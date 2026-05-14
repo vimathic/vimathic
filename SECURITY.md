@@ -79,10 +79,11 @@ considered acceptable trade-offs for a local-only VJ tool:
   warnings and caps, but a determined user can bypass them via the console.
   This is expected for a local creative tool.
 
-## No bug bounty
+## No bug bounty programme
 
-VIMATHIC is a non-commercial project. There is no monetary reward, but credit
-in the advisory will be given.
+VIMATHIC has no formal bug bounty programme. There is no monetary reward
+for security reports, but credit in the advisory will be given (unless the
+reporter asks to remain anonymous).
 
 ## Dependency security
 

@@ -67,15 +67,14 @@ of whatever you're listening to.
 Load a track (or mic, tab audio, system audio) — the music drives everything
 in real time.
 
-**Bass** pushes geometry. **Treble** sharpens edges. A **beat detector** runs in
-the background — its output is intentionally muted in the default visualisation
-(so the picture stays musical, not seizure-inducing), but it's available where
-it matters: BPM feeds the **Camera Programmer**, and the GIF recorder can
-beat-sync perfect loops.
+**Bass** and **treble** push geometry into motion. **Beat detection** runs in
+the background — its BPM feeds the Camera Programmer and the beat-synced GIF
+recorder, while its direct effect on the default visualisation is intentionally
+muted. MIDI controllers map to any parameter. A second screen or projector
+connects in one click.
 
-Swap the formula, the shape, the colour scheme, and other knobs — and dive into
-geometry you didn't expect. MIDI controllers map to any parameter. A second
-screen or projector connects in one click.
+Swap the formula, the shape, the colour scheme, and other knobs — and dive
+into geometry you didn't expect.
 
 ### A combinatorial space, not a preset gallery
 
@@ -98,17 +97,18 @@ mode replaces the formula slot with one of 6 vector fields, while Surface and
 Collapse use the chosen formula — gives **roughly one million distinct base
 states**.
 
-Add the continuous dimensions — sliders, MIDI, audio itself — and the space
-becomes effectively unbounded:
+That's before:
 
 - 7 audio-reactive sliders (amplitude, wave intensity, bass/treble sensitivity, bloom, colour, rotate-speed)
 - The MIDI mapping table (any CC → any parameter)
 - 7 toggleable post-processing effects with continuous parameters
-- The **Camera Programmer** (audio-reactive JavaScript camera scripts + keyframe timeline)
+- The **Camera Programmer** (arbitrary JavaScript camera scripts + keyframe timeline)
 - The **GLSL Shader Editor** (live-edit vertex and fragment shaders)
 - The audio itself — every track produces a different spectral fingerprint
 
-VIMATHIC is a generator for exploration, not a catalogue of finished pieces.
+Add the continuous dimensions — sliders, MIDI, audio itself — and the space
+becomes **effectively unbounded**. VIMATHIC is a generator for exploration,
+not a catalogue of finished pieces.
 
 ---
 
@@ -151,7 +151,7 @@ Bloom · God Rays · Motion Blur · Chromatic Aberration · Afterglow · Film Gr
 - File playback (MP3, WAV, FLAC, OGG) with drag & drop
 - Crossfade between tracks (configurable duration)
 - Bass / Mid / Treble sensitivity controls
-- Beat detector running in the background — BPM exposed to Camera Programmer and beat-synced GIF capture; default visualisation deliberately holds back on flash response
+- Beat detection in the background — feeds BPM to the Camera Programmer and beat-synced GIF recorder; the visualizer deliberately holds back on flash response in the default scene
 - Live microphone input (works with virtual loopback devices: VB-Audio Cable, BlackHole)
 - Browser tab audio capture (Chrome)
 - System audio capture (Windows Chrome)
@@ -209,6 +209,7 @@ plugins/
 documents/             — Markdown documentation (loaded into About modal + indexed by Google)
   quick-start.md  hotkeys.md  midi.md  camera-programmer.md
   shader-editor.md  recording.md  presets.md  output.md  troubleshooting.md
+  roadmap.md  safety.md  science.md  license.md
 ```
 
 **Stack:** Three.js (WebGL) · Web Audio API · Web MIDI API · Vite + vite-plugin-singlefile · micromark (build-time)
@@ -231,14 +232,6 @@ mathematical animation* has not been studied. We don't make therapeutic claims.
 
 ---
 
-## For tinkerers and VJs
-
-We love forks. If you build a cool feature in your fork, we might merge it back into the main VIMATHIC branch (with credit to you). By publishing your fork publicly, you agree that your contributions can be incorporated under the same BUSL‑1.1 license.
-
-No CLA, no paperwork — just build and share.
-
----
-
 ## Authorship
 
 VIMATHIC was designed and built by **S. Melentyev** in close collaboration with [Claude](https://claude.ai) (Anthropic). The project direction, design choices, scope, and decisions about what's in and what's out are the author's. The code, mathematical implementations, accuracy methodology, reference-value checks against mpmath / scipy.special / NIST DLMF, and the test suite that verifies them — were produced with Claude.
@@ -251,21 +244,18 @@ Where the author's role was strongest: deciding what the instrument should *be*,
 
 ## Support
 
-VIMATHIC is free, ad-free, telemetry-free, and open-source. If you find it useful and want to support continued development:
-
-- **Ko-fi**: [ko-fi.com/smelentyev](https://ko-fi.com/smelentyev)
-- **BTC**: `3EqX9aPn7S6CVfX1CVJ9Gj2aoGVwWMRhAz`
-- **DOGE**: `D983mnnVX1QrsHZNmfhNKP9gRkuQba5C5a`
-- **TON**: `UQBqeB9KzBpat4dNbkvnihuTLmX_GgUi7QzlmqE8_I23g0OG`
-
-Or just star the repo — visibility helps the project find its audience. See [Support](https://vimathic.com/docs/support.html) for non-monetary ways to contribute. None of it is expected.
+VIMATHIC 1.0 is free, ad-free, telemetry-free, and open-source — forever.
+For the roadmap of what comes next and ways to support development,
+see the [Roadmap](./documents/roadmap.md).
 
 ---
 
 ## Documentation
 
 **For users:** the in-app **About modal** (click the **i** icon next to FPS) and the live docs site at
-**[vimathic.com/docs/](https://vimathic.com/docs/)** — quick start, hotkeys, MIDI, shader editor, camera programmer, recording, presets, output, troubleshooting.
+**[vimathic.com/docs/](https://vimathic.com/docs/)** — quick start, hotkeys, MIDI, shader editor, camera programmer, recording, presets, output, roadmap, troubleshooting.
+
+The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, where it's going (PRO, custom AI engine, mobile apps), and how community support makes the rest possible.
 
 **For developers / contributors:**
 
@@ -285,9 +275,9 @@ Or just star the repo — visibility helps the project find its audience. See [S
 **Educational exception:** accredited schools, universities, and non-profit educational
 organizations may use VIMATHIC under Apache 2.0 terms immediately, free of charge.
 
-**After 2031-05-09:** GPL v3 for everyone. Any derivative work that gets distributed
-must also be open-source under GPL v3 — VIMATHIC and everything built on top of it
-stays free, forever.
+**After 2031-05-09:** the codebase converts to **GPL v3** — a copyleft open-source license.
+Any derivative work that gets distributed must remain open-source under GPL v3.
+No company can take this code and lock it behind a paywall.
 
 Uses [Three.js](https://threejs.org) © mrdoob, MIT License.
 

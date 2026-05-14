@@ -52,13 +52,16 @@ This documentation covers every part of VIMATHIC in detail. Pick the topic that 
 - [Presets & Clips](./presets.md) — save looks, recall them instantly, sequence them as live clips
 - [Output](./output.md) — send VIMATHIC to a projector, OBS, or professional VJ software
 
-### Support
+### Roadmap and support
+
+- [Roadmap](./roadmap.md) — what VIMATHIC is now, where it's going (PRO, custom AI engine, mobile apps), and how community support makes the rest possible
+
+### About
 
 - [Troubleshooting](./troubleshooting.md) — common issues and their fixes
 - [Safety & Privacy](./safety.md) — how VIMATHIC handles data and a few health notes worth knowing
 - [The Science](./science.md) — what published research says about fractal patterns and audiovisual stimulation
 - [License](./license.md) — plain-English explanation of how VIMATHIC is licensed
-- [Support the Project](./support.md) — ways to contribute if you find VIMATHIC useful
 
 ## Technical details
 
