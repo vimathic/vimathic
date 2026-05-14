@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+  # Allow manual runs from the Actions tab.
+  workflow_dispatch:
+
+# Cancel any in-progress runs for the same PR/branch when a new commit lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Math validation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        # 126 tests validating math-collections.js against canonical references
+        # (scipy.special, mpmath, NIST DLMF). See tests/math-validation.test.js.
+        run: npm test
+
+  e2e:
+    name: Playwright smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+  build:
+    name: Vite build (single-file)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: test
+
+    # Build job runs as CI verification only. Production deployment is
+    # handled by Cloudflare Pages, which runs its own `npm run build`
+    # on every push to main (configured in the Cloudflare Pages
+    # dashboard, not here). This job catches single-file-deploy
+    # regressions before Cloudflare even sees them.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify dist/ contents (whitelist)
+        # vite-plugin-singlefile inlines all imports into index.html. Web
+        # Worker modules cannot be inlined (they're loaded via
+        # `new Worker(new URL(...))`) and are emitted as separate chunks.
+        # The vimathic-docs Vite plugin also emits the static docs site,
+        # sitemap, robots.txt, and llms.txt.
+        #
+        # Full allowed dist/ contents (per DEPLOYMENT.md):
+        #   dist/index.html           ← main app, self-contained
+        #   dist/second-screen.html   ← projector/2nd-monitor popup target
+        #   dist/math-worker-*.js     ← Web Worker chunk(s)
+        #   dist/vimathic-intro.mp3   ← bundled intro track (S. Melentyev)
+        #   dist/support-hero.png     ← support page hero image (PNG fallback)
+        #   dist/support-hero.webp    ← support page hero image (WebP, modern browsers)
+        #   dist/sitemap.xml          ← SEO sitemap
+        #   dist/robots.txt           ← AI crawler opt-in
+        #   dist/llms.txt             ← LLM discoverability format
+        #   dist/docs/                ← static documentation site
+        #
+        # Anything in dist/ root that's NOT on this whitelist means
+        # something leaked from the inlining step — that's the regression
+        # we want CI to catch.
+        run: |
+          set -e
+          echo "=== dist/ root contents ==="
+          ls -la dist/
+          echo ""
+          echo "=== Whitelist verification ==="
+          ALLOWED='^(index\.html|second-screen\.html|math-worker-[A-Za-z0-9_-]+\.js|vimathic-intro\.mp3|support-hero\.png|support-hero\.webp|sitemap\.xml|robots\.txt|llms\.txt|docs)$'
+          UNEXPECTED=$(find dist -maxdepth 1 -mindepth 1 -printf '%f\n' | grep -Ev "$ALLOWED" || true)
+          if [ -n "$UNEXPECTED" ]; then
+            echo "❌ Unexpected files in dist/:"
+            echo "$UNEXPECTED"
+            echo ""
+            echo "The single-file build guarantee is broken. See DEPLOYMENT.md."
+            exit 1
+          fi
+          echo "✅ All dist/ root entries are on the whitelist."
+
+      - name: Verify index.html has no external script references
+        # The whole point of single-file deploy is that index.html runs
+        # offline. Any <script src="..."> pointing at an external URL
+        # (or a separate JS chunk that should have been inlined) breaks
+        # that. Worker imports via `new Worker(new URL(...))` are NOT
+        # <script> tags so they don't match this grep. Data URLs are
+        # excluded because they're inline-by-definition.
+        run: |
+          set -e
+          EXTERNAL=$(grep -E '<script[^>]+src="[^"]+\.js"' dist/index.html | grep -v 'src="data:' || true)
+          if [ -n "$EXTERNAL" ]; then
+            echo "❌ index.html contains external <script src> references:"
+            echo "$EXTERNAL"
+            echo ""
+            echo "Single-file deploy requires all JS to be inlined."
+            exit 1
+          fi
+          echo "✅ No external <script src> references in index.html."
+
+      - name: Verify index.html size is reasonable
+        # Sanity check: if the build produces a 50 KB or 50 MB file,
+        # something went wrong. Documented target is ~900 KB; accept
+        # 300 KB to 5 MB to catch regressions without being too strict.
+        run: |
+          set -e
+          SIZE=$(stat -c%s dist/index.html)
+          SIZE_KB=$((SIZE / 1024))
+          echo "dist/index.html: $SIZE_KB KB ($SIZE bytes)"
+          if [ "$SIZE" -lt 300000 ]; then
+            echo "❌ index.html is suspiciously small (<300 KB). Build may be broken."
+            exit 1
+          fi
+          if [ "$SIZE" -gt 5000000 ]; then
+            echo "❌ index.html is suspiciously large (>5 MB). Something is being bundled that shouldn't be."
+            exit 1
+          fi
+          echo "✅ Size is within expected range."

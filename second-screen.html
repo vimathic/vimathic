@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VIMATHIC — Output</title>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body {
+      width:100%; height:100%;
+      background:#000;
+      overflow:hidden;
+      cursor:none;
+    }
+    video {
+      width:100%; height:100%;
+      object-fit:contain;
+      display:block;
+    }
+    #status {
+      position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+      color:rgba(0,255,200,.5); font-family:'Courier New',monospace; font-size:13px;
+      letter-spacing:.1em; pointer-events:none; text-align:center; line-height:2;
+    }
+    #status.hidden { display:none; }
+  </style>
+</head>
+<body>
+  <video id="vid" autoplay muted playsinline></video>
+  <div id="status">Connecting to VIMATHIC…<br><span style="font-size:10px;opacity:.5">Keep both windows open</span></div>
+
+  <script>
+    const vid    = document.getElementById('vid');
+    const status = document.getElementById('status');
+
+    const connect = () => {
+      // Try opener first (popup mode)
+      const stream = window.opener?._vjStream ?? window._vjStream;
+      if (stream) {
+        vid.srcObject = stream;
+        vid.play().catch(() => {});
+        status.classList.add('hidden');
+        return true;
+      }
+      return false;
+    };
+
+    // Try immediately, then poll until stream appears
+    if (!connect()) {
+      const poll = setInterval(() => {
+        if (connect()) clearInterval(poll);
+      }, 200);
+      // Give up after 15s
+      setTimeout(() => { clearInterval(poll); status.textContent = 'No stream — reload main window.'; }, 15000);
+    }
+
+    // Reconnect if stream ends (e.g. main window refreshed)
+    vid.addEventListener('emptied', () => {
+      status.classList.remove('hidden');
+      status.textContent = 'Stream ended. Reconnecting…';
+      const poll = setInterval(() => { if (connect()) clearInterval(poll); }, 500);
+    });
+
+    // Fullscreen on double-click / F key
+    document.addEventListener('dblclick', () => document.documentElement.requestFullscreen?.());
+    document.addEventListener('keydown', e => {
+      if (e.key === 'f' || e.key === 'F') document.documentElement.requestFullscreen?.();
+      if (e.key === 'Escape') document.exitFullscreen?.();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# These are the official sponsorship channels for VIMATHIC.
+# GitHub will render a "❤ Sponsor" button at the top of the repo page
+# using this file. Only platforms listed in the GitHub spec work here;
+# crypto addresses go in documents/support.md instead.
+#
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+ko_fi: smelentyev
+
+# Other crypto and one-off donation methods are documented at:
+# https://vimathic.com/docs/support.html
+# https://github.com/vimathic/vimathic/blob/main/documents/support.md

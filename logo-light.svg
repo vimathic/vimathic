@@ -1,0 +1,21 @@
+<svg width="360" height="100" viewBox="0 0 360 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="lg-surf" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#16a34a"/>
+      <stop offset="50%"  stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="lg-text" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+  </defs>
+  <path d="M 8 86 L 46 18" stroke="url(#lg-surf)" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 84 86 L 46 18" stroke="url(#lg-surf)" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 10 84 C 22 66, 34 52, 46 46 C 58 52, 70 66, 82 84" stroke="#0284c7" stroke-width="1.2" fill="none" stroke-linecap="round" opacity="0.6"/>
+  <circle cx="46" cy="18" r="3" fill="#16a34a"/>
+  <circle cx="46" cy="18" r="1.2" fill="#fff"/>
+  <line x1="100" y1="14" x2="100" y2="86" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="116" y="62" font-family="'Courier New', monospace" font-size="36" font-weight="700" letter-spacing="-1" fill="url(#lg-text)">VIMATHIC</text>
+  <text x="118" y="80" font-family="'Courier New', monospace" font-size="8" letter-spacing="3.5" fill="#94a3b8">MATHEMATICAL VISUALIZER</text>
+</svg>

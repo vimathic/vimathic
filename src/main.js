@@ -1,0 +1,333 @@
+/**
+ * VIMATHIC — Mathematical VJ Studio
+ * Copyright (c) 2026 S. Melentyev. All rights reserved.
+ * Licensed under BUSL-1.1 — see LICENSE.txt
+ * https://github.com/vimathic/vimathic
+ */
+
+import { AudioEngine }  from './audio.js';
+import { RenderEngine } from './render.js';
+import { ShaderEditor, ModelLoader } from './shaders.js';
+import { CameraSystem } from './camera.js';
+import { UIController, ClipPlayer } from './ui/controller.js';
+import { MIDIController, ShuffleBag } from './utils.js';
+import { applyParam, syncParamUI, COLOR_SCHEME_COUNT } from './params.js';
+import { OutputManager, SecondScreen } from './outputs.js';
+import { GifRecorder, WebmRecorder } from './recorder.js';
+import { MathVisualizer } from './math-visualizer.js';
+import { getAllFormulasList } from './math-collections.js';
+import { DOM } from './dom.js';
+
+// ── App config ──────────────────────────────────────────────────────────────
+const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
+const CFG = {
+  planeSize: 7,
+  planeSegs: isMobile ? 80 : 160,
+  beatCooldown: 190,
+  beatThreshold: 0.65,
+  autoRotRadius: 7.2,
+};
+
+// ── Instantiate services ────────────────────────────────────────────────────
+const audio  = new AudioEngine();
+// Auto-load the bundled intro track on first load. Fire-and-forget: don't
+// block init on the fetch. If the user has previously clicked Clear, this
+// no-ops silently (see audio.js _loadIntroIfNeeded for the logic).
+audio._loadIntroIfNeeded();
+const render = new RenderEngine(isMobile, CFG);
+const camera = new CameraSystem(render.camera, render.orbit, CFG);
+const se     = new ShaderEditor(render);
+const ml     = new ModelLoader(render);
+
+const midi   = new MIDIController();
+const ctx    = { audio, render, camera };
+
+// MIDI → engine: one PARAMS lookup replaces the per-parameter switch.
+// Adding a new mappable parameter is now a single-place change in params.js.
+midi.cb.onParamSet = (id, val) => applyParam(ctx, id, val);
+
+const output      = new OutputManager(render.renderer);
+const secondScreen = new SecondScreen(render.renderer);
+
+// ── Recorders: GIF (with optional beat-sync) + WebM ────────────────────────
+const gifRec  = new GifRecorder(render.renderer);
+const webmRec = new WebmRecorder(render.renderer);
+
+const mathViz = new MathVisualizer(render, audio);
+
+const ui = new UIController({
+  audio, render, camera,
+  shaderEditor:se, modelLoader:ml,
+  midi, output, secondScreen, mathViz,
+  gifRec, webmRec,
+});
+ui.bindAll();
+
+const clip = new ClipPlayer(ui);
+ui.bindClip(clip);
+
+// ── Startup state ──────────────────────────────────────────────────────────
+// HTML defaults: shape=pyramid-smooth, color=16 (Amber), mode=wireframe,
+// gpu-sel=m:differentialEqs:pendulumNonLinear. The render constructor already
+// applies the shape, color uniform and viz mode; here we activate the matching
+// CPU formula so the very first frame shows the Pendulum phase portrait.
+audio.colorIdx = 16;
+mathViz.setFormula('differentialEqs', 'pendulumNonLinear');
+
+// ── Auto-persist boot ──────────────────────────────────────────────────────
+// Must run after the defaults above so a stored snapshot (if any) overrides
+// them. bootPersist also installs the debounced save loop and the
+// beforeunload flush, so from this point on the state survives reloads.
+ui.bootPersist();
+
+// ── Hotkeys ───────────────────────────────────────────────────────────────────
+// ── Non-repeating randomization pools ────────────────────────────────────────
+// Shared instances so 'R', 'Q', and 'F' never collide:
+//   • _shapeBag    — shape pool for 'R'
+//   • _colorBag    — color pool for 'R' and 'Q' (same instance; Q won't reproduce
+//                    a color R just set, and vice versa)
+//   • _formulaBag  — formula pool for 'R' and 'F' (same instance)
+// Each bag deals every value once before reshuffling; the reshuffle guarantees
+// the new top is not equal to the last drawn, so even at deck boundaries the
+// caller never sees the same value twice in a row.
+const SHAPES = ['plane','sphere','torus','torusknot','cylinder','cone','icosahedron','pyramid','box'];
+
+const _shapeBag = new ShuffleBag(SHAPES);
+// Color pool size sourced from params.js — single source of truth.
+// Previously a local COLOR_COUNT=36 lived here, which was correct but invited
+// drift if shaders.js gained another palette.
+const _colorBag = new ShuffleBag(Array.from({ length: COLOR_SCHEME_COUNT }, (_, i) => i));
+
+// Formula bag built once on first use. Compared by (collectionId, key)
+// because getAllFormulasList() builds fresh objects each call — reference
+// identity wouldn't survive a re-list, but ids are stable.
+let _formulaBag = null;
+function _getFormulaBag() {
+  if (_formulaBag) return _formulaBag;
+  const list = getAllFormulasList();
+  if (!list.length) return null;
+  _formulaBag = new ShuffleBag(
+    list,
+    (a, b) => a.collectionId === b.collectionId && a.key === b.key,
+  );
+  return _formulaBag;
+}
+
+// Pick and apply a random math formula from the full catalog.
+function _randomFormula() {
+  const bag  = _getFormulaBag();
+  if (!bag) return;
+  const pick = bag.next();
+  render.triggerMorphTransition(() => {
+    mathViz.setFormula(pick.collectionId, pick.key);
+  });
+  DOM.gpuSel.value = `m:${pick.collectionId}:${pick.key}`;
+}
+
+window.addEventListener('keydown', e => {
+  if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  switch (e.key.toLowerCase()) {
+    case ' ':          e.preventDefault(); audio.togglePlay(); break;
+    case 'arrowleft':  e.preventDefault(); audio.prevTrack();  break;
+    case 'arrowright': e.preventDefault(); audio.nextTrack();  break;
+
+    // F — random math formula from catalog (shuffle-bag, no repeats)
+    case 'f': {
+      _randomFormula();
+      break;
+    }
+
+    // R — randomise everything: color scheme + shape + formula.
+    // Each draw comes from a shared shuffle-bag, so values do not repeat
+    // until the corresponding pool is exhausted. Shape swap and formula
+    // change are combined into one morph callback so both apply at the
+    // flat frame, instead of one cancelling the other.
+    case 'r': {
+      const shape    = _shapeBag.next();
+      audio.colorIdx = _colorBag.next();
+      render.setColorSchemeAnimated(audio.colorIdx);
+      DOM.colorSel.value = audio.colorIdx;
+      DOM.shapeSel.value = shape;
+
+      const bag = _getFormulaBag();
+      if (!bag) {
+        // Formula list empty — just morph the shape.
+        render.setShapeAnimated(shape);
+        break;
+      }
+      const pick = bag.next();
+      DOM.gpuSel.value = `m:${pick.collectionId}:${pick.key}`;
+      render.triggerMorphTransition(() => {
+        render.setShape(shape);
+        mathViz.setFormula(pick.collectionId, pick.key);
+      });
+      break;
+    }
+
+    case 'q':
+      audio.colorIdx = _colorBag.next();
+      render.setColorSchemeAnimated(audio.colorIdx);
+      DOM.colorSel.value = audio.colorIdx;
+      break;
+    case 'e':
+      // Cycle forward through every defined scheme. Was hardcoded to %24,
+      // which silently skipped schemes 24-35.
+      audio.colorIdx = (audio.colorIdx + 1) % COLOR_SCHEME_COUNT;
+      render.setColorSchemeAnimated(audio.colorIdx);
+      DOM.colorSel.value = audio.colorIdx;
+      break;
+    case 'w': {
+      camera.rotAngle += Math.PI;
+      const r = CFG.autoRotRadius;
+      render.camera.position.set(Math.sin(camera.rotAngle)*r, render.camera.position.y, Math.cos(camera.rotAngle)*r);
+      render.orbit.update();
+      break;
+    }
+    case 'c': {
+      const target = render.grid.visible ? 0 : 0.1;
+      let t2 = 0;
+      const fade = () => { t2+=.05; render.grid.material.opacity += (target-render.grid.material.opacity)*.2; if(t2<1) requestAnimationFrame(fade); else render.grid.visible=target>0; };
+      fade();
+      break;
+    }
+    case 'h': DOM.hotkeyHint.classList.toggle('visible'); break;
+
+    // Note: the 'n' key is reserved for the hold-and-drag Wave Intensity
+    // control (see controls.js fullscreen drag handlers / hotkeys.md).
+    // It deliberately has no tap-action — the drag handler owns it.
+
+    case 's': {
+      e.preventDefault();
+      render.triggerGlitch(200);
+      // Capture original bloom only on the first press; subsequent presses
+      // within the punch window reuse it so rapid taps don't accumulate.
+      if (_bloomOrig === null) _bloomOrig = render.bloomPass.strength;
+      clearTimeout(_bloomTimer);
+      render.bloomPass.strength = Math.min(1.5, _bloomOrig + 0.8);
+      _bloomTimer = setTimeout(() => {
+        const v = _bloomOrig ?? 0.55;
+        render.bloomPass.strength = v;
+        syncParamUI('bloom', v);
+        _bloomOrig  = null;
+        _bloomTimer = null;
+      }, 200);
+      // Restart the beat-ring flash via Web Animations API — no layout reflow.
+      const ring = DOM.beatRing;
+      ring.classList.remove('flash');
+      ring.getAnimations?.().forEach(a => a.cancel());
+      ring.classList.add('flash');
+      break;
+    }
+  }
+});
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => render.onResize());
+
+// ── Cleanup ───────────────────────────────────────────────────────────────────
+window.addEventListener('beforeunload', () => {
+  audio.dispose();
+  ml.clear();
+  output.stopAll();
+  secondScreen.close();
+  // Abort active recordings to release MediaRecorder streams + worker(s)
+  if (gifRec.recording || gifRec.encoding) gifRec.abort();
+  if (webmRec.recording)                    webmRec.abort();
+  render.disposeCPUResources();
+  mathViz.dispose();
+});
+
+// ── Freeze-frame & grid toggle ────────────────────────────────────────────────
+let isFrozen = false;
+
+// Bloom glitch: track original value so rapid S presses don't accumulate
+let _bloomOrig  = null;
+let _bloomTimer = null;
+
+DOM.btnFreezeFrame.addEventListener('click', () => {
+  isFrozen = !isFrozen;
+  const btn = DOM.btnFreezeFrame;
+  if (isFrozen) {
+    btn.textContent = '▶ RESUME';
+    btn.style.background = 'rgba(255,58,122,.22)';
+  } else {
+    btn.textContent = '⏸ STOP MOTION';
+    btn.style.background = 'rgba(255,58,122,.08)';
+  }
+  // Pause/resume the volume-formula time accumulator. Volume formulas such
+  // as 'twist' use `time` as their evolution parameter; without this they
+  // would keep rotating even while the animate loop is frozen, because
+  // mathViz.tick() is called every frame regardless of the freeze gate.
+  mathViz?.setVolumeTimePaused?.(isFrozen);
+});
+
+DOM.btnToggleGrid.addEventListener('click', () => {
+  render.grid.visible = !render.grid.visible;
+  DOM.btnToggleGrid.style.opacity = render.grid.visible ? '1' : '0.45';
+});
+
+// Throttle uniform pushes: 30 fps on mobile, 60 fps on desktop.
+const UNIFORM_INTERVAL = isMobile ? 33 : 16;
+let time = 0, frames = 0, lastT = performance.now(), lastUniformUpdate = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  // FPS counter ticks even while frozen, so the operator sees the engine alive.
+  const now = performance.now();
+  frames += 1;
+  if (now - lastT >= 1000) {
+    DOM.fps.textContent = frames;
+    frames = 0; lastT = now;
+    render.updatePerfMetrics();
+  }
+
+  // Freeze holds the last composed frame but skips audio analysis and updates.
+  if (isFrozen) {
+    render.composer.render();
+    return;
+  }
+
+  time   += 0.008;
+
+  // Audio analysis — updates bass/mid/treble/beatInt, fires seek + EQ callbacks.
+  audio.update(time);
+
+  // Sync detected BPM to camera programmer context.
+  camera.estimatedBpm = audio.estimatedBpm;
+
+  // Math formula CPU geometry update (when active).
+  mathViz.tick(time);
+
+  // Push audio values to GPU uniforms (throttled, see UNIFORM_INTERVAL).
+  if (now - lastUniformUpdate >= UNIFORM_INTERVAL) {
+    lastUniformUpdate = now;
+    render.updateUniforms(time, audio);
+  }
+
+  // Lights + environment.
+  render.updateLights(time, audio);
+  render.updateSolarSystem(audio.bass);
+  render.updateGlitch();
+
+  // Camera.
+  if (camera.autoRot && !camera.userInt) {
+    if (camera.cpActive) {
+      camera.setElapsedForKeyframe(audio.getElapsedFraction());
+      camera.runScript(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
+    } else {
+      camera.updatePhysics(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
+    }
+  }
+
+  // Update timeline playhead when the camera editor is open.
+  if (DOM.camEditorOverlay.classList.contains('open')) {
+    camera.updatePlayhead(audio.getElapsedFraction());
+  }
+
+  render.orbit.update();
+  render.composer.render();
+  output.tick();
+}
+
+animate();

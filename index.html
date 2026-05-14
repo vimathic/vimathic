@@ -1,0 +1,1988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>VIMATHIC™ — Mathematical VJ Studio</title>
+  <meta name="description" content="VIMATHIC — Mathematical VJ Studio. 192 CPU formulas, 38 GPU shaders, MIDI, presets, clip player. Version 1.0 (Beta).">
+
+  <!-- Favicon — inline SVG, no external file needed -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23040412'/><polygon points='16,3 29,26 3,26' fill='none' stroke='%23ff3a7a' stroke-width='2'/><polygon points='16,8 25,23 7,23' fill='%2300ffcc' fill-opacity='.18'/><circle cx='16' cy='16' r='2' fill='%2300ffcc'/></svg>">
+
+  <!-- Open Graph — for link previews -->
+  <meta property="og:title"       content="Mathematical VJ Studio">
+  <meta property="og:description" content="Music turned into mathematics. 192 formulas, 38 GPU shaders, MIDI, clip player. v1.0 (Beta).">
+  <meta property="og:type"        content="website">
+  <style>
+
+    :root{
+      --mono:ui-monospace,'SF Mono','Cascadia Mono',Menlo,Consolas,'Liberation Mono',monospace;
+      --display:'Eurostile','Bahnschrift','Helvetica Neue',Helvetica,Arial,sans-serif;
+      --accent:#ff3a7a;--accent2:#0ff;--green:#00ffaa;--bg:#0a0a1a;--panel:rgba(5,5,20,0.93);
+      --pink:var(--accent);--cyan:var(--accent2)
+    }
+    :root{--accent:#ff3a7a;--accent2:#0ff;--green:#00ffaa;--bg:#0a0a1a;--panel:rgba(5,5,20,0.93);--pink:var(--accent);--cyan:var(--accent2)}
+    /* (font variables --mono and --display defined in earlier :root block) */
+    *{box-sizing:border-box}
+    body{margin:0;overflow:hidden;font-family:var(--mono);background:var(--bg)}
+
+
+
+    .beat-ring{position:fixed;top:50%;left:50%;border-radius:50%;border:0 solid var(--accent);
+      pointer-events:none;z-index:1;width:0;height:0;margin:0;opacity:0}
+    .beat-ring.flash{animation:beatFlash .4s ease-out forwards}
+    @keyframes beatFlash{
+      0%{width:0;height:0;box-shadow:0 0 0 0 rgba(255,58,122,.6)}
+      60%{width:260px;height:260px;margin:-130px;box-shadow:0 0 60px 20px rgba(255,58,122,.2)}
+      100%{width:460px;height:460px;margin:-230px;box-shadow:0 0 0 0 rgba(255,58,122,0);opacity:0}}
+
+
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+
+    :root{--btn-scale-hover:1.015;--btn-transition:.15s ease;--btn-radius:6px}
+
+    /* ── Clip Player transport buttons ────────────────────────────────────
+    .clip-row{display:flex;gap:5px;align-items:stretch;margin-top:4px}
+    .clip-row .clip-tbtn{
+      flex-grow:1;flex-shrink:1;flex-basis:0; /* equal share, ignore content width */
+      min-width:0;
+      width:auto;                          /* override global button{width:100%} */
+      padding:7px 6px;
+      font-size:10px;font-weight:600;
+      letter-spacing:.6px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;
+      background:rgba(255,58,122,.08);
+      border:1px solid rgba(255,58,122,.35);
+      color:var(--accent);
+      border-radius:5px;cursor:pointer;
+      font-family:var(--mono);
+      margin:0;                            /* override global button{margin-top:4px} */
+      transition:background var(--btn-transition),border-color var(--btn-transition),color var(--btn-transition),transform var(--btn-transition),box-shadow var(--btn-transition);
+      transform:scale(1);
+    }
+    .clip-row .clip-tbtn:hover:not(:disabled){
+      background:rgba(255,58,122,.18);
+      border-color:rgba(255,58,122,.6);
+      transform:scale(1);                      /* override global button:hover scale(1.01) */
+      box-shadow:none;                     /* override global button:hover glow */
+    }
+    /* SKIP — narrow, holds only the icon */
+    .clip-row .clip-tbtn.clip-skip{
+      flex-grow:0;flex-shrink:0;flex-basis:38px; /* fixed width — never participates in equal share */
+      padding:7px 4px;font-size:13px;
+    }
+    /* PLAY (green) and STOP (red) get accent colors so STOP is clearly STOP */
+    .clip-row #btn-clip-play{
+      background:rgba(0,255,170,.09);
+      border-color:rgba(0,255,170,.4);
+      color:var(--green);
+    }
+    .clip-row #btn-clip-play:hover:not(:disabled){
+      background:rgba(0,255,170,.20);
+      border-color:rgba(0,255,170,.7);
+    }
+    .clip-row #btn-clip-stop{
+      background:rgba(255,80,80,.08);
+      border-color:rgba(255,80,80,.4);
+      color:#ff7a7a;
+    }
+    .clip-row #btn-clip-stop:hover:not(:disabled){
+      background:rgba(255,80,80,.20);
+      border-color:rgba(255,80,80,.7);
+    }
+    /* Disabled state: keep text legible (no opacity drop), just dim colors */
+    .clip-row .clip-tbtn:disabled{
+      cursor:not-allowed;
+      filter:saturate(.45) brightness(.85); /* readable but visibly inactive */
+    }
+    /* Replaces the old fullscreen loading-overlay. A thin bar sits below
+       the play button and animates while a track is being decoded. */
+    #track-loading{height:2px;width:100%;margin-top:4px;background:rgba(255,58,122,.10);
+      border-radius:1px;overflow:hidden;opacity:0;transition:opacity .2s;pointer-events:none}
+    #track-loading.active{opacity:1}
+    #track-loading-fill{height:100%;width:0%;
+      background:linear-gradient(90deg,var(--accent),var(--accent2));
+      border-radius:1px;transition:width .15s ease-out}
+    /* Indeterminate animation when we don't know progress (e.g. fetching) */
+    #track-loading.indeterminate #track-loading-fill{
+      width:30%;animation:tloadSlide 1.1s linear infinite}
+    @keyframes tloadSlide{
+      0%   {transform:translateX(-100%)}
+      100% {transform:translateX(400%)}
+    }
+
+    #hotkey-hint{position:fixed;bottom:14px;left:14px;z-index:300;pointer-events:none;
+      font-size:8px;color:#334;font-family:monospace;line-height:1.7;
+      background:var(--panel);padding:4px 8px;border-radius:5px;border-left:2px solid #223;
+      opacity:0;transition:opacity .4s}
+    #hotkey-hint.visible{opacity:1}
+    #midi-badge{font-size:8px;font-family:monospace;color:#445;background:rgba(0,255,170,.06);
+      padding:3px 6px;border-radius:4px;border:1px solid #334;display:none;
+      white-space:nowrap;align-items:center;justify-content:center;min-width:0}
+    #midi-badge.active{color:var(--green);border-color:rgba(0,255,170,.5);display:flex}
+
+    /* ── Controls panel ───────────────────────────────────────────────────── */
+    .controls-panel{position:absolute;bottom:14px;right:14px;background:var(--panel);
+      backdrop-filter:blur(14px);border-radius:12px;z-index:200;width:292px;
+      border:1px solid rgba(255,58,122,.22);pointer-events:auto;max-height:92vh;
+      overflow-y:auto;
+      /* Firefox scrollbar — neon pink/cyan to match the rest of the UI */
+      scrollbar-width:thin;
+      scrollbar-color:rgba(255,58,122,.45) rgba(255,58,122,.06)}
+    .controls-panel::-webkit-scrollbar{width:5px}
+    .controls-panel::-webkit-scrollbar-track{background:rgba(255,58,122,.06);border-radius:3px}
+    .controls-panel::-webkit-scrollbar-thumb{
+      background:linear-gradient(180deg,var(--accent),var(--accent2));
+      border-radius:3px;
+      box-shadow:0 0 4px rgba(255,58,122,.3)}
+    .controls-panel::-webkit-scrollbar-thumb:hover{
+      background:linear-gradient(180deg,#ff5a9a,#5fffff)}
+    .ctrl-header{display:flex;justify-content:space-between;align-items:center;
+      padding:9px 13px;cursor:pointer;user-select:none;position:sticky;top:0;
+      background:var(--panel);z-index:1;border-radius:12px 12px 0 0}
+    .ctrl-header:hover{background:rgba(255,58,122,.06)}
+    .ctrl-header h3{margin:0;font-size:10px;color:var(--accent);letter-spacing:2px;font-family:var(--display)}
+    /* max-height bumped from 1800 to 5000 — was clipping MIDI mapping section
+       at the bottom of the panel when all advanced sections were expanded. */
+    .ctrl-body{padding:0 11px 11px 11px;overflow:hidden;transition:max-height .3s ease;max-height:5000px}
+    .ctrl-body.collapsed{max-height:0;padding:0 11px}
+    .cg{margin-bottom:8px}
+    .cg label{display:block;margin-bottom:3px;font-size:9px;color:#889;letter-spacing:1px}
+    .cg input[type=range]{width:100%;cursor:pointer;accent-color:var(--accent);height:3px}
+    .cg select{width:100%;background:#0a0a1a;color:#ddd;border:1px solid rgba(255,58,122,.35);
+      border-radius:6px;padding:6px 7px;font-size:10px;cursor:pointer;font-family:monospace}
+    .cg select option{background:#0a0a1a;color:#ddd}
+    .cg select:focus{outline:none;box-shadow:0 0 8px rgba(255,58,122,.4)}
+    /* ── Global dark select override — covers all selects incl. modals ── */
+    select{background:#0a0a1a!important;color:#ddd!important;border-color:rgba(255,58,122,.35)!important;
+      border-radius:6px;font-family:monospace;cursor:pointer;color-scheme:dark}
+    select option{background:#0a0a1a!important;color:#ddd!important}
+    /* ── Unified numeric input — single visual standard for input[type=number]
+       and any text input that holds a number. Width 64px fits a 3-digit value
+       (e.g. 120, 600) without truncation, including the native spinner arrows
+       the browser draws on the right. */
+    input.num-input,
+    input[type="number"]{
+      width:64px;
+      background:rgba(255,58,122,.06);
+      border:1px solid rgba(255,58,122,.25);
+      border-radius:5px;
+      color:#f3a;
+      font-family:var(--mono);
+      font-size:10px;
+      padding:5px 7px;
+      outline:none;
+      box-sizing:border-box;
+      color-scheme:dark;
+    }
+    input.num-input:focus,
+    input[type="number"]:focus{
+      border-color:var(--accent);
+      box-shadow:0 0 6px rgba(255,58,122,.35);
+    }
+    /* ── Searchable combobox wrapper ──────────────────────────────────── */
+    .srch-wrap{position:relative;width:100%}
+    .srch-wrap .srch-input{width:100%;background:#0a0a1a;color:#ddd;border:1px solid rgba(255,58,122,.35);
+      border-radius:6px;padding:5px 28px 5px 7px;font-size:10px;font-family:monospace;box-sizing:border-box;outline:none}
+    .srch-wrap .srch-input:focus{box-shadow:0 0 8px rgba(255,58,122,.4);border-color:var(--accent)}
+    .srch-wrap .srch-arrow{position:absolute;right:0;top:0;height:100%;width:26px;background:none;
+      border:none;color:#889;cursor:pointer;font-size:10px;display:flex;align-items:center;
+      justify-content:center;padding:0;line-height:1;padding-bottom:1px}
+    .srch-wrap .srch-drop{position:absolute;z-index:9999;width:100%;background:#0a0a1a;
+      border:1px solid rgba(255,58,122,.4);border-top:none;border-radius:0 0 6px 6px;
+      max-height:220px;overflow-y:auto;display:none}
+    .srch-wrap.open .srch-drop{display:block}
+    .srch-drop .srch-group{font-size:8px;color:rgba(255,58,122,.55);letter-spacing:1px;
+      padding:5px 8px 2px;border-top:1px solid rgba(255,58,122,.12);margin-top:2px}
+    .srch-drop .srch-opt{padding:5px 10px;font-size:10px;font-family:monospace;color:#ddd;
+      cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .srch-drop .srch-opt:hover,.srch-drop .srch-opt.active{background:rgba(255,58,122,.18);color:#fff}
+    .srch-drop::-webkit-scrollbar{width:4px}
+    .srch-drop::-webkit-scrollbar-track{background:#0a0a1a}
+    .srch-drop::-webkit-scrollbar-thumb{background:rgba(255,58,122,.4);border-radius:2px}
+    .vd{background:rgba(255,58,122,.15);padding:1px 5px;border-radius:3px;font-size:9px;margin-left:4px;color:var(--accent)}
+    .sec{font-size:8px;color:rgba(255,58,122,.65);letter-spacing:2px;text-transform:uppercase;
+      margin:9px 0 4px;border-bottom:1px solid rgba(255,58,122,.18);padding-bottom:3px;
+      cursor:pointer;user-select:none;transition:color .15s}
+    .sec:hover{color:var(--accent)}
+    /* Animated arrow: ▸ rotates 90° to ▾ when section expanded.
+       Original markup contains '▸ TITLE' as plain text — JS at end of <body>
+       rewrites this into <span class="sec-arrow">▸</span> + ' TITLE' so the
+       arrow can transform independently. */
+    .sec .sec-arrow{display:inline-block;transition:transform .2s;width:9px;text-align:center}
+    .sec.expanded .sec-arrow{transform:rotate(90deg)}
+    .seek-wrap{margin:4px 0 3px}
+    .seek-track{width:100%;height:5px;background:rgba(255,255,255,.09);border-radius:3px;
+      position:relative;cursor:pointer;overflow:hidden}
+    .seek-fill{height:100%;width:0%;border-radius:3px;pointer-events:none;
+      background:linear-gradient(90deg,var(--accent),#ffcc00,var(--green));transition:width .25s linear}
+    .seek-times{display:flex;justify-content:space-between;font-size:8px;color:#556;margin-top:2px}
+    .transport{display:flex;gap:4px;margin:4px 0 7px;align-items:center}
+    .transport .play-btn{flex:2;margin:0}
+    .tbtn{flex:1;background:rgba(255,58,122,.07);border:1px solid rgba(255,58,122,.3);
+      padding:7px 4px;border-radius:6px;color:#bbb;font-weight:bold;cursor:pointer;
+      font-family:monospace;font-size:14px;transition:all .15s;margin:0;text-align:center;width:auto}
+    .tbtn:hover{background:rgba(255,58,122,.18);color:var(--accent);transform:scale(1.05)}
+    .pl-wrap{background:rgba(0,0,0,.3);border:1px solid rgba(255,58,122,.15);border-radius:7px;overflow:hidden;margin-bottom:7px}
+    .pl-head{display:flex;justify-content:space-between;align-items:center;
+      padding:4px 9px;background:rgba(255,58,122,.06);border-bottom:1px solid rgba(255,58,122,.12)}
+    .pl-head span{font-size:8px;color:rgba(255,58,122,.75);letter-spacing:1px}
+    .pl-clear{background:none;border:none;color:rgba(255,58,122,.45);cursor:pointer;
+      font-size:9px;padding:0;margin:0;width:auto;letter-spacing:0}
+    .pl-clear:hover{color:var(--accent);background:rgba(255,58,122,14);box-shadow:0 0 8px rgba(255,58,122,.12);transform:scale(var(--btn-scale-hover))}
+    .pl-list{max-height:110px;overflow-y:auto;scrollbar-width:thin}
+    .pl-list::-webkit-scrollbar{width:2px}
+    #preset-list-wrap::-webkit-scrollbar{width:4px}
+    #preset-list-wrap::-webkit-scrollbar-thumb{background:rgba(0,255,200,.3);border-radius:2px}
+    #preset-list-wrap::-webkit-scrollbar-track{background:transparent}
+    #preset-list-wrap{scrollbar-width:thin;scrollbar-color:rgba(0,255,200,.3) transparent}
+    .pl-list::-webkit-scrollbar-thumb{background:var(--accent)}
+    .pl-item{display:flex;align-items:center;padding:4px 9px;cursor:pointer;
+      font-size:9px;color:#778;border-bottom:1px solid rgba(255,255,255,.02);transition:background .1s;gap:6px}
+    .pl-item:hover{background:rgba(255,58,122,.07);color:#bbb}
+    .pl-item.active{background:rgba(255,58,122,.11);color:var(--accent)}
+    .pl-num{font-size:8px;color:#445;min-width:14px;text-align:right}
+    .pl-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .pl-play{font-size:10px;color:var(--green);min-width:11px}
+    .pl-empty{padding:12px;text-align:center;font-size:9px;color:#334}
+    .pl-drop{font-size:8px;color:#445;text-align:center;padding:4px;cursor:pointer;border-top:1px solid rgba(255,58,122,.08)}
+    .pl-drop:hover{color:#778}
+    input#audio-file{display:none}
+    .eq-wrap{margin:6px 0;border-radius:6px;overflow:hidden;border:1px solid rgba(255,58,122,.18)}
+    .eq-canvas{display:block;width:100%;height:42px;background:#08081a}
+    button{width:100%;background:rgba(255,58,122,.11);border:1px solid rgba(255,58,122,.38);
+      padding:7px;border-radius:6px;color:var(--accent);font-weight:bold;cursor:pointer;
+      margin-top:4px;font-family:monospace;font-size:10px;transition:all .15s;letter-spacing:1px}
+    button:hover{background:rgba(255,58,122,.22);box-shadow:0 0 10px rgba(255,58,122,.18);transform:scale(var(--btn-scale-hover))}
+    .play-btn{background:rgba(0,200,80,.09);border-color:rgba(0,200,80,.45);color:#00ffaa}
+    .play-btn:hover{background:rgba(0,200,80,.18)}
+    .play-btn.playing{background:rgba(200,50,50,.11);border-color:rgba(200,50,50,.45);color:#ff5555;animation:pulse 1s infinite}
+    .mode-btns{display:flex;gap:4px;margin:6px 0}
+    .mbtn{flex:1;font-size:9px;padding:5px 2px;margin-top:0}
+    .mbtn.active{background:rgba(0,255,170,.11);border-color:var(--green);color:var(--green)}
+    .rec-btn{background:rgba(180,30,30,.11);border-color:rgba(200,50,50,.45);color:#ff5555}
+    .rec-btn:hover{background:rgba(200,50,50,.2)}
+    .rec-btn.recording{background:rgba(200,20,20,.22);border-color:#f33;color:#ff2222;animation:pulse .7s infinite}
+    /* ── Mobile bottom sheet ──────────────────────────────────────────────── */
+    @media(max-width:768px){
+      .controls-panel{
+        position:fixed;bottom:0;left:0;right:0;width:100%!important;
+        border-radius:16px 16px 0 0;max-height:72vh;
+        transform:none!important;
+      }
+      .ctrl-header{border-radius:16px 16px 0 0}
+      /* Larger touch targets on mobile */
+      button{padding:10px;font-size:11px}
+      .tbtn{padding:10px 8px;font-size:16px}
+      .mbtn{padding:9px 4px;font-size:10px}
+      .cg select{padding:9px 8px;font-size:11px}
+      input[type=range]{height:8px;margin:12px 0}
+    }
+
+    /* Drag handle — visible on mobile, hidden on desktop */
+    .panel-handle{
+      display:none;
+      width:36px;height:4px;border-radius:2px;
+      background:rgba(255,58,122,.4);margin:6px auto 2px;
+      cursor:grab;touch-action:none;
+    }
+    @media(max-width:768px){.panel-handle{display:block}}
+
+    /* ── Model import ─────────────────────────────────────────────────────── */
+    #model-drop-zone{border:2px dashed rgba(255,58,122,.35);border-radius:9px;padding:14px;
+      text-align:center;font-size:9px;color:#556;cursor:pointer;transition:all .2s;margin-bottom:6px}
+    #model-drop-zone:hover,#model-drop-zone.drag-over{border-color:var(--accent);color:var(--accent);background:rgba(255,58,122,.05)}
+    #model-info{font-size:8px;color:#445;text-align:center;min-height:12px;font-family:monospace}
+
+    /* ── About / docs modal ─────────────────────────────────────────────── */
+    /* Trigger button — placed in the FPS row */
+    #btn-about{
+      width:24px;height:24px;flex:0 0 auto;
+      display:flex;align-items:center;justify-content:center;
+      background:rgba(0,255,200,.06);
+      border:1px solid rgba(0,255,200,.3);
+      border-radius:50%;
+      color:var(--green,#0fc);
+      font-family:var(--display,'Courier New',monospace);
+      font-size:12px;font-weight:bold;font-style:italic;
+      cursor:pointer;
+      transition:background .15s,border-color .15s,box-shadow .15s,transform .15s;
+      line-height:1;padding:0;
+    }
+    #btn-about:hover{
+      background:rgba(0,255,200,.14);
+      border-color:rgba(0,255,200,.6);
+      box-shadow:0 0 8px rgba(0,255,200,.35);
+      transform:scale(1.06);
+    }
+    #btn-about:active{ transform:scale(.94); }
+
+    /* Overlay backdrop — mirrors shader/cam-editor pattern */
+    #about-overlay{
+      position:fixed;inset:0;z-index:870;
+      display:flex;align-items:center;justify-content:center;
+      background:rgba(0,0,0,.85);backdrop-filter:blur(7px);
+      opacity:0;pointer-events:none;transition:opacity .25s;
+    }
+    #about-overlay.open{ opacity:1;pointer-events:auto; }
+
+    /* Modal frame */
+    #about-box{
+      background:rgba(5,5,22,.98);
+      border:1px solid rgba(0,255,200,.35);
+      border-radius:14px;
+      width:min(720px,96vw);
+      max-height:88vh;
+      display:flex;flex-direction:column;
+      overflow:hidden;
+      box-shadow:0 8px 40px rgba(0,255,200,.12);
+    }
+
+    /* Header bar with title + close */
+    #about-header{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:10px 16px;
+      border-bottom:1px solid rgba(0,255,200,.18);
+      flex:0 0 auto;
+    }
+    #about-header h2{
+      margin:0;font-family:var(--display,'Courier New',monospace);
+      font-size:12px;letter-spacing:2px;color:var(--green,#0fc);
+      font-weight:normal;
+    }
+    #about-close{
+      background:none;border:none;color:#778;
+      font-size:18px;cursor:pointer;line-height:1;padding:2px 6px;
+      transition:color .15s;
+    }
+    #about-close:hover{ color:var(--accent,#f3a); }
+
+    /* Tab strip — horizontal, browser-style */
+    #about-tabs{
+      display:flex;gap:2px;
+      padding:6px 10px 0;
+      background:rgba(0,0,0,.35);
+      border-bottom:1px solid rgba(0,255,200,.15);
+      overflow-x:auto;
+      flex:0 0 auto;
+    }
+    #about-tabs::-webkit-scrollbar{ height:4px; }
+    #about-tabs::-webkit-scrollbar-thumb{ background:rgba(0,255,200,.3);border-radius:2px; }
+
+    .about-tab{
+      background:rgba(255,255,255,.02);
+      border:1px solid rgba(0,255,200,.15);
+      border-bottom:none;
+      border-radius:6px 6px 0 0;
+      padding:6px 12px;
+      color:#889;
+      font-family:var(--mono,monospace);
+      font-size:10px;letter-spacing:.5px;
+      cursor:pointer;white-space:nowrap;
+      transition:background .12s,color .12s,border-color .12s;
+    }
+    .about-tab:hover{ color:#bcd;background:rgba(0,255,200,.06); }
+    .about-tab.active{
+      background:rgba(0,255,200,.12);
+      border-color:rgba(0,255,200,.5);
+      color:var(--green,#0fc);
+    }
+
+    /* Content panel — scrolling article body */
+    #about-content{
+      flex:1 1 auto;overflow-y:auto;
+      padding:18px 22px;
+      color:#cdd;
+      font-family:var(--text,system-ui,sans-serif);
+      font-size:13px;line-height:1.6;
+      /* Firefox scrollbar — neon turquoise to match the modal's accent palette */
+      scrollbar-width:thin;
+      scrollbar-color:rgba(0,255,200,.45) rgba(0,255,200,.06);
+    }
+    #about-content::-webkit-scrollbar{width:5px}
+    #about-content::-webkit-scrollbar-track{background:rgba(0,255,200,.06);border-radius:3px}
+    #about-content::-webkit-scrollbar-thumb{
+      background:linear-gradient(180deg,#0fc,#0ff);
+      border-radius:3px;
+      box-shadow:0 0 4px rgba(0,255,200,.35);
+    }
+    #about-content::-webkit-scrollbar-thumb:hover{
+      background:linear-gradient(180deg,#5fffd1,#5fffff);
+    }
+    .about-doc h1,.about-doc h2,.about-doc h3{
+      color:var(--green,#0fc);
+      font-family:var(--display,'Courier New',monospace);
+      letter-spacing:1.2px;
+      margin:1.4em 0 .6em;
+    }
+    .about-doc h1{ font-size:17px;margin-top:0; }
+    .about-doc h2{ font-size:14px; }
+    .about-doc h3{ font-size:12px; }
+    .about-doc p{ margin:.6em 0; }
+    .about-doc code{
+      background:rgba(0,255,200,.10);
+      color:#0fc;
+      padding:1px 5px;border-radius:3px;
+      font-family:var(--mono,monospace);font-size:12px;
+    }
+    .about-doc pre{
+      background:#050510;border:1px solid #223;
+      border-radius:5px;padding:10px 12px;
+      overflow-x:auto;margin:.8em 0;
+    }
+    .about-doc pre code{ background:none;color:#9cf;padding:0; }
+    .about-doc a{ color:var(--accent2,#0ff);text-decoration:none;border-bottom:1px dotted; }
+    .about-doc a:hover{ color:#fff; }
+    .about-doc ul,.about-doc ol{ padding-left:1.4em;margin:.5em 0; }
+    .about-doc li{ margin:.25em 0; }
+    .about-doc kbd{
+      background:rgba(255,58,122,.12);border:1px solid rgba(255,58,122,.4);
+      color:var(--accent,#f3a);padding:1px 6px;border-radius:3px;
+      font-family:var(--mono,monospace);font-size:11px;
+    }
+
+    .about-empty{
+      text-align:center;color:#778;padding:40px 20px;
+      font-family:var(--mono,monospace);font-size:11px;
+    }
+    .about-empty code{
+      background:rgba(0,255,200,.10);color:#0fc;
+      padding:1px 5px;border-radius:3px;
+    }
+
+    /* ── Shader editor ────────────────────────────────────────────────────── */
+    #shader-editor-overlay{position:fixed;inset:0;z-index:800;display:flex;align-items:center;
+      justify-content:center;background:rgba(0,0,0,.82);backdrop-filter:blur(6px);
+      opacity:0;pointer-events:none;transition:opacity .25s}
+    #shader-editor-overlay.open{opacity:1;pointer-events:auto}
+    #shader-editor-box{background:rgba(5,5,22,.98);border:1px solid rgba(255,58,122,.45);
+      border-radius:14px;width:min(760px,96vw);max-height:90vh;display:flex;flex-direction:column;overflow:hidden}
+    #se-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;
+      border-bottom:1px solid rgba(255,58,122,.2);flex-shrink:0}
+    #se-header h3{margin:0;font-family:var(--display);font-size:10px;color:var(--accent);letter-spacing:2px}
+    #se-close{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);color:#667;font-size:15px;cursor:pointer;padding:4px 8px;width:auto;margin:0;letter-spacing:0;border-radius:6px;transition:all var(--btn-transition)}
+    #se-close:hover{color:var(--accent);background:rgba(255,255,255,.06);box-shadow:0 0 8px rgba(255,255,255,.08);transform:scale(var(--btn-scale-hover))}
+    #se-tabs{display:flex;gap:2px;padding:8px 12px 0;flex-shrink:0}
+    .se-tab{background:rgba(255,58,122,.06);border:1px solid rgba(255,58,122,.2);border-bottom:none;
+      padding:5px 14px;border-radius:6px 6px 0 0;font-size:9px;color:#778;cursor:pointer;font-family:monospace;letter-spacing:1px}
+    .se-tab.active{background:rgba(255,58,122,.14);color:var(--accent);border-color:rgba(255,58,122,.5)}
+    #se-body{flex:1;overflow-y:auto;display:flex;flex-direction:column;padding:12px;gap:8px;
+      min-height:0;max-height:calc(90vh - 80px)}
+    #se-ref{font-size:8px;color:#445;font-family:monospace;line-height:1.8;padding:6px 10px;
+      background:rgba(0,0,0,.4);border-radius:6px;border:1px solid #1a1a3a;flex-shrink:0}
+    #se-ref span{color:var(--accent2)}
+    #se-code{resize:none;background:#070714;color:#b8e0ff;font-family:var(--mono);
+      font-size:11px;line-height:1.6;border:none;border-radius:0;
+      padding:10px 10px 10px 8px;outline:none;height:200px;min-height:80px;tab-size:2;
+      width:100%;box-sizing:border-box;overflow-y:auto;flex:1}
+    #se-code:focus{outline:none}
+    /* Line-number gutter wrapper */
+    .se-editor-wrap{display:flex;border:1px solid rgba(255,58,122,.3);border-radius:7px;
+      overflow:hidden;position:relative;background:#070714;resize:vertical;min-height:80px;height:200px}
+    .se-editor-wrap:focus-within{border-color:rgba(255,58,122,.7);box-shadow:0 0 12px rgba(255,58,122,.12)}
+    #se-line-nums{background:#040410;color:#334;padding:10px 6px 10px 8px;min-width:34px;
+      text-align:right;user-select:none;overflow:hidden;border-right:1px solid rgba(255,58,122,.12);
+      font-family:var(--mono);font-size:11px;line-height:1.6;pointer-events:none;
+      white-space:pre;flex-shrink:0}
+    #se-line-nums .ln-err{color:#f66;background:rgba(255,50,50,.18);display:block;
+      margin:0 -6px 0 -8px;padding:0 6px 0 8px}
+    /* Error gutter highlight — paints the whole error-line row */
+    #se-code.has-error-line{background:linear-gradient(transparent,transparent)}
+    #se-footer{display:flex;gap:8px;align-items:center;flex-shrink:0;padding-top:4px}
+    #se-error{flex:1;font-size:9px;color:#f66;font-family:monospace;word-break:break-all;min-height:14px}
+    .se-btn{padding:7px 18px;border-radius:7px;font-family:monospace;font-size:10px;cursor:pointer;
+      border:1px solid;letter-spacing:1px;width:auto;margin:0}
+    .se-btn-apply{background:rgba(0,255,170,.1);border-color:var(--green);color:var(--green)}
+    .se-btn-apply:hover{background:rgba(0,255,170,.2);transform:scale(var(--btn-scale-hover))}
+    .se-btn-reset{background:rgba(255,58,122,.08);border-color:rgba(255,58,122,.4);color:var(--accent)}
+    #se-preset-wrap{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
+    .se-preset{background:rgba(0,255,255,.06);border:1px solid rgba(0,255,255,.2);border-radius:5px;
+      padding:3px 9px;font-size:8px;color:var(--accent2);cursor:pointer;font-family:monospace;
+      letter-spacing:.5px;width:auto;margin:0}
+    .se-preset:hover{background:rgba(0,255,255,.14);transform:scale(var(--btn-scale-hover))}
+
+    /* ── Audio source modal ───────────────────────────────────────────────── */
+    #audio-src-overlay{position:fixed;inset:0;z-index:850;display:flex;align-items:center;
+      justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(8px);
+      opacity:0;pointer-events:none;transition:opacity .25s}
+    #audio-src-overlay.open{opacity:1;pointer-events:auto}
+    #audio-src-box{background:rgba(4,4,22,.99);border:1px solid rgba(0,255,255,.3);
+      border-radius:14px;width:min(580px,96vw);overflow:hidden}
+    #as-header{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;
+      border-bottom:1px solid rgba(0,255,255,.15)}
+    #as-header h3{margin:0;font-family:var(--display);font-size:10px;color:var(--accent2);letter-spacing:2px}
+    #as-close{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);color:#667;font-size:15px;cursor:pointer;padding:4px 8px;width:auto;margin:0;letter-spacing:0;border-radius:6px;transition:all var(--btn-transition)}
+    #as-close:hover{color:var(--accent2);background:rgba(255,255,255,.06);box-shadow:0 0 8px rgba(255,255,255,.08);transform:scale(var(--btn-scale-hover))}
+    .as-section{padding:13px 18px;border-bottom:1px solid rgba(255,255,255,.05)}
+    .as-section:last-child{border-bottom:none}
+    .as-stitle{font-size:9px;color:var(--accent2);letter-spacing:2px;text-transform:uppercase;
+      margin-bottom:5px;font-family:var(--display);display:flex;align-items:center;gap:8px}
+    .as-desc{font-size:8px;color:#445;font-family:monospace;line-height:1.7;margin-bottom:7px}
+    .as-desc b{color:#667}
+    .as-compat{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
+    .as-tag{font-size:7px;padding:2px 7px;border-radius:10px;font-family:monospace;letter-spacing:.5px;border:1px solid}
+    .as-tag.yes{background:rgba(0,255,170,.1);color:var(--green);border-color:rgba(0,255,170,.3)}
+    .as-tag.no{background:rgba(255,50,50,.1);color:#f77;border-color:rgba(255,50,50,.3)}
+    .as-tag.partial{background:rgba(255,200,0,.08);color:#fc0;border-color:rgba(255,200,0,.3)}
+    .as-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .as-btn{background:rgba(0,255,255,.07);border:1px solid rgba(0,255,255,.28);border-radius:7px;
+      padding:7px 14px;font-size:9px;color:var(--accent2);cursor:pointer;font-family:monospace;
+      letter-spacing:.5px;width:auto;margin:0;transition:all .15s;flex-shrink:0}
+    .as-btn:hover{background:rgba(0,255,255,.16);transform:scale(var(--btn-scale-hover))}
+    .as-btn.active-src{background:rgba(0,255,170,.13);border-color:var(--green);color:var(--green)}
+    .as-btn.stop-src{background:rgba(255,50,50,.09);border-color:rgba(255,50,50,.35);color:#f77}
+    .as-btn.stop-src:hover{background:rgba(255,50,50,.2)}
+    #as-device-wrap{flex:1;min-width:150px}
+    #as-device-sel{width:100%;background:#0a0a1a;color:#9cf;border:1px solid rgba(0,255,255,.2);
+      border-radius:6px;padding:5px 8px;font-size:9px;font-family:monospace;cursor:pointer;outline:none}
+    #as-device-sel:focus{border-color:rgba(0,255,255,.5)}
+    #as-refresh-devs{background:none;border:none;color:#445;cursor:pointer;padding:0;width:auto;
+      margin:0;font-size:11px;letter-spacing:0;flex-shrink:0}
+    #as-refresh-devs:hover{color:var(--accent2);background:none;box-shadow:none;transform:none}
+    #as-status{font-size:8px;font-family:monospace;padding:4px 0;min-height:16px;letter-spacing:.5px;margin-top:4px}
+    #as-status.ok{color:var(--green)} #as-status.err{color:#f77} #as-status.info{color:#fc0}
+    .as-note{font-size:7px;color:#334;font-family:monospace;line-height:1.6;
+      background:rgba(0,0,0,.4);padding:6px 10px;border-radius:5px;border-left:2px solid #1a2a1a;margin-top:6px}
+
+    /* ── Output modal ─────────────────────────────────────────────────────── */
+    #output-overlay{position:fixed;inset:0;z-index:860;display:flex;align-items:center;
+      justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(8px);
+      opacity:0;pointer-events:none;transition:opacity .25s}
+    #output-overlay.open{opacity:1;pointer-events:auto}
+    #output-box{background:rgba(4,4,22,.99);border:1px solid rgba(255,58,122,.35);
+      border-radius:14px;width:min(560px,96vw);overflow:hidden}
+    #out-header{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;
+      border-bottom:1px solid rgba(255,58,122,.15)}
+    #out-header h3{margin:0;font-family:var(--display);font-size:10px;color:var(--accent);letter-spacing:2px}
+    #out-close{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);color:#667;font-size:15px;cursor:pointer;padding:4px 8px;width:auto;margin:0;letter-spacing:0;border-radius:6px;transition:all var(--btn-transition)}
+    #out-close:hover{color:var(--accent);background:rgba(255,255,255,.06);box-shadow:0 0 8px rgba(255,255,255,.08);transform:scale(var(--btn-scale-hover))}
+    .out-section{padding:12px 18px;border-bottom:1px solid rgba(255,255,255,.05)}
+    .out-section:last-child{border-bottom:none}
+    .out-stitle{font-size:9px;color:var(--accent);letter-spacing:2px;text-transform:uppercase;
+      margin-bottom:5px;font-family:var(--display);display:flex;align-items:center;gap:8px}
+    .out-badge{font-size:7px;padding:1px 7px;border-radius:10px;font-family:monospace;letter-spacing:.5px;
+      text-transform:none;border:1px solid}
+    .out-badge.ok{background:rgba(0,255,170,.1);color:var(--green);border-color:rgba(0,255,170,.3)}
+    .out-badge.warn{background:rgba(255,200,0,.1);color:#fc0;border-color:rgba(255,200,0,.3)}
+    .out-badge.na{background:rgba(100,100,100,.1);color:#445;border-color:#334}
+    .out-desc{font-size:8px;color:#445;font-family:monospace;line-height:1.7;margin-bottom:7px}
+    .out-desc b{color:#667} .out-desc code{color:var(--accent2);background:rgba(0,255,255,.06);padding:0 4px;border-radius:3px}
+    .out-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .out-btn{background:rgba(255,58,122,.08);border:1px solid rgba(255,58,122,.28);border-radius:7px;
+      padding:7px 14px;font-size:9px;color:var(--accent);cursor:pointer;font-family:monospace;
+      letter-spacing:.5px;width:auto;margin:0;transition:all .15s;flex-shrink:0}
+    .out-btn:hover{background:rgba(255,58,122,.18);transform:scale(var(--btn-scale-hover))}
+    .out-btn.active-out{background:rgba(0,255,170,.13);border-color:var(--green);color:var(--green)}
+    .out-btn.stop-out{background:rgba(255,50,50,.09);border-color:rgba(255,50,50,.35);color:#f77}
+    .out-btn.stop-out:hover{background:rgba(255,50,50,.2)}
+    .out-btn:disabled{opacity:.35;cursor:not-allowed;transform:none}
+    #out-vcam-fps{width:60px;background:#0a0a1a;color:#9cf;border:1px solid rgba(255,58,122,.2);
+      border-radius:5px;padding:4px 7px;font-size:9px;font-family:monospace;outline:none}
+    .out-note{font-size:7px;color:#334;font-family:monospace;line-height:1.6;
+      background:rgba(0,0,0,.4);padding:6px 10px;border-radius:5px;border-left:2px solid #2a1a1a;margin-top:6px}
+    #out-feedback{font-size:8px;font-family:monospace;padding:4px 0;min-height:16px;letter-spacing:.5px}
+
+    /* ── Camera editor ────────────────────────────────────────────────────── */
+    #cam-editor-overlay{position:fixed;inset:0;z-index:800;display:flex;align-items:center;
+      justify-content:center;background:rgba(0,0,0,.85);backdrop-filter:blur(6px);
+      opacity:0;pointer-events:none;transition:opacity .25s}
+    #cam-editor-overlay.open{opacity:1;pointer-events:auto}
+    #cam-editor-box{background:rgba(4,4,20,.99);border:1px solid rgba(0,255,170,.35);
+      border-radius:14px;width:min(820px,97vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden}
+    #ce-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;
+      border-bottom:1px solid rgba(0,255,170,.18);flex-shrink:0}
+    #ce-header h3{margin:0;font-family:var(--display);font-size:10px;color:var(--green);letter-spacing:2px}
+    #ce-close{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);color:#667;font-size:15px;cursor:pointer;padding:4px 8px;width:auto;margin:0;letter-spacing:0;border-radius:6px;transition:all var(--btn-transition)}
+    #ce-close:hover{color:var(--green);background:rgba(255,255,255,.06);box-shadow:0 0 8px rgba(255,255,255,.08);transform:scale(var(--btn-scale-hover))}
+    #ce-body{flex:1;overflow-y:auto;display:flex;flex-direction:column;padding:12px;gap:10px;
+      min-height:0;max-height:calc(92vh - 80px)}
+    #ce-ref{font-size:8px;color:#445;font-family:monospace;line-height:1.9;padding:7px 10px;
+      background:rgba(0,0,0,.5);border-radius:6px;border:1px solid #111830;flex-shrink:0}
+    #ce-ref span{color:var(--accent2)} #ce-ref b{color:#aaa}
+    #ce-tabs{display:flex;gap:3px;flex-shrink:0}
+    .ce-tab{background:rgba(0,255,170,.05);border:1px solid rgba(0,255,170,.15);border-bottom:none;
+      padding:5px 14px;border-radius:6px 6px 0 0;font-size:9px;color:#556;cursor:pointer;font-family:monospace;letter-spacing:1px}
+    .ce-tab.active{background:rgba(0,255,170,.12);color:var(--green);border-color:rgba(0,255,170,.45)}
+    #ce-timeline{flex-shrink:0;background:rgba(0,0,0,.4);border:1px solid rgba(0,255,170,.15);
+      border-radius:7px;padding:8px 10px;display:flex;flex-direction:column;gap:5px}
+    #ce-tl-label{font-size:8px;color:var(--green);letter-spacing:1px;font-family:monospace}
+    #ce-tl-bar{position:relative;height:28px;background:#070714;border-radius:5px;cursor:pointer;overflow:hidden}
+    #ce-tl-playhead{position:absolute;top:0;width:2px;height:100%;background:var(--accent);pointer-events:none;transition:left .05s linear}
+    .ce-kf{position:absolute;top:4px;width:10px;height:20px;border-radius:3px;cursor:grab;
+      background:rgba(0,255,170,.55);border:1px solid var(--green);transform:translateX(-5px)}
+    .ce-kf:hover{background:rgba(0,255,170,.9);z-index:2}
+    .ce-kf.selected{background:var(--green);box-shadow:0 0 8px var(--green)}
+    #ce-tl-add{font-size:8px;color:#445;font-family:monospace;cursor:pointer;text-align:right}
+    #ce-tl-add:hover{color:var(--green)}
+    #ce-code{resize:vertical;background:#060613;color:#b8ffda;font-family:var(--mono);
+      font-size:11px;line-height:1.6;border:1px solid rgba(0,255,170,.25);border-radius:7px;
+      padding:10px;outline:none;height:180px;min-height:100px;tab-size:2;width:100%;box-sizing:border-box}
+    #ce-code:focus{border-color:rgba(0,255,170,.6);box-shadow:0 0 12px rgba(0,255,170,.1)}
+    #ce-params{display:flex;gap:10px;flex-wrap:wrap;flex-shrink:0}
+    .ce-param{display:flex;flex-direction:column;gap:2px;flex:1;min-width:100px}
+    .ce-param label{font-size:8px;color:#556;letter-spacing:1px;font-family:monospace}
+    .ce-param input[type=range]{accent-color:var(--green)}
+    #ce-preset-wrap{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
+    .ce-preset{background:rgba(0,255,170,.06);border:1px solid rgba(0,255,170,.2);border-radius:5px;
+      padding:3px 9px;font-size:8px;color:var(--green);cursor:pointer;font-family:monospace;
+      letter-spacing:.5px;width:auto;margin:0}
+    .ce-preset:hover{background:rgba(0,255,170,.16);transform:scale(var(--btn-scale-hover))}
+    #ce-footer{display:flex;gap:8px;align-items:center;padding-top:2px;flex-shrink:0}
+    #ce-error{flex:1;font-size:9px;color:#f66;font-family:monospace;word-break:break-all;min-height:14px}
+    .ce-btn{padding:7px 18px;border-radius:7px;font-family:monospace;font-size:10px;cursor:pointer;
+      border:1px solid;letter-spacing:1px;width:auto;margin:0}
+    .ce-btn-apply{background:rgba(0,255,170,.1);border-color:var(--green);color:var(--green)}
+    .ce-btn-apply:hover{background:rgba(0,255,170,.22);transform:scale(var(--btn-scale-hover))}
+    .ce-btn-reset{background:rgba(255,58,122,.08);border-color:rgba(255,58,122,.4);color:var(--accent)}
+
+    /* ── Advanced section <details> ──────────────────────────────────────── */
+    details.adv-section{margin-top:6px}
+    details.adv-section > summary{
+      font-size:8px;color:rgba(255,58,122,.65);letter-spacing:2px;text-transform:uppercase;
+      margin:0 0 4px;border-bottom:1px solid rgba(255,58,122,.18);padding-bottom:3px;
+      cursor:pointer;list-style:none;user-select:none;display:flex;align-items:center;gap:6px;
+    }
+    details.adv-section > summary::-webkit-details-marker{display:none}
+    details.adv-section > summary::before{
+      content:'▸';transition:transform .2s;display:inline-block;font-size:9px;
+    }
+    details.adv-section[open] > summary::before{transform:rotate(90deg)}
+    /* ── Inner collapsible sub-sections ───────────────────────────────────── */
+    details.adv-sub{margin-top:4px}
+    details.adv-sub > summary{
+      font-size:8px;color:rgba(255,58,122,.5);letter-spacing:1.5px;text-transform:uppercase;
+      padding:4px 0 3px;border-bottom:1px solid rgba(255,58,122,.12);
+      cursor:pointer;list-style:none;user-select:none;display:flex;align-items:center;gap:5px;
+    }
+    details.adv-sub > summary::-webkit-details-marker{display:none}
+    details.adv-sub > summary::before{
+      content:'▸';transition:transform .18s;display:inline-block;font-size:8px;color:rgba(255,58,122,.45);
+    }
+    details.adv-sub[open] > summary::before{transform:rotate(90deg)}
+    details.adv-sub > summary:hover{color:rgba(255,58,122,.8)}
+
+    input[type="range"]{-webkit-appearance:none;appearance:none;width:100%;height:6px;
+      background:linear-gradient(90deg,#111,#1a1a2e);border-radius:4px;outline:none;margin:10px 0;position:relative;overflow:hidden}
+    input[type="range"]::-webkit-slider-runnable-track{height:6px;border-radius:4px;background:linear-gradient(90deg,#111,#1a1a2e)}
+    input[type="range"]::before{content:"";position:absolute;height:100%;width:var(--val,50%);
+      background:linear-gradient(90deg,#ff3a7a,#0ff,#00ffaa);box-shadow:0 0 10px #ff3a7a,0 0 20px rgba(0,255,255,.4);z-index:0}
+    input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;
+      background:radial-gradient(circle,#fff 0%,#ff3a7a 60%,#ff3a7a 100%);border-radius:50%;margin-top:-4px;cursor:pointer;
+      position:relative;z-index:2;box-shadow:0 0 6px #ff3a7a,0 0 12px rgba(255,58,122,.8),0 0 20px rgba(0,255,255,.3);transition:all .15s}
+    input[type="range"]::-webkit-slider-thumb:hover{transform:scale(1.2)}
+    input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#ff3a7a;border-radius:50%;border:none}
+
+    /* ── Neon custom checkboxes ───────────────────────────────────────────
+       Replaces white-background system checkboxes ("Start with music",
+       "Show artist name") with a transparent dark square that lights up
+       cyan/pink when checked. Works in Chrome/Firefox/Safari. */
+    input[type="checkbox"].neon, input.neon[type="checkbox"]{
+      -webkit-appearance:none;appearance:none;
+      width:14px;height:14px;flex-shrink:0;
+      background:rgba(0,0,0,.4);
+      border:1px solid rgba(255,58,122,.4);
+      border-radius:3px;cursor:pointer;
+      position:relative;
+      transition:background .15s,border-color .15s,box-shadow .15s;
+      vertical-align:middle;margin:0}
+    input[type="checkbox"].neon:hover{
+      border-color:var(--accent2);
+      box-shadow:0 0 6px rgba(0,255,255,.3)}
+    input[type="checkbox"].neon:checked{
+      background:rgba(0,255,200,.15);
+      border-color:var(--cyan);
+      box-shadow:0 0 8px rgba(0,255,255,.5),inset 0 0 4px rgba(0,255,200,.4)}
+    /* Checkmark drawn with CSS, no system glyph */
+    input[type="checkbox"].neon:checked::after{
+      content:'';position:absolute;left:3px;top:0px;
+      width:5px;height:9px;
+      border:solid var(--cyan);border-width:0 2px 2px 0;
+      transform:rotate(45deg)}
+    input[type="checkbox"].neon-pink:checked{
+      background:rgba(255,58,122,.15);
+      border-color:var(--accent);
+      box-shadow:0 0 8px rgba(255,58,122,.5),inset 0 0 4px rgba(255,58,122,.4)}
+    input[type="checkbox"].neon-pink:checked::after{border-color:var(--accent)}
+
+  /* ── EQ + FPS row ─────────────────────────────────────────── */
+  .eq-fps-row{display:flex;align-items:center;gap:8px;margin:6px 0;justify-content:space-between}
+  #fps-inline{font-size:10px;color:#556;font-family:monospace;white-space:nowrap;text-align:center;flex:0 0 auto;padding:4px 7px;background:rgba(255,58,122,.06);border-radius:5px;border:1px solid rgba(255,58,122,.18);letter-spacing:.5px;line-height:1.4}
+  #fps-inline.active{color:var(--green)}
+  /* ── Controls panel collapse → floating button ────────────────────────────── */
+.controls-panel {
+  transition: width .25s ease, border-radius .25s ease, background .25s ease,
+              box-shadow .25s ease, padding .25s ease;
+}
+
+.controls-panel.collapsed {
+  width: auto;
+  min-width: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  /* тень чуть ярче чем у раскрытой панели */
+  box-shadow: 0 0 18px rgba(255, 58, 122, .28);
+}
+
+/* Когда свёрнуто — прячем тело полностью (не просто max-height:0) */
+.controls-panel.collapsed .ctrl-body {
+  display: none;
+}
+
+/* Заголовок в свёрнутом состоянии — становится компактной кнопкой */
+.controls-panel.collapsed .ctrl-header {
+  padding: 9px 15px;
+  border-radius: 10px;
+  cursor: pointer;
+  /* убираем sticky, не нужен когда body скрыто */
+  position: static;
+  background: rgba(5, 5, 20, 0.93);
+  border-bottom: none;
+}
+
+.controls-panel.collapsed .ctrl-header:hover {
+  background: rgba(255, 58, 122, .13);
+  box-shadow: 0 0 12px rgba(255, 58, 122, .22);
+}
+
+/* Текст заголовка в свёрнутом состоянии — акцентный цвет, чуть крупнее */
+.controls-panel.collapsed .ctrl-header h3 {
+  color: var(--accent);
+  letter-spacing: 3px;
+}
+
+/* Кнопка ▶/▼ плавно вращается при переходе */
+#ctrl-collapse {
+  transition: transform .2s ease, background var(--btn-transition), box-shadow var(--btn-transition);
+  display: inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:22px;
+  height:22px;
+  border-radius:6px;
+  cursor:pointer;
+}
+#ctrl-collapse:hover{
+  background:rgba(255,58,122,.10);
+  box-shadow:0 0 8px rgba(255,58,122,.12);
+}
+
+.controls-panel.collapsed #ctrl-collapse {
+  transform: rotate(-90deg);
+}
+  </style>
+</head>
+<body>
+<div class="beat-ring" id="beat-ring"></div>
+<div id="hotkey-hint">
+  SPACE play/pause · ← → tracks<br>
+  F random formula · R random all<br>
+  Q random color · E next color<br>
+  W flip camera · C grid · H this hint<br>
+  <span style="color:#445">FS mode: L bass · K treble · J amp · N wave · B bloom</span>
+</div>
+<input type="file" id="audio-file" accept="audio/*" multiple>
+
+<div class="controls-panel" id="controls-panel">
+  <div class="ctrl-header" id="ctrl-header">
+    <div class="panel-handle"></div>
+    <h3>VIMATHIC</h3>
+      <span style="color:var(--accent);font-size:12px" id="ctrl-collapse">▼</span>
+  </div>
+  <div class="ctrl-body" id="ctrl-body">
+    <div class="seek-wrap">
+      <div class="seek-track" id="seek-track"><div class="seek-fill" id="seek-fill"></div></div>
+      <div class="seek-times"><span id="seek-cur">0:00</span><span id="seek-tot">0:00</span></div>
+    </div>
+    <div class="transport">
+      <button class="tbtn" id="prev-btn">⏮</button>
+      <button id="play-btn" class="play-btn">▶ PLAY</button>
+      <button class="tbtn" id="next-btn">⏭</button>
+    </div>
+    <div id="track-loading"><div id="track-loading-fill"></div></div>
+    <div class="sec">▸ PLAYLIST</div>
+    <div class="pl-wrap">
+      <div class="pl-head">
+        <span id="pl-count">0 tracks</span>
+        <button class="pl-clear" id="pl-clear">✕ CLEAR</button>
+      </div>
+      <div class="pl-list" id="pl-list"><div class="pl-empty" id="pl-empty">No tracks loaded</div></div>
+      <div class="pl-drop" id="pl-drop">↑ click or drag MP3/WAV</div>
+    </div>
+    <!-- ── Color + Bloom — most-reached-for controls right after transport ── -->
+    <div class="sec">▸ VISUAL STYLE</div>
+    <div class="mode-btns">
+      <button id="mode-surface" class="mbtn">◼ SURF</button>
+      <button id="mode-wireframe" class="mbtn active">▧ WIRE</button>
+      <button id="mode-points" class="mbtn">◌ PTS</button>
+    </div>
+    <div class="cg"><label>Color Scheme</label>
+      <select id="color-sel">
+        <option value="0">Teal Orange</option>
+        <option value="1">Blade Runner</option>
+        <option value="2">Matrix</option>
+        <option value="3">Bleach Bypass</option>
+        <option value="4">Outrun</option>
+        <option value="5">Vaporwave</option>
+        <option value="6">Neon Noir</option>
+        <option value="7">Sunset Grid</option>
+        <option value="8">Viridis</option>
+        <option value="9">Inferno</option>
+        <option value="10">Plasma</option>
+        <option value="11">Cividis</option>
+        <option value="12">Aurora</option>
+        <option value="13">Lava</option>
+        <option value="14">Deep Ocean</option>
+        <option value="15">Electric Violet</option>
+        <option value="16" selected>Amber</option>
+        <option value="17">Emerald</option>
+        <option value="18">Sapphire</option>
+        <option value="19">Obsidian</option>
+        <option value="20">Transformative Teal</option>
+        <option value="21">Electric Fuchsia</option>
+        <option value="22">BioGraphing</option>
+        <option value="23">Green Glow</option>
+        <optgroup label="— NEW —">
+        <option value="24">Cyberpunk Gold</option>
+        <option value="25">Arctic Fire</option>
+        <option value="26">Blood Moon</option>
+        <option value="27">Cosmic Dust</option>
+        <option value="28">Toxic Waste</option>
+        <option value="29">Cherry Blossom</option>
+        <option value="30">Midnight Chrome</option>
+        <option value="31">Solar Flare</option>
+        <option value="32">Deep Space</option>
+        <option value="33">Acid Rain</option>
+        <option value="34">Volcanic</option>
+        <option value="35">Bioluminescence</option>
+        </optgroup>
+      </select></div>
+    <div class="cg"><label>Bloom <span id="blmv" class="vd">0.55</span></label>
+      <input type="range" id="bloom" min="0" max="1.5" step="0.05" value="0.55"></div>
+
+    <div class="sec">▸ DEFORM MODE</div>
+    <div class="mode-btns">
+      <button id="deform-surface"  class="mbtn active" title="Height field — formula moves Y only">⬆ SURFACE</button>
+      <button id="deform-volume"   class="mbtn"        title="Vector field — formula moves X Y Z">⬡ VOLUME</button>
+      <button id="deform-collapse" class="mbtn"        title="Surface formula on 3D shape — artistic mode">✕ COLLAPSE</button>
+    </div>
+    <div id="volume-formula-wrap" style="display:none;margin-bottom:6px">
+      <select id="volume-formula-sel" style="width:100%;background:#0a0a1a;color:#0ff;border:1px solid rgba(0,255,255,.35);border-radius:6px;padding:6px 7px;font-size:10px;cursor:pointer;font-family:monospace">
+        <option value="breathe">Radial Breathe</option>
+        <option value="lorenzField">Lorenz Vector Field</option>
+        <option value="twist">Axial Twist</option>
+        <option value="rippleVolume">Volumetric Ripple</option>
+        <option value="magneticDipole">Magnetic Dipole Field</option>
+        <option value="fluidVortex">Fluid Vortex</option>
+      </select>
+      <div id="volume-formula-desc" style="font-size:8px;color:#445;font-family:monospace;padding:3px 2px;min-height:12px"></div>
+    </div>
+    <div class="sec xp">▸ RENDER</div>
+    <div class="cg xp">
+      <label>3D SHAPE</label>
+      <select id="shape-sel">
+        <optgroup label="— BASIC —">
+          <option value="plane">Plane</option><option value="sphere">Sphere</option>
+          <option value="box">Cube</option><option value="cylinder">Cylinder</option>
+          <option value="cone">Cone</option><option value="disc">Disc</option>
+          <option value="ring">Ring</option><option value="circle">Circle</option>
+        </optgroup>
+        <optgroup label="— ADVANCED —">
+          <option value="torus">Torus</option><option value="torusknot">Torus Knot</option>
+          <option value="hex">Hexagon</option><option value="pyramid">Pyramid</option>
+          <option value="pyramid-smooth" selected>Pyramid Smooth</option>
+        </optgroup>
+        <optgroup label="— POLYHEDRA —">
+          <option value="tetrahedron">Tetrahedron</option><option value="octahedron">Octahedron</option>
+          <option value="icosahedron">Icosahedron</option><option value="icosahedron-smooth">Icosahedron Smooth</option>
+          <option value="dodecahedron">Dodecahedron</option>
+        </optgroup>
+        <optgroup label="— SPECIAL —">
+          <option value="star">Star 3D</option><option value="solar">Solar System</option>
+        </optgroup>
+      </select>
+    </div>
+    <div class="sec xp">▸ FORMULA</div>
+    <div class="cg xp">
+      <label>SHADER MODE</label>
+      <select id="gpu-sel">
+        <optgroup label="AUDIO REACTIVE">
+          <option value="0">1. Bass Reactive Waves</option>
+          <option value="1">2. Spectrogram Mode</option><option value="2">3. Frequency Rings</option>
+          <option value="3">4. Turbulence Mode</option><option value="4">5. Ripple Effect</option>
+          <option value="5">6. Treble Spikes</option><option value="6">7. Modular Form (Ramanujan)</option>
+          <option value="7">8. Quantum Wave</option>
+        </optgroup>
+        <optgroup label="RAMANUJAN &amp; MODULAR">
+          <option value="8">9. Δ(τ) Modular Discriminant</option><option value="9">10. θ₃(q) Jacobi Theta</option>
+          <option value="10">11. τ(n) Ramanujan Tau</option><option value="11">12. Mock Theta Function</option>
+          <option value="12">13. p(n) Partition</option><option value="13">14. E₄(τ) Eisenstein</option>
+          <option value="14">15. η(τ) Dedekind Eta</option><option value="15">16. j(τ) j-invariant</option>
+        </optgroup>
+        <optgroup label="WAVE &amp; PDE">
+          <option value="16">17. Wave Equation</option><option value="17">18. Standing Wave</option>
+          <option value="18">19. Heat Equation</option><option value="19">20. Schrödinger</option>
+          <option value="20">21. Helmholtz</option><option value="21">22. KdV Soliton</option>
+          <option value="22">23. Burgers Shock</option><option value="23">24. Navier-Stokes</option>
+        </optgroup>
+        <optgroup label="FRACTALS &amp; CHAOS">
+          <option value="24">25. Mandelbrot Set</option><option value="25">26. Julia Set</option>
+          <option value="26">27. Lorenz Attractor</option><option value="27">28. Sierpiński</option>
+          <option value="28">29. Fractal Terrain</option><option value="29">30. Newton Fractal</option>
+          <option value="30">31. Dragon Curve</option><option value="31">32. Logistic Map</option>
+        </optgroup>
+        <optgroup label="SPECTRUM">
+          <option value="32">33. 3D Spectrogram</option><option value="33">34. Waterfall</option>
+          <option value="34">35. FFT Spectrum</option><option value="35">36. EQ 3D</option>
+          <option value="36">37. Vocoder</option><option value="37">38. Spectral Centroid</option>
+        </optgroup>
+        <optgroup label="━━ 🌀 FRACTALS & CHAOS ━━">
+          <option value="m:fractals:mandelbrot">Mandelbrot Escape</option>
+          <option value="m:fractals:julia">Julia Set (animated)</option>
+          <option value="m:fractals:burningShip">Burning Ship</option>
+          <option value="m:fractals:lorenz">Lorenz Attractor Slice</option>
+          <option value="m:fractals:rossler">Rössler Attractor</option>
+          <option value="m:fractals:newtonFractal">Newton Fractal z³−1</option>
+          <option value="m:fractals:sierpinski">Sierpiński IFS</option>
+          <option value="m:fractals:lyapunov">Lyapunov Exponent Map</option>
+          <option value="m:fractals:dragon">Dragon Curve Density</option>
+          <option value="m:fractals:chua">Chua Circuit Attractor</option>
+          <option value="m:fractals:cantorDust">Cantor Dust</option>
+          <option value="m:fractals:ikeda">Ikeda Map</option>
+          <option value="m:fractals:logistic">Logistic Map Bifurcation</option>
+          <option value="m:fractals:duffing">Duffing Oscillator</option>
+          <option value="m:fractals:henon">Hénon Map</option>
+          <option value="m:fractals:tinkerbell">Tinkerbell Map</option>
+        </optgroup>
+        <optgroup label="━━ ∿ SPECIAL FUNCTIONS ━━">
+          <option value="m:specialFunctions:bessel0">Bessel J₀ Radial</option>
+          <option value="m:specialFunctions:bessel1">Bessel J₁ Radial</option>
+          <option value="m:specialFunctions:legendre2">Legendre P_n Surface</option>
+          <option value="m:specialFunctions:gamma_fn">Gamma Function</option>
+          <option value="m:specialFunctions:erf">Error Function erf(x)</option>
+          <option value="m:specialFunctions:zeta">Riemann Zeta (real axis)</option>
+          <option value="m:specialFunctions:airy">Airy Function Ai(x)</option>
+          <option value="m:specialFunctions:hypergeometric">₂F₁ Hypergeometric</option>
+          <option value="m:specialFunctions:laguerre">Laguerre Polynomial</option>
+          <option value="m:specialFunctions:chebyshev">Chebyshev T_n(x)</option>
+          <option value="m:specialFunctions:sinc">Cardinal Sinc</option>
+          <option value="m:specialFunctions:ellipticK">Elliptic Integral K(k)</option>
+          <option value="m:specialFunctions:dawson">Dawson Function</option>
+          <option value="m:specialFunctions:clausen">Clausen Function</option>
+          <option value="m:specialFunctions:polygamma">Digamma ψ(x)</option>
+          <option value="m:specialFunctions:lambertW">Lambert W Function</option>
+        </optgroup>
+        <optgroup label="━━ 📊 PROBABILITY & STATISTICS ━━">
+          <option value="m:probability:gaussian">Gaussian Bell Curve</option>
+          <option value="m:probability:bivariate">Bivariate Gaussian</option>
+          <option value="m:probability:cauchy">Cauchy Distribution</option>
+          <option value="m:probability:laplace">Laplace Distribution</option>
+          <option value="m:probability:maxwellBoltzmann">Maxwell–Boltzmann</option>
+          <option value="m:probability:poisson">Poisson PMF</option>
+          <option value="m:probability:randomWalk">Brownian Motion</option>
+          <option value="m:probability:ornsteinUhlenbeck">Ornstein–Uhlenbeck</option>
+          <option value="m:probability:chiSquare">Chi-Squared Distribution</option>
+          <option value="m:probability:studentT">Student's t Distribution</option>
+          <option value="m:probability:entropyLandscape">Shannon Entropy Surface</option>
+          <option value="m:probability:mixtureGaussians">Gaussian Mixture</option>
+          <option value="m:probability:pareto">Pareto Distribution</option>
+          <option value="m:probability:kernelDensity">Kernel Density Estimate</option>
+          <option value="m:probability:vonMises">von Mises Distribution</option>
+          <option value="m:probability:metropolisWalk">MCMC Metropolis Walk</option>
+        </optgroup>
+        <optgroup label="━━ ⊞ LINEAR ALGEBRA ━━">
+          <option value="m:linearAlgebra:eigenField">Eigenvector Field</option>
+          <option value="m:linearAlgebra:determinant">Determinant Surface</option>
+          <option value="m:linearAlgebra:svdSpectrum">SVD Singular Values</option>
+          <option value="m:linearAlgebra:trace">Matrix Trace Wave</option>
+          <option value="m:linearAlgebra:tensorField">2D Tensor Field</option>
+          <option value="m:linearAlgebra:hessian">Hessian Determinant</option>
+          <option value="m:linearAlgebra:rotationMatrix">Rotation Matrix Flow</option>
+          <option value="m:linearAlgebra:gram">Gram–Schmidt Surface</option>
+          <option value="m:linearAlgebra:quadraticForm">Quadratic Form xᵀAx</option>
+          <option value="m:linearAlgebra:nullspace">Nullspace Projection</option>
+          <option value="m:linearAlgebra:spectralRadius">Spectral Radius Map</option>
+          <option value="m:linearAlgebra:matrixExp">Matrix Exponential</option>
+          <option value="m:linearAlgebra:kronecker">Kronecker Product Pattern</option>
+          <option value="m:linearAlgebra:vectorField">Curl of Vector Field</option>
+          <option value="m:linearAlgebra:jacobian">Jacobian Determinant</option>
+          <option value="m:linearAlgebra:manifoldCurvature">Gaussian Curvature</option>
+        </optgroup>
+        <optgroup label="━━ 📐 TRIGONOMETRY ━━">
+          <option value="m:trigonometry:sinCos">sin·cos Product</option>
+          <option value="m:trigonometry:pythagorean">Pythagorean Identity Wave</option>
+          <option value="m:trigonometry:sumAngle">Sum of Angles Identity</option>
+          <option value="m:trigonometry:doublAngle">Double Angle</option>
+          <option value="m:trigonometry:halfAngle">Half-Angle Formula</option>
+          <option value="m:trigonometry:productSum">Product-to-Sum</option>
+          <option value="m:trigonometry:tangentWave">Tanh / Smooth Step</option>
+          <option value="m:trigonometry:lissajous">Lissajous Height</option>
+          <option value="m:trigonometry:hyperbolicGeom">Cosh²−Sinh²=1 Surface</option>
+          <option value="m:trigonometry:chebyshevTrig">Chebyshev via cos(n·arccos)</option>
+          <option value="m:trigonometry:standingWave">Standing Wave</option>
+          <option value="m:trigonometry:travelingWave">Traveling Wave</option>
+          <option value="m:trigonometry:modeInterference">Mode Interference</option>
+          <option value="m:trigonometry:circularFunctions">sec / csc / cot Landscape</option>
+          <option value="m:trigonometry:atan2Field">atan2 Phase Field</option>
+          <option value="m:trigonometry:inverseTrig">Arcsin / Arccos Surface</option>
+        </optgroup>
+        <optgroup label="━━ 🔄 COMPLEX NUMBERS ━━">
+          <option value="m:complexNumbers:euler">Euler's Formula Re(e^ix)</option>
+          <option value="m:complexNumbers:eulerIm">Euler's Formula Im(e^iz)</option>
+          <option value="m:complexNumbers:moivre">De Moivre's Theorem</option>
+          <option value="m:complexNumbers:complexPower">Complex Power |z^z|</option>
+          <option value="m:complexNumbers:rootsOfUnity">n-th Roots of Unity</option>
+          <option value="m:complexNumbers:complexLog">Complex Logarithm</option>
+          <option value="m:complexNumbers:riemannSphere">Riemann Sphere Projection</option>
+          <option value="m:complexNumbers:mobiusTransform">Möbius Transformation</option>
+          <option value="m:complexNumbers:cauchyRiemann">Cauchy–Riemann Equations</option>
+          <option value="m:complexNumbers:complexSin">Complex sin(z) Real Part</option>
+          <option value="m:complexNumbers:juliaPotential">Julia Potential</option>
+          <option value="m:complexNumbers:windingNumber">Winding Number Field</option>
+          <option value="m:complexNumbers:blaschke">Blaschke Product |B(z)|</option>
+          <option value="m:complexNumbers:complexHeat">Heat Kernel in ℂ</option>
+          <option value="m:complexNumbers:argandField">Argand Phase Color</option>
+          <option value="m:complexNumbers:riemannZetaStrip">Riemann ζ Critical Strip</option>
+        </optgroup>
+        <optgroup label="━━ 〜 FOURIER SERIES ━━">
+          <option value="m:fourierSeries:sineWave">Fundamental Sine</option>
+          <option value="m:fourierSeries:squareWave">Square Wave</option>
+          <option value="m:fourierSeries:sawtoothWave">Sawtooth Wave</option>
+          <option value="m:fourierSeries:triangleWave">Triangle Wave</option>
+          <option value="m:fourierSeries:pulseWave">Pulse Wave</option>
+          <option value="m:fourierSeries:gibbsPhenomenon">Gibbs Phenomenon</option>
+          <option value="m:fourierSeries:heat2D">Fourier Heat Equation</option>
+          <option value="m:fourierSeries:parseval">Parseval Energy Spectrum</option>
+          <option value="m:fourierSeries:wavelets">Haar Wavelet</option>
+          <option value="m:fourierSeries:dct">Discrete Cosine Transform</option>
+          <option value="m:fourierSeries:convolution">Convolution (f*g)</option>
+          <option value="m:fourierSeries:spectralLeakage">Spectral Leakage</option>
+          <option value="m:fourierSeries:harmonics">Harmonic Series Sum</option>
+          <option value="m:fourierSeries:stochasticFourier">Random Phase Fourier</option>
+          <option value="m:fourierSeries:fejerKernel">Fejér Kernel</option>
+          <option value="m:fourierSeries:dirichletKernel">Dirichlet Kernel</option>
+        </optgroup>
+        <optgroup label="━━ dy/dx DIFFERENTIAL EQ ━━">
+          <option value="m:differentialEqs:simpleHarmonic">Simple Harmonic Oscillator</option>
+          <option value="m:differentialEqs:dampedOscillator">Damped Oscillator</option>
+          <option value="m:differentialEqs:forcedOscillator">Driven Resonance</option>
+          <option value="m:differentialEqs:exponentialDecay">Exponential Decay</option>
+          <option value="m:differentialEqs:logisticGrowth">Logistic Growth</option>
+          <option value="m:differentialEqs:predatorPrey">Lotka–Volterra</option>
+          <option value="m:differentialEqs:heatEquation">Heat Equation 1D</option>
+          <option value="m:differentialEqs:waveEquation">Wave Equation 1D</option>
+          <option value="m:differentialEqs:laplacePDE">Laplace Equation</option>
+          <option value="m:differentialEqs:eulerMethod">Euler Method Trajectory</option>
+          <option value="m:differentialEqs:rungeKutta4">Runge-Kutta RK4</option>
+          <option value="m:differentialEqs:beamBending">Euler–Bernoulli Beam</option>
+          <option value="m:differentialEqs:schrodingerBox">Particle in a Box</option>
+          <option value="m:differentialEqs:reynoldsFlow">Stokes Flow</option>
+          <option value="m:differentialEqs:fishersEquation">Fisher's Wave Front</option>
+          <option value="m:differentialEqs:pendulumNonLinear" selected>Nonlinear Pendulum Phase</option>
+        </optgroup>
+        <optgroup label="━━ ∫ INTEGRAL TRANSFORMS ━━">
+          <option value="m:integralTransforms:fourierTransform">Fourier Transform (Gaussian)</option>
+          <option value="m:integralTransforms:fourierInverse">Inverse Fourier (sinc)</option>
+          <option value="m:integralTransforms:laplaceTransform">Laplace Transform (step)</option>
+          <option value="m:integralTransforms:laplaceDecay">Laplace of Exponential</option>
+          <option value="m:integralTransforms:zTransform">Z-Transform (geometric)</option>
+          <option value="m:integralTransforms:waveletTransform">Morlet Wavelet</option>
+          <option value="m:integralTransforms:hilbertTransform">Hilbert Transform</option>
+          <option value="m:integralTransforms:radonTransform">Radon Transform</option>
+          <option value="m:integralTransforms:hankelTransform">Hankel Transform</option>
+          <option value="m:integralTransforms:mellinTransform">Mellin Transform</option>
+          <option value="m:integralTransforms:stieltjesTransform">Stieltjes Transform</option>
+          <option value="m:integralTransforms:cauchyIntegral">Cauchy Integral Formula</option>
+          <option value="m:integralTransforms:stocksFormula">Green's Theorem Flow</option>
+          <option value="m:integralTransforms:poissonIntegral">Poisson Integral Formula</option>
+          <option value="m:integralTransforms:continuousWavelet">CWT Scalogram</option>
+          <option value="m:integralTransforms:fourierSlice">Fourier Slice Theorem</option>
+        </optgroup>
+        <optgroup label="━━ ∞ TOPOLOGY & GEOMETRY ━━">
+          <option value="m:topology:mobiusStrip">Möbius Strip</option>
+          <option value="m:topology:kleinBottle">Klein Bottle Cross-Section</option>
+          <option value="m:topology:torusKnot">Torus Knot Height Field</option>
+          <option value="m:topology:boysSurface">Boy's Surface Slice</option>
+          <option value="m:topology:romanSurface">Steiner's Roman Surface</option>
+          <option value="m:topology:enneperSurface">Enneper Surface</option>
+          <option value="m:topology:scherkSurface">Scherk Minimal Surface</option>
+          <option value="m:topology:catenoid">Catenoid (Minimal)</option>
+          <option value="m:topology:helicoid">Helicoid</option>
+          <option value="m:topology:hyperbolicParaboloid">Hyperbolic Paraboloid</option>
+          <option value="m:topology:torusSection">Torus Cross Section</option>
+          <option value="m:topology:breatherSurface">Breather Surface</option>
+          <option value="m:topology:pseudosphere">Pseudosphere</option>
+          <option value="m:topology:crossCap">Cross-Cap (RP²)</option>
+          <option value="m:topology:alexanderHorned">Alexander Horned</option>
+          <option value="m:topology:hopfFibration">Hopf Fibration</option>
+        </optgroup>
+        <optgroup label="━━ ⬛ CELLULAR AUTOMATA ━━">
+          <option value="m:cellularAutomata:rule30">Rule 30 (Wolfram)</option>
+          <option value="m:cellularAutomata:rule90">Rule 90 (Sierpiński XOR)</option>
+          <option value="m:cellularAutomata:rule110">Rule 110 (Turing complete)</option>
+          <option value="m:cellularAutomata:rule184">Rule 184 (Traffic model)</option>
+          <option value="m:cellularAutomata:gameOfLifeDensity">Game of Life</option>
+          <option value="m:cellularAutomata:briansBrain">Brian's Brain</option>
+          <option value="m:cellularAutomata:langtonAnt">Langton's Ant</option>
+          <option value="m:cellularAutomata:cyclicCA">Cyclic CA</option>
+          <option value="m:cellularAutomata:wiredFire">Wireworld</option>
+          <option value="m:cellularAutomata:sandpile">Abelian Sandpile</option>
+          <option value="m:cellularAutomata:voronoiCA">Voronoi Growth</option>
+          <option value="m:cellularAutomata:excitableMedia">Excitable Medium (spiral)</option>
+          <option value="m:cellularAutomata:reactionDiffusion">Turing Pattern (RD)</option>
+          <option value="m:cellularAutomata:forestFire">Forest Fire CA</option>
+          <option value="m:cellularAutomata:conway3D">Conway 3D Rule</option>
+          <option value="m:cellularAutomata:turmite">Turmite (2D Turing)</option>
+        </optgroup>
+        <optgroup label="━━ ψ QUANTUM MECHANICS ━━">
+          <option value="m:quantumMechanics:particleBox1D">Particle in 1D Box |ψ_n|²</option>
+          <option value="m:quantumMechanics:harmonicOscillator">QM Harmonic Oscillator</option>
+          <option value="m:quantumMechanics:hydrogenS">Hydrogen 1s |ψ|²</option>
+          <option value="m:quantumMechanics:hydrogen2p">Hydrogen 2p |ψ|²</option>
+          <option value="m:quantumMechanics:tunneling">Quantum Tunneling</option>
+          <option value="m:quantumMechanics:wavePacket">Gaussian Wave Packet</option>
+          <option value="m:quantumMechanics:spinorVisualization">Spinor / Bloch Sphere</option>
+          <option value="m:quantumMechanics:doubleSlitProbability">Double-Slit Interference</option>
+          <option value="m:quantumMechanics:densityMatrix">Density Matrix ρ</option>
+          <option value="m:quantumMechanics:landauLevels">Landau Levels (2D magnetic)</option>
+          <option value="m:quantumMechanics:schrodingerSoliton">NLS Soliton</option>
+          <option value="m:quantumMechanics:coherentState">Coherent State Wigner</option>
+          <option value="m:quantumMechanics:atomicOrbitals">sp³ Hybrid Orbital</option>
+          <option value="m:quantumMechanics:bellState">Bell State Correlations</option>
+          <option value="m:quantumMechanics:feynmanPath">Feynman Path Integral</option>
+          <option value="m:quantumMechanics:quantumZeno">Quantum Zeno Effect</option>
+        </optgroup>
+      </select>
+    </div>
+
+    <!-- ── Core visual controls (always visible) ──────────────────────── -->
+    <div class="cg xp"><label>Amplitude <span id="ampv" class="vd">0.70</span></label>
+      <input type="range" id="amplitude" min="0.2" max="1.5" step="0.01" value="0.70"></div>
+    <div class="cg xp"><label>Wave Intensity <span id="wiv" class="vd">1.00</span></label>
+      <input type="range" id="wave-int" min="0.3" max="3.5" step="0.05" value="1.0"></div>
+
+    <div class="eq-fps-row">
+      <div id="fps-inline">FPS<br><span id="fps">60</span></div>
+      <button id="btn-about" title="About / documentation" aria-label="About">i</button>
+      <button id="btn-freeze-frame" title="Freeze / resume 3D animation" style="background:rgba(255,58,122,.08);border:1px solid rgba(255,58,122,.4);color:var(--accent);font-size:8px;padding:3px 7px;border-radius:5px;font-family:monospace;cursor:pointer;white-space:nowrap">⏸ STOP MOTION</button>
+      <button id="btn-toggle-grid" title="Toggle grid visibility" style="background:rgba(0,255,170,.08);border:1px solid rgba(0,255,170,.3);color:var(--green);font-size:8px;padding:3px 7px;border-radius:5px;font-family:monospace;cursor:pointer;white-space:nowrap;opacity:0.45">TOGGLE GRID</button>
+    </div>
+    <span id="gpu-mem" style="display:none;font-size:8px;color:#445"></span>
+    <div style="display:flex;gap:4px">
+      <button id="btn-reset" style="flex:1" title="Reset camera position only">RESET CAMERA</button>
+      <button id="btn-reset-all" style="flex:1;background:rgba(255,58,122,.10);border-color:rgba(255,58,122,.4);color:var(--accent)" title="Reset everything to startup state"> RESET ALL</button>
+    </div>
+
+
+    <!-- ── Advanced section (collapsed by default) ────────────────────── -->
+    <details class="adv-section">
+      <summary>ADVANCED</summary>
+
+      <div class="sec xp">▸ AUDIO SENSITIVITY</div>
+      <div class="cg xp"><label>Bass Sensitivity <span id="bsv" class="vd">1.20</span></label>
+        <input type="range" id="bass-sens" min="0" max="2.5" step="0.05" value="1.2"></div>
+      <div class="cg xp"><label>Treble Sensitivity <span id="tsv" class="vd">1.00</span></label>
+        <input type="range" id="treble-sens" min="0" max="2.5" step="0.05" value="1.0"></div>
+
+      <!-- ── Track name overlay toggle ──────────────────────────────────── -->
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer;padding:4px 0;user-select:none">
+        <input type="checkbox" id="show-track-name" class="neon">
+        <span style="font-size:10px;color:#778"> Show track &amp; artist name</span>
+      </label>
+
+      <div class="sec xp">▸ STATE &amp; PRESETS</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button id="btn-export" style="flex:1;min-width:90px">⬇ EXPORT</button>
+      <button id="btn-import" style="flex:1;min-width:90px">⬆ IMPORT</button>
+      <input type="file" id="state-file" accept=".json" style="display:none">
+    </div>
+    <div class="out-note" style="border-left-color:rgba(0,255,200,.18)">
+       Presets are stored in this browser's <b>localStorage</b> (per-domain, not in files). Use <b>EXPORT</b> to back them up to a <code>.json</code> file you can share or restore later via IMPORT.
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input id="preset-name" placeholder="Preset name…"
+        style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.2);
+        border-radius:5px;color:#0fc;font-family:var(--mono);font-size:10px;padding:7px 8px;outline:none">
+      <button id="btn-preset-save" style="white-space:nowrap;padding:7px 10px;font-size:10px">＋ SAVE</button>
+    </div>
+    <div id="preset-list-wrap" style="max-height:180px;overflow-y:auto;overflow-x:hidden;border:1px solid rgba(0,255,200,.08);border-radius:5px;padding:3px 5px;background:rgba(0,8,16,.4)">
+      <div id="preset-list" style="min-height:22px"></div>
+    </div>
+
+    <!-- ── Clip player ──────────────────────────────────────────────────── -->
+    <div class="sec" style="margin-top:6px">▸ CLIP PLAYER</div>
+    <!-- Mode toggle: SEC | BARS -->
+    <div style="display:flex;gap:5px;margin-bottom:4px">
+      <button id="clip-mode-sec"  class="mbtn active" style="flex:1;font-size:9px;padding:5px">⏱ SEC</button>
+      <button id="clip-mode-bars" class="mbtn"        style="flex:1;font-size:9px;padding:5px">♩ BARS</button>
+    </div>
+    <!-- Seconds row -->
+    <div class="clip-time-sec" style="display:flex;gap:6px;align-items:center">
+      <label style="font-size:10px;color:#556;white-space:nowrap">Hold (s)</label>
+      <input id="clip-hold" type="number" min="1" max="600" value="5" step="1">
+    </div>
+    <!-- Bars row (hidden by default) -->
+    <div class="clip-time-bars" style="display:none;gap:6px;align-items:center">
+      <label style="font-size:10px;color:#556;white-space:nowrap">Bars</label>
+      <select id="clip-bars" style="flex:1;background:rgba(255,58,122,.06);border:1px solid rgba(255,58,122,.25);
+        border-radius:5px;color:#f3a;font-family:var(--mono);font-size:10px;padding:5px 7px;outline:none">
+        <option value="2">2</option>
+        <option value="4">4</option>
+        <option value="8" selected>8</option>
+        <option value="16">16</option>
+        <option value="32">32</option>
+        <option value="64">64</option>
+      </select>
+    </div>
+    <!-- Transport: 3 buttons in one row, equal width.
+         FIX v7: parent gets .clip-row so .clip-row .clip-tbtn rules win
+         specificity over the global `button{}` selector. -->
+    <div class="clip-row">
+      <button id="btn-clip-play" class="clip-tbtn">▶ PLAY</button>
+      <button id="btn-clip-skip" class="clip-tbtn clip-skip" title="Skip to next">⏭</button>
+      <button id="btn-clip-stop" class="clip-tbtn" disabled>■ STOP</button>
+    </div>
+    <!-- Countdown progress bar -->
+    <div style="height:3px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden;margin-top:5px">
+      <div id="clip-progress" style="height:100%;width:0%;background:rgba(0,255,180,.7);
+        border-radius:2px;transition:background .3s;opacity:0"></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:7px;cursor:pointer;padding:4px 0;user-select:none">
+      <input type="checkbox" id="clip-sync-music" class="neon neon-pink">
+      <span style="font-size:10px;color:#778">🎵 Start with music</span>
+    </label>
+    <!-- Camera transition between preset steps -->
+    <div style="display:flex;gap:6px;align-items:center;padding:4px 0">
+      <label for="clip-cam-mode" style="font-size:10px;color:#556;white-space:nowrap"> Camera</label>
+      <select id="clip-cam-mode" title="Camera transition between preset steps"
+        style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);
+        border-radius:5px;color:#0fc;font-family:var(--mono);font-size:10px;padding:5px 7px;outline:none">
+        <option value="auto" selected>Auto (40% of step)</option>
+        <option value="0">Snap (instant, old)</option>
+        <option value="300">Fast (0.3s)</option>
+        <option value="800">Smooth (0.8s)</option>
+        <option value="1500">Slow (1.5s)</option>
+        <option value="3000">Cinematic (3s)</option>
+      </select>
+    </div>
+    <div id="clip-status" style="font-size:10px;color:#556;min-height:14px;padding-top:2px"></div>
+
+      <details class="adv-sub">
+        <summary>MODEL IMPORT</summary>
+        <div id="model-drop-zone" class="xp">
+          <div>⬆ Drop OBJ / GLTF / GLB here</div>
+          <div style="font-size:7px;color:#334;margin-top:3px">or click to browse</div>
+        </div>
+        <div id="model-info" class="xp"></div>
+        <input type="file" id="model-file" accept=".obj,.gltf,.glb" class="xp" style="display:none">
+        <button id="btn-clear-model" class="xp" style="display:none;margin-top:4px;background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.4);color:#ff7a7a;font-size:9px;padding:5px 8px;border-radius:5px;width:100%;cursor:pointer;font-family:var(--mono)">✕ CLEAR MODEL</button>
+      </details>
+
+      <details class="adv-sub">
+        <summary>SHADER EDITOR</summary>
+        <button id="btn-open-editor" class="xp">✎ EDIT GLSL SHADER</button>
+      </details>
+
+      <details class="adv-sub">
+        <summary>CAMERA PROGRAMMER</summary>
+        <div style="display:flex;gap:5px;margin-top:4px" class="xp">
+          <button id="btn-open-cam-editor" style="flex:1;background:rgba(0,255,170,.08);border-color:rgba(0,255,170,.4);color:var(--green);font-size:9px;padding:6px 4px;margin:0"> PROGRAM CAM.</button>
+          <button id="btn-ar" style="flex:1;font-size:9px;padding:6px 4px;margin:0"> CAM ROTATE</button>
+        </div>
+      </details>
+
+      <details class="adv-sub">
+        <summary>VIDEO OUTPUT &amp; AUDIO IN</summary>
+        <div style="display:flex;gap:6px;margin-bottom:4px;margin-top:4px">
+          <button id="btn-transp-bg" style="flex:1;background:rgba(255,255,255,.05);border-color:#445;color:#778;font-size:9px;padding:6px 4px;margin:0"> TRANSPARENT BG</button>
+          <button id="btn-open-output" style="flex:1;background:rgba(255,58,122,.08);border-color:rgba(255,58,122,.3);color:var(--accent);font-size:9px;padding:6px 4px;margin:0"> OUTPUT SETTINGS</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:4px">
+          <button id="btn-second-screen" style="flex:1;background:rgba(0,255,200,.06);border-color:rgba(0,255,200,.25);color:#0fc;font-size:9px;padding:6px 4px;margin:0"> SECOND SCREEN</button>
+          <button id="btn-fullscreen" style="flex:1;background:rgba(0,255,170,.07);border-color:rgba(0,255,170,.3);color:var(--green);font-size:9px;padding:6px 4px;margin:0"> FULLSCREEN</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:4px">
+          <button id="btn-second-screen-stop" style="flex:1;background:rgba(255,58,122,.06);border-color:rgba(255,58,122,.2);color:#f55;font-size:9px;padding:6px 4px;margin:0;display:none">✕ CLOSE SCREEN</button>
+        </div>
+        <button id="btn-audio-src" style="width:100%;background:rgba(0,255,255,.07);border-color:rgba(0,255,255,.3);color:var(--accent2);font-size:9px;padding:6px 4px;margin:0 0 4px"> AUDIO SOURCE: FILE</button>
+        <div id="output-status" style="font-size:8px;color:#334;font-family:monospace;min-height:14px;padding:2px 0"></div>
+      </details>
+
+      <!-- ── MIDI Mapping ──────────────────────────────────────────────── -->
+      <details class="adv-sub">
+        <summary>MIDI MAPPING</summary>
+      <div style="display:flex;gap:6px;margin-bottom:6px;align-items:stretch;min-width:0;overflow:hidden">
+        <button id="btn-midi-learn" style="font-size:9px;padding:5px 6px;min-width:0;
+          background:rgba(255,58,122,.08);border-color:rgba(255,58,122,.3);color:var(--accent)">🎛 LEARN</button>
+        <button id="btn-midi-clear" style="font-size:9px;padding:5px 6px;min-width:0;
+          background:none;border-color:#334;color:#556">✕ CLEAR</button>
+        <div id="midi-badge">🎹 MIDI</div>
+      </div>
+      <div id="midi-learn-status" style="font-size:5px;color:#556;min-height:7px;margin-bottom:4px"></div>
+      <div id="midi-mapping-list" style="display:flex;flex-direction:column;gap:4px"></div>
+      </details><!-- /midi adv-sub -->
+
+    </details><!-- /adv-section -->
+  </div>
+</div>
+
+<!-- Shader Editor Overlay -->
+<div id="shader-editor-overlay">
+  <div id="shader-editor-box">
+    <div id="se-header"><h3>✎ GLSL SHADER EDITOR</h3><button id="se-close">✕</button></div>
+    <div id="se-body">
+      <div id="se-ref">
+        <b style="color:#aaa">Uniforms:</b> <span>uTime</span> · <span>uBass</span> 0–1.2 · <span>uMid</span> 0–1 · <span>uTreble</span> 0–1.2 · <span>uBeat</span> 0–1 · <span>uAmp</span> · <span>uWI</span><br>
+        <b style="color:#aaa">Vertex:</b> <span>position</span> vec3 · <span>r</span>=length(xz) · <span>ang</span>=atan(z,x) · write into <span>y</span>
+      </div>
+      <div id="se-tabs">
+        <div class="se-tab active" data-tab="vert">VERTEX (displacement)</div>
+        <div class="se-tab" data-tab="frag">FRAGMENT (colour)</div>
+      </div>
+      <div class="se-editor-wrap" id="se-editor-wrap">
+        <div id="se-line-nums" aria-hidden="true">1</div>
+        <textarea id="se-code" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+      </div>
+      <div id="se-preset-wrap"></div>
+      <div id="se-footer">
+        <div id="se-error"></div>
+        <button class="se-btn se-btn-reset" id="se-btn-reset">↺ RESET</button>
+        <button class="se-btn se-btn-apply" id="se-btn-apply">▶ APPLY  Ctrl+S</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Camera Programmer Overlay -->
+<div id="cam-editor-overlay">
+  <div id="cam-editor-box">
+    <div id="ce-header"><h3>🎬 CAMERA PROGRAMMER</h3><button id="ce-close">✕</button></div>
+    <div id="ce-body">
+      <div id="ce-ref">
+        <b>Read:</b> <span>time bass mid treble beat bpm R</span> &nbsp;
+        <b>Write:</b> <span>ctx.cam.x/y/z ctx.target.x/y/z ctx.fov ctx.roll</span><br>
+        <b>Helpers:</b> <span>orbit(r,speed,h) lerp(a,b,t) clamp(v,lo,hi) sin cos</span> &nbsp; <span>ctx.state</span> persists · <span>ctx.p</span> = params tab
+      </div>
+      <div id="ce-tabs">
+        <div class="ce-tab active" data-cetab="code">JS CODE</div>
+        <div class="ce-tab" data-cetab="timeline">TIMELINE</div>
+        <div class="ce-tab" data-cetab="params">PARAMS</div>
+      </div>
+      <div id="ce-pane-code">
+        <textarea id="ce-code" spellcheck="false"></textarea>
+        <div id="ce-preset-wrap"></div>
+      </div>
+      <div id="ce-pane-timeline" style="display:none">
+        <div id="ce-timeline">
+          <div id="ce-tl-label">TIMELINE — drag keyframes · click to scrub</div>
+          <div id="ce-tl-bar"><div id="ce-tl-playhead" style="left:0%"></div></div>
+          <div id="ce-tl-add">＋ Add keyframe at playhead</div>
+        </div>
+        <div id="ce-kf-list" style="font-size:8px;color:#445;font-family:monospace;padding:4px 0;max-height:120px;overflow-y:auto"></div>
+      </div>
+      <div id="ce-pane-params" style="display:none">
+        <div id="ce-params">
+          <div class="ce-param"><label>ROT SPEED</label><input type="range" id="cp-rot" min="0" max="0.001" step="0.00001" value="0.00002"><span id="cp-rot-v" style="font-size:8px;color:var(--green);font-family:monospace">0.00002</span></div>
+          <div class="ce-param"><label>RADIUS</label><input type="range" id="cp-radius" min="2" max="20" step="0.1" value="7.2"><span id="cp-radius-v" style="font-size:8px;color:var(--green);font-family:monospace">7.2</span></div>
+          <div class="ce-param"><label>HEIGHT</label><input type="range" id="cp-height" min="0" max="12" step="0.1" value="3.2"><span id="cp-height-v" style="font-size:8px;color:var(--green);font-family:monospace">3.2</span></div>
+          <div class="ce-param"><label>GRAVITY</label><input type="range" id="cp-grav" min="0" max="0.005" step="0.0001" value="0.0004"><span id="cp-grav-v" style="font-size:8px;color:var(--green);font-family:monospace">0.0004</span></div>
+          <div class="ce-param"><label>BASS REACT</label><input type="range" id="cp-bass-react" min="0" max="3" step="0.05" value="1"><span id="cp-bass-react-v" style="font-size:8px;color:var(--green);font-family:monospace">1.00</span></div>
+          <div class="ce-param"><label>DAMPING</label><input type="range" id="cp-damp" min="0.9" max="1" step="0.001" value="0.996"><span id="cp-damp-v" style="font-size:8px;color:var(--green);font-family:monospace">0.996</span></div>
+          <div class="ce-param"><label>FOV</label><input type="range" id="cp-fov" min="20" max="120" step="1" value="45"><span id="cp-fov-v" style="font-size:8px;color:var(--green);font-family:monospace">45°</span></div>
+          <div class="ce-param"><label>ROLL</label><input type="range" id="cp-roll" min="0" max="0.5" step="0.01" value="0"><span id="cp-roll-v" style="font-size:8px;color:var(--green);font-family:monospace">0.00</span></div>
+        </div>
+      </div>
+      <div id="ce-footer">
+        <div id="ce-error"></div>
+        <button class="ce-btn ce-btn-reset" id="ce-btn-reset">↺ RESET</button>
+        <button class="ce-btn ce-btn-apply" id="ce-btn-apply">▶ APPLY  Ctrl+↵</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Audio Source Modal -->
+<div id="audio-src-overlay">
+  <div id="audio-src-box">
+    <div id="as-header">
+      <h3>🎙 AUDIO SOURCE</h3>
+      <button id="as-close">✕</button>
+    </div>
+
+    <!-- Section 1: File -->
+    <div class="as-section">
+      <div class="as-stitle">📁 FILE PLAYBACK <span style="font-size:7px;color:var(--green);font-family:monospace;letter-spacing:0;text-transform:none">active by default</span></div>
+      <div class="as-desc">Load MP3 / WAV / FLAC / OGG from your device. Supports drag & drop and crossfade.</div>
+      <div class="as-compat">
+        <span class="as-tag yes">All browsers</span>
+        <span class="as-tag yes">All OS</span>
+        <span class="as-tag yes">Crossfade</span>
+      </div>
+      <div class="as-row">
+        <button class="as-btn" id="as-btn-file">📂 OPEN FILE</button>
+        <span style="font-size:8px;color:#334;font-family:monospace">or drag MP3/WAV onto the visualizer</span>
+      </div>
+    </div>
+
+    <!-- Section 2: Microphone / Loopback -->
+    <div class="as-section">
+      <div class="as-stitle">🎤 MICROPHONE / LOOPBACK</div>
+      <div class="as-desc">
+        Captures any input device — including <b>virtual cables</b> that route system audio.<br>
+        <b>Windows:</b> install VB-Audio Cable, set it as default playback → select it below.<br>
+        <b>Mac:</b> install BlackHole 2ch, set it as output → select it below.
+      </div>
+      <div class="as-compat">
+        <span class="as-tag yes">Chrome</span>
+        <span class="as-tag yes">Firefox</span>
+        <span class="as-tag yes">Safari</span>
+        <span class="as-tag yes">All OS</span>
+        <span class="as-tag yes">Virtual loopback</span>
+      </div>
+      <div class="as-row">
+        <div id="as-device-wrap">
+          <select id="as-device-sel"><option value="">— select device —</option></select>
+        </div>
+        <button id="as-refresh-devs" title="Refresh device list">↺</button>
+        <button class="as-btn" id="as-btn-mic">▶ CONNECT</button>
+      </div>
+      <div class="as-note">
+        💡 <b>No virtual cable?</b> Works with a real mic too — point it at your speakers for a quick test.
+        For best quality use a loopback device.
+      </div>
+    </div>
+
+    <!-- Section 3: Tab / System audio -->
+    <div class="as-section">
+      <div class="as-stitle"> BROWSER TAB / SYSTEM AUDIO</div>
+      <div class="as-desc">
+        Uses <code>getDisplayMedia</code>. You choose what to share in the browser popup.<br>
+        <b>Tab audio:</b> share a specific browser tab — enable "Share tab audio".<br>
+        <b>System audio (Windows Chrome only):</b> share entire screen → tick "Share system audio".
+      </div>
+      <div class="as-compat">
+        <span class="as-tag yes">Chrome — tab</span>
+        <span class="as-tag partial">Chrome Win — system</span>
+        <span class="as-tag no">Firefox — no audio</span>
+        <span class="as-tag no">Safari — no audio</span>
+      </div>
+      <div class="as-row">
+        <button class="as-btn" id="as-btn-tab"> SHARE TAB</button>
+        <button class="as-btn" id="as-btn-display"> SHARE SCREEN + AUDIO</button>
+      </div>
+      <div class="as-note">
+        ⚠ Firefox does not support audio capture via getDisplayMedia. Use the loopback method instead.
+      </div>
+    </div>
+
+    <!-- Status + Stop -->
+    <div class="as-section" style="padding-top:10px;padding-bottom:12px">
+      <div id="as-status" class="info">No live capture active — using file playback</div>
+      <div class="as-row" style="margin-top:6px">
+        <button class="as-btn stop-src" id="as-btn-stop" style="display:none">⏹ STOP CAPTURE</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Output Modal -->
+<div id="output-overlay">
+  <div id="output-box">
+    <div id="out-header">
+      <h3>📤 VIDEO OUTPUT</h3>
+      <button id="out-close">✕</button>
+    </div>
+
+    <!-- Transparent BG -->
+    <div class="out-section">
+      <div class="out-stitle"> TRANSPARENT BACKGROUND
+        <span class="out-badge ok">All browsers</span>
+      </div>
+      <div class="out-desc">
+        Renders with alpha channel — stars, grid and background are hidden.
+        Use with OBS <b>Browser Source → Allow transparency</b> for chroma-key-free overlays.
+        Works with any VJ software that reads the browser canvas.
+      </div>
+      <div class="out-row">
+        <button class="out-btn" id="out-btn-transp"> TOGGLE TRANSPARENT BG</button>
+        <span id="out-transp-state" style="font-size:8px;color:#445;font-family:monospace">OFF</span>
+      </div>
+    </div>
+
+    <!-- Virtual Camera -->
+    <div class="out-section">
+      <div class="out-stitle"> VIRTUAL CAMERA (captureStream)
+        <span class="out-badge ok" id="out-vcam-badge">Chrome ✓</span>
+      </div>
+      <div class="out-desc">
+        Exposes the canvas as a <b>MediaStream</b>. OBS picks it up as a Browser Source (zero setup)
+        or as a Video Capture Device with the <b>OBS Virtual Camera</b> turned on.
+        A floating preview window confirms the stream is live.
+      </div>
+      <div class="out-row">
+        <label style="font-size:8px;color:#556;font-family:monospace">FPS</label>
+        <input id="out-vcam-fps" type="number" min="15" max="120" value="60">
+        <button class="out-btn" id="out-btn-vcam-start">▶ START</button>
+        <button class="out-btn stop-out" id="out-btn-vcam-stop" style="display:none">⏹ STOP</button>
+        <button class="out-btn" id="out-btn-vcam-preview" style="display:none"> PREVIEW</button>
+      </div>
+      <div class="out-note">
+        💡 <b>OBS Browser Source</b> — add source → Browser → paste URL → tick "Allow transparency" for alpha.
+        No plugins needed. Lowest latency option.
+      </div>
+    </div>
+
+    <!-- Recording -->
+    <div class="out-section">
+      <div class="out-stitle">🎞️ RECORD CLIP
+        <span class="out-badge ok">Chrome / Firefox / Edge</span>
+      </div>
+      <div class="out-desc">
+        Capture the visualizer as a downloadable file. <b>GIF</b> auto-loops on social
+        platforms (Twitter, Telegram, Discord) — best for short snippets. <b>WebM</b>
+        is higher quality with lower memory usage — better for archives & YouTube.
+        Beat-sync mode produces music-aligned perfect loops.
+      </div>
+
+      <!-- Format toggle -->
+      <div class="out-row">
+        <label style="font-size:8px;color:#556;font-family:monospace">FORMAT</label>
+        <button class="out-btn" id="rec-fmt-gif"  style="flex:0 0 60px;background:rgba(0,255,180,.18)">🎞️ GIF</button>
+        <button class="out-btn" id="rec-fmt-webm" style="flex:0 0 70px">🎥 WebM</button>
+      </div>
+
+      <!-- GIF settings (visible when GIF format selected) -->
+      <div id="rec-gif-settings">
+        <div class="out-row">
+          <label style="font-size:8px;color:#556;font-family:monospace">SIZE</label>
+          <select id="rec-gif-size" style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);border-radius:5px;color:#0fc;font-family:var(--mono);font-size:9px;padding:4px 6px">
+            <option value="480"  selected>480p (854×480) — small file</option>
+            <option value="640">  640p (1138×640)</option>
+            <option value="720">  720p (1280×720) — bigger</option>
+          </select>
+        </div>
+        <div class="out-row">
+          <label style="font-size:8px;color:#556;font-family:monospace">FPS</label>
+          <select id="rec-gif-fps" style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);border-radius:5px;color:#0fc;font-family:var(--mono);font-size:9px;padding:4px 6px">
+            <option value="10">10 — tiny</option>
+            <option value="15" selected>15 — recommended</option>
+            <option value="20">20</option>
+            <option value="24">24 — smooth</option>
+            <option value="30">30 — max</option>
+          </select>
+        </div>
+        <div class="out-row">
+          <label style="font-size:8px;color:#556;font-family:monospace">QUALITY</label>
+          <select id="rec-gif-quality" style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);border-radius:5px;color:#0fc;font-family:var(--mono);font-size:9px;padding:4px 6px">
+            <option value="20">Fast (smaller file)</option>
+            <option value="10" selected>Balanced</option>
+            <option value="5">Best (larger file, slower)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Duration mode -->
+      <div class="out-row">
+        <label style="font-size:8px;color:#556;font-family:monospace">DURATION</label>
+        <button class="out-btn" id="rec-dur-mode-sec"  style="flex:0 0 50px;background:rgba(0,255,180,.18)">⏱ SEC</button>
+        <button class="out-btn" id="rec-dur-mode-beat" style="flex:0 0 60px">♩ BEATS</button>
+      </div>
+      <div class="out-row" id="rec-dur-sec-wrap">
+        <label style="font-size:8px;color:#556;font-family:monospace">SECONDS</label>
+        <select id="rec-dur-sec" style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);border-radius:5px;color:#0fc;font-family:var(--mono);font-size:9px;padding:4px 6px">
+          <option value="5">5 seconds</option>
+          <option value="10" selected>10 seconds</option>
+          <option value="15">15 seconds</option>
+          <option value="30">30 seconds</option>
+          <option value="60">60 seconds (heavy)</option>
+        </select>
+      </div>
+      <div class="out-row" id="rec-dur-beat-wrap" style="display:none">
+        <label style="font-size:8px;color:#556;font-family:monospace">BEATS</label>
+        <select id="rec-dur-beat" style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);border-radius:5px;color:#0fc;font-family:var(--mono);font-size:9px;padding:4px 6px">
+          <option value="4">4 beats (1 bar)</option>
+          <option value="8" selected>8 beats (2 bars)</option>
+          <option value="16">16 beats (4 bars)</option>
+          <option value="32">32 beats (8 bars)</option>
+        </select>
+      </div>
+
+      <!-- Action buttons + progress -->
+      <div class="out-row">
+        <button class="out-btn" id="rec-btn-start" style="flex:1;background:rgba(255,58,122,.18);color:var(--accent)">⏺ START RECORDING</button>
+        <button class="out-btn stop-out" id="rec-btn-stop" style="display:none;flex:1">⏹ STOP</button>
+      </div>
+      <div id="rec-progress-wrap" style="display:none;margin-top:6px">
+        <div style="height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden">
+          <div id="rec-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#0fc,#ff3a7a);transition:width .15s"></div>
+        </div>
+        <div id="rec-progress-label" style="font-size:8px;color:#556;font-family:monospace;margin-top:3px">Capturing…</div>
+      </div>
+      <div class="out-note">
+        💡 <b>Beat mode</b> needs an audio track playing — capture starts immediately,
+        stops after exactly N detected beats. Result loops perfectly with the music.
+        Heavy combos (720p · 30fps · 60s) can use 1 GB+ RAM — adjust if your tab struggles.
+      </div>
+    </div>
+
+    <!-- Feedback -->
+    <div class="out-section" style="padding-top:8px;padding-bottom:10px">
+      <div id="out-feedback" style="color:#445">Ready.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Track name overlay ──────────────────────────────────────────────── -->
+<div id="track-overlay" style="
+  display:none;position:fixed;bottom:0;left:0;right:0;
+  padding:22px 28px 28px;
+  background:linear-gradient(transparent,rgba(4,4,18,.82));
+  pointer-events:none;z-index:8000;
+  flex-direction:column;gap:3px;
+  opacity:0;transition:opacity .6s ease">
+  <div style="font-size:10px;color:rgba(0,255,200,.55);font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase">Now Playing</div>
+  <div id="track-overlay-name" style="
+    font-family:var(--display);font-size:clamp(14px,2.5vw,22px);
+    color:#fff;letter-spacing:.04em;text-shadow:0 0 22px rgba(0,255,200,.6),0 2px 8px rgba(0,0,0,.8);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70vw">
+  </div>
+</div>
+
+<style>
+  .controls-panel.fs-hidden{opacity:0!important;pointer-events:none!important;transition:opacity .4s}
+</style>
+
+<!-- ── Mobile swipe-to-collapse + panel init ─────────────────────────── -->
+<script>
+(function(){
+  const panel  = document.getElementById('controls-panel');
+  const header = document.getElementById('ctrl-header');
+  const body   = document.getElementById('ctrl-body');
+  const handle = panel.querySelector('.panel-handle');
+  const arrow  = document.getElementById('ctrl-collapse');
+  const isMob  = () => window.innerWidth <= 768;
+
+  // ── Desktop: click header to collapse/expand ────────────────────────
+  header.addEventListener('click', () => {
+    const collapsed = panel.classList.toggle('collapsed');
+    if (arrow) arrow.textContent = collapsed ? '▲' : '▼';
+  });
+
+  // ── Mobile: swipe-down on handle to collapse, swipe-up to expand ────
+  let startY = 0, startExpanded = true;
+
+  const onTouchStart = e => {
+    if (!isMob()) return;
+    startY = e.touches[0].clientY;
+    startExpanded = !panel.classList.contains('collapsed');
+  };
+
+  const onTouchEnd = e => {
+    if (!isMob()) return;
+    const dy = e.changedTouches[0].clientY - startY;
+    if (dy > 48 && startExpanded) {
+      // swipe down → collapse
+      panel.classList.add('collapsed');
+      if (arrow) arrow.textContent = '▲';
+    } else if (dy < -48 && !startExpanded) {
+      // swipe up → expand
+      panel.classList.remove('collapsed');
+      if (arrow) arrow.textContent = '▼';
+    }
+  };
+
+  // Attach to handle AND header for broad touch target
+  [handle, header].forEach(el => {
+    if (!el) return;
+    el.addEventListener('touchstart', onTouchStart, { passive:true });
+    el.addEventListener('touchend',   onTouchEnd,   { passive:true });
+  });
+
+  // ── Range sliders: sync --val CSS custom property for gradient fill ──
+  document.querySelectorAll('input[type=range]').forEach(sl => {
+    const sync = () => {
+      const pct = ((sl.value - sl.min) / (sl.max - sl.min)) * 100;
+      sl.style.setProperty('--val', pct + '%');
+    };
+    sync();
+    sl.addEventListener('input', sync);
+  });
+
+  // ── .vd spans — click to type a custom value ─────────────────────────
+  // Ceiling = 3× slider max (soft limit: experiments OK, NaN prevented).
+  // The span sits inside <label> right before the <input type=range>.
+  document.querySelectorAll('.vd').forEach(span => {
+    if (span.id === 'blmv') return; // Bloom: max already at visual limit
+    span.title = 'Click to enter value';
+    span.style.cursor = 'text';
+
+    span.addEventListener('click', () => {
+      // Find sibling range input (parent is <label>, next sibling is <input>)
+      const label = span.closest('label');
+      const sl = label
+        ? label.parentElement.querySelector('input[type=range]')
+        : span.parentElement.querySelector('input[type=range]');
+      if (!sl) return;
+
+      const ceil = parseFloat(sl.max) * 3;
+      const floor = parseFloat(sl.min);
+
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.value = sl.value;
+      inp.style.cssText = `
+        width:52px;background:#0a0a1a;color:var(--accent);
+        border:1px solid var(--accent);border-radius:3px;
+        font-size:9px;font-family:monospace;padding:1px 4px;
+        text-align:center;outline:none;`;
+
+      span.replaceWith(inp);
+      inp.select();
+
+      const commit = () => {
+        let v = parseFloat(inp.value);
+        if (isNaN(v)) v = parseFloat(sl.value);
+        v = Math.max(floor, Math.min(ceil, v));
+        // Round to slider's step precision
+        const step = parseFloat(sl.step) || 0.01;
+        const decimals = (step.toString().split('.')[1] || '').length;
+        v = parseFloat(v.toFixed(decimals));
+        // Apply: update slider visually (clamp to slider range for the thumb)
+        sl.value = Math.min(parseFloat(sl.max), Math.max(floor, v));
+        sl.dispatchEvent(new Event('input', { bubbles: true }));
+        sl.dispatchEvent(new Event('change', { bubbles: true }));
+        // If value exceeds slider max, patch slider max so thumb moves
+        if (v > parseFloat(sl.max)) sl.max = v;
+        sl.value = v;
+        sl.dispatchEvent(new Event('input', { bubbles: true }));
+        // Restore span
+        span.textContent = v.toFixed(decimals);
+        inp.replaceWith(span);
+      };
+
+      inp.addEventListener('blur', commit);
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { inp.blur(); }
+        if (e.key === 'Escape') { inp.value = sl.value; inp.blur(); }
+      });
+    });
+  });
+
+  // ── Collapsible .sec section headers ───────────────────────────────────
+  // Each .sec sits flat in the panel between sibling content elements.
+  // On click, hide all siblings between this .sec and the NEXT .sec.
+  // The arrow ▸ (in title text) becomes a rotating <span> for animation.
+  // All sections start expanded — user can click to collapse what they
+  // don't need. Advanced sections (<details class="adv-section">) keep
+  // their own collapse logic and are not touched here.
+  const sections = document.querySelectorAll('.controls-panel .sec');
+  sections.forEach(sec => {
+    // Replace leading "▸ " with a rotating span + the rest of the text
+    const txt = sec.textContent.replace(/^▸\s*/, '');
+    sec.innerHTML = '<span class="sec-arrow">▸</span> ' + txt;
+    sec.classList.add('expanded');
+
+    // Collect siblings that belong to this section: everything until the
+    // next .sec or the panel end. Stored on the element for fast toggle.
+    const siblings = [];
+    let cur = sec.nextElementSibling;
+    while (cur && !cur.classList.contains('sec')) {
+      siblings.push(cur);
+      cur = cur.nextElementSibling;
+    }
+    sec._collapsibleSiblings = siblings;
+
+    sec.addEventListener('click', () => {
+      const expanded = sec.classList.toggle('expanded');
+      sec._collapsibleSiblings.forEach(el => {
+        // Use display:none to truly remove from layout (including <details>)
+        // Save original display so we can restore exactly
+        if (!expanded) {
+          if (!el.dataset._origDisplay) {
+            el.dataset._origDisplay = el.style.display || '';
+          }
+          el.style.display = 'none';
+        } else {
+          el.style.display = el.dataset._origDisplay || '';
+        }
+      });
+    });
+  });
+})();
+</script>
+
+<script type="module" src="/src/main.js"></script>
+
+<script>
+// ── Searchable combobox — wraps a <select> with a typed-filter input ─────────
+// Usage: makeSearchable('gpu-sel')  — call after DOM ready
+function makeSearchable(selId) {
+  const sel = document.getElementById(selId);
+  if (!sel || sel.dataset.srch) return;
+  sel.dataset.srch = '1';
+
+  // Build option list from <select> incl. <optgroup> labels
+  function getItems() {
+    const items = [];
+    for (const child of sel.children) {
+      if (child.tagName === 'OPTGROUP') {
+        items.push({ type: 'group', label: child.label });
+        for (const opt of child.children)
+          items.push({ type: 'opt', value: opt.value, text: opt.text, el: opt });
+      } else {
+        items.push({ type: 'opt', value: child.value, text: child.text, el: child });
+      }
+    }
+    return items;
+  }
+
+  // Create wrapper
+  const wrap = document.createElement('div');
+  wrap.className = 'srch-wrap';
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+  sel.style.display = 'none';
+
+  const input = document.createElement('input');
+  input.className = 'srch-input';
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.placeholder = sel.options[sel.selectedIndex]?.text || '— select —';
+
+  const arrow = document.createElement('button');
+  arrow.className = 'srch-arrow';
+  arrow.type = 'button';
+  arrow.innerHTML = '<span style="display:block;line-height:1;margin-top:-1px">▾</span>';
+
+  const drop = document.createElement('div');
+  drop.className = 'srch-drop';
+
+  wrap.appendChild(input);
+  wrap.appendChild(arrow);
+  wrap.appendChild(drop);
+
+  // Sync input text to selected option
+  function syncLabel() {
+    input.value = '';
+    input.placeholder = sel.options[sel.selectedIndex]?.text || '— select —';
+  }
+
+  // Render dropdown filtered by query
+  function render(query) {
+    drop.innerHTML = '';
+    const q = query.toLowerCase().trim();
+    let anyVisible = false;
+    let groupEl = null;
+    for (const item of getItems()) {
+      if (item.type === 'group') {
+        groupEl = document.createElement('div');
+        groupEl.className = 'srch-group';
+        groupEl.textContent = item.label;
+        groupEl.style.display = 'none';
+        drop.appendChild(groupEl);
+      } else {
+        if (q && !item.text.toLowerCase().includes(q)) continue;
+        if (groupEl) groupEl.style.display = '';
+        groupEl = null;
+        anyVisible = true;
+        const div = document.createElement('div');
+        div.className = 'srch-opt' + (item.value === sel.value ? ' active' : '');
+        div.textContent = item.text;
+        div.dataset.value = item.value;
+        div.addEventListener('mousedown', e => {
+          e.preventDefault();
+          sel.value = item.value;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          syncLabel();
+          close();
+        });
+        drop.appendChild(div);
+      }
+    }
+    if (!anyVisible) {
+      const div = document.createElement('div');
+      div.className = 'srch-opt';
+      div.style.color = '#556';
+      div.textContent = 'no results';
+      drop.appendChild(div);
+    }
+  }
+
+  function open() {
+    render(input.value);
+    wrap.classList.add('open');
+    // Scroll active item into view
+    const active = drop.querySelector('.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+  function close() { wrap.classList.remove('open'); }
+
+  input.addEventListener('focus', () => open());
+  input.addEventListener('input', () => render(input.value));
+  input.addEventListener('blur', () => setTimeout(close, 150));
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { close(); input.blur(); }
+    if (e.key === 'Enter') {
+      const first = drop.querySelector('.srch-opt');
+      if (first) first.dispatchEvent(new MouseEvent('mousedown'));
+    }
+  });
+
+  arrow.addEventListener('mousedown', e => {
+    e.preventDefault();
+    if (wrap.classList.contains('open')) { close(); input.blur(); }
+    else { input.focus(); open(); }
+  });
+
+  // When the user clicks an item in the custom dropdown, the click handler
+  // dispatches a real 'change' event — this listener handles that path.
+  sel.addEventListener('change', syncLabel);
+
+  // FIX: programmatic `sel.value = X` (clip player, hotkey R/Q/E/F, preset
+  // applyState, MIDI param dispatch) does NOT fire a `change` event per spec.
+  // Without this patch the underlying select updates correctly, but the
+  // searchable-combobox placeholder keeps showing the previous option's text,
+  // so the panel displays a stale name while the engine is already on the new
+  // formula/shape/color. We shadow the inherited HTMLSelectElement.value
+  // descriptor with an instance-level one that re-syncs the label after every
+  // programmatic write. The getter is unchanged.
+  const _valDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  if (_valDesc && _valDesc.set) {
+    Object.defineProperty(sel, 'value', {
+      configurable: true,
+      enumerable:   true,
+      get() { return _valDesc.get.call(this); },
+      set(v) { _valDesc.set.call(this, v); syncLabel(); },
+    });
+  }
+
+  syncLabel();
+}
+
+// Init after module scripts have populated the selects
+window.addEventListener('load', () => {
+  makeSearchable('gpu-sel');
+  makeSearchable('color-sel');
+  makeSearchable('shape-sel');
+  // volume-formula-sel is hidden by default — init searchable when shown
+  const volWrap = document.getElementById('volume-formula-wrap');
+  if (volWrap) {
+    new MutationObserver(() => {
+      if (volWrap.style.display !== 'none') makeSearchable('volume-formula-sel');
+    }).observe(volWrap, { attributes: true, attributeFilter: ['style'] });
+  }
+});
+</script>
+
+<div id="about-overlay" role="dialog" aria-modal="true" aria-labelledby="about-title">
+  <div id="about-box">
+    <div id="about-header">
+      <h2 id="about-title"> VIMATHIC ⠀  ⠀  ⠀  Mathematical VJ Studio</h2>
+      <button id="about-close" aria-label="Close">✕</button>
+    </div>
+    <div id="about-tabs" role="tablist"></div>
+    <div id="about-content" role="tabpanel"></div>
+  </div>
+</div>
+</body>
+</html>
