@@ -33,12 +33,16 @@ Drop in a track — 192 mathematical formulas come to life on screen, driven by 
 
 ## Quick Start
 
-**Option A — just open it:**
+**Option A — try it online:**
+
+👉 **[vimathic.com](https://vimathic.com)** — open in Chrome or Edge, no install required.
+
+**Option B — run it locally:**
 ```
 dist/index.html   ← open in any modern browser, no server needed
 ```
 
-**Option B — dev mode:**
+**Option C — dev mode:**
 ```bash
 git clone https://github.com/vimathic/vimathic
 cd vimathic
@@ -46,7 +50,7 @@ npm install
 npm run dev
 ```
 
-**Option C — build your own single file:**
+**Option D — build your own single file:**
 ```bash
 npm run build    # → dist/index.html  (self-contained, no external deps)
 ```
