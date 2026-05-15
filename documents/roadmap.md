@@ -1,4 +1,3 @@
-cat > documents/roadmap.md <<'EOF'
 ---
 title: Roadmap
 order: 4
@@ -139,5 +138,3 @@ whatever follows. The foundation stays open.
 
 *VIMATHIC is built by one person with AI assistance, in close
 collaboration with [Claude](https://claude.ai) (Anthropic).*
-EOF
-```
