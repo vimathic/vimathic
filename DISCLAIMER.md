@@ -95,12 +95,12 @@ verify it against the primary source.
 
 - Formula implementations labelled Tier A or Tier B have been tested against
   reference values using automated tests
-  (`node --test tests/math-validation.test.js`, 111 tests as of v1.0-beta),
-  but these tests were written with AI assistance and may contain errors.
-- Accuracy figures (e.g. "error ≤ 10⁻⁷") are estimates based on AI
-  analysis, not formal mathematical proofs or independent expert review.
-- [MATHEMATICAL_ACCURACY.md](./MATHEMATICAL_ACCURACY.md) reflects an
-  AI-assisted audit, not peer review.
+  (`node --test tests/math-validation.test.js`, 126 tests as of v1.0-beta).
+  The tests themselves may contain errors.
+- Accuracy figures (e.g. "error ≤ 10⁻⁷") are estimates,
+  not formal mathematical proofs or independent expert review.
+- [MATHEMATICAL_ACCURACY.md](./MATHEMATICAL_ACCURACY.md) is an internal
+  audit, not peer review.
 - Heavy CPU formulas (cellular automata, PDEs) run on internal simulation
   grids of 40×40 to 64×64 and are bilinearly interpolated onto the display
   mesh — accuracy figures are measured at the internal grid level, not the
@@ -146,8 +146,8 @@ verify it against the primary source.
 
 ## Legal
 
-- The license (BUSL-1.1) and its educational exception were drafted with
-  AI assistance and have not been reviewed by a lawyer.
+- The license (BUSL-1.1) and its educational exception have not been
+  reviewed by a lawyer.
 - If you intend to rely on the license terms for commercial, institutional,
   or legal purposes, consult a qualified attorney.
 - The "For tinkerers and VJs" section in the README is an informal

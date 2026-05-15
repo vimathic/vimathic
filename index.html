@@ -41,7 +41,7 @@
 
     :root{--btn-scale-hover:1.015;--btn-transition:.15s ease;--btn-radius:6px}
 
-    /* ── Clip Player transport buttons ────────────────────────────────────
+    /* ── Clip Player transport buttons ──────────────────────────────────── */
     .clip-row{display:flex;gap:5px;align-items:stretch;margin-top:4px}
     .clip-row .clip-tbtn{
       flex-grow:1;flex-shrink:1;flex-basis:0; /* equal share, ignore content width */
@@ -1217,8 +1217,8 @@
     </div>
     <!-- Seconds row -->
     <div class="clip-time-sec" style="display:flex;gap:6px;align-items:center">
-      <label style="font-size:10px;color:#556;white-space:nowrap">Hold (s)</label>
-      <input id="clip-hold" type="number" min="1" max="600" value="5" step="1">
+      <label style="font-size:10px;color:#556;white-space:nowrap">Hold(s)</label>
+      <input id="clip-hold" type="number" min="1" max="600" value="5" step="1" style="flex:1;width:auto;text-align:center;min-width:0">
     </div>
     <!-- Bars row (hidden by default) -->
     <div class="clip-time-bars" style="display:none;gap:6px;align-items:center">

@@ -13,11 +13,7 @@ Drop in a track — 192 mathematical formulas come to life on screen, driven by 
 ![License](https://img.shields.io/badge/license-BUSL--1.1-blue)
 ![Version](https://img.shields.io/badge/version-1.0--beta-green)
 ![Single File](https://img.shields.io/badge/deploy-single%20HTML-blueviolet)
-
-> ⚠️ **Disclaimer:** This project was built with AI assistance (Claude, Anthropic).
-> Mathematical, scientific, and legal claims have not been independently verified by domain experts.
-> Photosensitive users should read the disclaimer before using.
-> [Full disclaimer →](./DISCLAIMER.md)
+> ⚠️ **Read first:** VIMATHIC produces rapid flashing visuals — photosensitive users should read the full disclaimer before using. [Disclaimer →](./DISCLAIMER.md)
 
 ---
 
@@ -242,7 +238,6 @@ VIMATHIC was designed and built by **S. Melentyev** in close collaboration with 
 
 Where the author's role was strongest: deciding what the instrument should *be*, which formulas matter, how the parameter space should feel, and which trade-offs to accept. Where Claude's role was strongest: turning those decisions into working code, building out the math library, drafting documentation, and writing the tests that check it.
 
-*This is mentioned because honesty matters more than the optics of it.*
 
 ---
 

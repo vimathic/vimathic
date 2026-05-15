@@ -133,10 +133,7 @@ guaranteed delivery. The free 1.0 will remain free and open-source
 **forever** regardless of what happens with the mobile app or
 whatever follows. The foundation stays open.
 
----
 
-*VIMATHIC is built by one person with AI assistance, in close
-collaboration with [Claude](https://claude.ai) (Anthropic).*
 
 ---
 

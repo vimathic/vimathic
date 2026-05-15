@@ -70,11 +70,6 @@ VIMATHIC is built with Three.js for WebGL rendering, the Web Audio API for spect
 ## Browser support
 
 VIMATHIC targets modern browsers with WebGL 2.0 and the Web Audio API. Chrome and Edge have the fullest feature support including Web MIDI and tab audio capture. Firefox and Safari work for the core visualizer but lack Web MIDI. On mobile, Chrome on Android is the most capable platform; iOS Safari works for playback but has limitations on recording and audio capture.
-
-## Author and AI-assistance disclosure
-
-VIMATHIC was designed and built by **S. Melentyev** in collaboration with **Claude** (Anthropic AI). Code, documentation, and mathematical claims were produced with AI assistance. The collaboration is documented openly because honesty matters more than the optics of it.
-
 ---
 
 *VIMATHIC™ · v1.0 (Beta) · Mathematical VJ Studio*

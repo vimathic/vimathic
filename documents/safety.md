@@ -73,9 +73,7 @@ You are responsible for having the rights to any audio in your recordings. The v
 
 ## AI Assistance
 
-VIMATHIC was created by a human (S. Melentyev) in collaboration with **Claude** (Anthropic). Code, documentation, and mathematical claims were produced with AI assistance and have not been independently verified by domain experts.
-
-We mention this up-front because honesty matters more than the optics of it. For the full technical details on how accuracy was verified, see [Mathematical Accuracy](https://github.com/vimathic/vimathic/blob/main/MATHEMATICAL_ACCURACY.md) on GitHub.
+Code, documentation, and mathematical claims were produced with assistance from Claude (Anthropic) and have not been independently verified by domain experts. Methodology and per-formula audit: [Mathematical Accuracy](https://github.com/vimathic/vimathic/blob/main/MATHEMATICAL_ACCURACY.md).
 
 ## Dependencies
 
