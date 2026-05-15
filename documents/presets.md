@@ -35,6 +35,9 @@ What does NOT get captured:
 - The audio source (you reload audio manually)
 - MIDI mappings (separate storage)
 - Output / recording settings
+- Layered deformation effects from rapid mode-switching (a known limitation — see note below)
+
+> **About layered deformation.** Switching between Volume mode formulas quickly, or pressing `R` while in Volume mode, can produce a striking visual effect where multiple deformations stack on top of each other in the geometry buffer. This composition is a side-effect of how the deformation pipeline reuses vertex positions between mode switches; it cannot currently be saved into a preset or reproduced from a reload, because the saved snapshot captures only the final mode and formula, not the chain of deformations that produced the visible result. A proper "Compose Mode" — explicit, controllable, and preset-saveable layering of deformations — is under consideration for a future release, after the current stability period.
 
 ## Loading a preset
 
