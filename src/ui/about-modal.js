@@ -59,11 +59,6 @@ export function bindAboutModal() {
 
   btn.addEventListener('click', () => open(tabsEl, contentEl, overlay));
   closeBtn.addEventListener('click', () => close(overlay));
-
-  // Click on backdrop (but not modal box) closes — common UX pattern.
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay) close(overlay);
-  });
 }
 
 function open(tabsEl, contentEl, overlay) {

@@ -49,7 +49,15 @@ If you experience blurred vision, eye twitching, disorientation, or a sudden sev
 
 VIMATHIC uses your GPU heavily. Extended use may cause your device to run warm. Ensure adequate ventilation, especially on laptops with passive cooling.
 
-**Mobile devices.** VIMATHIC is not optimised for phones. It will run on modern Android and iOS browsers, but sustained sessions will heat the device noticeably — even on high-end hardware. If your phone gets uncomfortably warm, switch to a desktop or laptop. Treat the mobile build as a preview.
+### Mobile devices
+
+VIMATHIC runs in mobile browsers, but the mobile experience is intentionally a lighter preview of the desktop one. On phones and tablets the visualizer renders at roughly half the desktop frame rate, the displacement mesh is built at a lower resolution, and the heaviest post-processing effects (god rays, motion blur) are disabled by default. This trade keeps the app responsive on mid-range hardware and reduces — but does not eliminate — thermal load.
+
+Extended sessions can still warm the device. WebGL is a real GPU workload; phones are not designed for sustained 100% GPU use the way desktops are. If the device gets hot, take a break, lower the screen brightness, or close other apps in the background.
+
+**About the browser's "Desktop site" toggle.** Switching to "Desktop site" in your mobile browser **does not unlock desktop performance**. It only changes how the page is told to lay itself out; the underlying GPU, thermal envelope, and rendering budget stay exactly the same as before. In practice the toggle makes things slightly worse on mobile, because the visualizer no longer applies its mobile optimisations and tries to render the full desktop pipeline on a chip that wasn't built for it. The device will get hotter, frame rate will drop, and battery will drain faster. We recommend leaving the toggle in its default "Mobile" position when using VIMATHIC.
+
+A dedicated **VIMATHIC Mobile app** — built natively for iOS and Android, with proper GPU scheduling and platform-specific optimisations — is on the [Roadmap](./roadmap.md). The web version on mobile is best treated as a preview until that ships.
 
 There are no hidden processes, no cryptominers, no analytics beacons, and no network requests during use — just mathematics rendering to your music.
 

@@ -10,7 +10,7 @@ description: First five minutes with VIMATHIC — load a track, watch it react, 
 
 VIMATHIC is a mathematical VJ studio that runs in your browser. Drop in a track — a music file, the microphone, a browser tab, or system audio — and 192 mathematical formulas, 38 GPU shaders, and 36 colour schemes come to life, reacting to the music in real time.
 
-> ℹ️ **Before you start.** VIMATHIC was built with AI assistance (Claude, Anthropic) — mathematical, scientific, and legal claims have not been independently verified. The visualizer also produces rapid flashing visuals; please read [Safety & Privacy](./safety.md) if you have epilepsy, migraines, or motion sickness. **Tested primarily in Chrome and Edge** — other browsers may have reduced functionality.
+> ℹ️ **Before you start.** VIMATHIC was built with AI assistance (Claude, Anthropic) — mathematical, scientific, and legal claims have not been independently verified. The visualizer also produces rapid flashing visuals; please read [Safety & Privacy](./safety.md) if you have epilepsy, migraines, or motion sickness. **Tested primarily in Chrome and Edge on desktop** — other browsers may have reduced functionality. **On mobile** the visualizer renders at a reduced frame rate to manage thermal load, but extended use can still warm the device — give it breaks during long sessions. A dedicated mobile app is on the [Roadmap](./roadmap.md).
 
 ## 1. Get audio into the app
 

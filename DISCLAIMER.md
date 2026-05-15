@@ -50,15 +50,15 @@ guidance.
 - Extended use of a GPU-intensive application can cause hardware to **run
   hot**. Ensure adequate ventilation. If your machine has fan-control
   software, set it to a profile that copes with sustained load.
-- **VIMATHIC is not optimised for mobile devices.** It will run on a modern
-  phone, but sustained sessions will heat the device noticeably — even on
-  high-end hardware like a Pixel 10 Pro XL or recent iPhone. The app
-  applies what mobile-specific throttling it can (reduced framerate,
-  simpler geometry, disabled post-processing passes), but a math-driven
-  WebGL renderer on a phone GPU is inherently demanding. If your phone
-  gets uncomfortably warm, stop using it and switch to a desktop or
-  laptop. Treat the mobile build as a preview, not as the primary
-  experience.
+- **Mobile is a preview, not the primary experience.** On phones and
+  tablets, VIMATHIC renders at a reduced frame rate, lower mesh resolution,
+  and with the heaviest post-processing effects disabled by default. This
+  keeps the app responsive but cannot fully neutralise the thermal load of
+  sustained GPU rendering on hardware that was not built for it. Switching
+  your mobile browser to "Desktop site" does not improve performance — it
+  removes the mobile optimisations and makes the load worse. A dedicated
+  mobile app is on the roadmap; until it ships, treat the web version on
+  mobile as a preview.
 - **No cryptominers, no trojans, no background tasks.** VIMATHIC does only
   one thing: render mathematics to a canvas in response to your audio. There
   is no analytics, no telemetry, no network activity at runtime, no
