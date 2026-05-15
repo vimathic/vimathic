@@ -35,7 +35,7 @@ On **2031-05-09**, the entire codebase automatically converts to **GPL v3** — 
 
 In practice this means:
 
-- **You can fork VIMATHIC, modify it, and sell your version** — but you have to ship the source code of your modifications with it.
+- **You can fork VIMATHIC, modify it, and distribute your version** — including charging for the distribution — but you must ship the source code of your modifications with it, under GPL v3. In practice this means anyone who receives your version can freely redistribute it, so selling closed-shop is not really an option; GPL v3 protects the user, not the seller.
 - **You can build a commercial product on top of VIMATHIC's code** — but the product must also be GPL v3, with source available to anyone who receives a copy.
 - **You cannot take VIMATHIC's code into a closed-source commercial product** — that's the boundary GPL v3 enforces.
 - **Personal, educational, internal, and non-distributed use stays completely free** — same as today.
