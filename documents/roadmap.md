@@ -66,7 +66,6 @@ given freely.
  20   base shapes × 3 deformation modes
 126   validation tests against scipy, mpmath, NIST DLMF
  14   documentation pages
-  ~   six months of development
   ∞   yours to use, study, fork, share
 </pre>
 
