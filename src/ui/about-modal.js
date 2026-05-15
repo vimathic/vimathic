@@ -302,6 +302,38 @@ function showDoc(slug, tabsEl, contentEl) {
   // Reset scroll on tab switch so user sees the top of each doc, not where
   // they were in the previous one.
   contentEl.scrollTop = 0;
+
+  // ── Intercept cross-doc links ──────────────────────────────────────────
+  // Markdown docs link to each other with relative paths like `./safety.md`
+  // or `./safety.html`. In the static docs site (dist/docs/*.html) those
+  // resolve correctly. Inside the About modal they would otherwise trigger
+  // a real navigation to /safety.md, which 404s and reloads the page —
+  // dropping the user out of the running visualizer.
+  //
+  // Delegated handler on `.about-doc`: if the click target is an <a> whose
+  // href points at one of our doc slugs (with .md or .html suffix, with
+  // or without ./ prefix), preventDefault and switch tabs internally.
+  // External http(s) links, mailto:, and anchor links (#section) fall
+  // through to default browser behaviour.
+  const article = contentEl.querySelector('.about-doc');
+  if (article) {
+    article.addEventListener('click', (e) => {
+      const a = e.target.closest('a');
+      if (!a) return;
+      const href = a.getAttribute('href') || '';
+      // External / mailto / anchor / empty — leave alone.
+      if (!href || /^(https?:|mailto:|#)/i.test(href)) return;
+      // Pull out the slug from ./foo.md or foo.md or ./foo.html or foo.html
+      const m = href.match(/^\.?\/?([a-z0-9-]+)\.(md|html)$/i);
+      if (!m) return;
+      const targetSlug = m[1];
+      // Confirm it's a real doc; if not, let browser try (will 404, but
+      // at least it's not us silently swallowing a typo).
+      if (!DOCS.find(d => d.slug === targetSlug)) return;
+      e.preventDefault();
+      showDoc(targetSlug, tabsEl, contentEl);
+    });
+  }
 }
 
 // ── Build info footer ────────────────────────────────────────────────────
