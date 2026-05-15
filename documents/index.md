@@ -54,7 +54,7 @@ This documentation covers every part of VIMATHIC in detail. Pick the topic that 
 
 ### Roadmap and support
 
-- [Roadmap](./roadmap.md) — what VIMATHIC is now, where it's going (PRO, custom AI engine, mobile apps), and how community support makes the rest possible
+- [Roadmap](./roadmap.md) — what VIMATHIC is now, the planned next step (mobile app), and how community support shapes what comes after
 
 ### About
 

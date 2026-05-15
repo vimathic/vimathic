@@ -255,7 +255,7 @@ see the [Roadmap](./documents/roadmap.md).
 **For users:** the in-app **About modal** (click the **i** icon next to FPS) and the live docs site at
 **[vimathic.com/docs/](https://vimathic.com/docs/)** — quick start, hotkeys, MIDI, shader editor, camera programmer, recording, presets, output, roadmap, troubleshooting.
 
-The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, where it's going (PRO, custom AI engine, mobile apps), and how community support makes the rest possible.
+The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, the planned next step (mobile app), and how community support shapes what comes after.
 
 **For developers / contributors:**
 
