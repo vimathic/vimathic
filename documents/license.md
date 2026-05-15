@@ -27,7 +27,7 @@ The code is under **Business Source License 1.1** ("BUSL-1.1"). The short versio
 - Selling **hosted VIMATHIC** as a paid service to others
 - Re-publishing VIMATHIC under a different name as your own work
 
-If you want to do any of these — or anything else that feels like it might cross the line — please email **vimathic.reports@proton.me** and we'll talk. Reasonable use cases are usually OK; we just want to know.
+If you want to do any of these — or anything else that feels like it might cross the line — please email **vimathic.info@proton.me** and we'll talk. Reasonable use cases are usually OK; we just want to know.
 
 ## What happens in 2031
 
@@ -72,7 +72,7 @@ Each is used under its respective MIT license. The author of VIMATHIC makes no c
 
 ## When in doubt
 
-If you're not sure whether your intended use is allowed — email **vimathic.reports@proton.me** and ask. Most reasonable use cases get a "yes" within a day or two. We'd rather have a brief conversation than have you guess wrong.
+If you're not sure whether your intended use is allowed — email **vimathic.info@proton.me** and ask. Replies aren't guaranteed, but most reasonable use cases get a "yes" when answered.
 
 ---
 

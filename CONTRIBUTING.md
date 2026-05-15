@@ -137,6 +137,6 @@ Contributors who land merged PRs are credited in the [CHANGELOG.md](./CHANGELOG.
 
 ## Questions?
 
-Open a [Discussion](https://github.com/vimathic/vimathic/discussions) or email **vimathic.reports@proton.me** for anything that doesn't fit a bug or feature template.
+Open a [Discussion](https://github.com/vimathic/vimathic/discussions) or email **vimathic.info@proton.me** for anything that doesn't fit a bug or feature template.
 
 Thank you for considering it.

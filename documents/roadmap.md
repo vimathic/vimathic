@@ -138,3 +138,8 @@ whatever follows. The foundation stays open.
 
 *VIMATHIC is built by one person with AI assistance, in close
 collaboration with [Claude](https://claude.ai) (Anthropic).*
+
+---
+
+*Contact for collaboration or urgent matters: vimathic.info@proton.me.
+Don't expect a quick reply — or any reply at all.*

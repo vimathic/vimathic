@@ -287,4 +287,13 @@ VIMATHIC ships with an intro track — *S. Melentyev — Vimathic* (`vimathic-in
 
 ---
 
+## Contact
+
+For collaboration, licensing, or urgent matters: **vimathic.info@proton.me**
+Security vulnerabilities or conduct reports: **vimathic.reports@proton.me**
+
+*One person maintaining this in spare time. Replies aren't guaranteed and may take a while. For bugs, [GitHub Issues](https://github.com/vimathic/vimathic/issues) are faster.*
+
+---
+
 <sub>VIMATHIC™ · v1.0 (Beta) · Mathematical VJ Studio · Built with mathematics, music, and a browser</sub>
