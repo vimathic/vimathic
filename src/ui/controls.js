@@ -369,11 +369,6 @@ export function bindControls(ui) {
   }
   ui._renderPresets();
 
-  // ── Touch swipe for track navigation ──────────────────────────────────────
-  let tx = 0, ty = 0;
-  document.body.addEventListener('touchstart', e => { if (e.target.closest('.controls-panel')) return; tx=e.touches[0].clientX; ty=e.touches[0].clientY; }, {passive:true});
-  document.body.addEventListener('touchend',   e => { if (e.target.closest('.controls-panel')) return; const dx=e.changedTouches[0].clientX-tx, dy=e.changedTouches[0].clientY-ty; if(Math.abs(dx)>80&&Math.abs(dx)>Math.abs(dy)*2){dx<0?a.nextTrack():a.prevTrack();} }, {passive:true});
-
   // ── Model import ──────────────────────────────────────────────────────────
   const mdz = document.getElementById('model-drop-zone');
   const mfi = document.getElementById('model-file');
