@@ -49,6 +49,8 @@ If you experience blurred vision, eye twitching, disorientation, or a sudden sev
 
 VIMATHIC uses your GPU heavily. Extended use may cause your device to run warm. Ensure adequate ventilation, especially on laptops with passive cooling.
 
+**Mobile devices.** VIMATHIC is not optimised for phones. It will run on modern Android and iOS browsers, but sustained sessions will heat the device noticeably — even on high-end hardware. If your phone gets uncomfortably warm, switch to a desktop or laptop. Treat the mobile build as a preview.
+
 There are no hidden processes, no cryptominers, no analytics beacons, and no network requests during use — just mathematics rendering to your music.
 
 ## Importing Presets
