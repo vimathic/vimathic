@@ -261,7 +261,6 @@ The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, the plann
 - [MATHEMATICAL_ACCURACY.md](./MATHEMATICAL_ACCURACY.md) — accuracy methodology, per-formula tier breakdown
 - [SCIENCE.md](./SCIENCE.md) — research behind the neuroscience and why it works
 - [DISCLAIMER.md](./DISCLAIMER.md) — photosensitivity warning, AI-assisted authorship, hardware notes
-- [DEPLOYMENT.md](./DEPLOYMENT.md) — deployment guide and single-file build instructions
 - [SECURITY.md](./SECURITY.md) — vulnerability disclosure policy
 - [LICENSE.txt](./LICENSE.txt) — BUSL-1.1 with educational exception → GPL v3 on 2031-05-09
 

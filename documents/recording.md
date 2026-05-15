@@ -121,3 +121,12 @@ The recorder captures the **canvas only** — not the panel UI, not the modals, 
 ## Stopping early
 
 The **■ STOP** button cancels a recording mid-flight. For GIF, this aborts the worker and discards partial frames — no file is saved. For WebM, the partial recording downloads with whatever frames were captured up to that point.
+
+## Performance impact
+
+The GIF and WebM recorders add load during capture:
+
+- **GIF recorder:** uses a separate Web Worker (`gif.js`) for LZW encoding. At 720p × 15fps, capture runs at full speed while encoding happens in the background. Peak memory usage can reach ~1.5 GB for a 60-second capture at maximum settings — the UI warns if estimated usage exceeds that and suggests reducing resolution or duration.
+- **WebM recorder:** uses the browser's native `MediaRecorder` API. Much lower memory (~50–100 MB for a 60-second 1080p capture) but requires Chrome/Edge for VP9 codec support. The composite pipeline (WebGL → 2D overlay with watermark → MediaStream) adds negligible CPU overhead.
+
+Both recorders are designed not to affect the live visual output — capture runs on its own frame schedule independent of the render loop.

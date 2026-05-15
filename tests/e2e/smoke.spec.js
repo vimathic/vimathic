@@ -188,7 +188,7 @@ test.describe('Presets', () => {
   });
 });
 
-// ── 7. Math worker is loaded (regression guard for DEPLOYMENT.md guarantee) ──
+// ── 7. Math worker is loaded (regression guard) ──
 test.describe('Math worker', () => {
   test('window._vimathic_worker_active is true after CPU formula activates', async ({ page }) => {
     await page.goto('/');

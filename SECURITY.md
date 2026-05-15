@@ -6,9 +6,9 @@
 
 VIMATHIC is a client-side, browser-only application — it has no server, no
 authentication, no user data storage outside `localStorage` on the user's own
-machine, and makes no network requests at runtime (everything is bundled into
-three self-contained files: `index.html`, `math-worker-*.js`, and
-`second-screen.html`). See [DEPLOYMENT.md](./DEPLOYMENT.md) for details.
+machine, and makes no network requests at runtime — everything is bundled into
+four self-contained files: `index.html`, `math-worker-*.js`,
+`second-screen.html`, and `vimathic-intro.mp3`.
 
 That keeps the attack surface small but does not eliminate it. If you find:
 

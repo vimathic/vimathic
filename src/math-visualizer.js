@@ -63,7 +63,7 @@ function createMathWorker() {
     console.warn(
       '[MathVisualizer] Worker unavailable — math will run synchronously on main thread.\n' +
       'Cause:', e.message, '\n' +
-      'See DEPLOYMENT.md — math-worker-*.js must be deployed alongside index.html.'
+      'Hint: math-worker-*.js must be at the same path as index.html on the server.'
     );
     if (typeof window !== 'undefined') window._vimathic_worker_active = false;
     return null;

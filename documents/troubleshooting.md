@@ -155,7 +155,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 ### **Works in dev mode but not in deployed build**
 
-- The math worker file (`math-worker-XXX.js`) wasn't uploaded. See **DEPLOYMENT.md** for the four required files.
+- The math worker file (`math-worker-XXX.js`) wasn't uploaded alongside `index.html`. Both files must be at the same path on the server, or the worker falls back to slower main-thread computation.
 - CDN cached an old build. Hard reload: `Ctrl+Shift+R` (Cmd+Shift+R on Mac), or clear browser cache for the site.
 
 ### **MIDI worked yesterday, not today**
@@ -167,11 +167,48 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 - Some Tier-C formulas use heavy CPU computations (Gray-Scott, FitzHugh-Nagumo, 3D Conway). On lower-end mobile, they can lock the main thread for seconds before the worker fallback kicks in. If page is unresponsive: close the tab, reopen, pick a lighter formula on first load.
 
+## Performance expectations
+
+With the math worker enabled (default):
+
+- **Desktop, modern Chrome/Edge:** 60 fps stable on all formulas.
+- **Mid-range laptop (integrated GPU):** 60 fps on formulas with grid ≤ 64², 50–60 fps on heavier ones.
+- **Mid-range mobile:** 60 fps on simple formulas, 30–40 fps on heavy ones (Gray-Scott, 3D Conway). Render rate is capped at ~30 fps on mobile to manage thermal load.
+- **Old mobile / low-end devices:** graceful degradation; post-processing effects auto-disabled.
+
+Without the worker (sync fallback):
+
+- **Desktop:** 60 fps on most formulas, drops to 30–40 fps on the heaviest.
+- **Mid-range mobile:** 30 fps on simple formulas, 15–20 fps on heavy.
+- **Mobile is essentially unusable** for the new C-tier formulas (FitzHugh-Nagumo, Gray-Scott).
+
+If you're seeing lower performance than the above, check that `_vimathic_worker_active` is `true` in the console.
+
+## Browser compatibility
+
+| Feature | Chrome | Edge | Firefox | Safari |
+|---------|:------:|:----:|:-------:|:------:|
+| WebGL rendering | ✓ | ✓ | ✓ | ✓ |
+| Web Audio API | ✓ | ✓ | ✓ | ✓ |
+| Web MIDI API | ✓ | ✓ | ✗ | ✗ |
+| `captureStream()` (Virtual Camera) | ✓ | ✓ | ✓* | ✗ |
+| `MediaRecorder` (WebM export) | ✓ | ✓ | ✓ | ✓ |
+| Tab audio capture | ✓ | ✓ | ✗ | ✗ |
+| System audio capture | ✓ (Win) | ✓ (Win) | ✗ | ✗ |
+| Second-screen popup | ✓ | ✓ | ✓ | ✓ |
+| GIF recorder (gif.js worker) | ✓ | ✓ | ✓ | ✓ |
+| About modal (in-app docs) | ✓ | ✓ | ✓ | ✓ |
+| Docs site (`/docs/*.html`) | ✓ | ✓ | ✓ | ✓ |
+
+*Firefox supports `captureStream()` but not for audio capture via `getDisplayMedia`.
+
+The About modal and the static docs site are pure HTML/CSS/JS and work everywhere the main app works.
+
 ## Still stuck?
 
 - **Check the browser console** (F12 → Console). Most failures log a clear message.
 - **Try in Chrome incognito mode** — rules out extensions interfering.
 - **Update Chrome / Edge / Firefox** to the latest version.
-- **Verify deployment** per `DEPLOYMENT.md` — most "works locally but not online" issues are missing the worker file.
+- **Verify the math worker is loaded.** Open the browser console and type `_vimathic_worker_active` — should be `true`. If `false`, the `math-worker-*.js` file is missing or at the wrong path.
 
 If you've checked all of the above and have a reproducible issue, file it at the project's GitHub repository with: browser + OS, what you did, what you expected, what happened, console output.
