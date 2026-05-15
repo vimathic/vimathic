@@ -268,10 +268,32 @@ DOM.btnToggleGrid.addEventListener('click', () => {
 
 // Throttle uniform pushes: 30 fps on mobile, 60 fps on desktop.
 const UNIFORM_INTERVAL = isMobile ? 33 : 16;
+
+// Render-rate cap. On mobile we halve the rAF rate so the entire
+// animate() body runs at ~30 fps (or ~60 on 120Hz ProMotion displays
+// instead of 120). Audio analysis, math worker tick, and composer
+// render all advance at this lower rate. Three observations:
+//   • Beat detection runs on FFT windows of 1024–2048 samples (~20–
+//     40Hz effective rate), so 30Hz analysis is more than enough.
+//   • Math worker formulas are blended over multiple frames, so
+//     halving the tick rate is visually imperceptible.
+//   • GPU thermal load drops roughly in half — the dominant cost on
+//     mobile devices, where the phone otherwise gets uncomfortably
+//     hot during sustained use.
+const RENDER_FRAME_SKIP = isMobile ? 2 : 1;
+let renderFrameCounter = 0;
+
 let time = 0, frames = 0, lastT = performance.now(), lastUniformUpdate = 0;
 
 function animate() {
   requestAnimationFrame(animate);
+
+  // Render-rate gate. Increment counter every rAF; only proceed with the
+  // expensive composer pass when counter aligns with RENDER_FRAME_SKIP.
+  // The early-return path still keeps the FPS counter updated below so
+  // the operator sees the actual render rate (30 on mobile, 60 on desktop).
+  renderFrameCounter++;
+  if (renderFrameCounter % RENDER_FRAME_SKIP !== 0) return;
 
   // FPS counter ticks even while frozen, so the operator sees the engine alive.
   const now = performance.now();
