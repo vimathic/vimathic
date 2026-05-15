@@ -304,19 +304,22 @@ export class AudioEngine {
   }
 
   // ── Load & play ───────────────────────────────────────────────────────────
-  async loadPlay(file, offset = 0) {
+  // `silent` skips the loading indicator. Used for the bundled intro track,
+  // which is auto-loaded on boot from browser cache and has no perceptible
+  // load time — flashing the indicator for ~200ms looked like a glitch.
+  async loadPlay(file, offset = 0, { silent = false } = {}) {
     this._cancelCrossfade();
-    this.cb.onLoading(true, 0, 'LOADING TRACK…');
+    if (!silent) this.cb.onLoading(true, 0, 'LOADING TRACK…');
     this._stopSource();
     this.trackStart = 0; this.trackOfs = 0;
     this.cb.onSeek(0, '0:00');
     if (this.audioCtx?.state === 'closed') this.audioCtx = null;
     try {
       await this.ensureCtx();
-      const buf = await this._readFile(file);
-      this.cb.onLoading(true, 0.7, 'DECODING AUDIO…');
+      const buf = await this._readFile(file, { silent });
+      if (!silent) this.cb.onLoading(true, 0.7, 'DECODING AUDIO…');
       this.audioBuffer = await this.audioCtx.decodeAudioData(buf);
-      this.cb.onLoading(true, 1.0, 'READY');
+      if (!silent) this.cb.onLoading(true, 1.0, 'READY');
       this._startSource(offset);
       this.cb.onDuration(fmt(this.audioBuffer.duration));
       this.isPlaying = true;
@@ -325,16 +328,16 @@ export class AudioEngine {
     } catch (e) {
       console.error('Track load error:', e);
       this.isPlaying = false;
-      this.cb.onLoading(false);
+      if (!silent) this.cb.onLoading(false);
       return;
     }
-    setTimeout(() => this.cb.onLoading(false), 200);
+    if (!silent) setTimeout(() => this.cb.onLoading(false), 200);
   }
 
-  _readFile(file) {
+  _readFile(file, { silent = false } = {}) {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
-      r.onprogress = e => { if (e.lengthComputable) this.cb.onLoading(true, e.loaded / e.total * 0.6, 'READING FILE…'); };
+      r.onprogress = e => { if (!silent && e.lengthComputable) this.cb.onLoading(true, e.loaded / e.total * 0.6, 'READING FILE…'); };
       r.onload = () => {
         if (!r.result || r.result.byteLength === 0) reject(new Error('Empty file'));
         else resolve(r.result);
@@ -438,7 +441,9 @@ export class AudioEngine {
   }
 
   // ── Playlist ──────────────────────────────────────────────────────────────
-  addFiles(files) {
+  // `silent` skips the loading indicator during auto-load (intro track).
+  // Caller paths from user actions (drag-drop, file picker) omit it.
+  addFiles(files, { silent = false } = {}) {
     Array.from(files)
       .filter(f => f.type.startsWith('audio/'))
       .forEach(f => {
@@ -448,7 +453,7 @@ export class AudioEngine {
     this.cb.onPlaylistChange();
     if (this.trackIdx < 0 && this.playlist.length) {
       this.trackIdx = 0; this.curFile = this.playlist[0].file;
-      this.loadPlay(this.curFile);
+      this.loadPlay(this.curFile, 0, { silent });
     }
   }
 
@@ -527,7 +532,7 @@ export class AudioEngine {
         'S.Melentyev - Vimathic.mp3',
         { type: 'audio/mpeg', lastModified: Date.now() }
       );
-      this.addFiles([file]);
+      this.addFiles([file], { silent: true });
     } catch (err) {
       // Silent fail — the user simply won't have the intro track in their
       // playlist on this session. They can drag-drop their own files.
