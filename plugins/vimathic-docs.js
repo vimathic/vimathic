@@ -134,6 +134,9 @@ function escapeHtml(s) {
 
 function renderStaticPage(doc, siteUrl, allDocs) {
   const canonical = `${siteUrl}/docs/${doc.slug === 'index' ? '' : doc.slug + '.html'}`;
+  // Convert relative .md links to .html for static pages. The modal version
+  // keeps .md because about-modal.js has a cross-doc handler that accepts both.
+  const html = doc.html.replace(/href="(\.\/[a-z0-9-]+)\.md"/g, 'href="$1.html"');
   const navLinks = allDocs
     .filter(d => d.slug !== doc.slug)
     .map(d => `<li><a href="./${d.slug === 'index' ? '' : d.slug + '.html'}">${escapeHtml(d.title)}</a></li>`)
@@ -178,7 +181,7 @@ function renderStaticPage(doc, siteUrl, allDocs) {
     <a href="https://vimathic.com">VIMATHIC</a> · <a href="./">Documentation</a> · ${escapeHtml(doc.title)}
   </div>
 
-  ${doc.html}
+  ${html}
 
   <nav class="related">
     <strong>Other pages:</strong>
@@ -278,7 +281,7 @@ function renderLlmsTxt(siteUrl, docs) {
 
 > VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 36 colour schemes.
 
-VIMATHIC is open-source under Business Source License 1.1 (auto-converting to GPL v3 in 2031). The entire application is bundled into a single HTML file (~900 KB) plus three companion files. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
+VIMATHIC is open-source under Business Source License 1.1 (auto-converting to GPL v3 in 2031). The entire application is bundled into a single HTML file (~900 KB) plus four companion files. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
 
 The math accuracy is documented per-formula with tier classification: 120 formulas at IEEE 754 double precision (~10⁻¹⁴), 44 with bounded numerical approximations (10⁻³ to 10⁻⁷), and 28 at visualisation-grade. Reference values cross-checked against mpmath, scipy.special, and NIST DLMF.
 
