@@ -106,6 +106,21 @@ export class MathVisualizer {
       this._worker.onmessage = ({ data }) => {
         this._workerBusy = false;
         if (data.type === 'result') {
+          // Discard if this result is from a superseded generation —
+          // formula or mode changed while the worker was computing, so
+          // the height field would not match the current geometry intent.
+          // We still clear workerBusy above so the next tick can post.
+          if (data.gen !== undefined && data.gen !== this._generation) {
+            return;
+          }
+          // Discard if we're no longer in surface mode — the worker only
+          // produces height fields, and Volume/Collapse modes don't apply
+          // them. Without this gate, a switch surface→volume mid-tick
+          // would still consume the next worker response and write Y
+          // values over the Volume displacement.
+          if (this._mode !== 'surface') {
+            return;
+          }
           // Copy the transferred buffer into our persistent receive buffer
           // so the worker can reuse its own buffer next tick. Without this
           // copy, every tick allocates a new Float32Array on the main
@@ -119,11 +134,6 @@ export class MathVisualizer {
           console.warn('[MathVisualizer worker]', data.message);
           this._workerReady = false;
         }
-      };
-      this._worker.onerror = (e) => {
-        console.warn('[MathVisualizer] Worker error, falling back to sync:', e.message);
-        this._workerReady = false;
-        this._workerBusy  = false;
       };
     }
 
@@ -165,6 +175,20 @@ export class MathVisualizer {
     this._volumeTimePaused = false;
     this._volumeAccumTime  = 0;
     this._lastTickTime     = null;
+
+    // ── Operation generation counter ────────────────────────────────────
+    // Bumped on every state-affecting public call (setFormula, setMode,
+    // setVolumeFormula, setVolumeFn, deactivate). Worker tick messages
+    // carry the current generation; the onmessage handler discards results
+    // whose generation does not match the current one — i.e. results that
+    // were computed for a formula or mode that has since been superseded.
+    //
+    // This is the cancel-safety primitive for the math pipeline. Without
+    // it, rapid switching between Surface and Volume modes (or between
+    // formulas in either mode) could land a stale height field on geometry
+    // that has already been re-snapshotted for a different mode, producing
+    // visual artefacts that look like "the UI clicks but nothing changes".
+    this._generation = 0;
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -177,6 +201,7 @@ export class MathVisualizer {
   setFormula(collectionId, formulaKey) {
     const f = getFormula(collectionId, formulaKey);
     if (!f) return;
+    this._generation++;
 
     // Snapshot the current heights so the blend has a "from" state.
     // We read from the live geometry rather than _hfBuffer because the
@@ -221,6 +246,9 @@ export class MathVisualizer {
       console.warn(`[MathVisualizer] Unknown volume formula: ${key}`);
       return;
     }
+    this._generation++;
+    this._pendingHF  = null;
+    this._workerBusy = false;
     this._snapshotBasePositions();
     this._volumeFn  = f.f;
     this._volumeKey = key;
@@ -238,6 +266,9 @@ export class MathVisualizer {
    */
   setVolumeFn(fn) {
     if (typeof fn !== 'function') return;
+    this._generation++;
+    this._pendingHF  = null;
+    this._workerBusy = false;
     this._snapshotBasePositions();
     this._volumeFn = fn;
     this._mode     = 'volume';
@@ -252,7 +283,25 @@ export class MathVisualizer {
    */
   setMode(mode) {
     if (mode === this._mode) return;
-
+    this._generation++;
+    // Invalidate any in-flight worker response and the pending buffer.
+    // A switch out of surface mode means whatever the worker is currently
+    // computing (or has already returned) is no longer wanted.
+    this._pendingHF  = null;
+    this._workerBusy = false;
+    // Cancel any in-flight Surface formula-transition blend. Without this,
+    // a switch surface→volume→surface within the 800ms blend window would
+    // resume the old blend from _prevHF, which now points at a height
+    // field from a formula the user is no longer looking at. The blend
+    // animation would briefly show a ghost of the abandoned formula.
+    this._blendActive = false;
+    // Reset the volume time accumulator's "last tick" marker. If we were
+    // in volume mode and switch away (or in surface and switch into
+    // volume), the next _tickVolume should treat itself as the first
+    // tick — no carried-over dt from before the mode switch. Without
+    // this, the dt sanity guards in _tickVolume silently discard the
+    // first frame after mode entry, causing a one-frame jitter.
+    this._lastTickTime = null;
     // Entering volume with no formula yet — pick a sensible default rather
     // than leave the mesh undeformed and confused.
     if (mode === 'volume' && !this._volumeFn) {
@@ -305,6 +354,7 @@ export class MathVisualizer {
    * frame starts from a flat surface.
    */
   deactivate() {
+    this._generation++;
     this.active       = false;
     this._formulaFn   = null;
     this._pendingHF   = null;
@@ -342,6 +392,14 @@ export class MathVisualizer {
     const currentCount = this.render.gpuMesh.geometry.attributes.position.count;
     const currentGrid  = Math.round(Math.sqrt(currentCount));
     if (currentGrid !== this._gridSize) {
+      // Bump generation: the worker may currently be computing a tick for
+      // the OLD grid size. When its result lands, the gen check will
+      // discard it instead of trying to apply a height field whose length
+      // no longer matches the geometry vertex count. Without this, a
+      // rapid shape change would race the previous tick into the new
+      // shape's attribute buffer and produce a length mismatch error
+      // (or worse — a silent partial-write artefact).
+      this._generation++;
       this._gridSize    = currentGrid;
       this._pendingHF   = null;
       this._workerBusy  = false;
@@ -494,7 +552,14 @@ export class MathVisualizer {
     // in onmessage and is picked up at the top of the next tick.
     if (this._workerReady && this._worker && !this._workerBusy) {
       this._workerBusy = true;
-      this._worker.postMessage({ type: 'tick', time: t, gridSize: this._gridSize, extent: 3.5, audioParams });
+      this._worker.postMessage({
+        type: 'tick',
+        time: t,
+        gridSize: this._gridSize,
+        extent: 3.5,
+        audioParams,
+        gen: this._generation,
+      });
       return;
     }
 
