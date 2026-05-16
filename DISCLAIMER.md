@@ -44,7 +44,7 @@ guidance.
 ## Hardware & Performance
 
 - VIMATHIC runs in the browser and uses **WebGL (GPU)** for rendering, with
-  parallel Web Workers driving CPU math evaluation. It is intentionally
+  parallel Web Worker driving CPU math evaluation. It is intentionally
   demanding: a complex fractal animated at 60 fps with 7 post-processing
   passes will use whatever GPU and CPU the machine provides.
 - Extended use of a GPU-intensive application can cause hardware to **run
@@ -146,9 +146,10 @@ verify it against the primary source.
   reviewed by a lawyer.
 - If you intend to rely on the license terms for commercial, institutional,
   or legal purposes, consult a qualified attorney.
-- The "For tinkerers and VJs" section in the README is an informal
-  statement of intent, not a legally binding contribution agreement. Formal
-  contribution terms are governed by the BUSL-1.1 license.
+- Formal contribution terms are governed by [CONTRIBUTING.md](./CONTRIBUTING.md),
+  which establishes a dual-grant model: contributions are licensed to the
+  project under BUSL-1.1 / GPL v3, and separately grant the maintainer
+  rights to use them in proprietary commercial derivatives.
 
 ---
 
@@ -158,8 +159,10 @@ VIMATHIC uses the following third-party libraries:
 
 - [Three.js](https://threejs.org) — MIT License, © mrdoob and contributors
 - [gif.js](https://github.com/jnordberg/gif.js) — MIT License, © Johan Nordberg
-- [Vite](https://vitejs.dev) — MIT License, © Evan You and Vite contributors
-- [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) — MIT License
+- [micromark](https://github.com/micromark/micromark) — MIT License, © Titus Wormer
+- [micromark-extension-gfm-table](https://github.com/micromark/micromark-extension-gfm-table) — MIT License, © Titus Wormer
+- [Vite](https://vitejs.dev) — MIT License, © Yuxi (Evan) You and Vite contributors
+- [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) — MIT License, © Richard Tallent
 - [Playwright](https://playwright.dev) — Apache 2.0 License (dev/test only)
 
 All third-party code is used under its respective open-source license. The

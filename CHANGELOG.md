@@ -69,15 +69,22 @@ full creative-control toolchain — packaged as a single-file deployment.
 
 ### Licensing
 
-Code: **Business Source License 1.1** with educational/non-commercial
-exception, auto-converting to **GPL v3** on 2031-05-09.
+Code: **Business Source License 1.1**, auto-converting to **GPL v3** on
+2031-05-09. Educational exception: accredited educational institutions
+may use VIMATHIC immediately under either Apache 2.0 or GPL v3 (recipient's
+choice).
+
+Contributions are accepted under a dual-grant model: contributors license
+their work to the project under BUSL-1.1 / GPL v3, and separately grant
+the maintainer rights to use it in proprietary commercial derivatives.
+See CONTRIBUTING.md for full terms.
 
 Bundled intro track is licensed separately under the bundled-media clause
 in [LICENSE.txt](./LICENSE.txt) — personal/non-commercial playback inside
 VIMATHIC is permitted; commercial use, public performance, and sampling
 require separate permission.
 
-Bundled libraries (Three.js, gif.js, micromark) retain their original MIT
-licenses.
+Bundled libraries (Three.js, gif.js, micromark, micromark-extension-gfm-table,
+Vite, vite-plugin-singlefile) retain their original MIT licenses.
 
 [1.0.0-beta]: https://github.com/vimathic/vimathic/releases/tag/v1.0.0-beta

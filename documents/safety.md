@@ -77,12 +77,15 @@ Code, documentation, and mathematical claims were produced with assistance from 
 
 ## Dependencies
 
+## Dependencies
+
 VIMATHIC stands on the shoulders of these open-source projects — with gratitude to their authors:
 
 - [Three.js](https://threejs.org) — MIT License, © mrdoob and contributors
 - [gif.js](https://github.com/jnordberg/gif.js) — MIT License, © Johan Nordberg
 - [micromark](https://github.com/micromark/micromark) — MIT License, © Titus Wormer
-- [Vite](https://vitejs.dev) — MIT License, © Evan You and Vite contributors
+- [micromark-extension-gfm-table](https://github.com/micromark/micromark-extension-gfm-table) — MIT License, © Titus Wormer
+- [Vite](https://vitejs.dev) — MIT License, © Yuxi (Evan) You and Vite contributors
 - [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) — MIT License, © Richard Tallent
 
 All third-party code is used under its respective open-source license. The author makes no claim to these libraries.

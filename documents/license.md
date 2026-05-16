@@ -15,7 +15,7 @@ This page explains the VIMATHIC license in plain language. The full legal text i
 
 **Read, study, and modify the code.** All source is on GitHub. Read it, learn from it, fork it for your own learning or art.
 
-**Schools, universities, and non-profit educational organisations** can use VIMATHIC under the more permissive Apache 2.0 terms immediately, free of charge. Use it in teaching, classroom demonstrations, research, exhibitions — go ahead.
+**Schools, universities, and non-profit educational organisations** can use VIMATHIC immediately under either the **Apache 2.0** or **GPL v3** terms — recipient's choice, no waiting for the Change Date. Use it in teaching, classroom demonstrations, research, exhibitions — go ahead. After 2031-05-09, all use falls under GPL v3 (see below).
 
 ## What requires permission — for now
 
@@ -52,9 +52,18 @@ The track's licensing terms are independent of the BUSL-1.1 schedule. The GPL v3
 
 ## Forks & Contributions
 
-We love forks. If you build a cool feature, modification, or extension in your fork, we might merge it back into the main VIMATHIC branch (with credit to you). By publishing your fork publicly, you agree that your contributions can be incorporated under the same BUSL-1.1 terms as the main project.
+We love forks. If you build a cool feature, modification, or extension in your fork, we might merge it back into the main VIMATHIC branch (with credit to you).
 
-No Contributor License Agreement, no paperwork — just open a pull request with code you have the right to share. Details in [CONTRIBUTING.md on GitHub](https://github.com/vimathic/vimathic/blob/main/CONTRIBUTING.md).
+When you open a pull request, you grant two things:
+
+1. **A license to the project on the same terms as VIMATHIC itself** — BUSL-1.1 now, GPL v3 after the Change Date. This is the standard "your contribution joins the project" grant.
+2. **A separate, broader license to the maintainer** — to use your contribution under any license terms, including in proprietary commercial products derived from VIMATHIC (for example, planned commercial mobile and desktop apps).
+
+You retain copyright on your contribution. The grant above is non-exclusive — you can still use your own code anywhere else, under any terms you like.
+
+This dual-grant model is how the project sustains itself: VIMATHIC stays free and open-source, while commercial derivatives may incorporate community contributions. It's disclosed upfront so there are no surprises later.
+
+No Contributor License Agreement form, no paperwork — opening the PR is your acknowledgment of these terms. Full text in [CONTRIBUTING.md on GitHub](https://github.com/vimathic/vimathic/blob/main/CONTRIBUTING.md).
 
 ## Third-party libraries
 
@@ -70,7 +79,12 @@ Each is used under its respective MIT license. The author of VIMATHIC makes no c
 
 ## When in doubt
 
-If you're not sure whether your intended use is allowed — email **vimathic.info@proton.me** and ask. Replies aren't guaranteed, but most reasonable use cases get a "yes" when answered.
+If you're not sure whether your intended use is allowed — email **vimathic.info@proton.me** and ask.
+
+Two notes on what an email exchange does and doesn't do:
+
+- **An email asking permission does not by itself grant permission.** Silence is not consent. Only explicit written confirmation from the maintainer constitutes a license grant beyond what BUSL-1.1 already permits.
+- **Replies aren't guaranteed.** The project is maintained in spare time, and inbox volume varies. If you don't hear back within a reasonable window and your intended use is commercial or large-scale, treat that as "permission not granted" rather than "permission implied".
 
 ---
 

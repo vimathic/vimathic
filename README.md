@@ -262,7 +262,7 @@ The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, the plann
 - [SCIENCE.md](./SCIENCE.md) — research behind the neuroscience and why it works
 - [DISCLAIMER.md](./DISCLAIMER.md) — photosensitivity warning, AI-assisted authorship, hardware notes
 - [SECURITY.md](./SECURITY.md) — vulnerability disclosure policy
-- [LICENSE.txt](./LICENSE.txt) — BUSL-1.1 with educational exception → GPL v3 on 2031-05-09
+- [LICENSE.txt](./LICENSE.txt) — BUSL-1.1 → GPL v3 (2031-05-09); educational exception (Apache 2.0 or GPL v3 at recipient's option)
 
 ---
 
@@ -271,13 +271,20 @@ The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, the plann
 **[BUSL-1.1](./LICENSE.txt)** — source-available, non-competing use only.
 
 **Educational exception:** accredited schools, universities, and non-profit educational
-organizations may use VIMATHIC under Apache 2.0 terms immediately, free of charge.
+organizations may use VIMATHIC immediately under either **Apache 2.0** or **GPL v3** terms
+— recipient's choice, free of charge.
 
 **After 2031-05-09:** the codebase converts to **GPL v3** — a copyleft open-source license.
 Any derivative work that gets distributed must remain open-source under GPL v3.
 No company can take this code and lock it behind a paywall.
 
-Uses [Three.js](https://threejs.org) © mrdoob, MIT License.
+**Contributions:** by opening a pull request, contributors grant the project rights
+under BUSL-1.1 / GPL v3 and, separately, grant the maintainer rights to use the
+contribution in proprietary commercial derivatives. See
+[CONTRIBUTING.md](./CONTRIBUTING.md) for the full dual-grant terms.
+
+Uses Three.js, gif.js, micromark, Vite, and vite-plugin-singlefile — all MIT.
+See [LICENSE.txt](./LICENSE.txt) for full third-party attributions.
 
 ### Bundled audio
 
