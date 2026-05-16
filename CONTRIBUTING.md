@@ -52,7 +52,7 @@ Use the [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.md). I
 ### Pull requests
 
 1. **Open an issue first** for anything non-trivial. A two-line "this is what I want to do, OK?" before writing the code saves both of us from a closed PR.
-2. **Fork → branch → PR against `dev`**, not `main`. The `main` branch only receives merges from `dev` after CI is green.
+2. **Fork → branch → PR against `main`**. Branch protection requires required CI status checks (`test`, `build`) to pass and squash-merge as the only allowed method.
 3. **One concern per PR.** A docs typo fix + a CSS tweak + a bug fix = three PRs.
 4. **Run the test suite locally before pushing:**
 
@@ -132,7 +132,7 @@ If all three pass locally, CI almost always passes too.
 
 ## Project layout
 
-Source code lives in `src/`. Documentation lives in `documents/` (one `.md` per About-modal tab and static docs page). Plugins lives in `plugins/`. Tests in `tests/`. See [FINAL_REPO_STRUCTURE.md](./FINAL_REPO_STRUCTURE.md) for the full tree.
+Source code lives in `src/`. Documentation lives in `documents/` (one `.md` per About-modal tab and static docs page). Plugins live in `plugins/`. Tests in `tests/`. Browse the repo tree on GitHub for the full layout.
 
 Key principles:
 

@@ -70,8 +70,8 @@ given freely.
 </pre>
 
 All open-source under [BUSL-1.1](./license.md), converting to GPL v3
-on **2031-05-09**. Educational and non-profit use is permitted under
-Apache 2.0 terms immediately.
+on **2031-05-09**. Educational and non-profit use is permitted
+immediately under Apache 2.0 or GPL v3 terms (recipient's choice).
 
 ## What community support makes possible
 

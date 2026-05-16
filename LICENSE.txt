@@ -20,9 +20,19 @@ Additional Use Grant: You may make production use of the Licensed Work,
                       Use of the Licensed Work by accredited educational
                       institutions (schools, colleges, universities, and
                       other non-profit educational organizations) is
-                      permitted under the terms of the Apache License,
-                      Version 2.0, immediately and without waiting for
-                      the Change Date. This includes use in classrooms,
+                      permitted immediately and without waiting for the
+                      Change Date, at the recipient's option, under
+                      either:
+                        (a) the terms of the Apache License, Version 2.0,
+                            or
+                        (b) the terms of the GNU General Public License,
+                            Version 3.
+                      The recipient chooses which license to apply at the
+                      time of use. Once the Change Date is reached, all
+                      use (educational or otherwise) falls under the
+                      Change License (GPL v3) as defined below.
+
+                      This Educational Exception covers use in classrooms,
                       student projects, academic research, and educational
                       demonstrations, provided such use is non-commercial.
 
@@ -129,8 +139,12 @@ separately under the following terms:
 
 Termination. This License will automatically terminate and the rights
 granted hereunder will cease if You fail to comply with any material
-term of this License. Upon termination, You must destroy all copies of
-the Licensed Work in Your possession.
+term of this License. Upon termination, You must cease all use,
+reproduction, and distribution of the Licensed Work, and any rights
+granted hereunder will revert to the Licensor. Copies retained solely
+for archival, audit, or legal-compliance purposes may be kept but may
+not be used for any other purpose. Reinstatement of rights, if any,
+is at the sole discretion of the Licensor.
 
 Disclaimer of Warranties. THE LICENSED WORK IS PROVIDED "AS IS". THE
 LICENSOR HEREBY DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING
@@ -824,5 +838,26 @@ Public License instead of this License.  But first, please read
 
 Copyright (c) 2025–2026 S. Melentyev. All rights reserved.
 
-VIMATHIC uses Three.js © mrdoob and contributors, MIT License.
-https://github.com/mrdoob/three.js/blob/dev/LICENSE
+VIMATHIC incorporates the following third-party libraries, each
+under its respective license:
+
+  - Three.js — MIT License, © mrdoob and contributors
+    https://github.com/mrdoob/three.js/blob/dev/LICENSE
+
+  - gif.js — MIT License, © Johan Nordberg
+    https://github.com/jnordberg/gif.js/blob/master/LICENSE
+
+  - micromark — MIT License, © Titus Wormer
+    https://github.com/micromark/micromark/blob/main/license
+
+  - micromark-extension-gfm-table — MIT License, © Titus Wormer
+    https://github.com/micromark/micromark-extension-gfm-table/blob/main/license
+
+  - Vite — MIT License, © Yuxi (Evan) You and Vite contributors
+    https://github.com/vitejs/vite/blob/main/LICENSE
+
+  - vite-plugin-singlefile — MIT License, © Richard Tallent
+    https://github.com/richardtallent/vite-plugin-singlefile/blob/main/LICENSE
+
+The author makes no copyright claim to these libraries and disclaims
+all liability for any issues arising from their use.

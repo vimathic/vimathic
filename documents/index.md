@@ -26,7 +26,7 @@ Every formula is documented with its accuracy tier. 120 formulas use closed-form
 
 ## Single-file deployment
 
-The entire application — UI, renderer, audio engine, math engine, shader compiler, GIF recorder, WebM recorder, and full documentation — is bundled into a single `index.html` file (~900 KB) plus three companion files: the Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. The app runs offline after first load and makes no runtime network requests beyond fetching the intro track once.
+The entire application — UI, renderer, audio engine, math engine, shader compiler, GIF recorder, WebM recorder, and full documentation — is bundled into four runtime files: `index.html` (~900 KB, the main app), a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. The app runs offline after first load and makes no runtime network requests beyond fetching the intro track once.
 
 ## Documentation
 
@@ -65,7 +65,7 @@ This documentation covers every part of VIMATHIC in detail. Pick the topic that 
 
 ## Technical details
 
-VIMATHIC is built with Three.js for WebGL rendering, the Web Audio API for spectral analysis and beat detection, and the Web MIDI API for controller integration. The source code is on [GitHub](https://github.com/vimathic/vimathic) under Business Source License 1.1, automatically converting to GPL v3 on 2031-05-09. After conversion, VIMATHIC and any derivative work that gets distributed must remain open-source under GPL v3. Accredited educational institutions can use VIMATHIC under Apache 2.0 terms immediately, free of charge.
+VIMATHIC is built with Three.js for WebGL rendering, the Web Audio API for spectral analysis and beat detection, and the Web MIDI API for controller integration. The source code is on [GitHub](https://github.com/vimathic/vimathic) under Business Source License 1.1, automatically converting to GPL v3 on 2031-05-09. After conversion, VIMATHIC and any derivative work that gets distributed must remain open-source under GPL v3. Accredited educational institutions can use VIMATHIC immediately under either Apache 2.0 or GPL v3 terms — recipient's choice, free of charge.
 
 ## Browser support
 
