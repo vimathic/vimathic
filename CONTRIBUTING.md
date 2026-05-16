@@ -89,7 +89,17 @@ If your controller sends standard CC and you've worked out a useful default mapp
 
 VIMATHIC is licensed under [BUSL-1.1](./LICENSE.txt), auto-converting to GPL v3 on **2031-05-09**.
 
-By opening a pull request, you agree that your contribution is licensed under the same terms as the project. No Contributor License Agreement, no paperwork — just open the PR with code you have the right to share. You retain copyright on your contributions; you grant the project a license to use them under BUSL-1.1 (and, after the change date, GPL v3).
+By opening a pull request, you agree to the following:
+
+1. You **retain copyright** on your contribution.
+
+2. You **license the contribution to the project** under the same terms as the project itself (BUSL-1.1, converting to GPL v3 on the change date).
+
+3. You additionally grant the project maintainer **a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license** to use, modify, and distribute your contribution under any license terms, including in proprietary commercial products derived from VIMATHIC (e.g. planned mobile apps, possibly desktop).
+
+This dual license reflects a sustainable open-core model: the open-source VIMATHIC (this repository) is free forever, while commercial derivatives may incorporate contributions. Your code stays free in VIMATHIC 1.0; it may also appear in commercial products built by the maintainer.
+
+No CLA, no paperwork — opening the PR is your acknowledgment of these terms.
 
 If you're contributing on behalf of an employer, please verify that you have the right to do so before opening the PR.
 
