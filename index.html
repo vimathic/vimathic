@@ -141,7 +141,7 @@
       padding:9px 13px;cursor:pointer;user-select:none;position:sticky;top:0;
       background:var(--panel);z-index:1;border-radius:12px 12px 0 0}
     .ctrl-header:hover{background:rgba(255,58,122,.06)}
-    .ctrl-header h3{margin:0;font-size:10px;color:var(--accent);letter-spacing:2px;font-family:var(--display)}
+    .ctrl-header h3{margin:0;font-size:10px;color:var(--accent);letter-spacing:2px;font-family:var(--display);transform:scaleY(0.85);transform-origin:left center;display:inline-block}
     /* max-height bumped from 1800 to 5000 — was clipping MIDI mapping section
        at the bottom of the panel when all advanced sections were expanded. */
     .ctrl-body{padding:0 11px 11px 11px;overflow:hidden;transition:max-height .3s ease;max-height:5000px}
@@ -664,8 +664,6 @@
     input[type="range"]{-webkit-appearance:none;appearance:none;width:100%;height:6px;
       background:linear-gradient(90deg,#111,#1a1a2e);border-radius:4px;outline:none;margin:10px 0;position:relative;overflow:hidden}
     input[type="range"]::-webkit-slider-runnable-track{height:6px;border-radius:4px;background:linear-gradient(90deg,#111,#1a1a2e)}
-    input[type="range"]::before{content:"";position:absolute;height:100%;width:var(--val,50%);
-      background:linear-gradient(90deg,#ff3a7a,#0ff,#00ffaa);box-shadow:0 0 10px #ff3a7a,0 0 20px rgba(0,255,255,.4);z-index:0}
     input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;
       background:radial-gradient(circle,#fff 0%,#ff3a7a 60%,#ff3a7a 100%);border-radius:50%;margin-top:-4px;cursor:pointer;
       position:relative;z-index:2;box-shadow:0 0 6px #ff3a7a,0 0 12px rgba(255,58,122,.8),0 0 20px rgba(0,255,255,.3);transition:all .15s}
@@ -1642,8 +1640,10 @@
   <div style="font-size:10px;color:rgba(0,255,200,.55);font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase">Now Playing</div>
   <div id="track-overlay-name" style="
     font-family:var(--display);font-size:clamp(14px,2.5vw,22px);
-    color:#fff;letter-spacing:.04em;text-shadow:0 0 22px rgba(0,255,200,.6),0 2px 8px rgba(0,0,0,.8);
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70vw">
+    color:#fff;letter-spacing:.12em;text-transform:uppercase;
+    text-shadow:0 0 22px rgba(0,255,200,.6),0 2px 8px rgba(0,0,0,.8);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70vw;
+    transform:scaleY(0.85);transform-origin:left center">
   </div>
 </div>
 
