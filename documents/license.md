@@ -17,8 +17,6 @@ This page explains the VIMATHIC license in plain language. The full legal text i
 
 **Schools, universities, and non-profit educational organisations** can use VIMATHIC under the more permissive Apache 2.0 terms immediately, free of charge. Use it in teaching, classroom demonstrations, research, exhibitions — go ahead.
 
-**Run it locally without internet.** The offline build is one HTML file; you can keep a copy forever, share it as a file, run it from a USB stick. Even if vimathic.com one day disappears, your local copy continues to work.
-
 ## What requires permission — for now
 
 The code is under **Business Source License 1.1** ("BUSL-1.1"). The short version of what *isn't* allowed without separate permission:
