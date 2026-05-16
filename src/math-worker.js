@@ -56,11 +56,14 @@ self.onmessage = ({ data }) => {
 
     case 'tick': {
       if (!formulaFn) return;
-      const { time, gridSize, extent = 3.5, audioParams } = data;
+      const { time, gridSize, extent = 3.5, audioParams, gen } = data;
       const hf = generateSurfaceFromFormula(formulaFn, audioParams, gridSize, extent, time);
+      // Echo the generation token back unchanged. The main thread uses it
+      // to discard results that were superseded by a setFormula/setMode
+      // call that happened while this tick was being computed.
       // Second argument is the transfer list — moves ownership of the
       // ArrayBuffer to the main thread instead of structured-cloning it.
-      self.postMessage({ type: 'result', hf }, [hf.buffer]);
+      self.postMessage({ type: 'result', hf, gen }, [hf.buffer]);
       break;
     }
 
