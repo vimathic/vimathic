@@ -1713,7 +1713,10 @@
   });
 
   // ── .vd spans — click to type a custom value ─────────────────────────
-  // Ceiling = 3× slider max (soft limit: experiments OK, NaN prevented).
+  // No upper ceiling: type 500 to get 500. The slider's `max` attribute
+  // grows to match the value so the thumb sits at the right edge of an
+  // expanded track — see params.js syncParamUI for the same logic on the
+  // hotkey path. NaN inputs fall back to the slider's current value.
   // The span sits inside <label> right before the <input type=range>.
   document.querySelectorAll('.vd').forEach(span => {
     if (span.id === 'blmv') return; // Bloom: max already at visual limit
@@ -1728,7 +1731,6 @@
         : span.parentElement.querySelector('input[type=range]');
       if (!sl) return;
 
-      const ceil = parseFloat(sl.max) * 3;
       const floor = parseFloat(sl.min);
 
       const inp = document.createElement('input');
@@ -1746,19 +1748,24 @@
       const commit = () => {
         let v = parseFloat(inp.value);
         if (isNaN(v)) v = parseFloat(sl.value);
-        v = Math.max(floor, Math.min(ceil, v));
-        // Round to slider's step precision
+        // Lower clamp only — no upper limit. Type 500 to get 500.
+        if (v < floor) v = floor;
+        // Round to slider's step precision so we don't end up with
+        // 0.7000000000000001 from float arithmetic.
         const step = parseFloat(sl.step) || 0.01;
         const decimals = (step.toString().split('.')[1] || '').length;
         v = parseFloat(v.toFixed(decimals));
-        // Apply: update slider visually (clamp to slider range for the thumb)
-        sl.value = Math.min(parseFloat(sl.max), Math.max(floor, v));
-        sl.dispatchEvent(new Event('input', { bubbles: true }));
-        sl.dispatchEvent(new Event('change', { bubbles: true }));
-        // If value exceeds slider max, patch slider max so thumb moves
-        if (v > parseFloat(sl.max)) sl.max = v;
+        // Grow slider max BEFORE writing value, otherwise HTML5 silently
+        // clamps the assignment to the current max. Stash the original
+        // max so RESET ALL can restore it (matches params.js's
+        // dataset.htmlMax convention).
+        if (v > parseFloat(sl.max)) {
+          if (!sl.dataset.htmlMax) sl.dataset.htmlMax = sl.max;
+          sl.max = String(v);
+        }
         sl.value = v;
-        sl.dispatchEvent(new Event('input', { bubbles: true }));
+        sl.dispatchEvent(new Event('input',  { bubbles: true }));
+        sl.dispatchEvent(new Event('change', { bubbles: true }));
         // Restore span
         span.textContent = v.toFixed(decimals);
         inp.replaceWith(span);
