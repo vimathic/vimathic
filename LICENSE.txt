@@ -8,8 +8,8 @@ License text copyright © 2013 MariaDB plc, All Rights Reserved.
 Parameters
 
 Licensor:             S. Melentyev
-Licensed Work:        VIMATHIC™ Version 1.0 (Beta) and later versions of
-                      the Licensed Work are considered part of this License.
+Licensed Work:        VIMATHIC™ and all subsequent versions of the
+                      Licensed Work are considered part of this License.
 Additional Use Grant: You may make production use of the Licensed Work,
                       provided such use does not include offering the
                       Licensed Work or a substantially similar product
