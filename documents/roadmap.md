@@ -8,7 +8,7 @@ description: What VIMATHIC is today, and what comes next.
 
 <picture>
   <source srcset="/support-hero.webp" type="image/webp">
-  <img src="/support-hero.png" alt="Two hackers at night — one coding on a rooftop laptop, another at a desk with a Mandelbrot fractal on screen — dropping a coin into a shared hat between them" style="max-width:100%;height:auto;display:block;margin:1.5em auto;border-radius:6px;">
+  <img src="/support-hero.png" alt="VIMATHIC hero image" style="max-width:100%;height:auto;display:block;margin:1.5em auto;border-radius:6px;">
 </picture>
 
 VIMATHIC 1.0 is here — free, open-source, and complete on its own.
