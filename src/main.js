@@ -11,7 +11,7 @@ import { ShaderEditor, ModelLoader } from './shaders.js';
 import { CameraSystem } from './camera.js';
 import { UIController, ClipPlayer } from './ui/controller.js';
 import { MIDIController, ShuffleBag } from './utils.js';
-import { applyParam, syncParamUI, COLOR_SCHEME_COUNT } from './params.js';
+import { applyParam, syncParamUI, COLOR_SCHEME_COUNT, PARAMS } from './params.js';
 import { OutputManager, SecondScreen } from './outputs.js';
 import { GifRecorder, WebmRecorder } from './recorder.js';
 import { MathVisualizer } from './math-visualizer.js';
@@ -45,6 +45,12 @@ const ctx    = { audio, render, camera };
 // MIDI → engine: one PARAMS lookup replaces the per-parameter switch.
 // Adding a new mappable parameter is now a single-place change in params.js.
 midi.cb.onParamSet = (id, val) => applyParam(ctx, id, val);
+
+// Relative MIDI mode reads the current engine value before adding the
+// delta. PARAMS[id].get is the canonical reader for every mappable
+// parameter — same path preset capture uses. Returning 0 for unknown ids
+// keeps the controller inert rather than NaN-propagating into engine state.
+midi.cb.getParamValue = id => PARAMS[id]?.get(ctx) ?? 0;
 
 const output      = new OutputManager(render.renderer);
 const secondScreen = new SecondScreen(render.renderer);

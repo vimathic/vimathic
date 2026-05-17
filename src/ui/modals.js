@@ -826,18 +826,18 @@ function bindMIDI(ui) {
     if (!mappings.length) {
       listEl.innerHTML = '<span style="color:#334;font-size:10px">No mappings — use Learn or add below</span>';
     }
-    mappings.forEach(({ cc, paramId }) => {
+    mappings.forEach(({ cc, paramId, mode }) => {
       // Filter out mappings whose param has been removed from PARAMS —
       // shouldn't happen in normal use, but defends against stale
       // localStorage data from an older app version.
       const param = MIDI_PARAMS.find(p => p.id === paramId);
       if (!param) return;
-      listEl.appendChild(_makeRow(cc, paramId));
+      listEl.appendChild(_makeRow(cc, paramId, mode));
     });
     listEl.appendChild(_makeAddRow());
   };
 
-  const _makeRow = (cc, paramId) => {
+  const _makeRow = (cc, paramId, mode = 'relative') => {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:5px;align-items:center;padding:3px 0;border-bottom:1px solid #0d0d20;box-sizing:border-box';
     const ccLabel = document.createElement('span');
@@ -853,6 +853,31 @@ function bindMIDI(ui) {
       sel.appendChild(opt);
     });
     sel.addEventListener('change', () => { midi.setMapping(cc, sel.value); _renderMappings(); });
+
+    // ── REL / ABS mode toggle ────────────────────────────────────────
+    // Default is REL (relative): encoder ticks adjust value by delta,
+    // current value is never overwritten. ABS (absolute): standard MIDI
+    // — CC 0..127 maps linearly to param range. User picks per CC based
+    // on their hardware: encoders → REL, pots/faders → ABS.
+    const modeBtn = document.createElement('button');
+    modeBtn.title = 'Click to toggle: REL = encoder delta · ABS = potentiometer';
+    const _paintMode = m => {
+      modeBtn.textContent = m === 'absolute' ? 'ABS' : 'REL';
+      modeBtn.style.cssText =
+        'background:' + (m === 'absolute' ? 'rgba(255,200,0,.10)' : 'rgba(0,255,200,.10)') + ';' +
+        'border:1px solid ' + (m === 'absolute' ? 'rgba(255,200,0,.4)' : 'rgba(0,255,200,.4)') + ';' +
+        'color:' + (m === 'absolute' ? '#fc0' : '#0fc') + ';' +
+        'border-radius:4px;padding:3px 5px;cursor:pointer;font-size:8px;font-family:var(--mono);' +
+        'flex-shrink:0;box-sizing:border-box;letter-spacing:.5px;min-width:32px;text-align:center;';
+    };
+    _paintMode(mode);
+    modeBtn.addEventListener('click', () => {
+      const next = mode === 'absolute' ? 'relative' : 'absolute';
+      midi.setMappingMode(cc, next);
+      mode = next;
+      _paintMode(next);
+    });
+
     const reLearnBtn = document.createElement('button');
     reLearnBtn.textContent = '⊙'; reLearnBtn.title = 'Re-learn CC for this param';
     reLearnBtn.style.cssText = 'background:none;border:1px solid rgba(255,58,122,.2);color:#f3a;' +
@@ -862,7 +887,7 @@ function bindMIDI(ui) {
     delBtn.textContent = '✕';
     delBtn.style.cssText = 'background:none;border:none;color:#f44;cursor:pointer;font-size:12px;padding:2px 5px;flex-shrink:0;box-sizing:border-box';
     delBtn.addEventListener('click', () => { midi.setMapping(cc, 'none'); _renderMappings(); });
-    row.append(ccLabel, sel, reLearnBtn, delBtn);
+    row.append(ccLabel, sel, modeBtn, reLearnBtn, delBtn);
     return row;
   };
 

@@ -7,7 +7,7 @@
 // Called once from UIController.bindAll().
 
 import { DOM } from '../dom.js';
-import { bindParamSliders, resetParamsToDefault } from '../params.js';
+import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam } from '../params.js';
 import { bindAboutModal, ABOUT_OVERLAY_ID } from './about-modal.js';
 
 export function bindControls(ui) {
@@ -292,12 +292,23 @@ export function bindControls(ui) {
 
   // ── Keyboard-drag slider control (works in fullscreen AND normal mode) ──
   // Hold key + drag mouse/touchpad horizontally to adjust the mapped param.
+  //
+  // Each entry maps a key to a PARAMS id. min/max for the drag interaction
+  // come from PARAMS[id] — using extendedMax as the ceiling so the drag can
+  // push the value beyond the slider's visible HTML max. applyParam handles
+  // engine write + slider grow + display sync uniformly, so the slider
+  // remains a usable fine-tuner after an extension instead of clamping back.
+  //
+  // Why min uses Math.max(p.min, 0.1): some PARAMS allow min=0 (bassSens,
+  // trebleSens, bloom, waveInt) but hold-and-drag at exactly 0 makes the
+  // visualizer go silent, which feels broken mid-performance. 0.1 keeps a
+  // sliver of motion. PARAMS.min stays at 0 for MIDI / preset / reset paths.
   const _fsParams = {
-    'l': { get: () => a.bassSens,           set: v => { a.bassSens   = v; const el=document.getElementById('bass-sens');   if(el)el.value=v; const lv=document.getElementById('bsv');   if(lv)lv.textContent=v.toFixed(2); },              min:0.1, max:3.0 },
-    'k': { get: () => a.trebleSens,         set: v => { a.trebleSens = v; const el=document.getElementById('treble-sens'); if(el)el.value=v; const lv=document.getElementById('tsv');   if(lv)lv.textContent=v.toFixed(2); },              min:0.1, max:3.0 },
-    'j': { get: () => a.amp,                set: v => { a.amp=v; r.U.uAmp.value=v; const el=document.getElementById('amplitude');   if(el)el.value=v; const lv=document.getElementById('ampv'); if(lv)lv.textContent=v.toFixed(2); },   min:0.1, max:2.0 },
-    'n': { get: () => a.waveInt,            set: v => { a.waveInt=v; r.U.uWI.value=v; const el=document.getElementById('wave-int'); if(el)el.value=v; const lv=document.getElementById('wiv');  if(lv)lv.textContent=v.toFixed(2); },   min:0.1, max:3.0 },
-    'b': { get: () => r.bloomPass.strength, set: v => { r.bloomPass.strength=v; const el=document.getElementById('bloom'); if(el)el.value=v; const lv=document.getElementById('blmv'); if(lv)lv.textContent=v.toFixed(2); },             min:0.0, max:2.0 },
+    'l': 'bassSens',
+    'k': 'trebleSens',
+    'j': 'amp',
+    'n': 'waveInt',
+    'b': 'bloom',
   };
   let _dragKey = null;
 
@@ -310,11 +321,39 @@ export function bindControls(ui) {
     if (e.key.toLowerCase() === _dragKey) _dragKey = null;
   });
   document.addEventListener('mousemove', e => {
-    if (!_dragKey || !_fsParams[_dragKey]) return;
-    const p   = _fsParams[_dragKey];
-    const spd = (p.max - p.min) / 600;
-    const v   = Math.max(p.min, Math.min(p.max, p.get() + e.movementX * spd));
-    p.set(v);
+    if (!_dragKey) return;
+    const id = _fsParams[_dragKey];
+    const p  = PARAMS[id];
+    if (!p) return;
+
+    // Drag speed adapts to the live value but with log-bounded growth, NOT
+    // strict proportionality. Strict proportionality (spd = |cur|/600) is
+    // a self-reinforcing loop: each pixel of drag scales with current
+    // value, which grows, which scales the next pixel, which grows... a
+    // fast sustained drag can hit 1e+20 in a second.
+    //
+    // Two-regime sensitivity, matching MIDI relative dispatch:
+    //   • Normal range (|cur| ≤ extendedMax): 600 px = full sweep of
+    //     [min..extendedMax]. Standard slider feel for routine use.
+    //   • Extended range (|cur| > extendedMax): speed grows with
+    //     log₂(|cur| / extendedMax + 1), capped multiplier per decade.
+    //     So at |cur|=10·extMax the speed is ~3.46× normal, at 100·extMax
+    //     it's ~6.66×, at 1000·extMax it's ~9.97×. Reaching 1e+27 by
+    //     mouse drag is now mathematically infeasible — the multiplier
+    //     grows logarithmically while value grows linearly with the drag.
+    const hi        = p.extendedMax ?? p.max;
+    const lo        = Math.max(p.min, 0.1);
+    const cur       = p.get(ctx);
+    const spdBase   = (hi - lo) / 600;
+    const absVal    = Math.abs(cur);
+    const overshoot = absVal > hi ? absVal / hi : 1;
+    const mult      = overshoot > 1 ? Math.log2(overshoot + 1) : 1;
+    const spd       = spdBase * mult;
+    // Lower clamp at `lo` so a knob spam at the bottom doesn't drift below
+    // a useful value. No upper clamp — log-bounded growth lets the user
+    // reach extended values, just not unboundedly fast.
+    const v = Math.max(lo, cur + e.movementX * spd);
+    applyParam(ctx, id, v);
   });
 
   // ── Track name overlay ────────────────────────────────────────────────────
