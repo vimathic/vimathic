@@ -228,40 +228,20 @@ ${entries}
 
 function renderRobots(siteUrl) {
   return `# VIMATHIC — vimathic.com
-# We welcome AI search crawlers. Allow-list is explicit to be unambiguous;
-# default for any unlisted user-agent is also allow.
+#
+# Cloudflare auto-prepends a managed content block above this file
+# that handles AI crawler controls (training bots disallowed,
+# search bots allowed). We trust that default rather than override
+# it — see https://blog.cloudflare.com/ai-bots-content-controls/.
+#
+# This file only contributes:
+#   - the default Allow for any unlisted user-agent
+#   - the sitemap pointer for search engines
+#
+# To change AI crawler policy: toggle in the Cloudflare dashboard,
+# not here.
 
 User-agent: *
-Allow: /
-
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: GPTBot
-Allow: /
-
-User-agent: ChatGPT-User
-Allow: /
-
-User-agent: ClaudeBot
-Allow: /
-
-User-agent: Claude-Web
-Allow: /
-
-User-agent: PerplexityBot
-Allow: /
-
-User-agent: Google-Extended
-Allow: /
-
-User-agent: Applebot-Extended
-Allow: /
-
-User-agent: CCBot
 Allow: /
 
 Sitemap: ${siteUrl}/sitemap.xml
