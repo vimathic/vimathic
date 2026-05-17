@@ -57,7 +57,7 @@ License Grant. Subject to the terms and conditions of this License, the
 Licensor hereby grants You a non-exclusive, royalty-free, worldwide,
 non-sublicensable, non-transferable license to copy, modify, and create
 derivative works of the Licensed Work, in each case on the condition that
-You do not engage in any Competing Use as defined above.
+You do not engage in any Competing Use as defined below.
 
 Competing Use. A "Competing Use" means making the Licensed Work or a
 substantially similar product or service available to third parties:
