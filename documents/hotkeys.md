@@ -17,10 +17,11 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous / next track in playlist |
 | <kbd>R</kbd> | Randomize everything — shape, color, formula |
 | <kbd>F</kbd> | Random math formula (CPU) |
+| <kbd>D</kbd> | Next shape (sequential, looping through all 20 shapes) |
 | <kbd>Q</kbd> | Random color scheme |
 | <kbd>E</kbd> | Next color scheme (cycles through all 36) |
 | <kbd>W</kbd> | Flip camera 180° around its orbit |
-| <kbd>C</kbd> | Toggle ground grid |
+| <kbd>G</kbd> | Toggle ground grid |
 | <kbd>S</kbd> | Glitch punch — brief bloom + chromatic burst |
 | <kbd>H</kbd> | Toggle this hotkey hint overlay |
 
@@ -30,15 +31,15 @@ The randomization keys (`R`, `Q`, `F`) use a **shuffle bag**: every color, shape
 
 ## Hold-and-drag shortcuts
 
-Hold the key, then move the mouse **left or right** to adjust the parameter live. Works in both normal mode and full-screen mode.
+Hold the key, then drag horizontally with mouse, two-finger touchpad swipe, or scroll wheel to adjust the parameter live. Works in both normal mode and full-screen mode.
 
-| Key | Parameter | Range |
+| Keys | Parameter | Range |
 |---|---|---|
-| <kbd>L</kbd> | Bass sensitivity | 0.1 – 3.0 |
-| <kbd>K</kbd> | Treble sensitivity | 0.1 – 3.0 |
-| <kbd>J</kbd> | Amplitude | 0.1 – 2.0 |
-| <kbd>N</kbd> | Wave intensity | 0.1 – 3.0 |
-| <kbd>B</kbd> | Bloom | 0.0 – 2.0 |
+| <kbd>L</kbd> / <kbd>X</kbd> | Bass sensitivity | 0.1 – 3.0 |
+| <kbd>K</kbd> / <kbd>Z</kbd> | Treble sensitivity | 0.1 – 3.0 |
+| <kbd>J</kbd> / <kbd>V</kbd> | Amplitude | 0.1 – 2.0 |
+| <kbd>N</kbd> / <kbd>C</kbd> | Wave intensity | 0.1 – 3.0 |
+| <kbd>B</kbd> / <kbd>A</kbd> | Bloom | 0.0 – 2.0 |
 
 These are the "performance" keys — they're chosen so you can hold one with the left hand and aim the mouse with the right, like a modulation wheel. The slider in the side panel moves in sync as you drag.
 
@@ -46,6 +47,7 @@ These are the "performance" keys — they're chosen so you can hold one with the
 
 - `H` shows a small reference overlay in the bottom-left corner. Tap it once to show, again to hide.
 - `R` is by far the most useful key while exploring — it gives you a new combination in one keystroke.
+- `D` complements `R` — it walks through all 20 shapes in order, useful when you want to systematically compare looks instead of random surprise.
 - Combine `R` and `Q`: `R` for a full reset of the look, `Q` to swap just the color afterward.
 - `S` (glitch) plus a beat-heavy moment of music produces a satisfying punch — use it as a manual accent during sets.
 - The randomization affects the dropdowns in the panel too, so whatever `R` lands on becomes the "current" selection if you want to keep iterating from there.

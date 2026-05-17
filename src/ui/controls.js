@@ -299,16 +299,30 @@ export function bindControls(ui) {
   // engine write + slider grow + display sync uniformly, so the slider
   // remains a usable fine-tuner after an extension instead of clamping back.
   //
+  // Two key letters per param — original L/K/J/N/B (right side of the
+  // keyboard, easy reach for a right-handed mouse user) plus aliases
+  // Z/X/V/C/A (left side, easier when the right hand is on a mouse and
+  // the left wants to grab a parameter without crossing over). Both map
+  // to the same param via PARAMS[id], so there's no duplicated state and
+  // adding more aliases later is a one-line change here.
+  //
   // Why min uses Math.max(p.min, 0.1): some PARAMS allow min=0 (bassSens,
   // trebleSens, bloom, waveInt) but hold-and-drag at exactly 0 makes the
   // visualizer go silent, which feels broken mid-performance. 0.1 keeps a
   // sliver of motion. PARAMS.min stays at 0 for MIDI / preset / reset paths.
   const _fsParams = {
+    // Right-hand cluster (original)
     'l': 'bassSens',
     'k': 'trebleSens',
     'j': 'amp',
     'n': 'waveInt',
     'b': 'bloom',
+    // Left-hand cluster (aliases)
+    'x': 'bassSens',
+    'z': 'trebleSens',
+    'v': 'amp',
+    'c': 'waveInt',
+    'a': 'bloom',
   };
   let _dragKey = null;
 
@@ -320,27 +334,53 @@ export function bindControls(ui) {
   document.addEventListener('keyup', e => {
     if (e.key.toLowerCase() === _dragKey) _dragKey = null;
   });
-  document.addEventListener('mousemove', e => {
-    if (!_dragKey) return;
-    const id = _fsParams[_dragKey];
-    const p  = PARAMS[id];
+  // ── NOTE on touchpad freezing while a drag key is held ────────────────
+  // All three desktop OSes ship "disable touchpad while typing" enabled
+  // by default. JavaScript cannot override this — it happens before the
+  // input event ever reaches the browser. Affected users have OS-level
+  // remedies; external USB mouse / wheel handler below are unaffected.
+  //
+  //   Windows  — Touchpad PalmCheck (Synaptics/ELAN/Precision drivers).
+  //              Settings → Bluetooth & devices → Touchpad → Taps →
+  //              "Touchpad sensitivity" → Most sensitive.
+  //              Or vendor driver panel → Palm Check / Tracking → Off.
+  //
+  //   Linux    — libinput "Disable While Typing" (DWT).
+  //              GNOME:  Settings → Mouse & Touchpad → Disable while typing → OFF
+  //              CLI:    gsettings set org.gnome.desktop.peripherals.touchpad \
+  //                          disable-while-typing false
+  //              KDE:    Settings → Input Devices → Touchpad
+  //              Hypr/Sway: input { disable_while_typing = false }
+  //              libinput ≥1.31 also exposes an adjustable DWT timeout
+  //              (100ms..5s) for users who want a shorter block window
+  //              rather than a full disable.
+  //
+  //   macOS    — Built-in palm rejection, NO user-facing toggle since
+  //              Mavericks. The old "Ignore accidental trackpad input"
+  //              setting was removed when it became always-on. There is
+  //              no clean fix; use an external mouse or external Magic
+  //              Trackpad (smart-pairing exempts external pointing
+  //              devices from the typing-induced block).
+  // ── Delta dispatch — shared by mouse and touchpad inputs ──────────────
+  // Pulled out of the mousemove listener so wheel/touchpad events can
+  // drive the same speed-scaling math without duplication.
+  //
+  // Drag speed adapts to the live value but with log-bounded growth, NOT
+  // strict proportionality. Strict proportionality (spd = |cur|/600) is
+  // a self-reinforcing loop: each pixel of drag scales with current
+  // value, which grows, which scales the next pixel, which grows... a
+  // fast sustained drag can hit 1e+20 in a second.
+  //
+  // Two-regime sensitivity, matching MIDI relative dispatch:
+  //   • Normal range (|cur| ≤ extendedMax): 600 px = full sweep of
+  //     [min..extendedMax]. Standard slider feel for routine use.
+  //   • Extended range (|cur| > extendedMax): speed grows with
+  //     log₂(|cur| / extendedMax + 1). Reaching 1e+27 by drag is
+  //     mathematically infeasible — multiplier grows logarithmically
+  //     while value grows linearly with the drag.
+  const _applyDragDelta = (id, pixels) => {
+    const p = PARAMS[id];
     if (!p) return;
-
-    // Drag speed adapts to the live value but with log-bounded growth, NOT
-    // strict proportionality. Strict proportionality (spd = |cur|/600) is
-    // a self-reinforcing loop: each pixel of drag scales with current
-    // value, which grows, which scales the next pixel, which grows... a
-    // fast sustained drag can hit 1e+20 in a second.
-    //
-    // Two-regime sensitivity, matching MIDI relative dispatch:
-    //   • Normal range (|cur| ≤ extendedMax): 600 px = full sweep of
-    //     [min..extendedMax]. Standard slider feel for routine use.
-    //   • Extended range (|cur| > extendedMax): speed grows with
-    //     log₂(|cur| / extendedMax + 1), capped multiplier per decade.
-    //     So at |cur|=10·extMax the speed is ~3.46× normal, at 100·extMax
-    //     it's ~6.66×, at 1000·extMax it's ~9.97×. Reaching 1e+27 by
-    //     mouse drag is now mathematically infeasible — the multiplier
-    //     grows logarithmically while value grows linearly with the drag.
     const hi        = p.extendedMax ?? p.max;
     const lo        = Math.max(p.min, 0.1);
     const cur       = p.get(ctx);
@@ -349,12 +389,45 @@ export function bindControls(ui) {
     const overshoot = absVal > hi ? absVal / hi : 1;
     const mult      = overshoot > 1 ? Math.log2(overshoot + 1) : 1;
     const spd       = spdBase * mult;
-    // Lower clamp at `lo` so a knob spam at the bottom doesn't drift below
-    // a useful value. No upper clamp — log-bounded growth lets the user
-    // reach extended values, just not unboundedly fast.
-    const v = Math.max(lo, cur + e.movementX * spd);
+    const v         = Math.max(lo, cur + pixels * spd);
     applyParam(ctx, id, v);
+  };
+
+  document.addEventListener('mousemove', e => {
+    if (!_dragKey) return;
+    _applyDragDelta(_fsParams[_dragKey], e.movementX);
   });
+
+  // ── Touchpad / wheel support ──────────────────────────────────────────
+  // Two-finger swipe on a touchpad and mouse-wheel both fire `wheel`
+  // events. We map them to the same drag system so users without a
+  // physical mouse can still operate hold-and-drag parameters.
+  //
+  // Axis pick: deltaX is the natural choice (horizontal swipe = horizontal
+  // drag intent). When deltaX is zero — e.g. a traditional vertical mouse
+  // wheel without horizontal capability — we fall back to deltaY so the
+  // user gets *some* control. Sign of deltaY is inverted: scrolling UP
+  // increases value (matches the convention of right-drag = up).
+  //
+  // Step normalisation: wheel `deltaMode` can be PIXEL (0), LINE (1) or
+  // PAGE (2). Most touchpads send pixels; some mice send lines. We
+  // convert lines (~16px) and pages (~400px) to pixels so the
+  // _applyDragDelta math stays consistent across input devices.
+  //
+  // preventDefault on the wheel event stops the page from scrolling
+  // while the user is holding a drag key — otherwise the panel scrolls
+  // around as a side effect of trying to adjust amplitude.
+  document.addEventListener('wheel', e => {
+    if (!_dragKey) return;
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? 16   // lines → ~one text row in px
+              : e.deltaMode === 2 ? 400  // pages → ~one screen height
+              : 1;                       // pixels (default for touchpads)
+    // Prefer horizontal axis when present; otherwise use vertical (inverted
+    // so up = positive, matching right-drag convention).
+    const dx = e.deltaX !== 0 ? e.deltaX * unit : -e.deltaY * unit;
+    _applyDragDelta(_fsParams[_dragKey], dx);
+  }, { passive: false }); // passive:false required to call preventDefault
 
   // ── Track name overlay ────────────────────────────────────────────────────
   const _overlayChk  = document.getElementById('show-track-name');

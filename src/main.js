@@ -130,12 +130,55 @@ function _randomFormula() {
   DOM.gpuSel.value = `m:${pick.collectionId}:${pick.key}`;
 }
 
+// ── D hotkey: sequential shape cycling ──────────────────────────────────
+//
+// Reads the list of available shapes from the live <select id="shape-sel">
+// instead of mirroring it in a const here. Two reasons:
+//   • Single source of truth — adding a new option in index.html is
+//     instantly reachable via D, no JS edit needed.
+//   • The select includes shapes outside the R-randomiser pool (Plane,
+//     Disc, Ring, Star 3D, Solar System) that the user explicitly wants
+//     D to cycle through.
+//
+// The list is captured once on first D press and cached. Subsequent
+// HTML changes during a session won't be picked up — acceptable trade-
+// off, since shape options are static in the bundled build. A page
+// reload picks up any edits.
+let _shapeCycle = null;
+function _cycleShape() {
+  if (!_shapeCycle) {
+    _shapeCycle = Array.from(DOM.shapeSel.options).map(o => o.value);
+  }
+  if (!_shapeCycle.length) return;
+  // Start from the current selection's index so the first D press moves
+  // to the NEXT shape, not to whatever was first in the list. If the
+  // current value isn't in the list (defensive — shouldn't happen),
+  // indexOf returns -1 and (-1+1)%n = 0 lands on the first shape.
+  const i    = _shapeCycle.indexOf(DOM.shapeSel.value);
+  const next = _shapeCycle[(i + 1) % _shapeCycle.length];
+  DOM.shapeSel.value = next;
+  render.setShapeAnimated(next);
+}
+
 window.addEventListener('keydown', e => {
   if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  // Ignore auto-repeat keydown. Hotkeys here are single-action triggers
+  // (D = next shape, F = random formula, R = randomise all, space = play/
+  // pause), not held-state inputs. Without this filter, holding D would
+  // cycle through 30+ shapes per second instead of one shape per tap.
+  if (e.repeat) return;
   switch (e.key.toLowerCase()) {
     case ' ':          e.preventDefault(); audio.togglePlay(); break;
     case 'arrowleft':  e.preventDefault(); audio.prevTrack();  break;
     case 'arrowright': e.preventDefault(); audio.nextTrack();  break;
+
+    // D — step to next shape in shape-sel order, looping.
+    // Sibling of R (random shape) and F (random formula) for the user
+    // who wants deterministic shape browsing during a set.
+    case 'd': {
+      _cycleShape();
+      break;
+    }
 
     // F — random math formula from catalog (shuffle-bag, no repeats)
     case 'f': {
@@ -189,7 +232,10 @@ window.addEventListener('keydown', e => {
       render.orbit.update();
       break;
     }
-    case 'c': {
+    // G — fade grid in/out. Was 'C' historically; moved to G when C was
+    // claimed by the hold-and-drag alias for Wave Intensity (see
+    // controls.js _fsParams). Single-letter alias for 'grid'.
+    case 'g': {
       const target = render.grid.visible ? 0 : 0.1;
       let t2 = 0;
       const fade = () => { t2+=.05; render.grid.material.opacity += (target-render.grid.material.opacity)*.2; if(t2<1) requestAnimationFrame(fade); else render.grid.visible=target>0; };
@@ -198,9 +244,10 @@ window.addEventListener('keydown', e => {
     }
     case 'h': DOM.hotkeyHint.classList.toggle('visible'); break;
 
-    // Note: the 'n' key is reserved for the hold-and-drag Wave Intensity
-    // control (see controls.js fullscreen drag handlers / hotkeys.md).
-    // It deliberately has no tap-action — the drag handler owns it.
+    // Note: the letters L K J N B V C A X Z are all reserved for hold-and-
+    // drag parameter control (see controls.js _fsParams). They deliberately
+    // have no tap-action — the drag handler owns them. Adding a tap-action
+    // for any of them here would fight the drag arming via preventDefault.
 
     case 's': {
       e.preventDefault();
