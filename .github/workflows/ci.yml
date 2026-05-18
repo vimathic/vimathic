@@ -119,7 +119,7 @@ jobs:
           ls -la dist/
           echo ""
           echo "=== Whitelist verification ==="
-          ALLOWED='^(index\.html|second-screen\.html|math-worker-[A-Za-z0-9_-]+\.js|vimathic-intro\.mp3|support-hero\.png|support-hero\.webp|sitemap\.xml|robots\.txt|llms\.txt|docs)$'
+          ALLOWED='^(index\.html|second-screen\.html|math-worker-[A-Za-z0-9_-]+\.js|vimathic-intro\.mp3|support-hero\.png|support-hero\.webp|og-image\.png|sitemap\.xml|robots\.txt|llms\.txt|docs)$'
           UNEXPECTED=$(find dist -maxdepth 1 -mindepth 1 -printf '%f\n' | grep -Ev "$ALLOWED" || true)
           if [ -n "$UNEXPECTED" ]; then
             echo "❌ Unexpected files in dist/:"
