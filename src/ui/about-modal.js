@@ -352,7 +352,11 @@ function buildInfoFooterHtml() {
     `build <code>${esc(VIMATHIC_BUILD_HASH)}</code> ` +
     `(${esc(VIMATHIC_BUILD_DATE)}) · ` +
     `<a href="${esc(VIMATHIC_REPO_URL)}" target="_blank" rel="noopener" ` +
-    `style="color:inherit;text-decoration:underline;">source</a>` +
+    `style="color:inherit;text-decoration:underline;">source</a> · ` +
+    `<a href="https://github.com/vimathic/vimathic/issues" target="_blank" rel="noopener" ` +
+    `style="color:inherit;text-decoration:underline;">feedback</a> · ` +
+    `<a href="mailto:vimathic.info@proton.me" ` +
+    `style="color:inherit;text-decoration:underline;">email</a>` +
     `</footer>`
   );
 }
