@@ -46,7 +46,10 @@ import { DOM } from './dom.js';
 // Total number of color schemes defined in shaders.js (_COLOR_FUNS + getColor()).
 // Schemes are indexed 0..COLOR_SCHEME_COUNT-1. If you add a new GLSL palette,
 // bump this constant and the MIDI/slider ranges follow.
-export const COLOR_SCHEME_COUNT = 36;
+//
+// Layout: 0..23 original schemes · 24..35 NEW (Cyberpunk Gold..Bioluminescence)
+//         36..43 DARK series (Charcoal Smoke..Coal Plum)
+export const COLOR_SCHEME_COUNT = 44;
 
 export const PARAMS = {
   amp: {

@@ -192,6 +192,23 @@ vec3 acidRain(float t){vec3 a=vec3(.016,.059,.016),b=vec3(.118,1.,.161),c=vec3(.
 vec3 volcanic(float t){vec3 a=vec3(.027,.016,.016),b=vec3(.671,.098,.016),c=vec3(1.,.867,.251),d=vec3(1.,1.,.900);float s=t*3.;return s<1.?mix(a,b,s):s<2.?mix(b,c,s-1.):mix(c,d,s-2.);}
 vec3 bioluminescence(float t){vec3 a=vec3(.004,.027,.082),b=vec3(.0,.557,.698),c=vec3(.467,1.,.933);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
 
+// ── DARK series (36..43) ──────────────────────────────────────────────
+// Eight palettes that stay in shadow values throughout t∈[0..1] —
+// unlike the existing palettes, none of these terminate in a saturated
+// or bright peak. Useful for atmospheric / moody sets, projectors that
+// blow highlights, and laptop-screen previewing where neon palettes
+// look raw. Max channel value in any endpoint ≤ 0.55 for the truly-
+// dark four (36..39); ≤ 0.75 for the with-glow four (40..43), where
+// the glow is intentionally smoldering rather than bright.
+vec3 charcoalSmoke(float t){vec3 a=vec3(.063,.067,.078),b=vec3(.235,.243,.259),c=vec3(.471,.475,.486);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 slateIndigo(float t){vec3 a=vec3(.031,.039,.075),b=vec3(.157,.184,.314),c=vec3(.337,.341,.529);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 mossStone(float t){vec3 a=vec3(.075,.078,.063),b=vec3(.227,.243,.196),c=vec3(.412,.439,.349);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 petrol(float t){vec3 a=vec3(.020,.067,.082),b=vec3(.063,.231,.286),c=vec3(.231,.412,.471);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 emberBlack(float t){vec3 a=vec3(.027,.012,.008),b=vec3(.243,.094,.039),c=vec3(.624,.227,.075);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 burgundyVelvet(float t){vec3 a=vec3(.039,.012,.020),b=vec3(.243,.055,.106),c=vec3(.561,.122,.220);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 midnightForest(float t){vec3 a=vec3(.008,.027,.020),b=vec3(.043,.165,.106),c=vec3(.157,.435,.302);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 coalPlum(float t){vec3 a=vec3(.020,.012,.031),b=vec3(.137,.078,.180),c=vec3(.341,.235,.443);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+
 // ── getColor — dispatcher so both main() and user-written fragments can call ─
 // one entry point and get every palette. Out-of-range cm safely falls through
 // to bioluminescence (35) — so picking a scheme that doesn't exist (e.g. from
@@ -233,7 +250,17 @@ vec3 getColor(int cm, float t){
   else if(cm==32) return deepSpace(t);
   else if(cm==33) return acidRain(t);
   else if(cm==34) return volcanic(t);
-  else            return bioluminescence(t);  // 35 + safe default
+  else if(cm==35) return bioluminescence(t);
+  // DARK series — moody / atmospheric, no bright peaks
+  else if(cm==36) return charcoalSmoke(t);
+  else if(cm==37) return slateIndigo(t);
+  else if(cm==38) return mossStone(t);
+  else if(cm==39) return petrol(t);
+  else if(cm==40) return emberBlack(t);
+  else if(cm==41) return burgundyVelvet(t);
+  else if(cm==42) return midnightForest(t);
+  else if(cm==43) return coalPlum(t);
+  else            return bioluminescence(t);  // safe default for out-of-range
 }
 `;
 
