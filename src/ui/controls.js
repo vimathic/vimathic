@@ -45,14 +45,84 @@ export function bindControls(ui) {
 
   // ── Shape / mode selects ──────────────────────────────────────────────────
   document.getElementById('shape-sel').addEventListener('change', e => r.setShapeAnimated(e.target.value));
+
+  // ── Deform mode (Surface / Volume / Collapse) ─────────────────────────────
+  //
+  // Defined BEFORE the gpu-sel handler below so that handler can call
+  // _setDeformMode('collapse') as part of the volume→collapse auto-switch
+  // when a user picks an `m:` formula while in volume mode. See the
+  // gpu-sel handler for the motivation. Without this ordering the call
+  // would hit a temporal dead zone.
+  const _deformBtns    = ['surface','volume','collapse'];
+  const _volWrap       = document.getElementById('volume-formula-wrap');
+  const _volSel        = document.getElementById('volume-formula-sel');
+  const _volDesc       = document.getElementById('volume-formula-desc');
+
+  const _volDescriptions = {
+    breathe:       'Uniform expansion/contraction along surface normals',
+    lorenzField:   'Classic chaotic attractor as displacement field',
+    twist:         'Rotation around Y axis proportional to height',
+    rippleVolume:  'Spherical wavefronts emanating from origin',
+    magneticDipole:'B-field of a magnetic dipole at origin',
+    fluidVortex:   'Incompressible vortex flow (curl field)',
+  };
+
+  // Set deform mode and update UI. `runFormula` (optional) is called inside
+  // the same triggerMorphTransition that handles the mode switch, so an
+  // auto-switch + formula change happens in one morph animation rather than
+  // two competing ones. Without this, the gpu-sel handler doing setMode and
+  // setFormula in separate morphs would fire deflate→inflate twice.
+  const _setDeformMode = (mode, runFormula) => {
+    _deformBtns.forEach(m => {
+      const btn = document.getElementById('deform-'+m);
+      if (btn) btn.classList.toggle('active', m === mode);
+    });
+    if (mode === 'volume') {
+      _volWrap.style.display = '';
+      const key = _volSel.value;
+      _volDesc.textContent = _volDescriptions[key] ?? '';
+      // Morph transition into volume mode
+      r.triggerMorphTransition(() => {
+        if (ui.mathViz) ui.mathViz.setVolumeFormula(key);
+        if (runFormula) runFormula();
+      });
+    } else {
+      _volWrap.style.display = 'none';
+      // Morph transition into surface/collapse mode
+      r.triggerMorphTransition(() => {
+        if (ui.mathViz) ui.mathViz.setMode(mode);
+        if (runFormula) runFormula();
+      });
+    }
+  };
+
   document.getElementById('gpu-sel').addEventListener('change', e => {
     const val = e.target.value;
     if (val.startsWith('m:')) {
-      // CPU math formula — trigger same deflate→inflate morph as GPU mode change
+      // CPU math formula. The 192 m:-formulas are scalar fields (Z = f(x,y))
+      // — they only fit Surface and Collapse modes. Volume mode uses a
+      // separate 6-formula registry of vector fields (_volSel above).
+      //
+      // If we're currently in Volume mode and the user picks an m:-formula,
+      // auto-switch to Collapse mode so the formula actually applies —
+      // collapse runs the scalar formula along surface normals on the 3D
+      // shape, which is the closest 3D-preserving rendering. Without this
+      // auto-switch the formula change appeared to do nothing: setFormula
+      // updates _formulaFn but _tickVolume only reads _volumeFn, so the
+      // mesh kept showing the previous volume deformation.
       const [, colId, key] = val.split(':');
-      r.triggerMorphTransition(() => {
-        if (ui.mathViz) ui.mathViz.setFormula(colId, key);
-      });
+      const isVolumeActive = document.getElementById('deform-volume')?.classList.contains('active');
+      if (isVolumeActive) {
+        // Combined: switch mode AND apply formula inside one morph.
+        _setDeformMode('collapse', () => {
+          if (ui.mathViz) ui.mathViz.setFormula(colId, key);
+        });
+        ui._showToast?.('Volume → Collapse · scalar formulas need a surface mode');
+      } else {
+        r.triggerMorphTransition(() => {
+          if (ui.mathViz) ui.mathViz.setFormula(colId, key);
+        });
+      }
     } else {
       // GPU shader — deactivate math and switch uMode with crossfade
       if (ui.mathViz) ui.mathViz.deactivate();
@@ -70,42 +140,6 @@ export function bindControls(ui) {
   });
 
   // ── Deform mode buttons ───────────────────────────────────────────────────
-  const _deformBtns    = ['surface','volume','collapse'];
-  const _volWrap       = document.getElementById('volume-formula-wrap');
-  const _volSel        = document.getElementById('volume-formula-sel');
-  const _volDesc       = document.getElementById('volume-formula-desc');
-
-  const _volDescriptions = {
-    breathe:       'Uniform expansion/contraction along surface normals',
-    lorenzField:   'Classic chaotic attractor as displacement field',
-    twist:         'Rotation around Y axis proportional to height',
-    rippleVolume:  'Spherical wavefronts emanating from origin',
-    magneticDipole:'B-field of a magnetic dipole at origin',
-    fluidVortex:   'Incompressible vortex flow (curl field)',
-  };
-
-  const _setDeformMode = (mode) => {
-    _deformBtns.forEach(m => {
-      const btn = document.getElementById('deform-'+m);
-      if (btn) btn.classList.toggle('active', m === mode);
-    });
-    if (mode === 'volume') {
-      _volWrap.style.display = '';
-      const key = _volSel.value;
-      _volDesc.textContent = _volDescriptions[key] ?? '';
-      // Morph transition into volume mode
-      r.triggerMorphTransition(() => {
-        if (ui.mathViz) ui.mathViz.setVolumeFormula(key);
-      });
-    } else {
-      _volWrap.style.display = 'none';
-      // Morph transition into surface/collapse mode
-      r.triggerMorphTransition(() => {
-        if (ui.mathViz) ui.mathViz.setMode(mode);
-      });
-    }
-  };
-
   _deformBtns.forEach(mode => {
     const btn = document.getElementById('deform-'+mode);
     if (btn) btn.addEventListener('click', () => _setDeformMode(mode));
