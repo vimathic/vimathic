@@ -90,29 +90,6 @@ runs on community support.
 [**ko-fi.com/smelentyev**](https://ko-fi.com/smelentyev) — one-off
 contributions or small monthly amounts. No account required.
 
-### Cryptocurrency
-
-Direct addresses. Sending funds to any of them goes straight to the
-project author.
-
-**Bitcoin (BTC)**
-
-```
-3EqX9aPn7S6CVfX1CVJ9Gj2aoGVwWMRhAz
-```
-
-**Dogecoin (DOGE)**
-
-```
-D983mnnVX1QrsHZNmfhNKP9gRkuQba5C5a
-```
-
-**The Open Network (TON)**
-
-```
-UQBqeB9KzBpat4dNbkvnihuTLmX_GgUi7QzlmqE8_I23g0OG
-```
-
 ### Other ways that aren't money
 
 - **Star the repository** — [github.com/vimathic/vimathic](https://github.com/vimathic/vimathic). Visibility helps the project find its audience.
