@@ -863,11 +863,27 @@ export class RenderEngine {
       case 'hex':              return new THREE.CylinderGeometry(3.2,3.2,.5, 6, lo);
       case 'pyramid':          return new THREE.ConeGeometry(3.2,5, 4, lo);
       case 'pyramid-smooth':   return new THREE.ConeGeometry(3.2,5, lo, lo);
-      case 'tetrahedron':      return new THREE.TetrahedronGeometry(3.5, this.isMobile?8:16);
-      case 'octahedron':       return new THREE.OctahedronGeometry(3.5, this.isMobile?8:16);
-      case 'icosahedron':      return new THREE.IcosahedronGeometry(3.5, this.isMobile?4:8);
+      // Polyhedra — detail must be 0 for the shape to actually look like
+      // the named polyhedron. The second arg to Tetrahedron/Octahedron/
+      // Icosahedron/DodecahedronGeometry is a subdivision count; each
+      // level splits every triangle into 4 and PROJECTS vertices onto a
+      // sphere of the given radius. So detail=8..16 produces tens of
+      // thousands of triangles arranged into a smooth sphere, no longer
+      // visually distinguishable from SphereGeometry. The original
+      // intent was probably "more vertices = smoother CPU-formula
+      // displacement", but it destroyed the shape identity — a
+      // "tetrahedron" with 65k faces is just a sphere. Math-formula
+      // displacement on these low-poly geometries renders with visible
+      // faceting along edges, which is acceptable as an artistic look.
+      // Users who want smooth math-formula surfaces have Sphere directly.
+      case 'tetrahedron':      return new THREE.TetrahedronGeometry(3.5, 0);
+      case 'octahedron':       return new THREE.OctahedronGeometry(3.5, 0);
+      case 'icosahedron':      return new THREE.IcosahedronGeometry(3.5, 0);
+      // 'icosahedron-smooth' keeps detail=1 — that's the deliberately
+      // subdivided variant (20 faces → 80), distinct from the sharp
+      // 20-face icosahedron above. Name advertises the subdivision.
       case 'icosahedron-smooth': return new THREE.IcosahedronGeometry(3.5, 1);
-      case 'dodecahedron':     return new THREE.DodecahedronGeometry(3.5, this.isMobile?4:8);
+      case 'dodecahedron':     return new THREE.DodecahedronGeometry(3.5, 0);
       case 'star':             return this._buildStarGeo();
       case 'solar':            return new THREE.SphereGeometry(1.2, 64, 64);
       default:                 return new THREE.PlaneGeometry(this.CFG.planeSize, this.CFG.planeSize, seg, seg);
