@@ -197,10 +197,34 @@ export class MathVisualizer {
    * Activate a Surface-mode formula from math-collections.js.
    * If another formula is currently active, the existing height field is
    * captured and a blend to the new formula's output begins automatically.
+   *
+   * If the visualizer is currently in volume mode, automatically transitions
+   * to collapse mode first. Reason: the 192 catalogue formulas are scalar
+   * fields (Z = f(x,y)), but volume mode runs a vector-field tick that
+   * only consults _volumeFn. A bare setFormula() would update _formulaFn
+   * with the new function but the volume tick would keep using the old
+   * _volumeFn, so the user would see no change. Collapse mode runs the
+   * scalar formula along surface normals — the closest 3D-preserving
+   * rendering, and exactly what the user means when they pick e.g.
+   * "Mandelbrot" on a Sphere.
+   *
+   * The auto-exit lives here (not at every caller) so it covers every
+   * code path that ends up at setFormula: the gpu-sel dropdown, the R
+   * hotkey, preset apply, future MIDI handlers, AI-generated formulas.
    */
   setFormula(collectionId, formulaKey) {
     const f = getFormula(collectionId, formulaKey);
     if (!f) return;
+
+    // Auto-exit volume mode before applying a surface formula.
+    // setMode(collapse) restores the baseline geometry (clean shape) and
+    // takes a fresh snapshot, so the formula displaces clean normals
+    // rather than the volume-distorted mesh. Must happen BEFORE the
+    // _generation bump below so setMode's own bump doesn't race ours.
+    if (this._mode === 'volume') {
+      this.setMode('collapse');
+    }
+
     this._generation++;
 
     // Snapshot the current heights so the blend has a "from" state.
@@ -311,10 +335,20 @@ export class MathVisualizer {
 
     // Volume and Collapse both write displaced positions over the base
     // snapshot. Surface mode, by contrast, expects pos.y to be writable
-    // directly. Restoring the snapshot on exit guarantees Surface starts
-    // from clean geometry rather than from a frozen deformation.
-    if ((mode === 'surface') &&
-        (this._mode === 'volume' || this._mode === 'collapse') &&
+    // directly. Restoring the snapshot on exit guarantees the new mode
+    // starts from CLEAN geometry rather than from frozen distortions of
+    // the previous mode.
+    //
+    // Critical: restore must happen BEFORE the new snapshot. Order is
+    //   1. exiting volume/collapse → restore _basePositions to mesh
+    //   2. entering volume/collapse → snapshot mesh into _basePositions
+    // Skipping step 1 makes step 2 snapshot the displaced positions,
+    // permanently baking the previous mode's deformation into the new
+    // mode's "rest state". This was visible as: volume→collapse showed
+    // a collapse displacement built on top of the volume-distorted mesh,
+    // so changing the formula appeared to do nothing because the formula
+    // was small compared to the baked-in distortion.
+    if ((this._mode === 'volume' || this._mode === 'collapse') &&
         this._basePositions) {
       this._restoreBasePositions();
     }
