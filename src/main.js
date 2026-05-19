@@ -61,6 +61,22 @@ const webmRec = new WebmRecorder(render.renderer);
 
 const mathViz = new MathVisualizer(render, audio);
 
+// Wire RenderEngine shape changes into MathVisualizer's pristine-snapshot
+// machinery. Fires after every geometry swap (R hotkey, D hotkey, panel
+// dropdown, preset apply, clip-player, boot). Without this hook, changing
+// shape while in Volume/Collapse mode left _basePositions stale and the
+// next tick either bailed (no baseline) or displaced from the previous
+// shape's coordinates. The hook also captures a fresh pristine reference
+// that mode transitions restore from to start with clean geometry.
+render.cb.onShapeChange = () => mathViz.onShapeChange();
+
+// RenderEngine's constructor calls setShape('pyramid-smooth') before this
+// callback was wired, so the very first shape (boot geometry) has no
+// pristine snapshot yet. Trigger one now so the first mode-switch after
+// boot has a valid restore source. Subsequent shape changes fire the
+// callback synchronously via setShape.
+mathViz.onShapeChange();
+
 const ui = new UIController({
   audio, render, camera,
   shaderEditor:se, modelLoader:ml,

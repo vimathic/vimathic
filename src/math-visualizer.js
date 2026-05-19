@@ -156,11 +156,33 @@ export class MathVisualizer {
     // _basePts*       — same pair for the optional points-mesh proxy.
     // _dfBuffer       — displacement field reused each Volume tick.
     // _collapseBuf    — scalar field reused each Collapse tick.
+    //
+    // _pristinePositions — clean geometry snapshot taken once per shape,
+    //                   right after RenderEngine.setShape builds new geo.
+    //                   Surface ticks rewrite pos.y absolutely each frame
+    //                   (see math-collections.js applyHeightField), and
+    //                   Volume/Collapse ticks write displaced positions
+    //                   directly into the live attribute. Without an
+    //                   untouched-by-ticks reference, restoring geometry
+    //                   on mode transition has no clean source — the
+    //                   "baseline" ends up being whatever the previous
+    //                   mode last wrote. This caused visible bugs:
+    //                   Volume→Surface→Volume kept the mesh locked into
+    //                   the Surface deformation; changing shape inside
+    //                   Volume stalled because _basePositions was nulled
+    //                   by the rebuild detect but never re-captured. The
+    //                   pristine snapshot is the canonical "true shape"
+    //                   that mode transitions and shape changes restore
+    //                   from before any new baseline is taken.
     this._mode             = 'surface';
     this._basePositions    = null;
     this._baseNormals      = null;
     this._basePtsPositions = null;
     this._basePtsNormals   = null;
+    this._pristinePositions    = null;
+    this._pristineNormals      = null;
+    this._pristinePtsPositions = null;
+    this._pristinePtsNormals   = null;
     this._volumeFn         = null;
     this._dfBuffer         = null;
     this._collapseBuf      = null;
@@ -273,6 +295,13 @@ export class MathVisualizer {
     this._generation++;
     this._pendingHF  = null;
     this._workerBusy = false;
+    // Restore pristine BEFORE snapshotting — otherwise the snapshot
+    // captures whatever the previous mode left in the live attribute
+    // (Surface's rewritten Y values, Volume's displacement field), and
+    // every subsequent Volume tick layers on top of that frozen
+    // distortion. With the restore, snapshot is always taken from
+    // clean geometry. See setMode for the full rationale.
+    if (this._pristinePositions) this._restorePristineToMesh();
     this._snapshotBasePositions();
     this._volumeFn  = f.f;
     this._volumeKey = key;
@@ -293,6 +322,7 @@ export class MathVisualizer {
     this._generation++;
     this._pendingHF  = null;
     this._workerBusy = false;
+    if (this._pristinePositions) this._restorePristineToMesh();
     this._snapshotBasePositions();
     this._volumeFn = fn;
     this._mode     = 'volume';
@@ -334,22 +364,29 @@ export class MathVisualizer {
     }
 
     // Volume and Collapse both write displaced positions over the base
-    // snapshot. Surface mode, by contrast, expects pos.y to be writable
-    // directly. Restoring the snapshot on exit guarantees the new mode
-    // starts from CLEAN geometry rather than from frozen distortions of
-    // the previous mode.
+    // snapshot. Surface mode rewrites pos.y absolutely each tick. The
+    // safe transition path is: restore mesh from the pristine reference
+    // (untouched-by-ticks), then snapshot a fresh baseline if entering
+    // a displacement mode. Without the pristine restore, any new
+    // baseline would just capture whatever the previous mode last
+    // wrote — locking the mesh into yesterday's deformation.
     //
-    // Critical: restore must happen BEFORE the new snapshot. Order is
-    //   1. exiting volume/collapse → restore _basePositions to mesh
-    //   2. entering volume/collapse → snapshot mesh into _basePositions
-    // Skipping step 1 makes step 2 snapshot the displaced positions,
-    // permanently baking the previous mode's deformation into the new
-    // mode's "rest state". This was visible as: volume→collapse showed
-    // a collapse displacement built on top of the volume-distorted mesh,
-    // so changing the formula appeared to do nothing because the formula
-    // was small compared to the baked-in distortion.
-    if ((this._mode === 'volume' || this._mode === 'collapse') &&
-        this._basePositions) {
+    // Order:
+    //   1. restore mesh from pristine (if captured) — mesh is now clean
+    //   2. if entering volume/collapse, snapshot mesh into _basePositions
+    //
+    // The pristine snapshot is captured once per shape via the public
+    // onShapeChange() hook called from main.js after RenderEngine.setShape.
+    // Code paths that reach setMode before any shape has been formally
+    // announced (e.g. very early boot) skip the restore harmlessly.
+    if (this._pristinePositions) {
+      this._restorePristineToMesh();
+    } else if ((this._mode === 'volume' || this._mode === 'collapse') &&
+               this._basePositions) {
+      // Legacy fallback for the early-boot case: if pristine wasn't
+      // captured but we have a basePositions from a previous mode entry,
+      // use that. Rarely hits in practice — onShapeChange fires from the
+      // initial setShape during boot.
       this._restoreBasePositions();
     }
 
@@ -357,6 +394,49 @@ export class MathVisualizer {
       this._snapshotBasePositions();
     }
     this._mode = mode;
+  }
+
+  /**
+   * Hook called from main.js after RenderEngine.setShape finishes building
+   * a new geometry. Captures the pristine reference for the new shape and
+   * resets all stale per-shape state (worker pending, blends, baseline).
+   *
+   * Without this hook, a shape change inside Volume/Collapse mode used to
+   * stall because the in-tick rebuild detect nulled _basePositions and
+   * never re-snapshotted — the next tick's `if (!_basePositions) return`
+   * froze the displacement entirely. Now main.js wires this to fire
+   * synchronously after every setShape, so the pristine snapshot is
+   * always fresh and current-mode re-snapshots its baseline from the
+   * new shape's clean geometry.
+   */
+  onShapeChange() {
+    this._capturePristine();
+    // Invalidate any in-flight worker tick — its result would be sized for
+    // the old vertex count and would fail to apply (or worse, apply
+    // partially) to the new geometry.
+    this._generation++;
+    this._pendingHF    = null;
+    this._workerBusy   = false;
+    this._blendActive  = false;
+    this._lastTickTime = null;
+    const pos = this.render.gpuMesh.geometry.attributes.position;
+    this._gridSize = Math.round(Math.sqrt(pos.count));
+
+    // If we're in a displacement mode when the shape changes, immediately
+    // refresh _basePositions from the new pristine. Without this, the
+    // current mode's next tick would either bail (no baseline) or
+    // displace from stale baseline of the previous shape.
+    if (this._mode === 'volume' || this._mode === 'collapse') {
+      this._snapshotBasePositions();
+    }
+
+    // Re-arm the worker with the current formula so it knows about the
+    // (possibly) new grid size. If no formula is active, nothing to do.
+    if (this._formulaFn && this._worker && this._workerReady && this._collId) {
+      this._worker.postMessage({
+        type: 'setFormula', collectionId: this._collId, formulaKey: this._formulaKey,
+      });
+    }
   }
 
   /**
@@ -609,6 +689,95 @@ export class MathVisualizer {
   }
 
   // ── Private — volume / collapse helpers ──────────────────────────────────
+
+  /**
+   * Capture pristine (untouched-by-ticks) geometry. Called via the public
+   * onShapeChange() hook after RenderEngine.setShape rebuilds the mesh.
+   *
+   * The captured buffers stay alive across mode changes and are the
+   * authoritative "true shape" — Volume and Collapse ticks displace
+   * from this, Surface ticks rewrite Y but the X/Z reference is still
+   * pristine for any subsequent restore. Without this, restoring a clean
+   * baseline at mode-switch time has no source: ticks have already
+   * mutated the live attribute past recognition.
+   */
+  _capturePristine() {
+    const geo = this.render.gpuMesh.geometry;
+    const pos = geo.attributes.position;
+    const n   = pos.count;
+
+    if (!geo.attributes.normal) geo.computeVertexNormals();
+    const nrm = geo.attributes.normal;
+
+    this._pristinePositions = new Float32Array(n * 3);
+    this._pristineNormals   = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      this._pristinePositions[i * 3]     = pos.getX(i);
+      this._pristinePositions[i * 3 + 1] = pos.getY(i);
+      this._pristinePositions[i * 3 + 2] = pos.getZ(i);
+      this._pristineNormals[i * 3]     = nrm.getX(i);
+      this._pristineNormals[i * 3 + 1] = nrm.getY(i);
+      this._pristineNormals[i * 3 + 2] = nrm.getZ(i);
+    }
+
+    if (this.render.gpuPtsProxy) {
+      const ptsGeo = this.render.gpuPtsProxy.geometry;
+      const pp = ptsGeo.attributes.position;
+      if (!ptsGeo.attributes.normal) ptsGeo.computeVertexNormals();
+      const pn = ptsGeo.attributes.normal;
+      this._pristinePtsPositions = new Float32Array(pp.count * 3);
+      this._pristinePtsNormals   = new Float32Array(pp.count * 3);
+      for (let i = 0; i < pp.count; i++) {
+        this._pristinePtsPositions[i * 3]     = pp.getX(i);
+        this._pristinePtsPositions[i * 3 + 1] = pp.getY(i);
+        this._pristinePtsPositions[i * 3 + 2] = pp.getZ(i);
+        this._pristinePtsNormals[i * 3]     = pn.getX(i);
+        this._pristinePtsNormals[i * 3 + 1] = pn.getY(i);
+        this._pristinePtsNormals[i * 3 + 2] = pn.getZ(i);
+      }
+    } else {
+      this._pristinePtsPositions = null;
+      this._pristinePtsNormals   = null;
+    }
+  }
+
+  /**
+   * Copy pristine positions back to the live mesh. Used at mode-transition
+   * time to give the next mode a clean canvas to draw on. No-op if pristine
+   * hasn't been captured yet (first mode-switch before any shape was set
+   * via the onShapeChange hook — falls through to existing _basePositions
+   * behaviour).
+   */
+  _restorePristineToMesh() {
+    if (!this._pristinePositions) return;
+    const pos = this.render.gpuMesh.geometry.attributes.position;
+    const n   = pos.count;
+    // Defensive: if vertex count drifted, the pristine snapshot is stale;
+    // skip rather than write into mismatched buffers.
+    if (this._pristinePositions.length !== n * 3) return;
+    for (let i = 0; i < n; i++) {
+      pos.setXYZ(i,
+        this._pristinePositions[i * 3],
+        this._pristinePositions[i * 3 + 1],
+        this._pristinePositions[i * 3 + 2]);
+    }
+    pos.needsUpdate = true;
+    this.render.gpuMesh.geometry.computeVertexNormals();
+
+    if (this.render.gpuPtsProxy && this._pristinePtsPositions) {
+      const pp = this.render.gpuPtsProxy.geometry.attributes.position;
+      if (this._pristinePtsPositions.length === pp.count * 3) {
+        for (let i = 0; i < pp.count; i++) {
+          pp.setXYZ(i,
+            this._pristinePtsPositions[i * 3],
+            this._pristinePtsPositions[i * 3 + 1],
+            this._pristinePtsPositions[i * 3 + 2]);
+        }
+        pp.needsUpdate = true;
+        this.render.gpuPtsProxy.geometry.computeVertexNormals();
+      }
+    }
+  }
 
   /**
    * Snapshot current geometry positions AND normals as the base for

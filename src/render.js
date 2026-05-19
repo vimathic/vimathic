@@ -487,6 +487,16 @@ export class RenderEngine {
     this.isShapeChanging = false;
     this.pendingShape    = null;
 
+    // Callback object — main.js wires concrete handlers. No-op defaults
+    // so RenderEngine code can fire callbacks unconditionally without
+    // worrying whether anyone has subscribed yet. Currently only
+    // onShapeChange exists, fired at the end of setShape() to let
+    // MathVisualizer capture a fresh pristine snapshot of the new
+    // geometry.
+    this.cb = {
+      onShapeChange: (_shape) => {},
+    };
+
     // ── Transition system ─────────────────────────────────────────────────────
     this.transitions = new TransitionManager();
     // Durations (ms) — shorter on mobile to stay within GPU budget
@@ -846,6 +856,13 @@ export class RenderEngine {
     });
 
     if (shape === 'solar') this._buildSolarSystem();
+
+    // Notify subscribers (mainly MathVisualizer) that the shape changed.
+    // Called synchronously after geometry swap so the callback sees the
+    // new vertex buffer when it captures a pristine snapshot. Fires
+    // unconditionally — covers every entry point including R/D hotkeys,
+    // preset apply, clip-player, and direct setShape calls during boot.
+    this.cb?.onShapeChange?.(shape);
   }
 
   _buildShapeGeo(shape) {
