@@ -18,6 +18,7 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 | <kbd>R</kbd> | Randomize everything — shape, color, formula |
 | <kbd>F</kbd> | Random math formula (CPU) |
 | <kbd>D</kbd> | Next shape (sequential, looping through all 20 shapes) |
+| <kbd>T</kbd> | Next surface material — Matte / Glossy / Metallic / Glass / Velvet / Mirror (SURFACE mode only) |
 | <kbd>Q</kbd> | Random color scheme |
 | <kbd>E</kbd> | Next color scheme (cycles through all 36) |
 | <kbd>W</kbd> | Flip camera 180° around its orbit |
@@ -48,6 +49,7 @@ These are the "performance" keys — they're chosen so you can hold one with the
 - `H` shows a small reference overlay in the bottom-left corner. Tap it once to show, again to hide.
 - `R` is by far the most useful key while exploring — it gives you a new combination in one keystroke.
 - `D` complements `R` — it walks through all 20 shapes in order, useful when you want to systematically compare looks instead of random surprise.
+- `T` cycles the surface material (Matte, Glossy, Metallic, Glass, Velvet, Mirror) — it only has an effect in SURFACE render mode; in Wireframe or Points it does nothing.
 - Combine `R` and `Q`: `R` for a full reset of the look, `Q` to swap just the color afterward.
 - `S` (glitch) plus a beat-heavy moment of music produces a satisfying punch — use it as a manual accent during sets.
 - The randomization affects the dropdowns in the panel too, so whatever `R` lands on becomes the "current" selection if you want to keep iterating from there.
