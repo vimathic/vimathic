@@ -311,9 +311,28 @@ class TransitionManager {
 // RenderEngine
 // ─────────────────────────────────────────────────────────────────────────────
 export class RenderEngine {
+  // ── Surface material presets ──────────────────────────────────────────
+  // Each preset is the four FS reflection scalars plus an `on` flag.
+  // Matte has on:false so it costs nothing (FS skips the whole block).
+  //   metalness — 0 dielectric (neutral reflection) … 1 metal (colour-tinted)
+  //   roughness — 0 mirror-sharp … 1 fully diffuse (env darkened/blurred)
+  //   reflect   — overall reflection strength multiplier
+  //   fresnelP  — grazing-angle falloff exponent (higher = tighter rim)
+  // Keys must match the <option value> in index.html #surface-material-sel
+  // and the labels in params.js SURFACE_MATERIAL_DESCRIPTIONS.
+  static SURFACE_MATERIALS = {
+    matte:  { on:false, metalness:0.0, roughness:1.00, reflect:0.00, fresnelP:1.5 },
+    glossy: { on:true,  metalness:0.3, roughness:0.25, reflect:0.50, fresnelP:3.0 },
+    mirror: { on:true,  metalness:1.0, roughness:0.02, reflect:1.00, fresnelP:5.0 },
+    metal:  { on:true,  metalness:1.0, roughness:0.30, reflect:0.85, fresnelP:4.0 },
+    velvet: { on:true,  metalness:0.0, roughness:0.90, reflect:0.10, fresnelP:1.2 },
+    glass:  { on:true,  metalness:0.1, roughness:0.05, reflect:0.70, fresnelP:5.0 },
+  };
+
   constructor(isMobile, CFG) {
     this.isMobile = isMobile;
     this.CFG      = CFG;
+    this.currentMaterial = 'matte';
 
     // ── Three.js core ─────────────────────────────────────────────────────────
     this.scene    = new THREE.Scene();
@@ -466,6 +485,14 @@ export class RenderEngine {
                // SURF lighting: 1 = on (surface mode), 0 = off (wireframe/points).
                // Starts at 0 because startup mode is wireframe.
                uLighting:     { value: 0   },
+               // Surface material — studio-env reflections. uMaterial=0 (Matte)
+               // keeps the original look; >0 enables the reflection path in FS.
+               // The four scalars are a preset pushed by setSurfaceMaterial().
+               uMaterial:     { value: 0   },
+               uMetalness:    { value: 0.0 },
+               uRoughness:    { value: 1.0 },
+               uReflect:      { value: 0.0 },
+               uFresnelP:     { value: 1.5 },
              };
     this.gpuMat  = new THREE.ShaderMaterial({
       vertexShader: VS, fragmentShader: FS, uniforms: this.U,
@@ -819,6 +846,28 @@ export class RenderEngine {
       this.gpuPtsProxy = new THREE.Points(this.gpuMesh.geometry, ptsMat);
       this.scene.add(this.gpuPtsProxy);
     }
+  }
+
+  // ── Surface material (studio-env reflections) ─────────────────────────────
+  /**
+   * Apply a PBR-style material preset. Pushes four scalars into the shared
+   * uniforms; the FS reflection path reads them. uMaterial>0 enables the
+   * path (Matte=0 keeps the original flat-shaded look at zero cost).
+   *
+   * Works across all viz modes (surface / volume / collapse / GPU) because
+   * the reflection block in FS is independent of uLighting and reconstructs
+   * its own normal from screen-space derivatives.
+   *
+   * @param {string} name — key into RenderEngine.SURFACE_MATERIALS
+   */
+  setSurfaceMaterial(name) {
+    const m = RenderEngine.SURFACE_MATERIALS[name] ?? RenderEngine.SURFACE_MATERIALS.matte;
+    this.currentMaterial = name;
+    this.U.uMaterial.value  = m.on ? 1 : 0;
+    this.U.uMetalness.value = m.metalness;
+    this.U.uRoughness.value = m.roughness;
+    this.U.uReflect.value   = m.reflect;
+    this.U.uFresnelP.value  = m.fresnelP;
   }
 
   // ── Shape switching ──────────────────────────────────────────────────────────

@@ -264,6 +264,60 @@ vec3 getColor(int cm, float t){
 }
 `;
 
+// ── Shared surface-material GLSL ───────────────────────────────────────────
+// Extracted so both the main FS and the shader-editor FS template (SE_FS_
+// TEMPLATE) include identical material code without copy-paste drift.
+//
+// _MATERIAL_UNIFORMS — uniform declarations for the reflection path.
+// _STUDIO_ENV        — the procedural studio environment function.
+// _MATERIAL_BLOCK    — the reflection composite. Expects locals `color`
+//                      (vec3, in/out), `vWorldPos`, `vViewDir` to be in
+//                      scope. Gated by uMaterial>0 so Matte costs nothing.
+const _MATERIAL_UNIFORMS = `
+uniform int   uMaterial;
+uniform float uMetalness, uRoughness, uReflect, uFresnelP;`;
+
+const _STUDIO_ENV = `
+// Procedural studio environment — dark floor, brighter ceiling, three
+// soft-box highlights. Sampled by reflect(-V,N); no cubemap texture needed
+// (keeps the single-file bundle asset-free).
+vec3 studioEnv(vec3 dir){
+  vec3 d = normalize(dir);
+  float y = d.y;
+  vec3 floorC = vec3(0.02, 0.02, 0.03);
+  vec3 midC   = vec3(0.10, 0.11, 0.14);
+  vec3 ceilC  = vec3(0.30, 0.32, 0.38);
+  vec3 base = y < 0.0 ? mix(midC, floorC, -y)
+                      : mix(midC, ceilC,  y);
+  float sb1 = smoothstep(0.55, 0.95, dot(d, normalize(vec3( 0.4, 0.8,  0.3))));
+  float sb2 = smoothstep(0.70, 0.98, dot(d, normalize(vec3(-0.5, 0.7, -0.2))));
+  float sb3 = smoothstep(0.80, 0.99, dot(d, normalize(vec3( 0.1, 0.6, -0.8))));
+  base += vec3(1.0, 0.98, 0.92) * sb1 * 1.4;
+  base += vec3(0.85, 0.9, 1.0)  * sb2 * 1.0;
+  base += vec3(1.0, 0.95, 0.88) * sb3 * 0.7;
+  return base;
+}`;
+
+// Reflection composite. Modifies `color` in place. Reconstructs its own
+// normal from screen-space derivatives so it works regardless of how the
+// vertex was displaced (GPU mode, CPU formula, volume, or user shader).
+const _MATERIAL_BLOCK = `
+  if (uMaterial > 0) {
+    vec3 Nm = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+    vec3 Vm = normalize(vViewDir);
+    if (dot(Nm, Vm) < 0.0) Nm = -Nm;
+    vec3 Rm  = reflect(-Vm, Nm);
+    vec3 env = studioEnv(Rm);
+    env = mix(env, env * 0.4 + vec3(0.04), uRoughness * 0.7);
+    float fresM = pow(1.0 - max(dot(Nm, Vm), 0.0), uFresnelP);
+    vec3 metalTint  = mix(vec3(1.0), color, uMetalness);
+    vec3 reflection = env * metalTint;
+    float reflMix = clamp(uReflect * (uMetalness * 0.6 + fresM * 0.7 + 0.15), 0.0, 1.0);
+    color = mix(color, reflection, reflMix);
+    float specM = pow(max(dot(Nm, Vm), 0.0), mix(8.0, 180.0, 1.0 - uRoughness));
+    color += vec3(specM) * (1.0 - uRoughness) * uReflect * 0.3;
+  }`;
+
 export const FS = `
 uniform int   uCM, uCMNext;
 uniform float uCMBlend;
@@ -280,11 +334,16 @@ uniform float uCMBlend;
 // preamble at the correct position, and skips it on WebGL2 where it's a no-op.
 uniform int   uLighting;
 uniform float uTime, uBass, uTreble;
+// ── Surface material (PBR-style env reflections) ─────────────────────────
+// uMaterial: 0 = Matte (reflections off, original look). >0 enables the
+// reflection path. Shared with SE_FS_TEMPLATE via _MATERIAL_UNIFORMS.
+${_MATERIAL_UNIFORMS}
 varying float vH;
 varying vec3  vWorldPos;
 varying vec3  vViewDir;
 
 ${_COLOR_FUNS}
+${_STUDIO_ENV}
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 void main(){
@@ -332,6 +391,13 @@ void main(){
           + vec3(spec);
   }
 
+  // ── Surface material: studio-environment reflections ────────────────────
+  // Shared with SE_FS_TEMPLATE via _MATERIAL_BLOCK. Gated by uMaterial>0 so
+  // Matte (default) keeps the original look at zero cost. Runs independently
+  // of uLighting so reflections appear in every viz mode. Expects color,
+  // vWorldPos, vViewDir in scope — all present here.
+  ${_MATERIAL_BLOCK}
+
   gl_FragColor = vec4(color, 1.0);
 }`;
 
@@ -341,6 +407,8 @@ const SE_VS_TEMPLATE = body => `uniform float uTime,uBass,uMid,uTreble,uAmp,uBea
 uniform int uMode,uMathMode,uModeNext;
 uniform float uMorphProgress,uModeBlend;
 varying float vH;
+varying vec3  vWorldPos;
+varying vec3  vViewDir;
 float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;for(int n=-6;n<=6;n++){float fn=float(n);s+=cos(a*fn)*exp(-r*.28*fn*fn);}return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
@@ -349,17 +417,37 @@ void main(){vec3 pos=position;
   float r=length(pos.xz),ang=atan(pos.z,pos.x),y=0.,a=uAmp,wi=uWI,T=uTime;
   ${body}
   if(uMathMode==0){pos.y=y;}
-  vH=pos.y;gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);}`;
+  vH=pos.y;
+  vec4 _wp = modelMatrix * vec4(pos, 1.0);
+  vWorldPos = _wp.xyz;
+  vViewDir  = cameraPosition - _wp.xyz;
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);}`;
 
 // Template wrapping user frag body — _COLOR_FUNS provides all 36 color
 // functions AND the getColor() dispatcher, so a user fragment can just do
 // `c = getColor(uCM, t);` and cover every palette without copy-pasting a
 // 36-way if-cascade.
-const SE_FS_TEMPLATE = body => `uniform int uCM,uCMNext;uniform float uCMBlend;varying float vH;
+//
+// Surface materials (studio-env reflections) also apply here: the chosen
+// material runs over the user's `c` automatically (B+C). The user writes
+// their colour into `c` as before; we copy it into `color`, run the shared
+// _MATERIAL_BLOCK (which is a no-op when material is Matte / uMaterial==0),
+// then output. Advanced users can additionally call studioEnv(),
+// reflect(), and read uMetalness/uReflect/etc directly inside their body —
+// the function, uniforms, and vWorldPos/vViewDir varyings are all in scope.
+const SE_FS_TEMPLATE = body => `uniform int uCM,uCMNext;uniform float uCMBlend;
+uniform float uTime,uBass,uTreble;
+${_MATERIAL_UNIFORMS}
+varying float vH;
+varying vec3  vWorldPos;
+varying vec3  vViewDir;
 ${_COLOR_FUNS}
-void main(){float t=clamp((vH+.8)*.6,.03,.97);vec3 c;
+${_STUDIO_ENV}
+void main(){float t=clamp((vH+.8)*.6,.03,.97);vec3 c=vec3(0.0);
   ${body}
-  gl_FragColor=vec4(c,1.);}`;
+  vec3 color = c;
+  ${_MATERIAL_BLOCK}
+  gl_FragColor=vec4(color,1.);}`;
 
 // ── Shader editor default code snippets ───────────────────────────────────────
 const SE_DEFAULT_VERT = `// b bass  t treble  m mid  bt beat  T time  wi waveInt  a amp

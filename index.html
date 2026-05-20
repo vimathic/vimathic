@@ -778,7 +778,7 @@
 <div class="beat-ring" id="beat-ring"></div>
 <div id="hotkey-hint">
   SPACE play/pause · ← → tracks<br>
-  F random formula · D next shape · R random all<br>
+  F random formula · D next shape · T material · R random all<br>
   Q random color · E next color<br>
   W flip camera · G grid · H this hint<br>
   <span style="color:#445">Hold + drag (mouse / touchpad / wheel):<br>
@@ -870,6 +870,17 @@
         <option value="43">Coal Plum</option>
         </optgroup>
       </select></div>
+    <div class="cg"><label>Surface Material</label>
+      <select id="surface-material-sel">
+        <option value="matte" selected>Matte (flat)</option>
+        <option value="glossy">Glossy (lacquer)</option>
+        <option value="metal">Metal</option>
+        <option value="mirror">Mirror</option>
+        <option value="velvet">Velvet</option>
+        <option value="glass">Glass</option>
+      </select>
+      <div id="surface-material-desc" style="font-size:8px;color:#445;font-family:monospace;padding:3px 2px;min-height:12px"></div>
+    </div>
     <div class="cg"><label>Bloom <span id="blmv" class="vd">0.55</span></label>
       <input type="range" id="bloom" min="0" max="1.5" step="0.05" value="0.55"></div>
 

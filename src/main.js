@@ -176,6 +176,34 @@ function _cycleShape() {
   render.setShapeAnimated(next);
 }
 
+// ── T hotkey: sequential surface-material cycling ───────────────────────
+//
+// Same pattern as D for shapes — reads options from the live
+// <select id="surface-material-sel">, steps to the next, loops.
+//
+// No-op when the material dropdown is hidden. The dropdown is hidden in
+// WIRE/PTS viz modes (where reflections look degenerate, material is
+// forced to Matte), so T does nothing there — matching the rule that
+// materials are only meaningful on filled surfaces. Driving the change
+// event re-runs controls.js's _applyMat so render.setSurfaceMaterial and
+// the descriptor line update through the single existing path.
+let _materialCycle = null;
+function _cycleMaterial() {
+  const sel = document.getElementById('surface-material-sel');
+  if (!sel) return;
+  // Hidden dropdown → materials unavailable (WIRE/PTS). Ignore the key.
+  // offsetParent is null when the element or an ancestor is display:none.
+  if (sel.offsetParent === null) return;
+  if (!_materialCycle) {
+    _materialCycle = Array.from(sel.options).map(o => o.value);
+  }
+  if (!_materialCycle.length) return;
+  const i    = _materialCycle.indexOf(sel.value);
+  const next = _materialCycle[(i + 1) % _materialCycle.length];
+  sel.value = next;
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 window.addEventListener('keydown', e => {
   if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
   // Ignore auto-repeat keydown. Hotkeys here are single-action triggers
@@ -193,6 +221,13 @@ window.addEventListener('keydown', e => {
     // who wants deterministic shape browsing during a set.
     case 'd': {
       _cycleShape();
+      break;
+    }
+
+    // T — step to next surface material, looping. No-op in WIRE/PTS
+    // (dropdown hidden, material forced to Matte there).
+    case 't': {
+      _cycleMaterial();
       break;
     }
 

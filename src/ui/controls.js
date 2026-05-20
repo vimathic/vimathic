@@ -46,6 +46,67 @@ export function bindControls(ui) {
   // ── Shape / mode selects ──────────────────────────────────────────────────
   document.getElementById('shape-sel').addEventListener('change', e => r.setShapeAnimated(e.target.value));
 
+  // ── Surface material (studio-env reflections) ─────────────────────────────
+  // Global visual-style control — applies in every DEFORM mode (surface/
+  // volume/collapse). But it's only meaningful on filled surfaces: in
+  // WIRE / PTS viz modes the reconstructed normal is degenerate and
+  // reflections look broken, so there the material is forced to Matte and
+  // the whole dropdown is hidden. The previously-selected material is
+  // remembered and restored when the user returns to SURF viz mode.
+  const _matSel  = document.getElementById('surface-material-sel');
+  const _matDesc = document.getElementById('surface-material-desc');
+  const _matWrap = _matSel ? _matSel.closest('.cg') : null;  // the label+select container
+  const _matDescriptions = {
+    matte:  'Flat shaded — original look, no reflections',
+    glossy: 'Soft lacquer sheen with gentle highlights',
+    metal:  'Brushed metal with moving studio reflections',
+    mirror: 'Sharp chrome — full environment reflection',
+    velvet: 'Matte fabric with soft fresnel rim, no glints',
+    glass:  'Translucent edge-reflective, clear at center',
+  };
+  // Material the user picked while in SURF — restored when they come back
+  // from WIRE/PTS. Defaults to whatever the dropdown shows at boot.
+  let _savedMaterial = _matSel ? _matSel.value : 'matte';
+
+  const _applyMat = () => {
+    if (!_matSel) return;
+    const key = _matSel.value;
+    if (_matDesc) _matDesc.textContent = _matDescriptions[key] ?? '';
+    r.setSurfaceMaterial(key);
+  };
+  if (_matSel) {
+    _matSel.addEventListener('change', _applyMat);
+    _applyMat(); // pick up the default (matte) on boot
+  }
+
+  // Called by the viz-mode buttons. SURF → restore saved material + show
+  // dropdown. WIRE/PTS → remember current, force Matte, hide dropdown.
+  const _syncMaterialForVizMode = (vizMode) => {
+    if (!_matSel) return;
+    if (vizMode === 'surface') {
+      if (_matWrap) _matWrap.style.display = '';
+      // Restore the material the user had before switching away.
+      _matSel.value = _savedMaterial;
+      _applyMat();
+    } else {
+      // Entering WIRE / PTS — stash the current pick (unless it's already
+      // Matte from a previous WIRE/PTS visit) and force Matte.
+      if (_matSel.value !== 'matte') _savedMaterial = _matSel.value;
+      _matSel.value = 'matte';
+      _applyMat();
+      if (_matWrap) _matWrap.style.display = 'none';
+    }
+  };
+
+  // Boot-time sync: the HTML default viz mode is wireframe (mode-wireframe
+  // carries class="active"). Without this, the dropdown would show at boot
+  // even though we're in WIRE. Read the active mode button and sync.
+  {
+    const activeModeBtn = document.querySelector('.mode-btns .mbtn.active');
+    const bootMode = activeModeBtn?.id?.replace('mode-', '') || 'wireframe';
+    _syncMaterialForVizMode(bootMode);
+  }
+
   // ── Deform mode (Surface / Volume / Collapse) ─────────────────────────────
   //
   // Defined BEFORE the gpu-sel handler below so that handler can call
@@ -136,6 +197,9 @@ export function bindControls(ui) {
       document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
       document.getElementById('mode-'+mode).classList.add('active');
       r.setVizModeGPU(mode);
+      // Material is only meaningful on filled surfaces — force Matte and
+      // hide the dropdown in WIRE/PTS, restore the saved material in SURF.
+      _syncMaterialForVizMode(mode);
     });
   });
 
