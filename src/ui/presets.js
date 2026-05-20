@@ -99,6 +99,7 @@ export const PresetMixin = {
       // ── Visual ──────────────────────────────────────────────────────────
       shape:       r.currentShape,
       vizMode:     r.vizMode,
+      material:    r.currentMaterial ?? 'matte',
       gpuSelVal:   DOM.gpuSel.value || String(r.U.uMode.value),  // e.g. "3" or "m:waves:standingWave"
       gpuMode:     r.U.uMode.value,                              // GPU integer mode (when not CPU)
       deformMode:  mv?._mode      ?? 'surface',
@@ -181,6 +182,25 @@ export const PresetMixin = {
       document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
       const mb = DOM.modeBtn(s.vizMode);
       if (mb) mb.classList.add('active');
+    }
+
+    // ── Surface material ───────────────────────────────────────────────────
+    // Applied outside the morph block — it's a uniform push, no geometry
+    // rebuild needed. Default 'matte' for presets saved before this field
+    // existed (forward/backward compatible via the ?? guard).
+    {
+      const matKey = s.material ?? 'matte';
+      const matSel = document.getElementById('surface-material-sel');
+      if (matSel) {
+        // Setting .value + dispatching change runs controls.js's _applyMat,
+        // which calls render.setSurfaceMaterial and updates the descriptor.
+        // Single source of truth for the apply path.
+        matSel.value = matKey;
+        matSel.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        // No dropdown in this HTML variant — apply directly.
+        r.setSurfaceMaterial?.(matKey);
+      }
     }
 
     // ── Shape + Formula + Deform: single coordinated morph ──────────────────
