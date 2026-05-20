@@ -186,6 +186,7 @@ function bindRecordingSection(ui, setOutFeedback) {
   const sizeSel      = $('rec-gif-size');
   const fpsSel       = $('rec-gif-fps');
   const qualSel      = $('rec-gif-quality');
+  const aspectSel    = $('rec-aspect');
   const durModeSec   = $('rec-dur-mode-sec');
   const durModeBeat  = $('rec-dur-mode-beat');
   const durSecWrap   = $('rec-dur-sec-wrap');
@@ -193,6 +194,27 @@ function bindRecordingSection(ui, setOutFeedback) {
   const durSecSel    = $('rec-dur-sec');
   const durBeatSel   = $('rec-dur-beat');
   const startBtn     = $('rec-btn-start');
+
+  // ── Output dimensions from aspect preset + size ──────────────────────────
+  // The SIZE dropdown holds a p-value (480/640/720) interpreted as the
+  // SHORT edge, so a "480p" clip is ~the same file weight whether it's
+  // landscape or portrait. Long edge is derived from the aspect ratio.
+  //   landscape 16:9 → width = short*16/9, height = short
+  //   portrait  9:16 → width = short,      height = short*16/9
+  //   square    1:1  → width = short,      height = short
+  //   native         → the live canvas dimensions (recorder default; we
+  //                    return null to signal "let the recorder use native")
+  // The recorder cover-crops the (landscape) WebGL canvas into whatever
+  // width/height we hand it, so any aspect comes out undistorted.
+  const computeDimensions = (aspect, shortEdge) => {
+    switch (aspect) {
+      case 'portrait':  return { width: shortEdge,                      height: Math.round(shortEdge * 16 / 9) };
+      case 'square':    return { width: shortEdge,                      height: shortEdge };
+      case 'native':    return null;  // recorder falls back to canvas size
+      case 'landscape':
+      default:          return { width: Math.round(shortEdge * 16 / 9), height: shortEdge };
+    }
+  };
   const stopBtn      = $('rec-btn-stop');
   const progressWrap = $('rec-progress-wrap');
   const progressBar  = $('rec-progress-bar');
@@ -257,13 +279,16 @@ function bindRecordingSection(ui, setOutFeedback) {
   // ── Start action ─────────────────────────────────────────────────────────
   startBtn.addEventListener('click', () => {
     if (currentFmt === 'gif') {
-      // 16:9 from the chosen height. The size select holds heights
-      // (480/640/720) because that maps cleanly to "p"-labelled presets.
+      // SIZE holds the short-edge p-value; aspect preset derives the long
+      // edge. Cover-crop in the recorder handles the landscape→target fit.
       const sz   = parseInt(sizeSel.value, 10);
       const fps  = parseInt(fpsSel.value, 10);
       const qual = parseInt(qualSel.value, 10);
-      const height = sz;
-      const width  = Math.round(sz * 16 / 9);
+      const dims = computeDimensions(aspectSel.value, sz)
+                ?? { width: ui.render.renderer.domElement.width,
+                     height: ui.render.renderer.domElement.height };
+      const width  = dims.width;
+      const height = dims.height;
 
       const opts = {
         width, height, fps, quality: qual,
@@ -323,11 +348,16 @@ function bindRecordingSection(ui, setOutFeedback) {
       // WebM is single-phase: MediaRecorder streams chunks while recording
       // and emits the final blob on stop, so the progress bar tracks
       // elapsed time directly.
+      const sz   = parseInt(sizeSel.value, 10);
+      const dims = computeDimensions(aspectSel.value, sz);
       const opts = {
         duration:    parseInt(durSecSel.value, 10) * 1000,
         fps:         60,
         bitrateMbps: 8,
       };
+      // Only set dimensions for non-native aspects; native lets the
+      // recorder default to the live canvas size.
+      if (dims) { opts.width = dims.width; opts.height = dims.height; }
       webm.cb.onStart    = () => {
         setRecording(true);
         showProgress(0, `Recording WebM… ${opts.duration/1000}s`);

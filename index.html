@@ -1575,16 +1575,30 @@
         <button class="out-btn" id="rec-fmt-webm" style="flex:0 0 70px">🎥 WebM</button>
       </div>
 
+      <!-- Aspect ratio (shared by GIF + WebM) -->
+      <div class="out-row">
+        <label style="font-size:8px;color:#556;font-family:monospace">ASPECT</label>
+        <select id="rec-aspect" style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);border-radius:5px;color:#0fc;font-family:var(--mono);font-size:9px;padding:4px 6px">
+          <option value="landscape" selected>16:9 Landscape (YouTube)</option>
+          <option value="portrait">9:16 Portrait (TikTok/Reels)</option>
+          <option value="square">1:1 Square (Instagram)</option>
+          <option value="native">Native (as on screen)</option>
+        </select>
+      </div>
+
+      <!-- Size (shared by GIF + WebM; short-edge p-value) -->
+      <div class="out-row">
+        <label style="font-size:8px;color:#556;font-family:monospace">SIZE</label>
+        <select id="rec-gif-size" style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);border-radius:5px;color:#0fc;font-family:var(--mono);font-size:9px;padding:4px 6px">
+          <option value="480"  selected>480p — small file</option>
+          <option value="640">640p</option>
+          <option value="720">720p</option>
+          <option value="1080">1080p — bigger</option>
+        </select>
+      </div>
+
       <!-- GIF settings (visible when GIF format selected) -->
       <div id="rec-gif-settings">
-        <div class="out-row">
-          <label style="font-size:8px;color:#556;font-family:monospace">SIZE</label>
-          <select id="rec-gif-size" style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);border-radius:5px;color:#0fc;font-family:var(--mono);font-size:9px;padding:4px 6px">
-            <option value="480"  selected>480p (854×480) — small file</option>
-            <option value="640">  640p (1138×640)</option>
-            <option value="720">  720p (1280×720) — bigger</option>
-          </select>
-        </div>
         <div class="out-row">
           <label style="font-size:8px;color:#556;font-family:monospace">FPS</label>
           <select id="rec-gif-fps" style="flex:1;background:rgba(0,255,200,.06);border:1px solid rgba(0,255,200,.25);border-radius:5px;color:#0fc;font-family:var(--mono);font-size:9px;padding:4px 6px">

@@ -62,52 +62,86 @@ function makeScratchCanvas(w, h) {
   return c;
 }
 
+// ── Aspect-aware cover crop ────────────────────────────────────────────────
+/**
+ * Compute the source rectangle to sample from a (srcW × srcH) canvas so it
+ * fills a (dstW × dstH) destination with "cover" semantics: scaled to cover
+ * the whole destination, overflow cropped, centered, aspect preserved.
+ *
+ * The renderer canvas is usually landscape (window-shaped). Exporting
+ * portrait 9:16 by drawing the whole landscape canvas into a tall scratch
+ * canvas stretches it vertically — everything looks squashed. Cover-crop
+ * instead samples the central vertical slice, so a portrait clip shows an
+ * undistorted, zoomed-in view.
+ *
+ * @returns {{sx,sy,sw,sh}} source rect for drawImage's 9-arg form.
+ */
+function coverRect(srcW, srcH, dstW, dstH) {
+  const srcAspect = srcW / srcH;
+  const dstAspect = dstW / dstH;
+  let sw, sh;
+  if (srcAspect > dstAspect) {
+    sh = srcH;                 // source wider — crop sides, full height
+    sw = srcH * dstAspect;
+  } else {
+    sw = srcW;                 // source taller — crop top/bottom, full width
+    sh = srcW / dstAspect;
+  }
+  const sx = (srcW - sw) * 0.5;
+  const sy = (srcH - sh) * 0.5;
+  return { sx, sy, sw, sh };
+}
+
 // ── Watermark ────────────────────────────────────────────────────────────
 /**
- * Paint a "VIMATHIC" watermark in the bottom-left corner of the supplied
- * 2D context. The watermark scales with canvas height so it looks
- * consistent at 480p and 720p, and uses a subtle cyan glow under the fill
- * plus a dark outline so it stays readable on bright AND dark scenes —
- * which both happen in a visualizer.
+ * Paint a "VIMATHIC" watermark in the bottom-RIGHT corner, styled to match
+ * the brand name in the control-panel header: accent pink (#ff3a7a), the
+ * Eurostile/Bahnschrift display family, 2px letter-spacing, and a slight
+ * vertical squash (scaleY 0.85). Half the previous footprint so it reads as
+ * a discreet signature rather than a banner. A faint dark outline keeps it
+ * legible on bright scenes without the old heavy glow.
  *
  * @param {CanvasRenderingContext2D} ctx
- * @param {number} canvasWidth   — used only to keep margin proportional
+ * @param {number} canvasWidth   — drives horizontal (right-edge) position
  * @param {number} canvasHeight  — drives font size + vertical position
  */
 function drawWatermark(ctx, canvasWidth, canvasHeight) {
-  // Font size ≈ 4.5% of canvas height (≈22px @ 480p, ≈32px @ 720p).
-  // Clamped at 14px so the watermark never gets unreadably small on
-  // extreme aspect ratios.
-  const fontSize = Math.max(14, Math.round(canvasHeight * 0.045));
-  const margin   = Math.round(canvasHeight * 0.035);
+  // Half the old footprint: ~2.25% of height (was 4.5%). Clamped at 9px so
+  // it doesn't vanish on small/extreme aspect ratios.
+  const fontSize = Math.max(9, Math.round(canvasHeight * 0.0225));
+  const margin   = Math.round(canvasHeight * 0.025);
 
   ctx.save();
 
-  // Reset any composite state inherited from prior drawImage calls.
-  // Without these resets, a previous frame's globalAlpha could leak in
-  // and turn the watermark translucent unpredictably.
-  ctx.globalAlpha            = 1;
+  // Reset composite state that could leak from prior drawImage calls.
+  ctx.globalAlpha              = 1;
   ctx.globalCompositeOperation = 'source-over';
 
-  ctx.font         = `600 ${fontSize}px "JetBrains Mono", "Courier New", monospace`;
+  // Match the panel header: --display family, semi-bold, 2px tracking.
+  ctx.font = `600 ${fontSize}px "Eurostile", "Bahnschrift", "Helvetica Neue", Arial, sans-serif`;
+  // letterSpacing is supported in Chrome/Edge/Firefox; harmless if ignored.
+  try { ctx.letterSpacing = '2px'; } catch (_) {}
   ctx.textBaseline = 'bottom';
-  ctx.textAlign    = 'left';
+  ctx.textAlign    = 'right';
 
-  const x = margin;
+  // Bottom-right anchor. scaleY(0.85) mirrors the header's transform; we
+  // scale the context around the baseline so the squash doesn't drift the
+  // text off the corner.
+  const x = canvasWidth - margin;
   const y = canvasHeight - margin;
+  ctx.translate(0, y);
+  ctx.scale(1, 0.85);
+  ctx.translate(0, -y);
 
-  // Layer 1: soft cyan glow + dark outline. Glow rescues legibility on
-  // bright/cyan backgrounds; the dark stroke does the same on light/white.
-  ctx.shadowColor = 'rgba(0, 255, 200, 0.55)';
-  ctx.shadowBlur  = fontSize * 0.6;
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
-  ctx.lineWidth   = Math.max(2, fontSize * 0.12);
+  // Subtle dark outline for legibility on bright scenes (no big glow — the
+  // panel brand has none; this is a quiet signature).
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.40)';
+  ctx.lineWidth   = Math.max(1, fontSize * 0.10);
   ctx.lineJoin    = 'round';
   ctx.strokeText('VIMATHIC', x, y);
 
-  // Layer 2: main cyan fill. High alpha so it reads on dark scenes too.
-  ctx.shadowBlur  = fontSize * 0.3;
-  ctx.fillStyle   = 'rgba(0, 255, 200, 0.92)';
+  // Main fill: accent pink (#ff3a7a), matching the control-panel name.
+  ctx.fillStyle = 'rgba(255, 58, 122, 0.92)';
   ctx.fillText('VIMATHIC', x, y);
 
   ctx.restore();
@@ -120,8 +154,16 @@ function drawWatermark(ctx, canvasWidth, canvasHeight) {
 // Bumping any of these requires a fresh look at the memMb check below.
 const LIMITS = {
   maxDurationMs: 60_000,
-  maxWidth:      1280,
-  maxHeight:     720,
+  // Both dimensions share a 1920 ceiling so every orientation fits:
+  //   landscape 16:9  → 1920×1080
+  //   portrait  9:16  → 1080×1920  (TikTok / Reels / Shorts)
+  //   square    1:1   → 1080×1080  (Instagram feed)
+  // Previously these were 1280×720, which silently clamped any portrait
+  // request's height back to 720 — making vertical output impossible.
+  // 1920 is the practical ceiling for browser-side GIF/WebM encoding on
+  // mid-range laptops; beyond it the memory pre-flight (memMb) trips.
+  maxWidth:      1920,
+  maxHeight:     1920,
   maxFps:        30,    // GIFs above 30 fps look bad and weigh too much
   minFps:        5,
 };
@@ -403,6 +445,12 @@ export class GifRecorder {
     sctx.imageSmoothingQuality = 'high';
     const w = this._scratch.width;
     const h = this._scratch.height;
+    // Cover-crop source rect: sample the central region of the (usually
+    // landscape) WebGL canvas matching the output aspect, so portrait /
+    // square exports aren't stretched. Computed once — canvas size is
+    // stable for the duration of a capture (resize during record is rare
+    // and the next frame's drawImage tolerates a stale rect harmlessly).
+    const src = coverRect(this._canvas.width, this._canvas.height, w, h);
 
     this._captureTimer = setInterval(() => {
       if (!this.recording) return;
@@ -411,7 +459,7 @@ export class GifRecorder {
         // created with preserveDrawingBuffer:true in render.js. Without
         // that flag the GPU back-buffer is destroyed at composite time
         // and we'd get a black frame here.
-        sctx.drawImage(this._canvas, 0, 0, w, h);
+        sctx.drawImage(this._canvas, src.sx, src.sy, src.sw, src.sh, 0, 0, w, h);
         // Watermark goes AFTER the frame copy so it overlays the scene,
         // not the other way round.
         drawWatermark(sctx, w, h);
@@ -472,15 +520,23 @@ export class WebmRecorder {
     };
   }
 
-  /** @param {{duration:number, fps:number, bitrateMbps:number}} opts */
+  /** @param {{duration:number, fps:number, bitrateMbps:number, width:number, height:number}} opts */
   start(opts = {}) {
     if (this.recording) { this.cb.onError('Already recording'); return; }
     const o = {
       duration:    10_000,
       fps:         60,
       bitrateMbps: 8,
+      // Output dimensions. Default to the live canvas size (Native preset);
+      // an explicit width/height drives a fixed aspect (portrait/square/etc)
+      // with cover-crop. Clamped to LIMITS so portrait 1080×1920 passes but
+      // nothing exceeds the encoder's practical ceiling.
+      width:       this._canvas.width,
+      height:      this._canvas.height,
       ...opts,
     };
+    o.width  = Math.min(o.width,  LIMITS.maxWidth);
+    o.height = Math.min(o.height, LIMITS.maxHeight);
     // 5-minute ceiling. The encoder itself can run longer, but a single
     // WebM file past this point is more than most archive workflows want.
     if (o.duration > 5 * 60_000) o.duration = 5 * 60_000;
@@ -505,12 +561,15 @@ export class WebmRecorder {
     try {
       // ── Composite canvas ────────────────────────────────────────────
       // We can't captureStream() directly from the WebGL canvas because
-      // we need the watermark overlay. Instead: create a 2D canvas at
-      // the same size, redraw it every rAF tick (WebGL → 2D + watermark),
-      // and captureStream THAT. The browser snapshots the composite at
-      // its own pace; we just keep it fresh.
-      this._compCanvas = makeScratchCanvas(this._canvas.width, this._canvas.height);
+      // we need the watermark overlay AND aspect control. Instead: create a
+      // 2D canvas at the OUTPUT size (o.width × o.height, not the native
+      // canvas size), redraw it every rAF tick (WebGL → cover-crop → 2D +
+      // watermark), and captureStream THAT. The browser snapshots the
+      // composite at its own pace; we just keep it fresh.
+      this._compCanvas = makeScratchCanvas(o.width, o.height);
       this._compCtx    = this._compCanvas.getContext('2d');
+      this._compCtx.imageSmoothingEnabled = true;
+      this._compCtx.imageSmoothingQuality = 'high';
 
       this._stream = this._compCanvas.captureStream(o.fps);
       this._mr = new MediaRecorder(this._stream, {
@@ -561,7 +620,12 @@ export class WebmRecorder {
       const renderLoop = () => {
         if (!this.recording) return;
         try {
-          this._compCtx.drawImage(this._canvas, 0, 0, w, h);
+          // Cover-crop the (usually landscape) WebGL canvas into the output
+          // aspect. Recomputed each frame: unlike the GIF path, a WebM
+          // record can run minutes and the window may resize mid-capture,
+          // changing this._canvas dimensions. A per-frame rect stays correct.
+          const src = coverRect(this._canvas.width, this._canvas.height, w, h);
+          this._compCtx.drawImage(this._canvas, src.sx, src.sy, src.sw, src.sh, 0, 0, w, h);
           drawWatermark(this._compCtx, w, h);
         } catch (_) {
           // WebGL canvas can be resized between draws (window resize, DPI
