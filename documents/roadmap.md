@@ -11,7 +11,7 @@ description: What VIMATHIC is today, and what comes next.
   <img src="/support-hero.png" alt="VIMATHIC hero image" style="max-width:100%;height:auto;display:block;margin:1.5em auto;border-radius:6px;">
 </picture>
 
-VIMATHIC 1.0 is here — free, open-source, and complete on its own.
+VIMATHIC 1.0 is here — free, source-available, and complete on its own.
 This page is about what comes after.
 
 <pre style="line-height:1.4;font-size:0.85em;overflow-x:auto;">
@@ -19,7 +19,7 @@ This page is about what comes after.
 │                                                                 │
 │   NOW            VIMATHIC 1.0                                   │
 │                  ════════════════════                           │
-│                  Web · WebGL · Open-source · Free forever       │
+│                  Web · WebGL · Source-available · Free forever  │
 │                                                                 │
 │                  192 mathematical formulas, 38 GPU shaders,     │
 │                  36 colour schemes, 20 base shapes, full        │
@@ -69,7 +69,7 @@ given freely.
   ∞   yours to use, study, fork, share
 </pre>
 
-All open-source under [BUSL-1.1](./license.md), converting to GPL v3
+All source-available under [BUSL-1.1](./license.md), converting to open-source GPL v3
 on **2031-05-09**. Educational and non-profit use is permitted
 immediately under Apache 2.0 or GPL v3 terms (recipient's choice).
 
@@ -106,7 +106,7 @@ real goal, not a contract. If something can't be built as planned,
 you'll hear about it in transparent updates.
 
 Your support is a contribution to development, not a pre-order with
-guaranteed delivery. The free 1.0 will remain free and open-source
+guaranteed delivery. The free 1.0 will remain free and source-available
 **forever** regardless of what happens with the mobile app or
 whatever follows. The foundation stays open.
 
