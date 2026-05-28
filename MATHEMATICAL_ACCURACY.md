@@ -364,7 +364,7 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 > **164 mathematical formulas with verifiable numerical accuracy.**
 > 122 closed-form analytic expressions evaluated at IEEE 754 double precision.
 > 42 well-validated approximations with documented bounded error (≤ 10⁻³ to 10⁻⁷), including real PDE simulations on adaptive internal grids with bilinear interpolation to the full-resolution display mesh.
-> Open source, open test suite (111 automated tests passing, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
+> Source-available, open test suite (111 automated tests passing, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
 
 ### ✓ Defensible (alternative — domain-coverage emphasis)
 

@@ -61,7 +61,7 @@ When you open a pull request, you grant two things:
 
 You retain copyright on your contribution. The grant above is non-exclusive — you can still use your own code anywhere else, under any terms you like.
 
-This dual-grant model is how the project sustains itself: VIMATHIC stays free and open-source, while commercial derivatives may incorporate community contributions. It's disclosed upfront so there are no surprises later.
+This dual-grant model is how the project sustains itself: VIMATHIC stays free and source-available (open-source GPL v3 from 2031), while commercial derivatives may incorporate community contributions. It's disclosed upfront so there are no surprises later.
 
 No Contributor License Agreement form, no paperwork — opening the PR is your acknowledgment of these terms. Full text in [CONTRIBUTING.md on GitHub](https://github.com/vimathic/vimathic/blob/main/CONTRIBUTING.md).
 

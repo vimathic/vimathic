@@ -97,7 +97,7 @@ By opening a pull request, you agree to the following:
 
 3. You additionally grant the project maintainer **a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license** to use, modify, and distribute your contribution under any license terms, including in proprietary commercial products derived from VIMATHIC (e.g. planned mobile apps, possibly desktop).
 
-This dual license reflects a sustainable open-core model: the open-source VIMATHIC (this repository) is free forever, while commercial derivatives may incorporate contributions. Your code stays free in VIMATHIC 1.0; it may also appear in commercial products built by the maintainer.
+This dual license reflects a sustainable open-core model: the source-available VIMATHIC (this repository) is free forever, while commercial derivatives may incorporate contributions. Your code stays free in VIMATHIC 1.0; it may also appear in commercial products built by the maintainer.
 
 No CLA, no paperwork — opening the PR is your acknowledgment of these terms.
 

@@ -243,7 +243,7 @@ Where the author's role was strongest: deciding what the instrument should *be*,
 
 ## Support
 
-VIMATHIC 1.0 is free, ad-free, telemetry-free, and open-source — forever.
+VIMATHIC 1.0 is free, ad-free, telemetry-free, and source-available — and becomes fully open-source (GPL v3) in 2031.
 For the roadmap of what comes next and ways to support development,
 see the [Roadmap](./documents/roadmap.md).
 
