@@ -455,10 +455,24 @@ describe('Tier B — Linear Algebra', () => {
     near(evalAt('linearAlgebra', 'hessian', 0, 0, 0), 0, 1e-12);
   });
 
-  test('vectorField: curl of constant field is zero', () => {
-    // F_z = cos(x)·sin(z) — non-trivial in general.
-    // At x=0, z=0: dFz/dx = 0, dFx/dz = 0, curl = 0.
-    near(evalAt('linearAlgebra', 'vectorField', 0, 0, 0), 0, 1e-3);
+  test('vectorField: curl is non-zero away from the origin — F must not be conservative', () => {
+    // The field is F = (Fx, Fz) = (−sin(z·f), sin(x·f)), whose curl is
+    // f·(cos(x·f) + cos(z·f)); the formula divides by f and scales by 0.25.
+    //
+    // The previous field was F = (sin(x·f)·cos(z·f), cos(x·f)·sin(z·f)) — a
+    // gradient field, and the curl of a gradient is identically zero, so the
+    // formula returned ~1e-14 for every (x, z) and drew a dead-flat plate.
+    // The old assertion sampled the origin only, where sin(0)=0 kills both
+    // stencils, so any field of that shape satisfied it. Sample off-origin AND
+    // assert the whole grid is not flat: no conservative field can pass that.
+    near(evalAt('linearAlgebra', 'vectorField', 0.7, -1.3, 0),
+         0.25 * (Math.cos(0.7) + Math.cos(1.3)), 1e-3);
+
+    const hf = generateSurfaceFromFormula(
+      getFormula('linearAlgebra', 'vectorField').f, BASELINE, 121, 3.5, 0);
+    let lo = Infinity, hi = -Infinity;
+    for (const v of hf) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    assert.ok(hi - lo > 0.1, `height field is flat: spread=${hi - lo}`);
   });
 
   test('quadraticForm at origin → 0', () => {
@@ -956,6 +970,87 @@ describe('Integration — generateSurfaceFromFormula', () => {
     }
     assert.equal(unbounded.length, 0,
       `Unbounded outputs in: ${unbounded.join(', ')}`);
+  });
+
+  test('finite and bounded across the parameter envelope the app actually drives', () => {
+    // The two guards above evaluate the catalogue at BASELINE and grid 16 only,
+    // and that is not the envelope the running app produces: comp is
+    // `0.5 + audio.mid*0.4` → [0.5, 0.9], freq follows the wave-intensity
+    // slider, and the shipped mesh is 161×161 on desktop. Hénon diverged for
+    // comp > ~0.55 and shipped ±Infinity into the vertex buffer at plain boot
+    // defaults, which BASELINE-at-16 could not see: its isFinite() test ran on
+    // the double, while the height field is Float32, so 1e38 became Infinity
+    // only on the way into the buffer.
+    //
+    // Both checks share one pass — 192 formulas × params × grids is enough
+    // arithmetic that running it twice would be felt in the suite's runtime.
+    // Corners of the reachable envelope only: amp ∈ [0.2, 1.5] and freq ∈
+    // [0.3, 3.5] are the slider ranges in src/params.js, comp ∈ [0.5, 0.9] is
+    // what the audio path produces. Typed/MIDI values above a slider's max are
+    // deliberately not clamped (see applyParam), and a dozen formulas do exceed
+    // |y| = 100 out there — that is the documented "extended values stay
+    // extended" policy, not a contract this test gets to assert against.
+    const ENVELOPE = [
+      { amp: 1,    freq: 1,     comp: 0.5  },
+      { amp: 0.77, freq: 1.069, comp: 0.58 },  // idle boot values
+      { amp: 1,    freq: 1,     comp: 0.6  },
+      { amp: 1,    freq: 1,     comp: 0.9  },  // audio.mid saturated
+      { amp: 1.5,  freq: 3.5,   comp: 0.9  },  // both sliders at max
+      { amp: 0.2,  freq: 0.3,   comp: 0.5  },  // both sliders at min
+    ];
+    // Two different contracts, deliberately:
+    //   • FINITE — absolute. A non-finite entry tears the mesh and is the
+    //     defect this test exists for.
+    //   • DIVERGENCE — orders of magnitude, not the strict |y| ≤ 100 the
+    //     BASELINE guard above enforces. Several formulas are exponential
+    //     (catenoid's cosh, matrixExp, eulerIm, hyperbolicGeom) and legitimately
+    //     reach 1e4…1e9 with both sliders at max, while catenoid grazes 1.03e2
+    //     at plain boot defaults. Flagging those would be a policy change on
+    //     the catalogue, not a regression guard, so the ceiling here is set to
+    //     catch a diverging iteration (Hénon reached 5e37 at boot defaults)
+    //     rather than a steep-but-intended surface.
+    const DIVERGENCE = 1e4;
+    const bad = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, formula] of Object.entries(col.formulas)) {
+        for (const params of ENVELOPE) {
+          for (const [gs, t] of [[16, 0], [16, 2.5], [90, 0]]) {
+            const hf = generateSurfaceFromFormula(formula.f, params, gs, 3.5, t);
+            let worst = 0, nonFinite = 0;
+            for (let i = 0; i < hf.length; i++) {
+              if (!Number.isFinite(hf[i])) { nonFinite++; continue; }
+              const a = Math.abs(hf[i]);
+              if (a > worst) worst = a;
+            }
+            const slidersAtMax = params.amp > 1 && params.freq > 3;
+            if (nonFinite || (worst > DIVERGENCE && !slidersAtMax)) {
+              bad.push(`${colId}/${key} @amp=${params.amp} freq=${params.freq} `
+                + `comp=${params.comp} grid=${gs} t=${t}: ${nonFinite} non-finite, `
+                + `max=${worst.toExponential(2)}`);
+            }
+          }
+        }
+      }
+    }
+    assert.equal(bad.length, 0, `Out-of-contract outputs:\n  ${bad.join('\n  ')}`);
+  });
+
+  test('henon stays bounded where it used to overflow to ±1e38', () => {
+    // Sharpest single case: the boot-default corner of the envelope above.
+    const f  = getFormula('fractals', 'henon').f;
+    const hf = generateSurfaceFromFormula(f, { amp: 0.77, freq: 1.069, comp: 0.58 }, 161, 3.5, 0);
+    let nonFinite = 0, over = 0;
+    for (let i = 0; i < hf.length; i++) {
+      if (!Number.isFinite(hf[i])) nonFinite++;
+      else if (Math.abs(hf[i]) > 100) over++;
+    }
+    assert.equal(nonFinite, 0, `${nonFinite} vertices are ±Infinity`);
+    assert.equal(over, 0, `${over} vertices exceed |y| > 100`);
+    // Direct call, past the Float32 narrowing: a diverging orbit returns 0.
+    assert.ok(Math.abs(f(3.5, 3.5, 0, { amp: 1, freq: 1, comp: 0.6 })) <= 100);
+    // And the attractor itself is untouched — this is the value the escape
+    // must not change, since the canonical orbit lives inside |x| ≤ 1.3.
+    assert.ok(Math.abs(f(0.4, -0.2, 0, BASELINE)) > 0);
   });
 });
 

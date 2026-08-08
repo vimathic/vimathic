@@ -337,11 +337,27 @@ export const PresetMixin = {
       }
     }
 
-    if (s.deformMode === 'volume' && s.volumeKey) {
+    // A numeric gpuSelVal means a GPU shader owns pos.y, and the shader's whole
+    // displacement is gated on uMathMode==0 (shaders.js). MathVisualizer
+    // .deactivate() leaves _mode/_volumeKey as they were, so a snapshot taken
+    // after switching from DEFORM: VOLUME to a GPU shader still carries
+    // deformMode:'volume' — honouring it re-armed the CPU deformation, set
+    // uMathMode to 1, and the restored GPU shader then drew nothing at all.
+    //
+    // Restore what the user was actually looking at: the shader, over an
+    // undeformed surface. Not "skip the deform block" — the mode still has to
+    // be written, or mathViz._mode stays stuck at 'volume' and the next 'm:'
+    // formula the user picks auto-exits into COLLAPSE while the panel reads
+    // SURFACE. 'collapse' needs no special case: unlike setVolumeFormula it
+    // never touches uMathMode, so it round-trips over a GPU shader untouched.
+    const cpuPath = s.gpuSelVal == null || s.gpuSelVal.startsWith('m:');
+    const deformTarget = (!cpuPath && s.deformMode === 'volume') ? 'surface' : s.deformMode;
+
+    if (deformTarget === 'volume' && s.volumeKey) {
       onFlatActions.push(() => { if (mv) mv.setVolumeFormula(s.volumeKey); });
-    } else if (s.deformMode && s.deformMode !== 'surface') {
-      onFlatActions.push(() => { if (mv) mv.setMode(s.deformMode); });
-    } else if (s.deformMode === 'surface') {
+    } else if (deformTarget && deformTarget !== 'surface') {
+      onFlatActions.push(() => { if (mv) mv.setMode(deformTarget); });
+    } else if (deformTarget === 'surface') {
       // Explicit surface mode — schedule restoration if mv was in volume/collapse.
       onFlatActions.push(() => { if (mv) mv.setMode('surface'); });
     }
@@ -355,9 +371,13 @@ export const PresetMixin = {
     // FIX(#15, r2): run for EVERY snapshot. One without deformMode leaves the
     // engine mode alone (no branch above fires), so the row has to be re-lit
     // from mathViz._mode — the field captureState() records.
-    const deformMode = s.deformMode ?? mv?._mode ?? null;
+    // deformTarget, not s.deformMode: the row must show the mode that was
+    // actually scheduled above, or it lights ⬡ VOLUME over a GPU shader that
+    // carries no volume deformation.
+    const deformMode = deformTarget ?? mv?._mode ?? null;
     if (deformMode) {
-      this.syncDeformUI?.(deformMode, s.volumeKey ?? mv?._volumeKey ?? null);
+      const volKey = deformTarget === 'volume' ? (s.volumeKey ?? mv?._volumeKey ?? null) : null;
+      this.syncDeformUI?.(deformMode, volKey);
     }
 
     if (onFlatActions.length > 0) {
@@ -378,6 +398,7 @@ export const PresetMixin = {
     // script over the user's. Everything above this line has already run:
     // shape, colour, formula, shader and params are what a clip step is for.
     const camOwned = !opts.preserveCamera;
+    let startCameraTween = null;
 
     if (s.camera && camOwned) {
       const c = s.camera;
@@ -407,7 +428,13 @@ export const PresetMixin = {
         });
       }
 
-      r.tweenCameraTo(
+      // Built here, fired after the camera-programmer block below — with a
+      // zero/negative duration tweenCameraTo commits synchronously and runs
+      // onDone before this function returns, so starting it here meant the
+      // "Snap (instant, old)" clip mode drained a queue that did not yet hold
+      // the preset's camera script. The script was then never loaded and the
+      // clip replayed with the generic auto-orbit instead.
+      startCameraTween = () => r.tweenCameraTo(
         {
           pos:    { x: c.x,  y: c.y,  z: c.z  },
           target: { x: c.tx, y: c.ty, z: c.tz },
@@ -459,6 +486,10 @@ export const PresetMixin = {
       }
     }
 
+    // The queue is complete now — physics, auto-rotate wish, programmer script
+    // — so the tween may run, instant path included.
+    startCameraTween?.();
+
     // ── Custom shader ───────────────────────────────────────────────────────
     if (s.shader?.hasCustom) {
       se._vert = s.shader.vert;
@@ -466,6 +497,26 @@ export const PresetMixin = {
       // Re-apply the custom shader via the compileAndApply path.
       if (DOM.seCode) DOM.seCode.value = se._tab === 'vert' ? se._vert : se._frag;
       se.compileAndApply();
+    } else if (s.shader && (se?.customVS || se?.customFS)) {
+      // A snapshot that carries a shader record with hasCustom:false describes
+      // the built-in look, so it has to be able to UNDO a live custom program —
+      // otherwise the first clip step that carries a shader locks it in for the
+      // whole set and no preset in the list can get the stock look back.
+      //
+      // Gated twice, and both gates matter. `s.shader` existing keeps a
+      // pre-schema or hand-written preset with no shader field on today's
+      // leave-it-alone behaviour. A custom program actually being live keeps a
+      // plain apply a no-op — every preset this build saves carries a shader
+      // record, so without that gate this branch would run on every preset
+      // click and every clip step.
+      //
+      // Only the live program is touched, never se._vert / se._frag / #se-code:
+      // those hold the user's own source, including keystrokes they have not
+      // applied yet, and a clip step arriving every few seconds must not
+      // overwrite what they are typing. revertToBuiltIn() for the same reason —
+      // reset() would stomp the editor text back to the default snippets and
+      // re-fire onOpen mid-clip.
+      se.revertToBuiltIn();
     }
   },
 

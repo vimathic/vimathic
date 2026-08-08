@@ -70,6 +70,37 @@ function getWorkerUrl() {
 // Allocate a sized 2D canvas for downscaling WebGL frames into. Kept as a
 // helper because both recorders need the same shape, just at different
 // dimensions and refresh patterns.
+/**
+ * Frame schedule for a GIF of `capMs` at `fps`.
+ *
+ * A GIF stores its per-frame delay in CENTIseconds, so the only periods the
+ * file can express are multiples of 10 ms. Capturing at 1000/fps and letting
+ * the encoder round produced files of the wrong length — at the default 15 fps
+ * a "10 seconds" GIF became a 10.50 s file, at 30 fps a 9.00 s one, and a
+ * beat-synced loop drifted out of the bar it was cut to. Quantise once, then
+ * derive both clocks (the capture interval and the frame budget) from the same
+ * number so `frames × frameDelay ≈ capMs` holds in the written file.
+ *
+ * Exported for tests/recorder-gif-timing.test.js — the invariant is arithmetic,
+ * and the encoder path around it needs a browser.
+ */
+export function gifFramePlan(fps, capMs) {
+  // Round the PERIOD UP, i.e. the rate down. Rounding to the nearest 10 ms
+  // shortens the period for two of the five rates the panel offers (24 → 40 ms
+  // = 25 fps, 30 → 30 ms = 33.3 fps), and a shorter period means MORE frames
+  // than the requested rate implies. Two things break on that: the capture runs
+  // above LIMITS.maxFps, which clampOptions enforces one screen earlier, and
+  // the memory pre-flight — which prices the run at this same frame count —
+  // starts refusing combinations that used to record (30 fps × 30 s at the
+  // panel's default 480p landscape crossed the 1500 MB limit by 4%). Rounding
+  // up can only ever ask for fewer frames than the old arithmetic did, so no
+  // run that fitted before can stop fitting now. The cost is fidelity, not
+  // correctness: 24 fps records at 20 and 30 fps at 25, and the file plays back
+  // at exactly the rate it was captured at, which is the whole point.
+  const frameDelay = Math.max(10, Math.ceil(1000 / fps / 10) * 10);
+  return { frameDelay, frames: Math.max(1, Math.round(capMs / frameDelay)) };
+}
+
 function makeScratchCanvas(w, h) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
@@ -382,7 +413,10 @@ export class GifRecorder {
     // pushing RGBA frames. So both modes get a real cap, enforced twice: the
     // stop timer below in time, _frameBudget in frames.
     const capMs     = o.stopOnBeats != null ? LIMITS.maxDurationMs : o.duration;
-    const capFrames = Math.ceil((capMs / 1000) * o.fps);
+
+    // ── Frame period ─────────────────────────────────────────────────────
+    // Both clocks come from one quantised period — see gifFramePlan().
+    const { frameDelay, frames: capFrames } = gifFramePlan(o.fps, capMs);
 
     // ── Memory pre-flight ────────────────────────────────────────────────
     // 4 bytes/pixel is the worst-case intermediate before gif.js compresses
@@ -400,7 +434,7 @@ export class GifRecorder {
       ? Math.min(capMs, estimateBeatDurationMs(o.stopOnBeats, o.audioEngine))
       : o.duration;
     const frameBytes = o.width * o.height * 4;
-    const estFrames  = Math.ceil((estMs / 1000) * o.fps);
+    const estFrames  = Math.ceil(estMs / frameDelay);
     const memMb      = (frameBytes * estFrames) / (1024 * 1024);
     // FIX(#23, r3): name only the levers this run actually has. Beat mode has
     // no duration knob, and a native-size run has no size knob either — the
@@ -418,7 +452,7 @@ export class GifRecorder {
     }
 
     this._scratch    = makeScratchCanvas(o.width, o.height);
-    this._frameDelay = 1000 / o.fps;
+    this._frameDelay = frameDelay;
     this._totalFrames = capFrames;
     this._frameBudget = capFrames;
     this._framesCaptured = 0;   // FIX(#9)
@@ -448,7 +482,11 @@ export class GifRecorder {
       const meta = {
         width:  o.width,
         height: o.height,
-        fps:    o.fps,
+        // The rate the FILE actually plays at, which is the quantised one —
+        // reporting the requested rate would describe a file that does not
+        // exist. See gifFramePlan().
+        fps:    Math.round((1000 / this._frameDelay) * 100) / 100,
+        fpsRequested: o.fps,
         frames: this._framesCaptured,   // FIX(#9)
         sizeMb: blob.size / (1024 * 1024),
         // FIX(#9, r2): the runtime watchdog cut this capture short. The file

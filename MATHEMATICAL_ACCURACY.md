@@ -35,9 +35,9 @@
 - `excitableMedia` — sin-spiral replaced with FitzHugh-Nagumo PDE on an optimised internal grid, bilinearly interpolated onto the display mesh. C → **B**.
 - `reactionDiffusion` — threshold-of-oscillators replaced with Gray-Scott reaction-diffusion on an optimised internal grid, bilinearly interpolated onto the display mesh, with configurable F/k regimes. C → **B**.
 
-<!-- 131 counts tests/math-validation.test.js alone. `npm test`
-     reports 149 — it also runs tests/preset-migrations.test.js (18). -->
-Test suite: **131 tests passing**, including 18 dedicated validation tests for the rewritten formulas comparing against canonical reference values (mpmath, NIST DLMF).
+<!-- 133 counts tests/math-validation.test.js alone. `npm test`
+     reports 208 — it also runs every other suite in tests/. -->
+Test suite: **133 tests passing**, including 18 dedicated validation tests for the rewritten formulas comparing against canonical reference values (mpmath, NIST DLMF).
 
 ### A note on grid resolution
 
@@ -166,7 +166,7 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `spectralRadius` | Spectral Radius | 🔵 B | 2×2 eigenvalue formula via discriminant. |
 | `matrixExp` | Matrix Exponential | 🟡 C | `cosh(r·comp)·cos(r) - 1` is a stylized substitute, not general e^A. |
 | `kronecker` | Kronecker Product | 🔵 B | Grid+sub-grid product structure correct conceptually. |
-| `vectorField` | Curl ∇×F | 🟢 A | Central-difference curl, error O(h²) with h=0.01. |
+| `vectorField` | Curl ∇×F | 🟢 A | Central-difference curl of F = (−sin(z·f), sin(x·f)), error O(h²) with h=0.01. The field has to be named: the stencil was always correct, but it was applied to a gradient field, whose curl is identically zero — the formula rendered a flat plate until the field was replaced. |
 | `jacobian` | Jacobian Det | 🟢 A | Operator precedence bug fixed — entire determinant expression now correctly scaled by `amp*0.1`. |
 | `manifoldCurvature` | Gaussian Curvature | 🔵 B | Numerical Hessian determinant with h=0.05. |
 
@@ -366,7 +366,7 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 > **164 mathematical formulas with verifiable numerical accuracy.**
 > 122 closed-form analytic expressions evaluated at IEEE 754 double precision.
 > 42 well-validated approximations with documented bounded error (≤ 10⁻³ to 10⁻⁷), including real PDE simulations on adaptive internal grids with bilinear interpolation to the full-resolution display mesh.
-> Source-available, open test suite (131 automated tests passing, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
+> Source-available, open test suite (133 automated tests passing, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
 
 ### ✓ Defensible (alternative — domain-coverage emphasis)
 
@@ -386,9 +386,9 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 
 ## How to Verify
 
-<!-- 131 is the count for this file alone, same as the "Test
-     suite" line above — move both together. `npm test` reports 149. -->
-The companion file `tests/math-validation.test.js` contains **131 executable test cases** covering:
+<!-- 133 is the count for this file alone, same as the "Test
+     suite" line above — move both together. `npm test` reports 208. -->
+The companion file `tests/math-validation.test.js` contains **133 executable test cases** covering:
 - All 122 Tier A formulas at canonical reference points (boundary values, known special-function values, identity tests).
 - Sanity checks for Tier B formulas (PDF integration, convergence behaviour, polynomial fit boundary error, PDE simulation stability).
 - Qualitative checks for Tier C formulas (peak location, sign changes, energy bounds, determinism).
@@ -400,7 +400,7 @@ Run with:
 node --test tests/math-validation.test.js
 ```
 
-All 131 tests currently passing against the live `math-collections.js`.
+All 133 tests currently passing against the live `math-collections.js`.
 
 ---
 

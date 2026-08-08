@@ -218,13 +218,14 @@ export class UIController {
     const _startClip = () => {
       const presets = this._loadPresetList();
       if (!presets.length) { this._showToast('⚠ No presets saved yet', true); return; }
-      if (clip.barsMode) {
-        clip.barsCount = +barsInput?.value || 8;
-        clip.buildFromPresets(0); // holdMs unused in bars mode
-      } else {
-        const holdMs = Math.max(500, (+holdInput.value || 5) * 1000);
-        clip.buildFromPresets(holdMs);
-      }
+      // One hold for both branches. Bars mode ignores it — but the user can
+      // click ⏱ SEC while the clip is playing, and _setMode does not rebuild
+      // the steps, so the sentinel 0 this used to pass in bars mode became the
+      // hold of every step: the clip strobed through presets at morph speed
+      // while the Hold(s) box still read 5.
+      const holdMs = Math.max(500, (+holdInput.value || 5) * 1000);
+      if (clip.barsMode) clip.barsCount = +barsInput?.value || 8;
+      clip.buildFromPresets(holdMs);
       clip.play();
       // If "sync with music" is on and audio isn't playing yet, kick it off
       // so the visual sequence and the music start together.

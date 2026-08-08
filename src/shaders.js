@@ -417,7 +417,7 @@ void main(){
 
 // ── ShaderEditor ──────────────────────────────────────────────────────────────
 
-const SE_VS_TEMPLATE = body => `uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI;
+const SE_VS_TEMPLATE = body => `uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
 uniform int uMode,uMathMode,uModeNext;
 uniform float uMorphProgress,uModeBlend;
 varying float vH;
@@ -438,6 +438,10 @@ void main(){vec3 pos=position;
   ${body}
   if(uMathMode==0){pos.y=y;}
   vH=pos.y;
+  // An editor shader is now installed on the POINTS proxy too, and a vertex
+  // program that leaves gl_PointSize unwritten draws points of undefined size.
+  // Mirrors the built-in VS; harmless in WIRE/SURF, which ignore it.
+  gl_PointSize=uPointSize;
   vec4 _wp = modelMatrix * vec4(pos, 1.0);
   vWorldPos = _wp.xyz;
   vViewDir  = cameraPosition - _wp.xyz;
@@ -598,14 +602,9 @@ export class ShaderEditor {
       cleanup();
       this.customVS = fullVS;
       this.customFS = fullFS;
-      this._render.gpuMat.vertexShader   = fullVS;
-      this._render.gpuMat.fragmentShader = fullFS;
-      this._render.gpuMat.needsUpdate    = true;
-      if (this._render.gpuPtsProxy) {
-        this._render.gpuPtsProxy.material.vertexShader   = fullVS;
-        this._render.gpuPtsProxy.material.fragmentShader = fullFS;
-        this._render.gpuPtsProxy.material.needsUpdate    = true;
-      }
+      // One call reaches gpuMat, the live POINTS proxy, and any proxy built
+      // later — see RenderEngine.applyShaderSource().
+      this._render.applyShaderSource(fullVS, fullFS);
       errEl.style.color = 'var(--green)';
       errEl.textContent = '✔ Compiled & applied';
       this.cb.onCompileResult({ ok: true, message: '✔ Compiled & applied', line: null });
@@ -682,13 +681,21 @@ export class ShaderEditor {
     return msg.split('\n')[0].substring(0, 120);
   }
 
+  /**
+   * Put the built-in program back on screen without touching the editor's
+   * text, its error line or the callbacks. Split out of reset() so a preset
+   * that carries no custom shader can undo a live one mid-clip: reset() would
+   * also stomp #se-code back to the defaults and re-fire onOpen.
+   */
+  revertToBuiltIn() {
+    this.customVS = null; this.customFS = null;
+    this._render.applyShaderSource();
+  }
+
   reset() {
     this._vert = SE_DEFAULT_VERT; this._frag = SE_DEFAULT_FRAG;
-    this.customVS = null; this.customFS = null;
+    this.revertToBuiltIn();
     document.getElementById('se-code').value = this._tab === 'vert' ? this._vert : this._frag;
-    this._render.gpuMat.vertexShader   = VS;
-    this._render.gpuMat.fragmentShader = FS;
-    this._render.gpuMat.needsUpdate    = true;
     document.getElementById('se-error').textContent = '';
     this.cb.onCompileResult({ ok: true, message: '', line: null });
     this.cb.onOpen(this._tab, this._tab === 'vert' ? this._vert : this._frag, SE_PRESETS);

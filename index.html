@@ -727,21 +727,21 @@
   min-width: 0;
   border-radius: 10px;
   overflow: hidden;
-  /* тень чуть ярче чем у раскрытой панели */
+  /* the collapsed panel is the only one that carries a glow */
   box-shadow: 0 0 18px rgba(255, 58, 122, .28);
 }
 
-/* Когда свёрнуто — прячем тело полностью (не просто max-height:0) */
+/* Collapsed: hide the body outright, not just max-height:0 */
 .controls-panel.collapsed .ctrl-body {
   display: none;
 }
 
-/* Заголовок в свёрнутом состоянии — становится компактной кнопкой */
+/* Collapsed header doubles as a compact button */
 .controls-panel.collapsed .ctrl-header {
   padding: 9px 15px;
   border-radius: 10px;
   cursor: pointer;
-  /* убираем sticky, не нужен когда body скрыто */
+  /* drop sticky — pointless once the body is hidden */
   position: static;
   background: rgba(5, 5, 20, 0.93);
   border-bottom: none;
@@ -752,13 +752,13 @@
   box-shadow: 0 0 12px rgba(255, 58, 122, .22);
 }
 
-/* Текст заголовка в свёрнутом состоянии — акцентный цвет, чуть крупнее */
+/* Collapsed header text: accent colour, wider tracking */
 .controls-panel.collapsed .ctrl-header h3 {
   color: var(--accent);
   letter-spacing: 3px;
 }
 
-/* Кнопка ▶/▼ плавно вращается при переходе */
+/* The ▶/▼ button rotates smoothly on toggle */
 #ctrl-collapse {
   transition: transform .2s ease, background var(--btn-transition), box-shadow var(--btn-transition);
   display: inline-flex;

@@ -716,7 +716,13 @@ export class AudioEngine {
 
   /** Fraction 0..1 of the current track. Read by the Camera Programmer. */
   getElapsedFraction() {
-    if (!this.audioBuffer || !this.audioCtx) return 0;
+    // The isPlaying test is the same one _updateSeek() above carries, and it is
+    // not optional: audioCtx.currentTime keeps advancing after stopAudio(), so
+    // without it the camera-programmer playhead crawls on by itself while the
+    // transport says 0:00, and every keyframe added from a stopped track lands
+    // at a time that depends on how long the user spent typing. Zero is where
+    // stopAudio() already tells the UI the track is.
+    if (!this.audioBuffer || !this.audioCtx || !this.isPlaying) return 0;
     const elapsed = Math.min(this.audioBuffer.duration, this.audioCtx.currentTime - this.trackStart + this.trackOfs);
     return elapsed / this.audioBuffer.duration;
   }
