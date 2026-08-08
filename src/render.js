@@ -10,9 +10,35 @@ import { VS, FS } from './shaders.js';
 // ── Planet texture cache — persists across shape switches ─────────────────────
 const _planetTexCache = new Map();
 
+// FIX(#27): planets must be reproducible — presets and recordings replay the
+// same solar system, but Math.random() made every session and every re-entry
+// into 'solar' look different. Seeded off the planet's own cache key instead,
+// so the same planet is always the same planet. Local rather than imported from
+// math-collections.js — three lines of arithmetic aren't worth the dependency.
+//
+// FIX(#27, r3): scope — seeded are _makePlanetTexture and the planet material in
+// _buildSolarSystem, nothing else. The starfield (`── Stars ──` block),
+// updateGlitch(), and the '⚡ Reactive' entry of CP_PRESETS in camera.js (jitters
+// ctx.cam.x/z every frame) stay on Math.random() by the owner's choice, so a
+// frame is NOT bit-identical between sessions.
+function _planetKey(baseHex, hasCraters) { return `${baseHex}_${hasCraters}`; }
+
+// Operands stay below 2^53, so the multiply-mix is exact in a double.
+function _planetSeed(key) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < key.length; i++) h = ((h ^ key.charCodeAt(i)) * 1664525 + 1013904223) >>> 0;
+  return h;
+}
+
+function _lcg(seed) {
+  let s = seed >>> 0;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+
 function _makePlanetTexture(baseHex, hasCraters) {
-  const key = `${baseHex}_${hasCraters}`;
+  const key = _planetKey(baseHex, hasCraters);
   if (_planetTexCache.has(key)) return _planetTexCache.get(key);
+  const rnd = _lcg(_planetSeed(key)); // FIX(#27): deterministic stand-in for Math.random()
   const size = 256, cv = document.createElement('canvas');
   cv.width = cv.height = size;
   const ctx = cv.getContext('2d');
@@ -22,14 +48,14 @@ function _makePlanetTexture(baseHex, hasCraters) {
   const seed = baseHex % 37;
   for (let i = 0; i < 280; i++) {
     const px=(Math.sin(i*seed+1.3)*.5+.5)*size, py=(Math.cos(i*seed*1.7+.9)*.5+.5)*size;
-    const rs=1+Math.abs(Math.sin(i*.41))*6, bright=Math.random()>.5;
+    const rs=1+Math.abs(Math.sin(i*.41))*6, bright=rnd()>.5; // FIX(#27): seeded
     const dr=bright?18:-18, dg=bright?14:-14, db=bright?10:-10;
     ctx.fillStyle=`rgba(${Math.min(255,rd+dr)},${Math.min(255,gd+dg)},${Math.min(255,bd+db)},0.35)`;
     ctx.beginPath(); ctx.arc(px,py,rs,0,Math.PI*2); ctx.fill();
   }
   if (hasCraters) {
     for (let c=0; c<14; c++) {
-      const cx=Math.random()*size, cy=Math.random()*size, cr=3+Math.random()*14;
+      const cx=rnd()*size, cy=rnd()*size, cr=3+rnd()*14; // FIX(#27): seeded
       ctx.strokeStyle=`rgba(${Math.max(0,rd-30)},${Math.max(0,gd-30)},${Math.max(0,bd-30)},0.7)`;
       ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(cx,cy,cr,0,Math.PI*2); ctx.stroke();
       ctx.fillStyle=`rgba(${Math.max(0,rd-20)},${Math.max(0,gd-20)},${Math.max(0,bd-20)},0.4)`; ctx.fill();
@@ -44,6 +70,9 @@ function _makePlanetTexture(baseHex, hasCraters) {
 // Post-processing FX shader definitions
 // Pass order: RenderPass → Bloom → GodRays → MotionBlur → ChromaticAberration
 //             → Afterimage → FilmGrainVignette
+// Only RenderPass, Bloom and FilmGrainVignette are built at startup; the four
+// in the middle are built on first enable — RenderEngine.FX_PASS_ORDER is the
+// authoritative copy of that order and is what decides where they land.
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ── 1. Chromatic Aberration ───────────────────────────────────────────────────
@@ -318,8 +347,9 @@ export class RenderEngine {
   //   roughness — 0 mirror-sharp … 1 fully diffuse (env darkened/blurred)
   //   reflect   — overall reflection strength multiplier
   //   fresnelP  — grazing-angle falloff exponent (higher = tighter rim)
+  // FIX(#28): the label map lives in ui/controls.js, not params.js.
   // Keys must match the <option value> in index.html #surface-material-sel
-  // and the labels in params.js SURFACE_MATERIAL_DESCRIPTIONS.
+  // and the labels in the _matDescriptions map in ui/controls.js.
   static SURFACE_MATERIALS = {
     matte:  { on:false, metalness:0.0, roughness:1.00, reflect:0.00, fresnelP:1.5 },
     glossy: { on:true,  metalness:0.3, roughness:0.25, reflect:0.50, fresnelP:3.0 },
@@ -328,6 +358,19 @@ export class RenderEngine {
     velvet: { on:true,  metalness:0.0, roughness:0.90, reflect:0.10, fresnelP:1.2 },
     glass:  { on:true,  metalness:0.1, roughness:0.05, reflect:0.70, fresnelP:5.0 },
   };
+
+  // ── Composer pipeline order ───────────────────────────────────────────────
+  // Property names of every pass, in the order the composer must execute them.
+  // The composer renders passes in array order, so this list IS the picture:
+  // God Rays before Afterimage means trails accumulate over ray-lit frames;
+  // swap them and the trails smear the rays instead. Lazily built passes are
+  // placed by _fxSlot(), which reads this list and the composer's ACTUAL
+  // contents — never a literal index, which would keep working right up until
+  // a pass is added or removed above it and then quietly shift the pipeline.
+  static FX_PASS_ORDER = [
+    'renderPass', 'bloomPass', 'godRaysPass', 'motionBlurPass',
+    'chromaticPass', 'afterimagePass', 'filmGrainVigPass',
+  ];
 
   constructor(isMobile, CFG) {
     this.isMobile = isMobile;
@@ -350,20 +393,15 @@ export class RenderEngine {
       powerPreference: 'high-performance',
       alpha: true,   // required for transparent background output
     });
+    // FIX(#26): via _pixelRatio(), which onResize() re-applies — see its doc.
+    this.renderer.setPixelRatio(this._pixelRatio());
     this.renderer.setSize(innerWidth, innerHeight);
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, isMobile ? 1.0 : 1.5));
     this.renderer.setClearColor(0x050515, 1);
     document.body.appendChild(this.renderer.domElement);
 
-    // WebGL2 capability detection. On WebGL1-only contexts we ship lower
-    // geometry density and force-disable the two heaviest post passes
-    // (God Rays, Motion Blur) further down in the pipeline setup.
-    const isWebGL2 = this.renderer.capabilities.isWebGL2;
-    if (!isWebGL2) {
-      console.warn('[VIMATHIC] WebGL 2 not available — reducing quality for compatibility.');
-      CFG.planeSegs = Math.min(CFG.planeSegs, 60);
-    }
-    this._isWebGL2 = isWebGL2;
+    // FIX(#29): no WebGL1 fallback on purpose. r169 dropped the WebGL1 renderer
+    // and pins capabilities.isWebGL2 to `true`, so anything guarded by it is
+    // dead code — and without WebGL2 the renderer never constructs at all.
 
     // Performance tier detection — gates higher-density geometry on capable
     // GPUs. Supports WebGPU (navigator.gpu), NVIDIA/RTX, AMD RX 7000-series,
@@ -376,37 +414,31 @@ export class RenderEngine {
 
     // ── Effect composer — base passes ─────────────────────────────────────────
     this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    // Kept as a field so every slot named in FX_PASS_ORDER resolves to a real
+    // property — _fxSlot() looks passes up by those names.
+    this.renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(this.renderPass);
 
-    // Bloom
+    // Bloom — on by default, so it is built here.
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.4, 0.15);
     this.composer.addPass(this.bloomPass);
 
-    // ── FX pipeline — appended after bloom ───────────────────────────────────
-    // Pass order is significant: AfterimagePass must run AFTER God Rays and
-    // Motion Blur, otherwise trails accumulate on unprocessed frames and
-    // distort both effects.
-
-    // Pass 3: God Rays — screen-space radial scattering from bright areas.
-    this.godRaysPass = new ShaderPass(GodRaysShader);
-    this.godRaysPass.enabled = false;
-    this.composer.addPass(this.godRaysPass);
-
-    // Pass 4: Motion Blur — directional blur along camera velocity.
-    this.motionBlurPass = new ShaderPass(MotionBlurShader);
-    this.motionBlurPass.enabled = false;
-    this.composer.addPass(this.motionBlurPass);
-
-    // Pass 5: Chromatic Aberration — RGB channel split toward frame edges.
-    this.chromaticPass = new ShaderPass(ChromaticAberrationShader);
-    this.chromaticPass.enabled = false;
-    this.composer.addPass(this.chromaticPass);
-
-    // Pass 6: Afterglow / Trailing — placed AFTER god rays and motion blur
-    // (see pipeline note above).
-    this.afterimagePass = new AfterimagePass(0.87); // damp: higher = longer trails
-    this.afterimagePass.enabled = false;
-    this.composer.addPass(this.afterimagePass);
+    // ── FX pipeline — the four optional passes are built on first enable ─────
+    // They start disabled and nothing in the app switches them on yet, so
+    // constructing them here would charge every single session for frames that
+    // never render: AfterimagePass allocates two full-screen half-float render
+    // targets up front (tens of MB of VRAM at 1080p) and each ShaderPass
+    // compiles its program during startup. _fxPass() builds one on the first
+    // enabling call and keeps it forever after, so toggling costs nothing on
+    // the second and later calls.
+    //
+    // Declared here purely so the fields exist before any setter runs; the
+    // composer slot each one gets is decided by FX_PASS_ORDER, not by the
+    // order of these lines.
+    this.godRaysPass    = null; // Pass 3: screen-space radial scattering from bright areas
+    this.motionBlurPass = null; // Pass 4: directional blur along camera velocity
+    this.chromaticPass  = null; // Pass 5: RGB channel split toward frame edges
+    this.afterimagePass = null; // Pass 6: afterglow / trailing — must follow god rays + motion blur
 
     // Pass 7: Film Grain + Vignette — final "lens" look. Enabled by default
     // with a subtle vignette; grain starts off.
@@ -416,17 +448,16 @@ export class RenderEngine {
     this.filmGrainVigPass.enabled = true;
     this.composer.addPass(this.filmGrainVigPass);
 
-    // ── Mobile / WebGL1 budget enforcement ───────────────────────────────────
+    // ── Mobile budget enforcement ────────────────────────────────────────────
     // Mobile GPUs choke on the 48-sample God Rays loop; motion blur is also
-    // disabled because the extra texture reads per pixel cost too much.
+    // refused because the extra texture reads per pixel cost too much. Those
+    // two rejections live in setGodRays/setMotionBlur, which bail out before
+    // building anything — on mobile the passes are never even constructed, so
+    // there is nothing left to switch off here.
+    // FIX(#29): the parallel WebGL1 kill-switch is gone — see the WebGL2-only
+    // note at the renderer construction above.
     if (isMobile) {
-      this.godRaysPass.enabled    = false;
-      this.motionBlurPass.enabled = false;
       this.filmGrainVigPass.uniforms.uVignetteAmt.value = 0.4;
-    }
-    if (!this._isWebGL2) {
-      this.godRaysPass.enabled    = false;
-      this.motionBlurPass.enabled = false;
     }
 
     // ── Motion blur — screen-space velocity tracking state ───────────────────
@@ -497,10 +528,9 @@ export class RenderEngine {
     this.gpuMat  = new THREE.ShaderMaterial({
       vertexShader: VS, fragmentShader: FS, uniforms: this.U,
       side: THREE.DoubleSide,
-      // dFdx/dFdy in the fragment shader need GL_OES_standard_derivatives on WebGL1.
-      // No-op on WebGL2 where derivatives are core. Three.js wires the extension
-      // string into the compiled source when this flag is set.
-      extensions: { derivatives: true },
+      // FIX(#29): no `extensions: { derivatives: true }` — dFdx/dFdy are core
+      // built-ins in WebGL2, and r169 honours only clipCullDistance/multiDraw,
+      // so the flag was a no-op. Adding it back changes nothing.
     });
     this.gpuMesh = new THREE.Mesh(gpuGeo, this.gpuMat);
     this.scene.add(this.gpuMesh);
@@ -567,7 +597,7 @@ export class RenderEngine {
     this.U.uBass.value   = audio.bass   * audio.bassSens;
     this.U.uMid.value    = audio.mid;
     this.U.uTreble.value = audio.treble * audio.trebleSens;
-    this.U.uBeat.value   = audio.beatInt
+    this.U.uBeat.value   = audio.beatInt;
     this.U.uAmp.value    = audio.amp;
     this.U.uWI.value     = audio.waveInt;
     // uCM is NOT updated here during a color crossfade — setColorSchemeAnimated()
@@ -793,13 +823,15 @@ export class RenderEngine {
     this.beatLight.intensity   = beatInt * 2.0 * beatPunch;
     this.stars.rotation.y      = time * .015;
 
-    // Update God Rays light position to track magicLight in screen space
-    if (this.godRaysPass.enabled) {
+    // Update God Rays light position to track magicLight in screen space.
+    // `?.` covers the pass never having been built — an unbuilt pass is an
+    // off pass, so there is no uniform to feed either way.
+    if (this.godRaysPass?.enabled) {
       this._updateGodRaysLightPos(this.magicLight.position);
     }
 
     // Update motion blur velocity from camera movement
-    if (this.motionBlurPass.enabled) {
+    if (this.motionBlurPass?.enabled) {
       this._updateMotionBlur();
     }
   }
@@ -823,7 +855,18 @@ export class RenderEngine {
   // ── Viz modes ────────────────────────────────────────────────────────────────
   setVizModeGPU(mode) {
     this.vizMode = mode;
-    if (this.gpuPtsProxy) { this.scene.remove(this.gpuPtsProxy); this.gpuPtsProxy.geometry.dispose(); this.gpuPtsProxy = null; }
+    // FIX(#3): the proxy only BORROWS gpuMesh.geometry, which setShape() owns and
+    // disposes; disposing it here kills the live mesh's buffer on every mode
+    // click. Cloning per proxy was rejected — megabytes copied per button press
+    // at 160×160 segments, plus two buffers for MathVisualizer to keep in sync.
+    // FIX(#3, r3): the material IS the proxy's own (rebuilt on each entry into
+    // points mode), so it must be released here — otherwise every mode cycle
+    // strands a compiled ShaderMaterial and its GL program.
+    if (this.gpuPtsProxy) {
+      this.scene.remove(this.gpuPtsProxy);
+      this.gpuPtsProxy.material?.dispose();
+      this.gpuPtsProxy = null;
+    }
     this.gpuMesh.visible  = true;
     this.gpuMat.wireframe = false;
     this.U.uPointSize.value = 1.0;
@@ -839,10 +882,12 @@ export class RenderEngine {
       const ptsMat = new THREE.ShaderMaterial({
         vertexShader: VS, fragmentShader: FS, uniforms: this.U,
         side: THREE.DoubleSide,
-        // Shares uniforms (including uLighting=0) with gpuMat — extension flag
-        // still needed because Three.js compiles per-material.
-        extensions: { derivatives: true },
+        // Shares uniforms (including uLighting=0) with gpuMat.
+        // FIX(#29): no `extensions: { derivatives: true }` — ignored by r169,
+        // same reason as on gpuMat above.
       });
+      // Geometry is deliberately shared with gpuMesh, not cloned — see the
+      // dispose note at the top of this method.
       this.gpuPtsProxy = new THREE.Points(this.gpuMesh.geometry, ptsMat);
       this.scene.add(this.gpuPtsProxy);
     }
@@ -984,8 +1029,12 @@ export class RenderEngine {
     planets.forEach(pd => {
       const pivot = new THREE.Object3D(); this.scene.add(pivot);
       const pg  = new THREE.SphereGeometry(pd.r, 32, 32);
+      // FIX(#27): roughness/metalness seeded from the same key as the texture,
+      // so a rebuilt planet keeps its finish. The material stays per-instance —
+      // clearSolarSystem() disposes it; only the numbers are pinned.
+      const prnd = _lcg(_planetSeed(_planetKey(pd.color, pd.craters)));
       const pm  = new THREE.MeshStandardMaterial({ map: _makePlanetTexture(pd.color, pd.craters),
-        roughness: .65+Math.random()*.2, metalness: .05+Math.random()*.1 });
+        roughness: .65+prnd()*.2, metalness: .05+prnd()*.1 });
       const mesh = new THREE.Mesh(pg, pm);
       mesh.position.set(pd.dist, 0, 0); pivot.add(mesh);
       if (pd.rings) {
@@ -1016,7 +1065,9 @@ export class RenderEngine {
   disposeCPUResources() {
     if (this.cpuMesh)     { this.scene.remove(this.cpuMesh); this.cpuMesh.geometry?.dispose(); this.cpuMesh.material?.dispose(); this.cpuMesh = null; }
     if (this.cpuPts)      { this.scene.remove(this.cpuPts);  this.cpuPts.geometry?.dispose();  this.cpuPts.material?.dispose();  this.cpuPts  = null; }
-    if (this.gpuPtsProxy) { this.scene.remove(this.gpuPtsProxy); this.gpuPtsProxy.geometry?.dispose(); this.gpuPtsProxy.material?.dispose(); this.gpuPtsProxy = null; }
+    // FIX(#3): same shared-buffer trap as in setVizModeGPU() — the proxy's
+    // geometry belongs to gpuMesh, so only its own material is disposed here.
+    if (this.gpuPtsProxy) { this.scene.remove(this.gpuPtsProxy); this.gpuPtsProxy.material?.dispose(); this.gpuPtsProxy = null; }
     this.cpuGeo = null; this.cpuMat = null; this.cpuPtsMat = null;
   }
 
@@ -1029,8 +1080,19 @@ export class RenderEngine {
   }
 
   /**
+   * Device pixel ratio budget — the single place the formula lives.
+   * Capped because the backing store cost grows with the square of the ratio:
+   * 1.0 on phones (fill-rate bound), 1.5 on desktop (diminishing returns above).
+   * FIX(#26): called at construction AND from onResize(), so a DPR change
+   * (other monitor, page zoom) re-sizes the backing store.
+   */
+  _pixelRatio() {
+    return Math.min(devicePixelRatio, this.isMobile ? 1.0 : 1.5);
+  }
+
+  /**
    * Performance tier for gating effect quality.
-   *   'low'    = mobile / WebGL1
+   *   'low'    = mobile
    *   'medium' = integrated GPU
    *   'high'   = discrete GPU (NVIDIA, RTX, GeForce, Radeon RX 7+, or maxTextureSize ≥ 16384)
    *   'ultra'  = WebGPU available — reserved for future compute / raytracing paths
@@ -1062,9 +1124,17 @@ export class RenderEngine {
   onResize() {
     this.camera.aspect = innerWidth / innerHeight;
     this.camera.updateProjectionMatrix();
+    // FIX(#26): recompute the ratio instead of echoing the one frozen in the
+    // constructor. setPixelRatio() goes FIRST — setSize() multiplies by the
+    // current ratio when it sizes the drawing buffer.
+    const dpr = this._pixelRatio();
+    this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(innerWidth, innerHeight);
+    // Resizes only the passes the composer actually holds, so the lazily built
+    // FX passes need no mention here — one created later is sized on insert
+    // from these same dimensions.
     this.composer.setSize(innerWidth, innerHeight);
-    this.composer.setPixelRatio(this.renderer.getPixelRatio());
+    this.composer.setPixelRatio(dpr);
   }
 
   /** Toggle transparent background for alpha-channel output (chroma-key free). */
@@ -1089,7 +1159,62 @@ export class RenderEngine {
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Post-processing FX — public control API
+  //
+  // The four optional passes are created on demand (see _fxPass), so every
+  // reference to them outside the setters must tolerate `null` — that is what
+  // "off" looks like before the first enable. Once built, a pass lives as long
+  // as the composer does: disabling only clears its `enabled` flag, because
+  // tearing it down would put the render-target allocation and the shader
+  // compile back on the toggle path. Any future teardown must reach them
+  // through `?.` for the same reason.
   // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Composer index a lazily built pass must be inserted at. Derived from the
+   * passes actually present right now: take the nearest pass DOWNSTREAM of
+   * `key` that already exists and sit in front of it; if nothing downstream is
+   * built, this pass belongs at the tail. Reading the live array rather than
+   * counting slots is what keeps the order correct no matter which subset of
+   * the optional passes happens to exist at the time of the call.
+   * @param {string} key — property name, must appear in FX_PASS_ORDER
+   */
+  _fxSlot(key) {
+    const order  = RenderEngine.FX_PASS_ORDER;
+    const passes = this.composer.passes;
+    for (let i = order.indexOf(key) + 1; i < order.length; i++) {
+      const idx = passes.indexOf(this[order[i]]); // null / absent ⇒ -1, skipped
+      if (idx !== -1) return idx;
+    }
+    return passes.length;
+  }
+
+  /**
+   * Resolve the pass a setter is about to touch, building it if this is the
+   * call that turns it on. Returns null when the caller is disabling a pass
+   * that was never built — nothing to do, and constructing one just to set
+   * enabled=false would defeat the whole point.
+   *
+   * The pass is inserted DISABLED — ShaderPass defaults to enabled, and the
+   * setters flip the flag only after pushing their uniforms, so the effect can
+   * never render one frame with stock settings. insertPass() sizes the new
+   * pass from the composer's current dimensions, so one built after a resize
+   * is born at the right resolution — that is why onResize() needs no
+   * lazy-pass special case.
+   *
+   * @param {string}     key      — property name, must appear in FX_PASS_ORDER
+   * @param {boolean}    enabled  — what the setter was asked to do
+   * @param {()=>object} build    — constructs the pass; called at most once
+   */
+  _fxPass(key, enabled, build) {
+    if (!enabled) return this[key];
+    if (!this[key]) {
+      const pass = build();
+      pass.enabled = false;
+      this[key] = pass;
+      this.composer.insertPass(pass, this._fxSlot(key));
+    }
+    return this[key];
+  }
 
   /**
    * Chromatic Aberration — RGB lens dispersion toward frame edges.
@@ -1097,10 +1222,12 @@ export class RenderEngine {
    * @param {number}  strength  0.001 (subtle) – 0.008 (heavy). Default 0.003.
    */
   setChromaticAberration(enabled, strength = 0.003) {
-    this.chromaticPass.enabled = enabled;
+    const pass = this._fxPass('chromaticPass', enabled, () => new ShaderPass(ChromaticAberrationShader));
+    if (!pass) return; // never built ⇒ already off
     if (enabled) {
-      this.chromaticPass.uniforms.uStrength.value = Math.max(0, strength);
+      pass.uniforms.uStrength.value = Math.max(0, strength);
     }
+    pass.enabled = enabled;
   }
 
   /**
@@ -1142,11 +1269,16 @@ export class RenderEngine {
    * @param {number}  amount  0.5 (short trail) – 0.97 (very long ghost). Default 0.87.
    */
   setAfterglow(enabled, amount = 0.87) {
-    this.afterimagePass.enabled = enabled;
+    // The constructor arg is the same damp default the uniform write below
+    // overrides on this very call; it matters only if a future caller enables
+    // the pass without passing an amount.
+    const pass = this._fxPass('afterimagePass', enabled, () => new AfterimagePass(0.87));
+    if (!pass) return; // never built ⇒ already off
     if (enabled) {
       // AfterimagePass exposes its uniform as 'damp'
-      this.afterimagePass.uniforms['damp'].value = Math.min(0.98, Math.max(0.0, amount));
+      pass.uniforms['damp'].value = Math.min(0.98, Math.max(0.0, amount));
     }
+    pass.enabled = enabled;
   }
 
   /**
@@ -1163,12 +1295,14 @@ export class RenderEngine {
       console.info('[VimathicFX] God Rays are disabled on mobile for GPU budget reasons.');
       return;
     }
-    this.godRaysPass.enabled = enabled;
+    const pass = this._fxPass('godRaysPass', enabled, () => new ShaderPass(GodRaysShader));
+    if (!pass) return; // never built ⇒ already off
     if (enabled) {
-      this.godRaysPass.uniforms.uExposure.value  = Math.max(0, intensity);
-      this.godRaysPass.uniforms.uDecay.value     = Math.min(0.99, Math.max(0.8, decay));
-      this.godRaysPass.uniforms.uThreshold.value = Math.max(0, threshold);
+      pass.uniforms.uExposure.value  = Math.max(0, intensity);
+      pass.uniforms.uDecay.value     = Math.min(0.99, Math.max(0.8, decay));
+      pass.uniforms.uThreshold.value = Math.max(0, threshold);
     }
+    pass.enabled = enabled;
   }
 
   /**
@@ -1183,11 +1317,13 @@ export class RenderEngine {
       console.info('[VimathicFX] Motion Blur is disabled on mobile for GPU budget reasons.');
       return;
     }
-    this.motionBlurPass.enabled = enabled;
+    const pass = this._fxPass('motionBlurPass', enabled, () => new ShaderPass(MotionBlurShader));
+    if (!pass) return; // never built ⇒ already off
     if (enabled) {
-      this.motionBlurPass.uniforms.uAmount.value = Math.max(0, amount);
+      pass.uniforms.uAmount.value = Math.max(0, amount);
       this._mbClampSpeed = Math.max(0.005, maxSpeed);
     }
+    pass.enabled = enabled;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1198,6 +1334,8 @@ export class RenderEngine {
    * Project a world-space point to screen UV (0–1) and write it into the
    * God Rays light position uniform. Called from updateLights() using
    * magicLight.position, or manually for a custom light source.
+   * Callers must have checked godRaysPass — this writes into it unguarded,
+   * and the pass only exists once setGodRays() has turned the effect on.
    * @param {THREE.Vector3} worldPos
    */
   _updateGodRaysLightPos(worldPos) {
@@ -1212,7 +1350,8 @@ export class RenderEngine {
   /**
    * Computes screen-space camera velocity by projecting the world origin
    * through consecutive camera matrices. Called from updateLights() when
-   * Motion Blur is enabled.
+   * Motion Blur is enabled — which also means the pass exists, so the
+   * uniform write at the end is unguarded on purpose.
    */
   _updateMotionBlur() {
     // Project world origin (0,0,0) into NDC for the current frame
@@ -1240,6 +1379,7 @@ export class RenderEngine {
    * @param {THREE.Vector3} worldPos
    */
   updateGodRaysLightPos(worldPos) {
-    if (this.godRaysPass.enabled) this._updateGodRaysLightPos(worldPos);
+    // Same `?.` reasoning as in updateLights: no pass ⇒ the effect is off.
+    if (this.godRaysPass?.enabled) this._updateGodRaysLightPos(worldPos);
   }
 }

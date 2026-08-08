@@ -77,8 +77,6 @@ Code, documentation, and mathematical claims were produced with assistance from 
 
 ## Dependencies
 
-## Dependencies
-
 VIMATHIC stands on the shoulders of these open-source projects — with gratitude to their authors:
 
 - [Three.js](https://threejs.org) — MIT License, © mrdoob and contributors

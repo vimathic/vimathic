@@ -7,8 +7,7 @@ description: First five minutes with VIMATHIC — load a track, watch it react, 
 
 # Quick Start
 
-
-VIMATHIC is a mathematical VJ studio that runs in your browser. Drop in a track — a music file, the microphone, a browser tab, or system audio — and 192 mathematical formulas, 38 GPU shaders, and 36 colour schemes come to life, reacting to the music in real time.
+VIMATHIC is a mathematical VJ studio that runs in your browser. Drop in a track — a music file, the microphone, a browser tab, or system audio — and 192 mathematical formulas, 38 GPU shaders, and 44 colour schemes come to life, reacting to the music in real time.
 
 > ⚠️ **Before you start.** VIMATHIC produces rapid flashing visuals — please read [Safety & Privacy](./safety.md) if you have epilepsy, migraines, or motion sickness. The app is tested primarily in **Chrome and Edge on desktop**; other browsers may have reduced functionality. **On mobile** the visualizer renders at a lower frame rate to manage thermal load, but extended use can still warm the device — give it breaks during long sessions. A dedicated mobile app is on the [Roadmap](./roadmap.md).
 
@@ -54,7 +53,7 @@ The control panel on the left exposes the main knobs:
 - **Visual Style** — Surface / Wireframe / Points rendering modes.
 - **Shape** — Pyramid, Sphere, Torus, Icosahedron, and others. The mesh that the math deforms.
 - **Math Formula / GPU Shader** — the equation driving the animation. 192 CPU formulas + 38 GPU shaders.
-- **Color Scheme** — 36 palettes from cinematic to synthwave to scientific.
+- **Color Scheme** — 44 palettes from cinematic to synthwave to scientific to dark.
 - **Audio sliders** — Amplitude, Wave Intensity, Bass/Treble Sensitivity, Bloom.
 - **Camera** — Reset camera position, toggle Auto-Rotate.
 

@@ -35,7 +35,9 @@
 - `excitableMedia` — sin-spiral replaced with FitzHugh-Nagumo PDE on an optimised internal grid, bilinearly interpolated onto the display mesh. C → **B**.
 - `reactionDiffusion` — threshold-of-oscillators replaced with Gray-Scott reaction-diffusion on an optimised internal grid, bilinearly interpolated onto the display mesh, with configurable F/k regimes. C → **B**.
 
-Test suite: **111 tests passing**, including 18 dedicated validation tests for the rewritten formulas comparing against canonical reference values (mpmath, NIST DLMF).
+<!-- 131 counts tests/math-validation.test.js alone. `npm test`
+     reports 149 — it also runs tests/preset-migrations.test.js (18). -->
+Test suite: **131 tests passing**, including 18 dedicated validation tests for the rewritten formulas comparing against canonical reference values (mpmath, NIST DLMF).
 
 ### A note on grid resolution
 
@@ -364,7 +366,7 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 > **164 mathematical formulas with verifiable numerical accuracy.**
 > 122 closed-form analytic expressions evaluated at IEEE 754 double precision.
 > 42 well-validated approximations with documented bounded error (≤ 10⁻³ to 10⁻⁷), including real PDE simulations on adaptive internal grids with bilinear interpolation to the full-resolution display mesh.
-> Source-available, open test suite (111 automated tests passing, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
+> Source-available, open test suite (131 automated tests passing, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
 
 ### ✓ Defensible (alternative — domain-coverage emphasis)
 
@@ -384,7 +386,9 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 
 ## How to Verify
 
-The companion file `tests/math-validation.test.js` contains **111 executable test cases** covering:
+<!-- 131 is the count for this file alone, same as the "Test
+     suite" line above — move both together. `npm test` reports 149. -->
+The companion file `tests/math-validation.test.js` contains **131 executable test cases** covering:
 - All 122 Tier A formulas at canonical reference points (boundary values, known special-function values, identity tests).
 - Sanity checks for Tier B formulas (PDF integration, convergence behaviour, polynomial fit boundary error, PDE simulation stability).
 - Qualitative checks for Tier C formulas (peak location, sign changes, energy bounds, determinism).
@@ -396,7 +400,7 @@ Run with:
 node --test tests/math-validation.test.js
 ```
 
-All 111 tests currently passing against the live `math-collections.js`.
+All 131 tests currently passing against the live `math-collections.js`.
 
 ---
 

@@ -7,12 +7,73 @@ proper.
 
 ---
 
-## [1.0.0-beta] — 2026-05-13
+<!-- Entries transcribed from `git log 03caff7..HEAD`, PR numbers in
+     parentheses. CONTRIBUTING.md promises contributors are credited here. -->
+## [Unreleased]
+
+Changes on `main` since the v1.0.0-beta tag. Not yet released.
+
+### Added
+
+- **DARK palette group** — 8 new colour schemes at indices 36–43 (Charcoal
+  Smoke, Slate Indigo, Moss Stone, Petrol, Ember Black, Burgundy Velvet,
+  Midnight Forest, Coal Plum), taking the total from 36 to **44**. (#18)
+- **Procedural PBR surface materials** — six looks (Matte, Glossy, Metal,
+  Mirror, Velvet, Glass), with a `T` hotkey that cycles them and preset
+  capture support. SURFACE render mode only; the control is hidden (and `T`
+  is a no-op) in Wireframe and Points. (#22)
+- **Portrait, square and native export aspects** for the recorder. Export was
+  landscape-16:9-only and stretched anything else; GIF and WebM now cover-crop
+  to the chosen aspect instead of distorting, and WebM sizes its composite
+  canvas to the real output dimensions. The watermark was restyled. (#23)
+- **Full favicon package** — .ico, 16/32/48 PNG, apple-touch-icon,
+  android-chrome 192/512, plus a web app manifest. (#14)
+- **Richer web app manifest** for a better PWA install experience. (#15)
+- **OG image** for social link previews. (#13)
+- **Feedback and email links** in the About modal footer. (#16)
+
+### Changed
+
+- **Pristine-snapshot architecture** in the math visualizer. Mode transitions
+  and shape changes now restore from a clean per-shape geometry snapshot taken
+  before any tick writes to the live attribute, instead of from "whatever the
+  previous mode last wrote". (#20)
+- Roadmap donation section simplified. (#21)
+- License wording corrected from "open-source" to "source-available" for
+  BUSL-1.1 across README, CONTRIBUTING, MATHEMATICAL_ACCURACY, and the docs
+  site. (#26)
+- Hotkeys documentation now covers the `T` surface-material cycle. (#24)
+
+### Fixed
+
+- **Camera control taken by hand during a clip now outranks the presets.**
+  Switching AUTO-ROTATE on — or applying a Camera Programmer script — while the
+  Clip Player was cycling used to last exactly one hold time: the next preset
+  carried `autoRot: false` and switched it straight back off. The player now
+  hands the camera over for the rest of the clip and applies the look only
+  (shape, colour, formula, shader keep cycling); AUTO-ROTATE off, or the next
+  PLAY, hands it back. The panel shows `🎥 MANUAL` while the camera is yours.
+- **Volume-mode formula changes no longer keep the previous distortion.** Four
+  compounding issues: `setFormula` left `_mode` untouched, `setMode` restored
+  the baseline only for `surface`, and `_snapshotBasePositions` read the live
+  mesh and so baked distorted geometry in as the rest state. Baseline restore
+  is now symmetric across modes and volume mode auto-exits on formula
+  change. (#19)
+- **Polyhedra lost their identity** — detail is now set to 0 so icosahedron,
+  dodecahedron and friends render with their true flat faces. (#17)
+- **Missing `og:image` meta tags** added and the large Twitter card
+  enabled. (#25)
+
+<!-- Date of the v1.0.0-beta tag, commit 03caff7. -->
+## [1.0.0-beta] — 2026-05-18
 
 First public release. Browser-based mathematical VJ studio with audio-reactive
 visualization powered by 192 mathematical formulas, 38 GPU shaders, and a
 full creative-control toolchain — packaged as a single-file deployment.
 
+<!-- Counts below are the v1.0.0-beta record, not today's `main` — 36
+     schemes and ~900 KB were the figures at tag 03caff7. Don't "correct" them
+     to the current 44 / ~1.1 MB; that would falsify the release history. -->
 ### Features
 
 - **192 mathematical formulas** across 12 domains (fractals, special
@@ -87,4 +148,5 @@ require separate permission.
 Bundled libraries (Three.js, gif.js, micromark, micromark-extension-gfm-table,
 Vite, vite-plugin-singlefile) retain their original MIT licenses.
 
+[Unreleased]: https://github.com/vimathic/vimathic/compare/v1.0.0-beta...main
 [1.0.0-beta]: https://github.com/vimathic/vimathic/releases/tag/v1.0.0-beta

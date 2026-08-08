@@ -161,9 +161,8 @@ function bindOutputModal(ui) {
 // ── Recording (GIF / WebM) ──────────────────────────────────────────────────
 //
 // One UI section drives both recorders, picking the active one by a
-// format toggle. Settings panes swap based on the toggle — GIF exposes
-// size/fps/quality, WebM hides them and relies on MediaRecorder defaults
-// (canvas-native size + 60 fps + VP9).
+// format toggle. ASPECT and SIZE are shared; the fps/quality pane is
+// GIF-only, since WebM is pinned to 60 fps + VP9.
 //
 // Beat-sync mode is GIF-only: MediaRecorder can't be stopped exactly on
 // a beat without trailing data, and the resulting WebM would be off by
@@ -202,8 +201,9 @@ function bindRecordingSection(ui, setOutFeedback) {
   //   landscape 16:9 → width = short*16/9, height = short
   //   portrait  9:16 → width = short,      height = short*16/9
   //   square    1:1  → width = short,      height = short
-  //   native         → the live canvas dimensions (recorder default; we
-  //                    return null to signal "let the recorder use native")
+  //   native         → null, meaning "send no dimensions at all". Each
+  //                    recorder then applies its own native default: the
+  //                    canvas aspect, boxed to what that encoder can afford.
   // The recorder cover-crops the (landscape) WebGL canvas into whatever
   // width/height we hand it, so any aspect comes out undistorted.
   const computeDimensions = (aspect, shortEdge) => {
@@ -266,11 +266,28 @@ function bindRecordingSection(ui, setOutFeedback) {
     progressBar.style.width    = '0%';
   };
 
+  // ── Stop-button phase ────────────────────────────────────────────────────
+  // One button covers two very different phases of a GIF run:
+  //   'capture' — capture is live; stopping ends it early and still yields a
+  //               file, so the button reads STOP.
+  //   'encode'  — capture is done and gif.js is chewing through the frames.
+  //               GifRecorder.stop() is a no-op by then (already !recording),
+  //               so the only action left is cancelling the encode — CANCEL.
+  // FIX(#10): without the relabel the button sits on STOP through a 60-second
+  // encode and does nothing when clicked.
+  const setStopPhase = phase => {
+    if (!stopBtn) return;
+    stopBtn.textContent = phase === 'encode' ? '✕ CANCEL' : '⏹ STOP';
+  };
+
   // Lock all settings controls while recording so a mid-record change
   // can't corrupt the in-flight capture (e.g. switching format).
   const setRecording = isRec => {
     startBtn.style.display = isRec ? 'none' : '';
     stopBtn.style.display  = isRec ? ''     : 'none';
+    // FIX(#10): every return to idle resets the button to its capture label,
+    // so the next run doesn't start out saying CANCEL.
+    if (!isRec) setStopPhase('capture');
     [fmtGifBtn, fmtWebmBtn, durModeSec, durModeBeat,
      sizeSel, fpsSel, qualSel, durSecSel, durBeatSel
     ].forEach(el => { if (el) el.disabled = isRec; });
@@ -284,19 +301,21 @@ function bindRecordingSection(ui, setOutFeedback) {
       const sz   = parseInt(sizeSel.value, 10);
       const fps  = parseInt(fpsSel.value, 10);
       const qual = parseInt(qualSel.value, 10);
-      const dims = computeDimensions(aspectSel.value, sz)
-                ?? { width: ui.render.renderer.domElement.width,
-                     height: ui.render.renderer.domElement.height };
-      const width  = dims.width;
-      const height = dims.height;
+      const dims = computeDimensions(aspectSel.value, sz);
 
       const opts = {
-        width, height, fps, quality: qual,
+        fps, quality: qual,
         // Floyd-Steinberg dithering for the highest-quality preset only.
         // It looks better on gradients but doubles encode time, so we
         // gate it on quality≤5 (the "best" end of the scale).
         dither: qual <= 5,
       };
+      // FIX(#23, r3): Native must reach the recorder as ABSENT dimensions —
+      // the identical signal the WebM branch sends below. Resolving it here
+      // to the canvas size made GifRecorder's 1280×720 native default
+      // unreachable, so Native captured at up to 1920×1080 (8.3MB/frame vs
+      // 3.5MB) and a 10s/20fps take was refused outright.
+      if (dims) { opts.width = dims.width; opts.height = dims.height; }
 
       if (currentDurMode === 'beat') {
         if (!ui.audio?.isPlaying) {
@@ -322,15 +341,31 @@ function bindRecordingSection(ui, setOutFeedback) {
       };
       gif.cb.onProgress = pct => showProgress(pct * 0.5,
         `Capturing… ${Math.round(pct * 100)}%`);
-      gif.cb.onEncoding = pct => showProgress(0.5 + pct * 0.5,
-        `Encoding GIF… ${Math.round(pct * 100)}%`);
+      gif.cb.onEncoding = pct => {
+        // FIX(#10): capture has handed off to the encoder — flip the stop
+        // button into its cancel role (see setStopPhase).
+        setStopPhase('encode');
+        showProgress(0.5 + pct * 0.5, `Encoding GIF… ${Math.round(pct * 100)}%`);
+      };
+      // FIX(#9, r2): watchdog notice, deliberately NOT routed through onError
+      // — a file is still coming, so tearing the recording UI down here would
+      // hide the encode progress and contradict itself when onDone fires.
+      gif.cb.onNotice   = msg => setOutFeedback('⚠ ' + msg, '#fc7');
       gif.cb.onDone     = (blob, meta) => {
         setRecording(false);
         hideProgress();
         downloadBlob(blob, `vimathic-${Date.now()}.gif`);
+        // FIX(#9): a neutral "?" beats printing nonsense if the count ever
+        // goes missing again.
+        const frameCount = Number.isFinite(meta.frames) ? meta.frames : '?';
+        // FIX(#9, r2): a watchdog-truncated take is a real, playable file but
+        // shorter than asked for — say so, in warning colour, so the short
+        // loop doesn't read as a bug.
         setOutFeedback(
-          `✓ GIF saved: ${meta.frames} frames, ${meta.sizeMb.toFixed(1)} MB`,
-          'var(--green)');
+          meta.truncated
+            ? `✓ GIF saved (cut short at the memory limit): ${frameCount} frames, ${meta.sizeMb.toFixed(1)} MB`
+            : `✓ GIF saved: ${frameCount} frames, ${meta.sizeMb.toFixed(1)} MB`,
+          meta.truncated ? '#fc7' : 'var(--green)');
       };
       gif.cb.onError    = msg => {
         setRecording(false);
@@ -355,8 +390,8 @@ function bindRecordingSection(ui, setOutFeedback) {
         fps:         60,
         bitrateMbps: 8,
       };
-      // Only set dimensions for non-native aspects; native lets the
-      // recorder default to the live canvas size.
+      // Only set dimensions for non-native aspects; native lets the recorder
+      // apply its own default (see the GIF branch above — same rule).
       if (dims) { opts.width = dims.width; opts.height = dims.height; }
       webm.cb.onStart    = () => {
         setRecording(true);
@@ -391,7 +426,14 @@ function bindRecordingSection(ui, setOutFeedback) {
 
   // ── Stop action ──────────────────────────────────────────────────────────
   stopBtn.addEventListener('click', () => {
-    if (currentFmt === 'gif')  gif.stop();
+    if (currentFmt === 'gif') {
+      // FIX(#10): ask the recorder which phase it's in rather than trusting
+      // the label — capture can end on its own (duration timer / beat target)
+      // between the last repaint and this click. Once gif.js is encoding,
+      // stop() is a no-op and abort() is the only way out.
+      if (gif.encoding) gif.abort(); else gif.stop();
+      return;
+    }
     if (currentFmt === 'webm') webm.stop();
   });
 
@@ -611,9 +653,21 @@ function bindCameraEditor(ui) {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:3px 0;border-bottom:1px solid #0d0d20;cursor:pointer';
       row.style.color = kf === selectedKf ? 'var(--green)' : '#445';
-      row.innerHTML = `<span style="min-width:40px">${(kf.t * 100).toFixed(1)}%</span>
-        <span style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${kf.code.split('\n')[0].substring(0, 40)}</span>
-        <span style="cursor:pointer;color:#f55" data-del="${i}">✕</span>`;
+      // FIX(#21): DOM nodes, not an innerHTML template. kf.code arrives from
+      // imported presets (untrusted; ui/presets.js sandboxes it) so a
+      // keyframe whose first line holds markup would be parsed as HTML right
+      // here. Same layout, same data-del hook the click handler below reads.
+      const tSpan = document.createElement('span');
+      tSpan.style.cssText = 'min-width:40px';
+      tSpan.textContent   = (kf.t * 100).toFixed(1) + '%';
+      const codeSpan = document.createElement('span');
+      codeSpan.style.cssText = 'flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis';
+      codeSpan.textContent   = kf.code.split('\n')[0].substring(0, 40);
+      const delSpan = document.createElement('span');
+      delSpan.style.cssText = 'cursor:pointer;color:#f55';
+      delSpan.dataset.del   = i;
+      delSpan.textContent   = '✕';
+      row.append(tSpan, codeSpan, delSpan);
       row.addEventListener('click', e => {
         // Click on the ✕ deletes; click anywhere else selects.
         // data-del is the sorted-list index, NOT the original cpKeyframes
@@ -660,12 +714,22 @@ function bindCameraEditor(ui) {
     });
   });
 
+  // ── Arming a script claims the camera from the clip player ───────────────
+  // APPLY / Ctrl+Enter / RESET all end with the user driving the camera (RESET
+  // included — resetScript() re-arms built-in physics with auto-rotate ON), so
+  // a clip in progress must stop restoring each preset's camera over it. The
+  // claim is a no-op when no clip is playing. Handing the camera back is the
+  // AUTO-ROTATE button's job (controls.js), or the next PLAY.
+  const _claimCam = () => ui._clip?.claimCamera();
+
   document.getElementById('ce-btn-apply')?.addEventListener('click', () => {
     const code = document.getElementById('ce-code').value;
     cam.loadScript(code);
+    _claimCam();
   });
   document.getElementById('ce-btn-reset')?.addEventListener('click', () => {
     cam.resetScript();
+    _claimCam();
   });
 
   // Ctrl/Cmd+Enter inside the code editor compiles, matching what most
@@ -674,6 +738,7 @@ function bindCameraEditor(ui) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
       cam.loadScript(document.getElementById('ce-code').value);
+      _claimCam();
     }
   });
 

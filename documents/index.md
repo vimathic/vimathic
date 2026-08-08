@@ -1,12 +1,12 @@
 ---
 title: Overview
 order: 0
-description: VIMATHIC is a browser-based mathematical VJ studio that turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 36 colour schemes.
+description: VIMATHIC is a browser-based mathematical VJ studio that turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 44 colour schemes.
 ---
 
 # VIMATHIC — Mathematical VJ Studio
 
-VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser, with no installation, no accounts, and no plugins. You load audio — a music file, the microphone, a browser tab, or system output — and the visualizer reacts in real time using 192 mathematical formulas, 38 GPU shaders, and 36 colour schemes.
+VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser, with no installation, no accounts, and no plugins. You load audio — a music file, the microphone, a browser tab, or system output — and the visualizer reacts in real time using 192 mathematical formulas, 38 GPU shaders, and 44 colour schemes.
 
 ## What it does
 
@@ -14,7 +14,7 @@ The visualizer takes any audio source and decomposes it into bass and treble ban
 
 - **192 CPU formulas** across 12 mathematical domains (fractals, special functions, probability, linear algebra, trigonometry, complex analysis, Fourier series, differential equations, integral transforms, topology, cellular automata, quantum mechanics)
 - **38 GPU shaders** (audio-reactive vertex and fragment programs) running on the graphics card for real-time performance
-- **36 colour schemes** ranging from cinematic to synthwave to scientific
+- **44 colour schemes** ranging from cinematic to synthwave to scientific to dark
 - **20 base 3D shapes** with three render modes (surface, wireframe, points) and three deformation modes (surface, volume, collapse)
 - **MIDI controller support** for any controller that sends standard CC messages
 - **Recording suite** for animated GIF (beat-synchronized loops) and high-quality WebM video
@@ -22,11 +22,11 @@ The visualizer takes any audio source and decomposes it into bass and treble ban
 
 ## Mathematical accuracy
 
-Every formula is documented with its accuracy tier. 120 formulas use closed-form mathematical expressions at IEEE 754 double precision (~10⁻¹⁴). 44 use bounded numerical approximations with documented error margins (10⁻³ to 10⁻⁷). 28 are visualisation-grade — qualitatively faithful but not numerically verified for production scientific use. Reference values are cross-checked against mpmath, scipy.special, and NIST DLMF. Full per-formula breakdown and test methodology is available in the project's [Mathematical Accuracy](https://github.com/vimathic/vimathic/blob/main/MATHEMATICAL_ACCURACY.md) document on GitHub.
+Every formula is documented with its accuracy tier. 122 formulas use closed-form mathematical expressions at IEEE 754 double precision (~10⁻¹⁴). 42 use bounded numerical approximations with documented error margins (10⁻³ to 10⁻⁷). 28 are visualisation-grade — qualitatively faithful but not numerically verified for production scientific use. Reference values are cross-checked against mpmath, scipy.special, and NIST DLMF. Full per-formula breakdown and test methodology is available in the project's [Mathematical Accuracy](https://github.com/vimathic/vimathic/blob/main/MATHEMATICAL_ACCURACY.md) document on GitHub.
 
 ## Single-file deployment
 
-The entire application — UI, renderer, audio engine, math engine, shader compiler, GIF recorder, WebM recorder, and full documentation — is bundled into four runtime files: `index.html` (~900 KB, the main app), a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. The app runs offline after first load and makes no runtime network requests beyond fetching the intro track once.
+The entire application — UI, renderer, audio engine, math engine, shader compiler, GIF recorder, WebM recorder, and full documentation — is bundled into four runtime files: `index.html` (~1.1 MB, the main app), a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. The app runs offline after first load and makes no runtime network requests beyond fetching the intro track once.
 
 ## Documentation
 

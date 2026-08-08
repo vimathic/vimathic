@@ -68,6 +68,21 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 - Imported preset references a color scheme index that doesn't exist in your current build. The shader falls back to a default palette. Re-save the preset on your current version to capture a valid index.
 
+### **I expected a GPU shader on startup, but shader settings do nothing**
+
+- **By design: VIMATHIC boots into the CPU formula branch, not the GPU one.**
+  The first frame is the *Nonlinear Pendulum Phase* CPU formula — the app
+  activates it explicitly at startup, and the SHADER MODE dropdown's
+  pre-selected entry is that same CPU formula. Nothing GPU-side is running yet.
+- The dropdown mixes both ladders. **Numbered** entries (*1. Bass Reactive
+  Waves* … *38. Spectral Centroid*) switch the renderer onto the GPU shader
+  path. **Unnumbered** entries (*Nonlinear Pendulum Phase*, *Mandelbrot
+  Escape*, *Lorenz Attractor Slice*, …) are CPU formulas evaluated in the math
+  Web Worker.
+- This is the single most common source of confusion when debugging: uniforms,
+  the Shader Editor, and GPU-only behaviour all look "dead" simply because the
+  app never left the CPU branch. Pick a numbered entry first, then debug.
+
 ### **Shader Editor says "Compiled & applied" but nothing changes**
 
 - You're in CPU mode. The Shader Editor only affects rendering when a **numbered** GPU shader is active (entries like *1. Bass Reactive Waves*, *2. Spectrogram Mode*, … *38. Spectral Centroid* in the SHADER MODE dropdown). CPU formulas (entries without numbers, like *Mandelbrot Escape*, *Lorenz Attractor Slice*) bypass the Shader Editor.

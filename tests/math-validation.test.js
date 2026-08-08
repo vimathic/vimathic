@@ -792,6 +792,123 @@ describe('Regression — Tier D defects (fixed)', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// REGRESSION — heavy-simulator cache invalidation (defect #12)
+//
+// The eleven Cellular Automata formulas below are wrapped in
+// createCachedHeavySampler(): the simulator runs ONCE per tick and every vertex
+// bilinearly samples the cached res×res grid. That wrapper is module-private
+// (not exported), so it is exercised the only way production does — through the
+// public formula objects in MATH_COLLECTIONS.
+//
+// The bug: the cache key was `t` alone. `t` advances 0.008 per frame against a
+// 0.016 staleness threshold, so only ~1 frame in 3 rebuilt and the rest sampled
+// a grid computed from stale audio params. Undersampled, not deaf — the eleven
+// formulas did track the music, at ~16-20Hz.
+//
+// The fix has two halves. amp and comp join the cache key, with a
+// HEAVY_PARAM_EPS = 0.05 dead-band so analyser jitter doesn't rebuild every
+// frame. HEAVY_MIN_RECOMPUTE_TICKS then caps param-driven rebuilds at ~30Hz,
+// because unbounded they fire on ~83% of frames of real music — ~3× the old
+// load, more than the main-thread collapse path can absorb.
+//
+// Every test here fixes `t` and varies only the params: on the old code they
+// all return a bit-identical grid, which is precisely the failure being pinned.
+// A fixed `t` is also the ceiling's exemption (same instant + new params = a
+// grid that never existed), so the rate limit can't mask the cache-key half.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('Regression — heavy sampler: params in the cache key + rebuild-rate ceiling (#12)', () => {
+  // Sampling a grid rather than one point: an automaton can legitimately be
+  // flat at any single (x, z), so a single probe would be a coin flip. The
+  // whole surface can only be identical if the cached grid was reused.
+  function surfaceAt(formulaKey, t, params) {
+    const f = getFormula('cellularAutomata', formulaKey);
+    assert.ok(f, `Formula not found: cellularAutomata/${formulaKey}`);
+    const out = [];
+    for (let x = -3; x <= 3; x += 0.5)
+      for (let z = -3; z <= 3; z += 0.5)
+        out.push(f.f(x, z, t, params));
+    return out;
+  }
+
+  function maxAbsDiff(a, b) {
+    assert.equal(a.length, b.length, 'sample grids differ in length');
+    return a.reduce((m, v, i) => Math.max(m, Math.abs(v - b[i])), 0);
+  }
+
+  // Fixed instant shared by every case — the point is that t never moves.
+  const T = 2.5;
+
+  // Formulas whose output provably swings with amp / comp at this t. Chosen by
+  // measurement, not by reading the sources: `wiredFire` and `briansBrain` are
+  // flat over parts of the t domain and would make a hard assertion flaky.
+  const AMP_SENSITIVE  = ['reactionDiffusion', 'conway3D', 'excitableMedia', 'cyclicCA'];
+  const COMP_SENSITIVE = ['gameOfLifeDensity', 'conway3D', 'cyclicCA'];
+
+  test('changing amp at a fixed t recomputes the simulation', () => {
+    for (const key of AMP_SENSITIVE) {
+      const quiet = surfaceAt(key, T, { amp: 1, comp: 0.5 });
+      const loud  = surfaceAt(key, T, { amp: 2, comp: 0.5 });
+      assert.ok(maxAbsDiff(quiet, loud) > 1e-9,
+        `${key}: amp 1 → 2 produced an identical surface at t=${T} — cache ignored params`);
+    }
+  });
+
+  test('changing comp at a fixed t recomputes the simulation', () => {
+    // comp = 0.5 + mid·0.4, so it is the mid-band's only route into these
+    // simulators (it drives generation counts and regime constants).
+    for (const key of COMP_SENSITIVE) {
+      const low  = surfaceAt(key, T, { amp: 1, comp: 0.5 });
+      const high = surfaceAt(key, T, { amp: 1, comp: 0.9 });
+      assert.ok(maxAbsDiff(low, high) > 1e-9,
+        `${key}: comp 0.5 → 0.9 produced an identical surface at t=${T} — cache ignored params`);
+    }
+  });
+
+  test('sub-tolerance param jitter still hits the cache (HEAVY_PARAM_EPS)', () => {
+    // The other half of the fix: invalidating on every analyser wobble would
+    // run a full simulation per frame. Deltas below 0.05 must be absorbed, so
+    // the result is byte-identical, not merely close.
+    for (const key of [...new Set([...AMP_SENSITIVE, ...COMP_SENSITIVE])]) {
+      const base   = surfaceAt(key, T, { amp: 1,    comp: 0.5  });
+      const jitter = surfaceAt(key, T, { amp: 1.02, comp: 0.51 });
+      assert.equal(maxAbsDiff(base, jitter), 0,
+        `${key}: a 0.02/0.01 param wobble rebuilt the simulation — dead-band lost`);
+    }
+  });
+
+  test('identical (t, params) is deterministic across calls', () => {
+    // Guards the cache itself: a hit must return what the miss computed.
+    // Also rules out Math.random() creeping into any of these simulators,
+    // which would flicker the surface frame to frame.
+    for (const key of AMP_SENSITIVE) {
+      const first  = surfaceAt(key, T, { amp: 1.3, comp: 0.7 });
+      const second = surfaceAt(key, T, { amp: 1.3, comp: 0.7 });
+      assert.equal(maxAbsDiff(first, second), 0, `${key}: non-deterministic output`);
+    }
+  });
+
+  test('every heavy sampler stays finite across the param range', () => {
+    // Sweeping amp/comp now actually re-runs the simulators, so this covers
+    // eleven code paths that the old cache made unreachable after the first
+    // call at a given t.
+    const HEAVY = [
+      'gameOfLifeDensity', 'briansBrain', 'langtonAnt', 'cyclicCA', 'wiredFire',
+      'sandpile', 'excitableMedia', 'reactionDiffusion', 'forestFire',
+      'conway3D', 'turmite',
+    ];
+    for (const key of HEAVY) {
+      for (const params of [{ amp: 0, comp: 0.5 }, { amp: 1, comp: 0.5 }, { amp: 2, comp: 0.9 }]) {
+        for (const v of surfaceAt(key, T, params)) {
+          assert.ok(Number.isFinite(v),
+            `${key} returned non-finite at amp=${params.amp} comp=${params.comp}: ${v}`);
+        }
+      }
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // INTEGRATION — Surface generation end-to-end
 // ═══════════════════════════════════════════════════════════════════════════════
 

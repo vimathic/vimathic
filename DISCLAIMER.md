@@ -95,7 +95,7 @@ verify it against the primary source.
 
 - Formula implementations labelled Tier A or Tier B have been tested against
   reference values using automated tests
-  (`node --test tests/math-validation.test.js`, 126 tests as of v1.0-beta).
+  (`node --test tests/math-validation.test.js`, 131 tests).
   The tests themselves may contain errors.
 - Accuracy figures (e.g. "error ≤ 10⁻⁷") are estimates,
   not formal mathematical proofs or independent expert review.

@@ -87,7 +87,11 @@ export const PARAMS = {
     label:   'Bass Sensitivity',
     slider:  'bassSens',
     display: 'bsv',
-    min: 0, max: 2.5, default: 1.0,
+    // FIX(#19): default was 1.0 while the engine boots at 1.2 — RESET ALL
+    // silently nudged bass sensitivity below the startup value. Keep the
+    // three aligned: audio.js (`this.bassSens = 1.2`) is the engine truth and
+    // index.html is the visible truth (slider value="1.2", <span id="bsv">1.20</span>).
+    min: 0, max: 2.5, default: 1.2,
     // L + drag covers up to 3.0 at full window sweep — comfortable range
     // for very quiet tracks. Click-to-type can go higher (e.g. 500 for
     // ambient material).
@@ -136,7 +140,14 @@ export const PARAMS = {
     // max MUST equal COLOR_SCHEME_COUNT-1 so MIDI CC mapping reaches every
     // palette. Previously hardcoded to 23, which silently cut off the 12 new
     // schemes added at indices 24-35.
-    min: 0, max: COLOR_SCHEME_COUNT - 1, default: 0,
+    //
+    // FIX(#2): default was 0 — RESET ALL wrote 16 (Amber) and then
+    // resetParamsToDefault() clobbered it straight back to 0 (Teal Orange)
+    // through set() below, which also rewrites DOM.colorSel. The default MUST
+    // match the startup state: main.js sets `audio.colorIdx = 16` and
+    // index.html carries `<option value="16" selected>Amber</option>`.
+    // Keep all three aligned — same rule as waveInt's range above.
+    min: 0, max: COLOR_SCHEME_COUNT - 1, default: 16,
     integer: true,
     format: v => String(Math.round(v)),
     get: ctx => ctx.audio.colorIdx,

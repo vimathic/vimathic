@@ -13,14 +13,15 @@ assignees: ''
 
      ❌ New mathematical formulas (192 is the curated count)
      ❌ New GPU shaders (38 is intentional)
-     ❌ New colour schemes (36 covers the design space)
+     ❌ New colour schemes (44 covers the design space)
      ❌ New shapes (20 base shapes + deformation modes cover geometry)
      ❌ New keyboard shortcuts (the hotkey surface is full)
      ❌ Major architecture refactors
-     ❌ New external dependencies (currently 3: three, gif.js, micromark)
+     ❌ New external dependencies (currently `three`, `gif.js`, `micromark`
+        and `micromark-extension-gfm-table`)
 
-     This freeze lifts around Week 10 post-launch. See CONTRIBUTING.md
-     for the full reasoning.
+     This freeze stays in effect until the scope-freeze section of
+     CONTRIBUTING.md says otherwise — check there before assuming it lifted.
 
      If your idea is in one of the above categories, please tag the issue
      with `phase-3-consideration` — it'll be reviewed during the next

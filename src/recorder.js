@@ -26,6 +26,8 @@
 //
 // GIF also supports beat-sync: pass { stopOnBeats: N, audioEngine } to
 // auto-stop after N detected beats — useful for music-aligned loops.
+// FIX(#9): still bounded by LIMITS.maxDurationMs — a paused track stops
+// emitting beats, and an unbounded capture eats memory until the tab dies.
 //
 // ── Memory awareness ──────────────────────────────────────────────────────
 // GIF rasterises every captured frame into a 2D canvas before queueing it
@@ -33,6 +35,18 @@
 // intermediate ≈ 1.5 GB peak — well into "tab crash" territory on a 4 GB
 // MacBook Air. The LIMITS table below and the per-call memMb check
 // surface a clean error instead of letting the user faceplant.
+//
+// FIX(#9, r2): that check is two-tier, because a start-time refusal is only
+// honest when the clip length is known at start time:
+//   1. Pre-flight — reject before capture when the EXPECTED clip (timed
+//      duration, or beats ÷ BPM in beat mode) already blows the ceiling.
+//   2. Runtime watchdog — stop cleanly if the real frame queue reaches the
+//      ceiling anyway (tempo slower than the estimate); the user gets a
+//      shorter GIF plus a reason.
+// Size tier 1 off the 60 s wall-clock cap instead and it refuses 69 of the
+// UI's 80 aspect × size × fps presets — every landscape and portrait preset
+// from 20 fps up, with no smaller size left to fall back to. The hard
+// ceilings (LIMITS.maxDurationMs, _frameBudget) still bound every run.
 
 import GIF from 'gif.js';
 import gifWorkerSource from 'gif.js/dist/gif.worker.js?raw';
@@ -166,13 +180,78 @@ const LIMITS = {
   maxHeight:     1920,
   maxFps:        30,    // GIFs above 30 fps look bad and weigh too much
   minFps:        5,
+  // FIX(#9, r2): peak RGBA bytes gif.js may hold in queued-but-unencoded
+  // frames, in MB. Named because both memory tiers read it — change it here
+  // and the pre-flight and the runtime watchdog stay in agreement.
+  maxFrameMemMb: 1500,
 };
+
+// ── Default output box for GifRecorder ───────────────────────────────────
+// FIX(#23, r2): "native" for GIF is the canvas ASPECT at a GIF-sane pixel
+// budget, not the canvas's raw pixel count — GIF holds every frame as
+// uncompressed RGBA, so a 1920-wide canvas costs 8.3+ MB/frame and trips the
+// memory pre-flight at the default 10 s / 15 fps. Raise this box and the
+// out-of-the-box GIF stops recording at all. Only the native fallback is
+// boxed; explicit width/height goes straight to LIMITS.
+const GIF_DEFAULT_MAX = { width: 1280, height: 720 };
+
+// ── Beat-mode length estimate ────────────────────────────────────────────
+// Beat mode stops after N beats, so its length is (N ÷ BPM) minutes — known
+// closely enough up front to size the memory pre-flight honestly. The BPM
+// comes from the audio engine's sliding average (audio.js `estimatedBpm`),
+// clamped: a cold estimator reports its 120 default, and a noisy one can
+// briefly read absurdly low, which would inflate the estimate back into
+// "refuse everything" territory. The headroom factor absorbs ordinary tempo
+// drift so the runtime watchdog stays a rare backstop rather than the norm.
+const BEAT_BPM_MIN  = 60;
+const BEAT_BPM_MAX  = 300;
+const BEAT_HEADROOM = 1.25;
+
+function estimateBeatDurationMs(beats, audioEngine) {
+  const raw = audioEngine?.estimatedBpm;
+  const bpm = (Number.isFinite(raw) && raw > 0)
+    ? Math.min(BEAT_BPM_MAX, Math.max(BEAT_BPM_MIN, raw))
+    : 120;
+  const n = (Number.isFinite(beats) && beats > 0) ? beats : 1;
+  return (n / bpm) * 60_000 * BEAT_HEADROOM;
+}
+
+// ── Aspect-preserving fit ────────────────────────────────────────────────
+/**
+ * FIX(#22): shrink (w × h) under a (maxW × maxH) ceiling by ONE shared
+ * factor, so the aspect ratio survives. Clamping each axis on its own
+ * re-shapes the output: a 2880×1620 canvas (1080p window at DPR 1.5) becomes
+ * 1920×1620 — ≈1.19:1 instead of the 16:9 on screen — where one factor gives
+ * 1920×1080: smaller, same picture.
+ *
+ * Non-positive / non-finite inputs pass through untouched — the caller (or
+ * the encoder) reports those far more usefully than a NaN would.
+ */
+function fitWithin(w, h, maxW, maxH) {
+  if (!(w > 0) || !(h > 0)) return { width: w, height: h };
+  const k = Math.min(1, maxW / w, maxH / h);
+  if (k === 1) return { width: Math.round(w), height: Math.round(h) };
+  return {
+    width:  Math.max(1, Math.round(w * k)),
+    height: Math.max(1, Math.round(h * k)),
+  };
+}
+
+// FIX(#23, r2): LIMITS is one box among several — GifRecorder's native
+// default fits into GIF_DEFAULT_MAX first. Same single-factor maths either
+// way, so aspect survives both.
+function fitWithinLimits(w, h) {
+  return fitWithin(w, h, LIMITS.maxWidth, LIMITS.maxHeight);
+}
 
 function clampOptions(opts) {
   const out = { ...opts };
   if (out.duration > LIMITS.maxDurationMs) out.duration = LIMITS.maxDurationMs;
-  if (out.width  > LIMITS.maxWidth)  out.width  = LIMITS.maxWidth;
-  if (out.height > LIMITS.maxHeight) out.height = LIMITS.maxHeight;
+  // FIX(#22): scale width/height together instead of clamping each axis
+  // independently, which changed the aspect ratio behind the user's back.
+  const fit  = fitWithinLimits(out.width, out.height);
+  out.width  = fit.width;
+  out.height = fit.height;
   if (out.fps    > LIMITS.maxFps)    out.fps    = LIMITS.maxFps;
   if (out.fps    < LIMITS.minFps)    out.fps    = LIMITS.minFps;
   return out;
@@ -196,6 +275,7 @@ function clampOptions(opts) {
  *   const rec = new GifRecorder(renderer);
  *   rec.cb.onProgress = pct => updateUiBar(pct);   // capture 0–1
  *   rec.cb.onEncoding = pct => updateUiBar(pct);   // post-capture 0–1
+ *   rec.cb.onNotice   = msg => showToast(msg);     // cut short, file still coming
  *   rec.cb.onDone     = (blob, meta) => downloadBlob(blob, 'clip.gif');
  *   rec.cb.onError    = msg => showToast(msg, true);
  *
@@ -222,6 +302,15 @@ export class GifRecorder {
     this._lastFrameTime = 0;
     this._totalFrames   = 0;
     this._frameBudget   = 0;
+    // FIX(#9): counted, not derived from (_totalFrames - _frameBudget) —
+    // beat mode has no _totalFrames, so that derivation went negative.
+    this._framesCaptured = 0;
+    // FIX(#9, r2): runtime watchdog state — RGBA cost of one queued frame,
+    // and whether the watchdog (not the beat target / timer) ended the run.
+    this._frameBytes   = 0;
+    this._memStopped   = false;
+    // FIX(#9, r2): levers the user can actually turn in this run; see start().
+    this._knobs        = 'duration/size/fps';
     this.recording = false;
     this.encoding  = false;
 
@@ -229,6 +318,11 @@ export class GifRecorder {
       onStart:    ()           => {},
       onProgress: (_capturePct)=> {},
       onEncoding: (_encodePct) => {},
+      // FIX(#9, r2): non-fatal in-run notice. onError means "no file is
+      // coming" and the UI tears the recording state down on it, so the
+      // watchdog's soft stop — which still yields a GIF — needs its own
+      // channel. Default no-op keeps callers that don't wire it working.
+      onNotice:   (_msg)       => {},
       onDone:     (_blob, _meta)=> {},
       onError:    (_msg)       => {},
       onAbort:    ()           => {},
@@ -255,11 +349,20 @@ export class GifRecorder {
       return;
     }
 
+    // FIX(#23): "Native" = no width/height from the caller = the live canvas
+    // ASPECT, scaled into GIF_DEFAULT_MAX (see there for why the raw canvas
+    // size is unusable here). Both recorders read the same signal, so the UI
+    // must omit the dimensions for Native rather than resolve them itself —
+    // passing the canvas size through makes this default unreachable.
+    const nativeSize = opts.width == null && opts.height == null;
+    const nativeFit = fitWithin(this._canvas.width, this._canvas.height,
+                                GIF_DEFAULT_MAX.width, GIF_DEFAULT_MAX.height);
+
     const o = clampOptions({
       duration: 10_000,
       fps:      15,
-      width:    Math.min(this._canvas.width,  1280),
-      height:   Math.min(this._canvas.height, 720),
+      width:    nativeFit.width,
+      height:   nativeFit.height,
       quality:  10,
       dither:   false,
       workers:  2,
@@ -273,22 +376,55 @@ export class GifRecorder {
       return;
     }
 
-    // Memory pre-flight. 4 bytes/pixel is the worst-case intermediate
-    // before gif.js compresses to indexed colour. The 1500 MB threshold
-    // is the empirical edge below which Chrome stays alive on 4 GB
-    // machines; above it we bail with a useful error instead of letting
-    // the tab OOM mid-capture.
-    const frames = Math.ceil((o.duration / 1000) * o.fps);
-    const memMb = (o.width * o.height * 4 * frames) / (1024 * 1024);
-    if (memMb > 1500) {
-      this.cb.onError(`Estimated ${Math.round(memMb)}MB — reduce duration/size/fps`);
+    // ── Wall-clock ceiling ───────────────────────────────────────────────
+    // FIX(#9): beat mode has no `duration`, but it is not open-ended either —
+    // a paused track stops producing beats while the capture interval keeps
+    // pushing RGBA frames. So both modes get a real cap, enforced twice: the
+    // stop timer below in time, _frameBudget in frames.
+    const capMs     = o.stopOnBeats != null ? LIMITS.maxDurationMs : o.duration;
+    const capFrames = Math.ceil((capMs / 1000) * o.fps);
+
+    // ── Memory pre-flight ────────────────────────────────────────────────
+    // 4 bytes/pixel is the worst-case intermediate before gif.js compresses
+    // to indexed colour. Above LIMITS.maxFrameMemMb we bail with a useful
+    // error instead of letting the tab OOM mid-capture.
+    //
+    // FIX(#9, r2): budget against the EXPECTED clip, not the wall-clock cap.
+    // Beat mode almost never runs the full 60 s — 8 beats at 120 BPM is 4 s —
+    // so pricing it at 60 s inflates the estimate ~15× and refuses 69 of the
+    // UI's 80 aspect × size × fps presets, every landscape and portrait one
+    // from 20 fps up with no smaller size to fall back to. A run that DOES
+    // outlast its estimate is caught by the runtime watchdog in the capture
+    // loop, which stops cleanly rather than refusing to start.
+    const estMs = o.stopOnBeats != null
+      ? Math.min(capMs, estimateBeatDurationMs(o.stopOnBeats, o.audioEngine))
+      : o.duration;
+    const frameBytes = o.width * o.height * 4;
+    const estFrames  = Math.ceil((estMs / 1000) * o.fps);
+    const memMb      = (frameBytes * estFrames) / (1024 * 1024);
+    // FIX(#23, r3): name only the levers this run actually has. Beat mode has
+    // no duration knob, and a native-size run has no size knob either — the
+    // UI's SIZE selector is inert once the aspect is Native, so advertising
+    // it sends the user to a control that changes nothing.
+    const knobs = [
+      o.stopOnBeats != null ? 'beats' : 'duration',
+      nativeSize ? null : 'size',
+      'fps',
+    ].filter(Boolean).join('/');
+    if (memMb > LIMITS.maxFrameMemMb) {
+      this.cb.onError(
+        `Estimated ${Math.round(memMb)}MB of frames (limit ${LIMITS.maxFrameMemMb}MB) — reduce ${knobs}`);
       return;
     }
 
     this._scratch    = makeScratchCanvas(o.width, o.height);
     this._frameDelay = 1000 / o.fps;
-    this._totalFrames = frames;
-    this._frameBudget = frames;
+    this._totalFrames = capFrames;
+    this._frameBudget = capFrames;
+    this._framesCaptured = 0;   // FIX(#9)
+    this._frameBytes  = frameBytes;   // FIX(#9, r2)
+    this._memStopped  = false;        // FIX(#9, r2)
+    this._knobs       = knobs;        // FIX(#23, r3)
     this._lastFrameTime = 0;
     this._beatsSeen = 0;
     this.recording = true;
@@ -313,14 +449,20 @@ export class GifRecorder {
         width:  o.width,
         height: o.height,
         fps:    o.fps,
-        frames: this._totalFrames - this._frameBudget,
+        frames: this._framesCaptured,   // FIX(#9)
         sizeMb: blob.size / (1024 * 1024),
+        // FIX(#9, r2): the runtime watchdog cut this capture short. The file
+        // is real and complete-as-encoded, just shorter than asked for — the
+        // UI needs the flag to avoid implying a clean full take.
+        truncated: this._memStopped,
       };
       this.cb.onDone(blob, meta);
     });
     this._gif.on('abort', () => {
+      // FIX(#10): bookkeeping only — gif.js emits 'abort' from inside our own
+      // abort(), so raising cb.onAbort here too delivers it twice. abort()
+      // owns the callback.
       this.encoding = false;
-      this.cb.onAbort();
     });
 
     // ── Beat-sync mode ────────────────────────────────────────────────────
@@ -329,12 +471,16 @@ export class GifRecorder {
     // taking care to call the original handler so the rest of the app
     // keeps working. The original is restored in stop() and abort().
     //
-    // _totalFrames and _frameBudget are unknown up front in this mode —
-    // capture runs open-ended and the beat counter decides when to stop.
+    // _totalFrames stays 0 in this mode: the clip length isn't known up
+    // front, so the progress bar has no denominator (the UI shows an
+    // indeterminate "stop after N beats" label instead).
+    // FIX(#9): _frameBudget holds capFrames rather than Infinity, so the
+    // guard in the capture loop can fire; the safety timer below enforces the
+    // same ceiling in wall-clock terms. Whichever trips first ends the run
+    // once the beats dry up (track paused / ended).
     if (o.stopOnBeats != null) {
       this._waitingForFirstBeat = true;
       this._totalFrames = 0;
-      this._frameBudget = Infinity;
       this._beatsTarget = o.stopOnBeats;
       this._audioEngine = o.audioEngine;
 
@@ -346,13 +492,17 @@ export class GifRecorder {
       this.cb.onStart();
       // Capture loop is started by the FIRST onBeat (in _onBeatTick),
       // not here — so the first frame lands on a downbeat.
+      // FIX(#9): the safety stop is armed NOW rather than on the first beat.
+      // If no beat ever arrives the run ends with a clean "No frames
+      // captured" instead of leaving the UI stuck in "recording" forever.
+      this._stopTimer = setTimeout(() => this.stop(), capMs);
       return;
     }
 
     // ── Time-based mode ───────────────────────────────────────────────────
     this.cb.onStart();
     this._startCaptureLoop();
-    this._stopTimer = setTimeout(() => this.stop(), o.duration);
+    this._stopTimer = setTimeout(() => this.stop(), capMs);   // FIX(#9): == o.duration here
   }
 
   /** Stop capturing and kick off encoding. Idempotent; safe to call twice. */
@@ -399,7 +549,16 @@ export class GifRecorder {
     }
 
     if (this._gif) {
+      // gif.js's abort() kills the mid-frame workers and emits 'abort' — our
+      // handler for that is bookkeeping-only (FIX #10), so the cancellation
+      // reaches the UI exactly once, from here.
       try { this._gif.abort(); } catch (_) {}
+      // FIX(#10): idle workers and the captured frames' RGBA buffers survive
+      // that abort(). Without these two lines each cancelled run strands
+      // hundreds of MB and a couple of live Workers.
+      try { this._gif.freeWorkers.forEach(w => w.terminate()); } catch (_) {}
+      try { this._gif.frames.length = 0; } catch (_) {}
+      this._gif = null;
     }
     this.encoding = false;
     this.cb.onAbort();
@@ -466,13 +625,33 @@ export class GifRecorder {
         this._gif.addFrame(this._scratch, { delay: this._frameDelay, copy: true });
 
         this._frameBudget--;
-        const captured = this._totalFrames - this._frameBudget;
+        // FIX(#9): count what was really captured — beat mode has no
+        // _totalFrames to subtract the budget from.
+        this._framesCaptured++;
         if (this._totalFrames > 0) {
-          this.cb.onProgress(captured / this._totalFrames);
+          this.cb.onProgress(this._framesCaptured / this._totalFrames);
         }
 
         if (this._frameBudget <= 0) {
           this.stop();
+          return;
+        }
+
+        // FIX(#9, r2): second tier of the memory guard. The pre-flight sized
+        // beat mode off the EXPECTED clip, so a track dragging slower than
+        // its estimated BPM can still out-run the budget; stopping here gives
+        // a shorter GIF with an explanation instead of a dead tab. Time mode
+        // never reaches this — the pre-flight already proved a full
+        // _frameBudget fits, and _framesCaptured never exceeds it.
+        if (this._framesCaptured * this._frameBytes > LIMITS.maxFrameMemMb * 1024 * 1024) {
+          this._memStopped = true;
+          this.cb.onNotice(
+            `Memory limit (${LIMITS.maxFrameMemMb}MB) reached after ${this._framesCaptured} ` +
+            // FIX(#23, r3): same lever list the pre-flight uses, so neither
+            // message points at a control that is inert in this mode.
+            `frames — stopping early; reduce ${this._knobs} for the full clip`);
+          this.stop();
+          return;
         }
       } catch (e) {
         this.cb.onError('Capture error: ' + e.message);
@@ -527,16 +706,21 @@ export class WebmRecorder {
       duration:    10_000,
       fps:         60,
       bitrateMbps: 8,
-      // Output dimensions. Default to the live canvas size (Native preset);
-      // an explicit width/height drives a fixed aspect (portrait/square/etc)
-      // with cover-crop. Clamped to LIMITS so portrait 1080×1920 passes but
-      // nothing exceeds the encoder's practical ceiling.
+      // Output dimensions. Same "Native" signal GifRecorder reads: absent
+      // width/height means the live canvas, boxed to what this encoder can
+      // afford — LIMITS here, since MediaRecorder streams instead of holding
+      // frames. An explicit width/height drives a fixed aspect with
+      // cover-crop.
       width:       this._canvas.width,
       height:      this._canvas.height,
       ...opts,
     };
-    o.width  = Math.min(o.width,  LIMITS.maxWidth);
-    o.height = Math.min(o.height, LIMITS.maxHeight);
+    // FIX(#22): scale both axes by one shared factor. Clamping them
+    // independently turned a 2880×1620 native canvas (1080p window at DPR
+    // 1.5) into 1920×1620 — ≈1.19:1 instead of the 16:9 on screen.
+    const fit = fitWithinLimits(o.width, o.height);
+    o.width  = fit.width;
+    o.height = fit.height;
     // 5-minute ceiling. The encoder itself can run longer, but a single
     // WebM file past this point is more than most archive workflows want.
     if (o.duration > 5 * 60_000) o.duration = 5 * 60_000;

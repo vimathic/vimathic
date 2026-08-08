@@ -965,6 +965,11 @@
           <option value="34">35. FFT Spectrum</option><option value="35">36. EQ 3D</option>
           <option value="36">37. Vocoder</option><option value="37">38. Spectral Centroid</option>
         </optgroup>
+        <!-- ── CPU math collections (value="m:<collection>:<key>") ─────────
+             Labels mirror the `name` fields in src/math-collections.js, which
+             is the source of truth quoted by the tests and by
+             MATHEMATICAL_ACCURACY.md. Adding or renaming a formula means
+             editing both sides — nothing enforces this at build time. -->
         <optgroup label="━━ 🌀 FRACTALS & CHAOS ━━">
           <option value="m:fractals:mandelbrot">Mandelbrot Escape</option>
           <option value="m:fractals:julia">Julia Set (animated)</option>
@@ -972,7 +977,7 @@
           <option value="m:fractals:lorenz">Lorenz Attractor Slice</option>
           <option value="m:fractals:rossler">Rössler Attractor</option>
           <option value="m:fractals:newtonFractal">Newton Fractal z³−1</option>
-          <option value="m:fractals:sierpinski">Sierpiński IFS</option>
+          <option value="m:fractals:sierpinski">Sierpiński IFS Height</option>
           <option value="m:fractals:lyapunov">Lyapunov Exponent Map</option>
           <option value="m:fractals:dragon">Dragon Curve Density</option>
           <option value="m:fractals:chua">Chua Circuit Attractor</option>
@@ -986,7 +991,7 @@
         <optgroup label="━━ ∿ SPECIAL FUNCTIONS ━━">
           <option value="m:specialFunctions:bessel0">Bessel J₀ Radial</option>
           <option value="m:specialFunctions:bessel1">Bessel J₁ Radial</option>
-          <option value="m:specialFunctions:legendre2">Legendre P_n Surface</option>
+          <option value="m:specialFunctions:legendre2">Legendre P₂ Surface</option>
           <option value="m:specialFunctions:gamma_fn">Gamma Function</option>
           <option value="m:specialFunctions:erf">Error Function erf(x)</option>
           <option value="m:specialFunctions:zeta">Riemann Zeta (real axis)</option>
@@ -996,7 +1001,7 @@
           <option value="m:specialFunctions:chebyshev">Chebyshev T_n(x)</option>
           <option value="m:specialFunctions:sinc">Cardinal Sinc</option>
           <option value="m:specialFunctions:ellipticK">Elliptic Integral K(k)</option>
-          <option value="m:specialFunctions:dawson">Dawson Function</option>
+          <option value="m:specialFunctions:dawson">Dawson Function F(x)</option>
           <option value="m:specialFunctions:clausen">Clausen Function</option>
           <option value="m:specialFunctions:polygamma">Digamma ψ(x)</option>
           <option value="m:specialFunctions:lambertW">Lambert W Function</option>
@@ -1008,7 +1013,7 @@
           <option value="m:probability:laplace">Laplace Distribution</option>
           <option value="m:probability:maxwellBoltzmann">Maxwell–Boltzmann</option>
           <option value="m:probability:poisson">Poisson PMF</option>
-          <option value="m:probability:randomWalk">Brownian Motion</option>
+          <option value="m:probability:randomWalk">Brownian Motion (seeded)</option>
           <option value="m:probability:ornsteinUhlenbeck">Ornstein–Uhlenbeck</option>
           <option value="m:probability:chiSquare">Chi-Squared Distribution</option>
           <option value="m:probability:studentT">Student's t Distribution</option>
@@ -1025,7 +1030,7 @@
           <option value="m:linearAlgebra:svdSpectrum">SVD Singular Values</option>
           <option value="m:linearAlgebra:trace">Matrix Trace Wave</option>
           <option value="m:linearAlgebra:tensorField">2D Tensor Field</option>
-          <option value="m:linearAlgebra:hessian">Hessian Determinant</option>
+          <option value="m:linearAlgebra:hessian">Hessian Determinant (2D)</option>
           <option value="m:linearAlgebra:rotationMatrix">Rotation Matrix Flow</option>
           <option value="m:linearAlgebra:gram">Gram–Schmidt Surface</option>
           <option value="m:linearAlgebra:quadraticForm">Quadratic Form xᵀAx</option>
@@ -1056,15 +1061,15 @@
           <option value="m:trigonometry:inverseTrig">Arcsin / Arccos Surface</option>
         </optgroup>
         <optgroup label="━━ 🔄 COMPLEX NUMBERS ━━">
-          <option value="m:complexNumbers:euler">Euler's Formula Re(e^ix)</option>
-          <option value="m:complexNumbers:eulerIm">Euler's Formula Im(e^iz)</option>
+          <option value="m:complexNumbers:euler">Euler's Formula Re(e^{ix})</option>
+          <option value="m:complexNumbers:eulerIm">Euler's Formula Im(e^{iz})</option>
           <option value="m:complexNumbers:moivre">De Moivre's Theorem</option>
           <option value="m:complexNumbers:complexPower">Complex Power |z^z|</option>
-          <option value="m:complexNumbers:rootsOfUnity">n-th Roots of Unity</option>
+          <option value="m:complexNumbers:rootsOfUnity">n-th Roots of Unity Heights</option>
           <option value="m:complexNumbers:complexLog">Complex Logarithm</option>
           <option value="m:complexNumbers:riemannSphere">Riemann Sphere Projection</option>
           <option value="m:complexNumbers:mobiusTransform">Möbius Transformation</option>
-          <option value="m:complexNumbers:cauchyRiemann">Cauchy–Riemann Equations</option>
+          <option value="m:complexNumbers:cauchyRiemann">Cauchy–Riemann Satisfaction</option>
           <option value="m:complexNumbers:complexSin">Complex sin(z) Real Part</option>
           <option value="m:complexNumbers:juliaPotential">Julia Potential</option>
           <option value="m:complexNumbers:windingNumber">Winding Number Field</option>
@@ -1075,9 +1080,9 @@
         </optgroup>
         <optgroup label="━━ 〜 FOURIER SERIES ━━">
           <option value="m:fourierSeries:sineWave">Fundamental Sine</option>
-          <option value="m:fourierSeries:squareWave">Square Wave</option>
-          <option value="m:fourierSeries:sawtoothWave">Sawtooth Wave</option>
-          <option value="m:fourierSeries:triangleWave">Triangle Wave</option>
+          <option value="m:fourierSeries:squareWave">Square Wave (Fourier)</option>
+          <option value="m:fourierSeries:sawtoothWave">Sawtooth Wave (Fourier)</option>
+          <option value="m:fourierSeries:triangleWave">Triangle Wave (Fourier)</option>
           <option value="m:fourierSeries:pulseWave">Pulse Wave</option>
           <option value="m:fourierSeries:gibbsPhenomenon">Gibbs Phenomenon</option>
           <option value="m:fourierSeries:heat2D">Fourier Heat Equation</option>
@@ -1093,31 +1098,31 @@
         </optgroup>
         <optgroup label="━━ dy/dx DIFFERENTIAL EQ ━━">
           <option value="m:differentialEqs:simpleHarmonic">Simple Harmonic Oscillator</option>
-          <option value="m:differentialEqs:dampedOscillator">Damped Oscillator</option>
+          <option value="m:differentialEqs:dampedOscillator">Damped Harmonic Oscillator</option>
           <option value="m:differentialEqs:forcedOscillator">Driven Resonance</option>
           <option value="m:differentialEqs:exponentialDecay">Exponential Decay</option>
           <option value="m:differentialEqs:logisticGrowth">Logistic Growth</option>
           <option value="m:differentialEqs:predatorPrey">Lotka–Volterra</option>
-          <option value="m:differentialEqs:heatEquation">Heat Equation 1D</option>
-          <option value="m:differentialEqs:waveEquation">Wave Equation 1D</option>
-          <option value="m:differentialEqs:laplacePDE">Laplace Equation</option>
+          <option value="m:differentialEqs:heatEquation">Heat Equation (1D)</option>
+          <option value="m:differentialEqs:waveEquation">Wave Equation (1D)</option>
+          <option value="m:differentialEqs:laplacePDE">Laplace Equation Solution</option>
           <option value="m:differentialEqs:eulerMethod">Euler Method Trajectory</option>
           <option value="m:differentialEqs:rungeKutta4">Runge-Kutta RK4</option>
           <option value="m:differentialEqs:beamBending">Euler–Bernoulli Beam</option>
           <option value="m:differentialEqs:schrodingerBox">Particle in a Box</option>
-          <option value="m:differentialEqs:reynoldsFlow">Stokes Flow</option>
-          <option value="m:differentialEqs:fishersEquation">Fisher's Wave Front</option>
+          <option value="m:differentialEqs:reynoldsFlow">Stokes Flow (low Re)</option>
+          <option value="m:differentialEqs:fishersEquation">Fisher's Equation (wave front)</option>
           <option value="m:differentialEqs:pendulumNonLinear" selected>Nonlinear Pendulum Phase</option>
         </optgroup>
         <optgroup label="━━ ∫ INTEGRAL TRANSFORMS ━━">
           <option value="m:integralTransforms:fourierTransform">Fourier Transform (Gaussian)</option>
-          <option value="m:integralTransforms:fourierInverse">Inverse Fourier (sinc)</option>
+          <option value="m:integralTransforms:fourierInverse">Inverse Fourier (Rect)</option>
           <option value="m:integralTransforms:laplaceTransform">Laplace Transform (step)</option>
           <option value="m:integralTransforms:laplaceDecay">Laplace of Exponential</option>
           <option value="m:integralTransforms:zTransform">Z-Transform (geometric)</option>
           <option value="m:integralTransforms:waveletTransform">Morlet Wavelet</option>
           <option value="m:integralTransforms:hilbertTransform">Hilbert Transform</option>
-          <option value="m:integralTransforms:radonTransform">Radon Transform</option>
+          <option value="m:integralTransforms:radonTransform">Radon Transform (sinogram)</option>
           <option value="m:integralTransforms:hankelTransform">Hankel Transform</option>
           <option value="m:integralTransforms:mellinTransform">Mellin Transform</option>
           <option value="m:integralTransforms:stieltjesTransform">Stieltjes Transform</option>
@@ -1128,7 +1133,7 @@
           <option value="m:integralTransforms:fourierSlice">Fourier Slice Theorem</option>
         </optgroup>
         <optgroup label="━━ ∞ TOPOLOGY & GEOMETRY ━━">
-          <option value="m:topology:mobiusStrip">Möbius Strip</option>
+          <option value="m:topology:mobiusStrip">Möbius Strip Height</option>
           <option value="m:topology:kleinBottle">Klein Bottle Cross-Section</option>
           <option value="m:topology:torusKnot">Torus Knot Height Field</option>
           <option value="m:topology:boysSurface">Boy's Surface Slice</option>
@@ -1140,45 +1145,45 @@
           <option value="m:topology:hyperbolicParaboloid">Hyperbolic Paraboloid</option>
           <option value="m:topology:torusSection">Torus Cross Section</option>
           <option value="m:topology:breatherSurface">Breather Surface</option>
-          <option value="m:topology:pseudosphere">Pseudosphere</option>
+          <option value="m:topology:pseudosphere">Pseudosphere (Tractricoid)</option>
           <option value="m:topology:crossCap">Cross-Cap (RP²)</option>
-          <option value="m:topology:alexanderHorned">Alexander Horned</option>
-          <option value="m:topology:hopfFibration">Hopf Fibration</option>
+          <option value="m:topology:alexanderHorned">Alexander Horned (approximation)</option>
+          <option value="m:topology:hopfFibration">Hopf Fibration Projection</option>
         </optgroup>
         <optgroup label="━━ ⬛ CELLULAR AUTOMATA ━━">
           <option value="m:cellularAutomata:rule30">Rule 30 (Wolfram)</option>
-          <option value="m:cellularAutomata:rule90">Rule 90 (Sierpiński XOR)</option>
+          <option value="m:cellularAutomata:rule90">Rule 90 (XOR / Sierpiński)</option>
           <option value="m:cellularAutomata:rule110">Rule 110 (Turing complete)</option>
           <option value="m:cellularAutomata:rule184">Rule 184 (Traffic model)</option>
-          <option value="m:cellularAutomata:gameOfLifeDensity">Game of Life</option>
+          <option value="m:cellularAutomata:gameOfLifeDensity">Game of Life (density)</option>
           <option value="m:cellularAutomata:briansBrain">Brian's Brain</option>
-          <option value="m:cellularAutomata:langtonAnt">Langton's Ant</option>
+          <option value="m:cellularAutomata:langtonAnt">Langton's Ant (trajectory density)</option>
           <option value="m:cellularAutomata:cyclicCA">Cyclic CA</option>
-          <option value="m:cellularAutomata:wiredFire">Wireworld</option>
+          <option value="m:cellularAutomata:wiredFire">Wireworld (wire / fire)</option>
           <option value="m:cellularAutomata:sandpile">Abelian Sandpile</option>
-          <option value="m:cellularAutomata:voronoiCA">Voronoi Growth</option>
-          <option value="m:cellularAutomata:excitableMedia">Excitable Medium (spiral)</option>
-          <option value="m:cellularAutomata:reactionDiffusion">Turing Pattern (RD)</option>
+          <option value="m:cellularAutomata:voronoiCA">Voronoi Growth CA</option>
+          <option value="m:cellularAutomata:excitableMedia">Excitable Medium (FitzHugh-Nagumo)</option>
+          <option value="m:cellularAutomata:reactionDiffusion">Gray-Scott Pattern</option>
           <option value="m:cellularAutomata:forestFire">Forest Fire CA</option>
-          <option value="m:cellularAutomata:conway3D">Conway 3D Rule</option>
-          <option value="m:cellularAutomata:turmite">Turmite (2D Turing)</option>
+          <option value="m:cellularAutomata:conway3D">Conway 3D Rule (slice)</option>
+          <option value="m:cellularAutomata:turmite">Turmite (2D Turing machine)</option>
         </optgroup>
         <optgroup label="━━ ψ QUANTUM MECHANICS ━━">
           <option value="m:quantumMechanics:particleBox1D">Particle in 1D Box |ψ_n|²</option>
-          <option value="m:quantumMechanics:harmonicOscillator">QM Harmonic Oscillator</option>
+          <option value="m:quantumMechanics:harmonicOscillator">QM Harmonic Oscillator |ψ_n|²</option>
           <option value="m:quantumMechanics:hydrogenS">Hydrogen 1s |ψ|²</option>
           <option value="m:quantumMechanics:hydrogen2p">Hydrogen 2p |ψ|²</option>
           <option value="m:quantumMechanics:tunneling">Quantum Tunneling</option>
           <option value="m:quantumMechanics:wavePacket">Gaussian Wave Packet</option>
-          <option value="m:quantumMechanics:spinorVisualization">Spinor / Bloch Sphere</option>
-          <option value="m:quantumMechanics:doubleSlitProbability">Double-Slit Interference</option>
-          <option value="m:quantumMechanics:densityMatrix">Density Matrix ρ</option>
-          <option value="m:quantumMechanics:landauLevels">Landau Levels (2D magnetic)</option>
+          <option value="m:quantumMechanics:spinorVisualization">Spinor / Bloch Sphere Projection</option>
+          <option value="m:quantumMechanics:doubleSlitProbability">Double-Slit Interference |ψ|²</option>
+          <option value="m:quantumMechanics:densityMatrix">Density Matrix ρ Diagonal</option>
+          <option value="m:quantumMechanics:landauLevels">Landau Level (2D magnetic)</option>
           <option value="m:quantumMechanics:schrodingerSoliton">NLS Soliton</option>
-          <option value="m:quantumMechanics:coherentState">Coherent State Wigner</option>
-          <option value="m:quantumMechanics:atomicOrbitals">sp³ Hybrid Orbital</option>
+          <option value="m:quantumMechanics:coherentState">Coherent State Wigner Function</option>
+          <option value="m:quantumMechanics:atomicOrbitals">sp² Hybrid (xz-plane projection)</option>
           <option value="m:quantumMechanics:bellState">Bell State Correlations</option>
-          <option value="m:quantumMechanics:feynmanPath">Feynman Path Integral</option>
+          <option value="m:quantumMechanics:feynmanPath">Feynman Path Integral (free particle)</option>
           <option value="m:quantumMechanics:quantumZeno">Quantum Zeno Effect</option>
         </optgroup>
       </select>
@@ -1825,8 +1830,12 @@
   // On click, hide all siblings between this .sec and the NEXT .sec.
   // The arrow ▸ (in title text) becomes a rotating <span> for animation.
   // All sections start expanded — user can click to collapse what they
-  // don't need. Advanced sections (<details class="adv-section">) keep
-  // their own collapse logic and are not touched here.
+  // don't need.
+  // '.controls-panel .sec' is a DESCENDANT selector, so the .sec headers
+  // inside <details class="adv-section"> are handled too, and their nested
+  // <details class="adv-sub"> blocks ride along in _collapsibleSiblings — the
+  // hide branch below must therefore cope with <details>. Only the open/closed
+  // state of <details> is left alone; that stays native <summary> behaviour.
   const sections = document.querySelectorAll('.controls-panel .sec');
   sections.forEach(sec => {
     // Replace leading "▸ " with a rotating span + the rest of the text

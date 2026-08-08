@@ -2,7 +2,7 @@
 title: Shader Editor
 order: 5
 group: production
-description: Write live GLSL vertex and fragment code — audio uniforms, 36 palettes, 8 starter presets.
+description: Write live GLSL vertex and fragment code — audio uniforms, 44 palettes, 8 starter presets.
 ---
 
 # Shader Editor
@@ -71,7 +71,7 @@ The scaffold defines:
 | `uCM`, `uCMNext`, `uCMBlend` | uniforms | Active palette index and crossfade |
 | `uTime`, `uBass`, `uTreble` | uniforms | Audio-reactive globals |
 
-You also have **all 36 palette functions** available by name (`tealOrange`, `lava`, `cyberpunkGold`, etc.) plus a dispatcher:
+You also have **all 44 palette functions** available by name (`tealOrange`, `lava`, `cyberpunkGold`, `coalPlum`, etc.) plus a dispatcher:
 
 ```glsl
 c = getColor(uCM, t);   // matches the palette dropdown

@@ -1,12 +1,16 @@
 # These are the official sponsorship channels for VIMATHIC.
 # GitHub will render a "❤ Sponsor" button at the top of the repo page
-# using this file. Only platforms listed in the GitHub spec work here;
-# crypto addresses go in documents/support.md instead.
+# using this file. Anything the GitHub spec doesn't cover — and the
+# non-monetary ways to help — is described in the Roadmap doc instead.
+#
+# FIX(#30): the links below point at documents/roadmap.md — documents/support.md
+# no longer exists (folded into the roadmap, 90ed86c), so pointing there 404s.
 #
 # Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
 
 ko_fi: smelentyev
 
-# Other crypto and one-off donation methods are documented at:
-# https://vimathic.com/docs/support.html
-# https://github.com/vimathic/vimathic/blob/main/documents/support.md
+# Ko-fi details, the "why support this" context, and the non-monetary ways
+# to help (star, share, report bugs, contribute a MIDI mapping) live here:
+# https://vimathic.com/docs/roadmap.html
+# https://github.com/vimathic/vimathic/blob/main/documents/roadmap.md
