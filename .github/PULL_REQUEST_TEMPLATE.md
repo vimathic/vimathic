@@ -7,7 +7,7 @@
       Phase 0-2 — some categories of changes are not accepted yet).
     • Open an issue first for anything non-trivial.
     • Run `npm test && npm run test:e2e && npm run build` locally.
-    • Target the `dev` branch, not `main`.
+    • Target the `main` branch.
 -->
 
 ## What does this PR do?
@@ -49,7 +49,7 @@ Closes #
 
 <!-- Tick all that apply and add details where useful. -->
 
-- [ ] `npm test` passes (126 math validation tests)
+- [ ] `npm test` passes (149 tests: math validation + preset migrations)
 - [ ] `npm run test:e2e` passes (Playwright smoke tests)
 - [ ] `npm run build` succeeds and `dist/` looks correct
 - [ ] Manually tested in browser — please specify which browser(s) and OS

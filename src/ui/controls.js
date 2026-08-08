@@ -79,31 +79,59 @@ export function bindControls(ui) {
     _applyMat(); // pick up the default (matte) on boot
   }
 
-  // Called by the viz-mode buttons. SURF → restore saved material + show
-  // dropdown. WIRE/PTS → remember current, force Matte, hide dropdown.
-  const _syncMaterialForVizMode = (vizMode) => {
+  // Called by the viz-mode buttons and by ui.syncVizModeUI (preset load).
+  // SURF → restore saved material + show dropdown. WIRE/PTS → remember
+  // current, force Matte, hide dropdown.
+  //
+  // FIX(#15, r2): `presetMaterial` is the snapshot's material and becomes the
+  // REMEMBERED pick, not necessarily the active one. Writing it to the dropdown
+  // after this call instead strands a mirror material in a hidden-dropdown WIRE
+  // session and leaves _savedMaterial on the pre-preset pick. null = plain user
+  // switch (stash whatever the dropdown shows).
+  const _syncMaterialForVizMode = (vizMode, presetMaterial = null) => {
     if (!_matSel) return;
+
+    // Decide what "the remembered material" is before touching the dropdown.
+    // A snapshot may name a material this build doesn't ship; assigning an
+    // unknown value to a <select> silently blanks it (the same trap
+    // syncDeformUI guards for the volume formula), so an unknown key is
+    // ignored and we fall back to the normal stash-the-current-pick rule.
+    if (presetMaterial && Array.from(_matSel.options).some(o => o.value === presetMaterial)) {
+      _savedMaterial = presetMaterial;
+    } else if (vizMode !== 'surface' && _matSel.value !== 'matte') {
+      // Entering WIRE / PTS by hand — stash the current pick (unless it's
+      // already Matte from a previous WIRE/PTS visit).
+      _savedMaterial = _matSel.value;
+    }
+
     if (vizMode === 'surface') {
       if (_matWrap) _matWrap.style.display = '';
-      // Restore the material the user had before switching away.
+      // Restore the material the user (or the preset) had before switching away.
       _matSel.value = _savedMaterial;
       _applyMat();
     } else {
-      // Entering WIRE / PTS — stash the current pick (unless it's already
-      // Matte from a previous WIRE/PTS visit) and force Matte.
-      if (_matSel.value !== 'matte') _savedMaterial = _matSel.value;
+      // WIRE / PTS — force Matte and hide the dropdown.
       _matSel.value = 'matte';
       _applyMat();
       if (_matWrap) _matWrap.style.display = 'none';
     }
   };
 
+  // The viz-mode button row. Declared here so the boot sync just below and
+  // _setVizModeBtns further down share one list.
+  const _vizBtns = ['surface','wireframe','points'];
+
   // Boot-time sync: the HTML default viz mode is wireframe (mode-wireframe
   // carries class="active"). Without this, the dropdown would show at boot
   // even though we're in WIRE. Read the active mode button and sync.
+  //
+  // FIX(#15, r3): ask the #mode-* buttons by id — `.mode-btns` wraps the deform
+  // row too, so `.mode-btns .mbtn.active` picked by document order and would
+  // read `deform-surface` as the viz mode if the sections were ever reordered.
   {
-    const activeModeBtn = document.querySelector('.mode-btns .mbtn.active');
-    const bootMode = activeModeBtn?.id?.replace('mode-', '') || 'wireframe';
+    const bootMode = _vizBtns.find(
+      m => document.getElementById('mode-' + m)?.classList.contains('active')
+    ) || 'wireframe';
     _syncMaterialForVizMode(bootMode);
   }
 
@@ -192,10 +220,21 @@ export function bindControls(ui) {
   });
 
   // ── Viz mode buttons ──────────────────────────────────────────────────────
-  ['surface','wireframe','points'].forEach(mode => {
+  //
+  // FIX(#15, r2): `.mbtn` is shared by three unrelated rows — viz mode
+  // (#mode-*), deform (#deform-*) and the clip time base (#clip-mode-*). Toggle
+  // only inside our own group: a blanket `.active` clear un-lights rows nobody
+  // down the call path lights back up. (_vizBtns lives up by the boot sync.)
+  const _setVizModeBtns = (mode) => {
+    _vizBtns.forEach(m => {
+      const btn = document.getElementById('mode-' + m);
+      if (btn) btn.classList.toggle('active', m === mode);
+    });
+  };
+
+  _vizBtns.forEach(mode => {
     document.getElementById('mode-'+mode).addEventListener('click', () => {
-      document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
-      document.getElementById('mode-'+mode).classList.add('active');
+      _setVizModeBtns(mode);
       r.setVizModeGPU(mode);
       // Material is only meaningful on filled surfaces — force Matte and
       // hide the dropdown in WIRE/PTS, restore the saved material in SURF.
@@ -208,6 +247,69 @@ export function bindControls(ui) {
     const btn = document.getElementById('deform-'+mode);
     if (btn) btn.addEventListener('click', () => _setDeformMode(mode));
   });
+
+  // ── UI-sync adapters for applyState ───────────────────────────────────────
+  //
+  // FIX(#15): the mode helpers above are closures inside bindControls and so
+  // invisible to presets.js applyState — hence two thin adapters on `ui`,
+  // rather than widening those closures into module scope.
+  //
+  // Contract: UI ONLY. The caller has already applied the mode to the engine;
+  // these must not re-drive it, or preset apply would stack a second morph
+  // transition on the one already running. Both are null-safe so a stripped
+  // HTML variant can't turn a preset load into a TypeError.
+
+  /**
+   * Mirror a deform mode into the panel: #deform-* active state,
+   * #volume-formula-wrap visibility, #volume-formula-sel selection.
+   * Does NOT call mathViz.setMode / setVolumeFormula.
+   *
+   * @param {'surface'|'volume'|'collapse'} mode
+   * @param {string|null} volumeKey Volume formula id; only meaningful when
+   *                                mode === 'volume'. Ignored otherwise.
+   */
+  ui.syncDeformUI = (mode, volumeKey = null) => {
+    _deformBtns.forEach(m => {
+      const btn = document.getElementById('deform-' + m);
+      if (btn) btn.classList.toggle('active', m === mode);
+    });
+    if (mode !== 'volume') {
+      if (_volWrap) _volWrap.style.display = 'none';
+      return;
+    }
+    if (_volSel && volumeKey) {
+      // Guard against a preset carrying a formula id this build doesn't ship:
+      // assigning an unknown value to a <select> silently blanks it, which
+      // would leave the picker empty and the description stale.
+      const known = Array.from(_volSel.options).some(o => o.value === volumeKey);
+      if (known) _volSel.value = volumeKey;
+    }
+    // Read back from the <select> so the description always describes what
+    // the user can actually see selected.
+    const key = _volSel ? _volSel.value : volumeKey;
+    if (_volDesc) _volDesc.textContent = _volDescriptions[key] ?? '';
+    if (_volWrap) _volWrap.style.display = '';
+  };
+
+  /**
+   * Mirror a viz mode into the panel: the #mode-* active state plus the same
+   * material show/hide/restore logic the mode buttons run.
+   * Does NOT call r.setVizModeGPU.
+   *
+   * FIX(#15, r2): touches only the #mode-* row (via _setVizModeBtns) — the
+   * deform and clip time-base rows share `.mbtn` and must keep their highlight.
+   *
+   * @param {'surface'|'wireframe'|'points'} mode
+   * @param {string|null} material  Material key from the snapshot being applied.
+   *   It becomes the remembered pick: shown immediately in SURF, restored on
+   *   the way back from WIRE/PTS (where Matte stays forced). Omit for a plain
+   *   UI refresh that must leave the material choice alone.
+   */
+  ui.syncVizModeUI = (mode, material = null) => {
+    _setVizModeBtns(mode);
+    // no-ops when the material select is absent
+    _syncMaterialForVizMode(mode, material);
+  };
 
   if (_volSel) {
     _volSel.addEventListener('change', () => {
@@ -240,14 +342,23 @@ export function bindControls(ui) {
 
   // ── Reset ALL — hard reset to startup state ──────────────────────────────
   // Restores: shape (Pyramid Smooth), formula (Nonlinear Pendulum Phase),
-  // viz mode (Wireframe), color scheme (Amber, idx 16), grid (OFF),
-  // camera (looking up at object's bottom), all sliders to defaults,
-  // deform mode (surface), freeze-frame (off), custom shader (cleared).
+  // viz mode (Wireframe) + material (Matte), color scheme (Amber, idx 16),
+  // grid (OFF), camera (looking up at object's bottom), all sliders to
+  // defaults, deform mode (surface), freeze-frame (off), custom shader
+  // (cleared).
+  //
+  // FIX(#2/#28): the Amber line above only holds while PARAMS.colorIdx.default
+  // is 16 — resetParamsToDefault() runs last and stomps the explicit write
+  // below. Keep params.js, main.js and index.html's `selected` in agreement.
   DOM.btnResetAll.addEventListener('click', () => {
     // ── Visual mode + shape + formula ─────────────────────────────────────
-    document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
-    DOM.modeWireframe.classList.add('active');
+    // FIX(#15, r3): route the viz-mode reset through the same engine call + UI
+    // adapter as every other mode switch. A blanket `.mbtn` clear here left the
+    // clip time-base row dark, and setVizModeGPU alone left a mirror material
+    // live in WIRE with its dropdown hidden. 'matte' also resets the remembered
+    // SURF pick, which would otherwise outlive the reset.
     r.setVizModeGPU('wireframe');
+    ui.syncVizModeUI('wireframe', 'matte');
 
     r.setShapeAnimated('pyramid-smooth');
     DOM.shapeSel.value = 'pyramid-smooth';
@@ -262,15 +373,18 @@ export function bindControls(ui) {
     });
 
     // Color scheme — Amber (option 16).
+    // FIX(#2): duplicates what resetParamsToDefault() does below via
+    // PARAMS.colorIdx.set — kept for the immediate visual response, before the
+    // full param sweep. Source of truth is PARAMS.colorIdx.default; changing
+    // the number only here would be silently undone by the sweep.
     a.colorIdx = 16;
     r.setColorSchemeAnimated(16);
     DOM.colorSel.value = '16';
 
-    // Deform mode — surface.
+    // Deform mode — surface. FIX(#15, r3): same split, engine call plus the
+    // shared adapter, so this row can't drift from what _setDeformMode paints.
     if (ui.mathViz) ui.mathViz.setMode('surface');
-    document.querySelectorAll('[id^="deform-"]').forEach(b => b.classList.remove('active'));
-    DOM.deformSurface.classList.add('active');
-    DOM.volumeFormulaWrap.style.display = 'none';
+    ui.syncDeformUI('surface');
 
     // Grid OFF.
     if (r.grid) r.grid.visible = false;
@@ -331,6 +445,12 @@ export function bindControls(ui) {
   DOM.btnAr.addEventListener('click', () => {
     cam.autoRot = !cam.autoRot;
     _syncAutoRot();
+    // Switching auto-rotate on by hand outranks the clip player's camera:
+    // from here on its steps change the look but not the viewpoint, so a
+    // Camera Programmer armed mid-clip keeps running past the next preset.
+    // Switching it off hands the camera back. Both are no-ops when no clip
+    // is playing (see ClipPlayer.claimCamera).
+    if (cam.autoRot) ui._clip?.claimCamera(); else ui._clip?.releaseCamera();
   });
   // Orbit user interaction
   let autoRotTimer = null;
@@ -338,7 +458,13 @@ export function bindControls(ui) {
     cam.userInt = true;
     if (cam.autoRot) {
       clearTimeout(autoRotTimer);
-      autoRotTimer = setTimeout(() => { cam.autoRot = false; _syncAutoRot(); }, 500);
+      // Dragging the view kills auto-rotate — same end state as the button,
+      // so the clip player takes its camera back here too.
+      autoRotTimer = setTimeout(() => {
+        cam.autoRot = false;
+        _syncAutoRot();
+        ui._clip?.releaseCamera();
+      }, 500);
     }
   });
   r.orbit.addEventListener('end', () => {
@@ -405,9 +531,11 @@ export function bindControls(ui) {
   // adding more aliases later is a one-line change here.
   //
   // Why min uses Math.max(p.min, 0.1): some PARAMS allow min=0 (bassSens,
-  // trebleSens, bloom, waveInt) but hold-and-drag at exactly 0 makes the
+  // trebleSens, bloom) but hold-and-drag at exactly 0 makes the
   // visualizer go silent, which feels broken mid-performance. 0.1 keeps a
   // sliver of motion. PARAMS.min stays at 0 for MIDI / preset / reset paths.
+  // FIX(#28): waveInt is not in that list — params.js declares min 0.3
+  // (aligned with the index.html slider), so the clamp never moves it.
   const _fsParams = {
     // Right-hand cluster (original)
     'l': 'bassSens',

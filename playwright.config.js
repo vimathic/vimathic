@@ -9,7 +9,13 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 2 : undefined,
+  // One worker in CI, not two. These tests drive a real WebGL scene and hosted
+  // runners have no GPU, so Chromium falls back to SwiftShader; parallel
+  // contexts then starve each other and the render loop misses its deadlines.
+  // That is what made the FPS assertion time out on a machine where the app
+  // was in fact running fine. The suite takes ~1.5 min serialised, well inside
+  // the job's 15-minute budget.
+  workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? 'github' : 'list',
   use: {
     baseURL: 'http://localhost:3000',

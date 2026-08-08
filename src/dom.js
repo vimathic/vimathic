@@ -196,7 +196,12 @@ const REQUIRED = {
 // via optional chaining).
 const OPTIONAL = {
   // ── Math formula picker (in-panel) ──────────────────────────────────────
-  // Generated dynamically by buildMathCollectionUI() — not always present.
+  //
+  // FIX(#29, r3): reserved keys. math-collections.js exports
+  // buildMathCollectionUI() / bindMathCollectionUI(), but nothing calls them,
+  // so these ids never reach the DOM and always resolve to null. Kept so the
+  // lookup surface exists once the picker is wired in; must stay OPTIONAL
+  // until then — in REQUIRED, resolveGroup() would abort boot.
   mathFormulaSelect: 'math-formula-select',
   mathFormulaInfo:   'math-formula-info',
   mathApplyBtn:      'math-apply-btn',
@@ -204,20 +209,12 @@ const OPTIONAL = {
 
 // ── ID-list exports for tests ────────────────────────────────────────────
 //
-// Smoke tests (tests/e2e/smoke.spec.js) need to verify the HTML actually
-// contains every id JS expects. Previously the test maintained its own
-// hand-curated `requiredIds` array — a subset of REQUIRED, kept in sync
-// manually. That's the classic two-sources-of-truth trap: rename an id
-// in dom.js + index.html, forget the smoke array, and the test happily
-// continues to pass on whatever subset it was checking.
-//
-// Exporting the lists from here makes dom.js the single source of truth.
-// A new id added to REQUIRED is automatically smoke-tested; an id removed
-// from REQUIRED stops being checked. No second list to forget.
-//
-// Note: the runtime boot in resolveGroup() ALREADY throws when a required
-// id is missing. The smoke test confirms that behaviour holds in a real
-// browser — useful regression coverage if anyone ever weakens resolveGroup.
+// The smoke test asserts index.html carries every id JS expects. It reads
+// these exports instead of keeping its own array, which keeps dom.js the
+// single source of truth: a hand-copied list drifts silently on a rename and
+// goes on passing against whatever subset it still holds. resolveGroup()
+// already throws on a missing required id at boot — the smoke test pins that
+// behaviour in a real browser, in case anyone weakens the resolver.
 export const REQUIRED_IDS = Object.values(REQUIRED);
 export const OPTIONAL_IDS = Object.values(OPTIONAL);
 

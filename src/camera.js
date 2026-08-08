@@ -133,6 +133,10 @@ export class CameraSystem {
     this.cpKeyframes  = [];
     this.cpSelectedKf = null;
     this._cpState     = { velY:0, phase:0 };
+    // FIX(#13, r2): bank angle (radians) the last runScript() tick asked for —
+    // absolute, never accumulated. Kept as state instead of applied on the spot:
+    // the main loop's next orbit.update() would erase it (see applyRoll()).
+    this.cpRoll       = 0;
 
     // BPM hint fed in from main.js each frame; exposed to scripts as ctx.bpm.
     this.estimatedBpm = 120;
@@ -238,6 +242,9 @@ export class CameraSystem {
       this.cpFn = new Function('ctx', `const {time,bass,mid,treble,beat,bpm,R,cam,target,state,p,sin,cos,abs,pow,lerp,clamp,orbit}=ctx; ${code}`);
       this.cpActive  = true;
       this._cpState  = { velY:0, phase:0 };
+      // FIX(#13, r2): fresh script → fresh roll. Armed while auto-rotate is off
+      // it gets no runScript() tick, so the old bank angle would hang around.
+      this.cpRoll    = 0;
       this.cb.onScriptStatus('ok', '✔ Running');
       setTimeout(() => this.cb.onScriptStatus('clear', ''), 2000);
     } catch (e) {
@@ -256,8 +263,21 @@ export class CameraSystem {
     this.cb.onSetCode(CP_DEFAULT);
     this.cb.onScriptStatus('clear', '');
     this.camera.fov = 45; this.camera.updateProjectionMatrix();
+    // FIX(#13, r2): drop the stored roll alongside the visible one — levelling
+    // rotation.z alone would be undone by applyRoll() on the next frame.
+    this.cpRoll = 0;
     this.camera.rotation.z = 0;
     this.setCamPhysics('dark_matter');
+  }
+
+  /**
+   * FIX(#13, r3): the single gate for "the programmer script is what's driving
+   * the camera". Its per-frame tick and the roll applied on its behalf must ask
+   * the same question — a reader with weaker conditions goes on re-applying the
+   * last bank angle after the script stopped, and OrbitControls cannot undo it.
+   */
+  isScriptDriving() {
+    return this.cpActive && this.autoRot && !this.userInt;
   }
 
   /**
@@ -274,7 +294,7 @@ export class CameraSystem {
    * status badge so the user sees what broke.
    */
   runScript(time, bass, mid, treble, beatInt) {
-    if (!this.cpFn || !this.autoRot || this.userInt) return;
+    if (!this.cpFn || !this.isScriptDriving()) return;
 
     const ctx = {
       time, bass, mid, treble,
@@ -330,8 +350,31 @@ export class CameraSystem {
     this.camera.position.set(ctx.cam.x, ctx.cam.y, ctx.cam.z);
     this.orbit.target.set(ctx.target.x, ctx.target.y, ctx.target.z);
     if (ctx.fov !== this.camera.fov) { this.camera.fov = Math.max(10, Math.min(160, ctx.fov)); this.camera.updateProjectionMatrix(); }
-    if (ctx.roll) this.camera.rotation.z = ctx.roll;
     this.orbit.update();
+    // FIX(#13, r2): only record the roll — applyRoll() puts it on after main.js's
+    // last orbit.update(), which would otherwise wipe a tilt applied here (see
+    // there). The non-finite guard mirrors the FOV clamp: rotateZ() on a NaN
+    // poisons the quaternion permanently, with no visible way back.
+    this.cpRoll = Number.isFinite(ctx.roll) ? ctx.roll : 0;
+  }
+
+  /**
+   * Apply the roll recorded by the last runScript() tick. main.js is the only
+   * caller and must call it after the frame's final orbit.update(), just before
+   * the composer pass: that update() ends in a lookAt() which rebuilds the
+   * camera quaternion — it wipes a tilt applied any earlier, and by re-levelling
+   * every frame it is also why a relative rotateZ() cannot accumulate. rotateZ()
+   * turns the camera about its own view axis and leaves position, look direction
+   * and camera.up alone, so OrbitControls keeps dragging normally.
+   *
+   * FIX(#13, r3): gated on isScriptDriving(), not cpActive alone — the tilt must
+   * expire with the script that asked for it (mouse grab, auto-rotate off,
+   * runtime error, resetScript), or it stays welded on with no way to level it.
+   * The truthiness test keeps roll === 0 free of quaternion work.
+   */
+  applyRoll() {
+    if (!this.isScriptDriving() || !this.cpRoll) return;
+    this.camera.rotateZ(this.cpRoll);
   }
 
   /**

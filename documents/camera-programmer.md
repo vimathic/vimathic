@@ -25,6 +25,10 @@ Your script is wrapped in a function and called once per animation frame, while 
 
 The script receives a `ctx` object — but in your code you write the variables directly (they're destructured for you). Modify `ctx.cam.x`, `ctx.cam.y`, `ctx.cam.z` to position the camera; `ctx.target.x/y/z` to aim; `ctx.fov` to zoom; `ctx.roll` to bank.
 
+### While a clip is playing
+
+Arming the programmer during a Clip Player run takes the camera away from the player for the rest of that clip: the presets keep cycling their look, but they stop restoring their saved viewpoint over your script. Switching auto-rotate off — or pressing **▶ PLAY** again — hands the camera back. See [Presets & Clips](./presets.md) for the full rule.
+
 ## Available in your script
 
 ### Audio-reactive variables

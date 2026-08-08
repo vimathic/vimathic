@@ -386,12 +386,18 @@ export class MIDIController {
 // across deck boundaries the caller never sees the same value twice in a
 // row (unless the pool has size 1, where repetition is unavoidable).
 //
-// Motivation: plain Math.random() on small pools — 9 shapes, 36 color
-// schemes — repeats unpleasantly often. With 9 items, the same value
-// returns roughly every ninth call on average, and there's no guarantee
-// of *any* spread before a repeat. ShuffleBag is the "Spotify-shuffle"
-// pattern: each item is dealt once before any reshuffle, then the deck
-// is reshuffled with a no-repeat guard at the seam.
+// Motivation: plain Math.random() on small pools — the 9-entry SHAPES pool
+// in main.js, COLOR_SCHEME_COUNT color schemes — repeats unpleasantly often.
+// With 9 items, the same value returns roughly every ninth call on average,
+// and there's no guarantee of *any* spread before a repeat. ShuffleBag is the
+// "Spotify-shuffle" pattern: each item is dealt once before any reshuffle,
+// then the deck is reshuffled with a no-repeat guard at the seam.
+//
+// FIX(#30, r2): the scheme count used to be spelled "36" here; it is 44 today
+// and will move again, so name COLOR_SCHEME_COUNT (src/params.js) instead of
+// copying the number. The "9 shapes" is *not* a stale count of the 20 options
+// in #shape-sel: 'R' randomizes over SHAPES in main.js, a 9-entry subset of
+// that dropdown. Check the array, not the selector, if this looks wrong.
 //
 // Usage:
 //   const bag = new ShuffleBag(['a','b','c']);

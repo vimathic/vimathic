@@ -20,11 +20,14 @@ import { DOM } from './dom.js';
 
 // ── App config ──────────────────────────────────────────────────────────────
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
+// FIX(#29): dropped beatCooldown / beatThreshold. They duplicated
+// AudioEngine.BEAT_COOLDOWN / BEAT_THRESHOLD (audio.js) but CFG is only ever
+// handed to RenderEngine and CameraSystem — neither reads them, and the audio
+// engine never sees CFG at all — so the values could silently drift from the
+// ones actually used by the detector. audio.js owns them.
 const CFG = {
   planeSize: 7,
   planeSegs: isMobile ? 80 : 160,
-  beatCooldown: 190,
-  beatThreshold: 0.65,
   autoRotRadius: 7.2,
 };
 
@@ -408,16 +411,38 @@ function animate() {
     render.updatePerfMetrics();
   }
 
-  // Freeze holds the last composed frame but skips audio analysis and updates.
+  // FIX(#8): the visual clock stops under freeze, the audio clock does not.
+  // Advancing `time` here (instead of after the gate) keeps the value handed
+  // to audio.update() bit-identical to the previous code on unfrozen frames.
+  if (!isFrozen) time += 0.008;
+
+  // Audio analysis — updates bass/mid/treble/beatInt, fires seek + EQ callbacks.
+  //
+  // FIX(#8): hoisted ABOVE the freeze gate. STOP MOTION must freeze the
+  // PICTURE, not the audio pipeline. Everything inside audio.update() that is
+  // obliged to keep ticking lives here: _checkCrossfadeCleanup(), the beat
+  // detector, _trackBpm() and _updateSeek(). Crossfade cleanup in particular is
+  // polled on audioCtx.currentTime rather than scheduled with setTimeout
+  // precisely so it cannot be starved (see audio.js _checkCrossfadeCleanup) —
+  // freezing mid-crossfade used to leave the outgoing AudioBufferSourceNode and
+  // both GainNodes connected and unstopped for the entire freeze, which is the
+  // exact leak that polling design exists to prevent.
+  //
+  // Clock choice while frozen: pass the FROZEN `time`. Inside audio.update()
+  // `time` reaches only the idle-LFO branch (the !isPlaying fallback that keeps
+  // bass/mid/treble breathing when nothing is loaded); beat detection uses
+  // Date.now(), BPM uses performance.now(), and seek + crossfade cleanup use
+  // audioCtx.currentTime — none of them read `time`, so beat behaviour is
+  // untouched. Holding `time` still leaves the idle animation exactly where the
+  // freeze caught it, so resuming doesn't jump — same contract as the
+  // mathViz.setVolumeTimePaused(isFrozen) call on the freeze button.
+  audio.update(time);
+
+  // Freeze holds the last composed frame but skips the visual updates below.
   if (isFrozen) {
     render.composer.render();
     return;
   }
-
-  time   += 0.008;
-
-  // Audio analysis — updates bass/mid/treble/beatInt, fires seek + EQ callbacks.
-  audio.update(time);
 
   // Sync detected BPM to camera programmer context.
   camera.estimatedBpm = audio.estimatedBpm;
@@ -436,14 +461,14 @@ function animate() {
   render.updateSolarSystem(audio.bass);
   render.updateGlitch();
 
-  // Camera.
-  if (camera.autoRot && !camera.userInt) {
-    if (camera.cpActive) {
-      camera.setElapsedForKeyframe(audio.getElapsedFraction());
-      camera.runScript(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
-    } else {
-      camera.updatePhysics(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
-    }
+  // Camera. FIX(#13, r3): gate the script branch on camera.isScriptDriving()
+  // rather than restating the condition here — camera.applyRoll() below reads
+  // the same predicate, and the two must not disagree about whether it runs.
+  if (camera.isScriptDriving()) {
+    camera.setElapsedForKeyframe(audio.getElapsedFraction());
+    camera.runScript(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
+  } else if (camera.autoRot && !camera.userInt) {
+    camera.updatePhysics(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
   }
 
   // Update timeline playhead when the camera editor is open.
@@ -452,6 +477,10 @@ function animate() {
   }
 
   render.orbit.update();
+  // FIX(#13, r2): the camera programmer's roll goes on HERE — after the frame's
+  // last orbit.update(), whose lookAt() would erase it, and before the composer
+  // pass. No-ops unless a script is driving the camera and asked for a roll.
+  camera.applyRoll();
   render.composer.render();
   output.tick();
 }

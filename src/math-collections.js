@@ -185,19 +185,120 @@ function sampleGrid(grid, res, u, v) {
   return lerp(lerp(v00, v10, fx), lerp(v01, v11, fx), fy);
 }
 
+// FIX(#12): tolerance on the cached audio params before the grid is
+// recomputed. The params are pure audio: amp ≈ [0, 2] and
+// comp = 0.5 + mid·0.4 ∈ [0.5, 0.9]. 0.05 is below the noise floor of a
+// sustained tone (analyser jitter between frames is a few thousandths) yet
+// well under a visible step: for the simulators here amp is a linear output
+// scale — 0.05 is a 5% height change — and comp only nudges an iteration
+// count or a regime constant (e.g. ±3 of 60-120 Gray-Scott iterations).
+// So a quiet or steady passage keeps the cache, while music that actually
+// moves the params invalidates it, which is the whole point of the fix.
+const HEAVY_PARAM_EPS = 0.05;
+
+// Staleness threshold on the formula clock, unchanged from the original
+// cache: `time` advances 0.008 per rendered frame, so on its own this trigger
+// fires roughly every 3rd frame — the ~20Hz baseline the heavy formulas have
+// always animated at. Left ungated below, so that baseline is preserved
+// exactly whatever the ceiling does to the params trigger.
+const HEAVY_TIME_EPS = 0.016;
+
+// FIX(#12, r2): ceiling on how often the params trigger may rebuild the
+// simulation, counted in ticks. Adding params to the cache key was right —
+// the heavy formulas really were tracking the music at only ~20Hz — but it
+// left the rebuild rate unbounded: amp = audio.amp·(1+bass·0.5) clears
+// HEAVY_PARAM_EPS on ~83% of frames of real music, so the simulation rebuilt
+// on essentially every frame, ~3× the old load. Affordable in the surface
+// worker, not on the main thread, where MathVisualizer._tickCollapse
+// evaluates these same formulas synchronously inside a 16.7ms budget (on the
+// reference host one rebuild costs 4.2ms for Conway 3D, 2.0ms for
+// Reaction-Diffusion, 2.2ms for Excitable Media).
+//
+// 2 ticks caps the rebuild rate at ~30Hz — half the worst case #12
+// introduced, still well above the ~20Hz it was fixing, and the same rate the
+// mobile render path runs at. Every rebuild resets the counter, including a
+// time-triggered one, so 30Hz is the ceiling on rebuilds from all triggers
+// combined and not just on the params one.
+//
+// Counted in TICKS rather than in `t`: `t` is not a usable clock here. The
+// callers pass t = time + beatInt·0.3, and beatInt decays 0.04 per frame
+// (audio.js), so for the ~25 frames after every beat t moves by
+// 0.008 − 0.012 = −0.004 per frame — backwards, and four times slower than
+// the frame rate. A ceiling expressed in t collapses onto HEAVY_TIME_EPS in
+// exactly that regime and silently throws #12's responsiveness away
+// (measured: identical rebuild counts, 16.3Hz, params trigger dead).
+const HEAVY_MIN_RECOMPUTE_TICKS = 2;
+
 /**
  * Wrapper for heavy formulas. simulator(t, params, res) returns Float32Array(res*res)
  * of pre-scaled Y values (including *amp). The wrapper caches the grid for the
- * current t and samples with bilinear interp. Runs simulator ONLY once per tick.
- * Preserves exact original visual behavior (including Dimensional Collapse).
+ * current t AND the current audio params (FIX(#12) — it used to key on t
+ * alone) and samples it with bilinear interp. Runs simulator ONLY once per
+ * tick. Preserves exact original visual behavior (including Dimensional
+ * Collapse).
  */
 function createCachedHeavySampler(simulator, defaultRes = 64) {
   let cachedGrid = null;
   let lastT = -Infinity;
+  // FIX(#12): the params the cached grid was actually computed with. NaN
+  // seeds force the first call through, same as `!cachedGrid` does for t.
+  //
+  // amp and comp only: every simulator wrapped here destructures exactly
+  // {amp, comp} — none reads freq, so invalidating on freq would rebuild the
+  // simulation for a grid that comes out bit-identical. If a future heavy
+  // simulator does take freq, add it to both the seed and the test below,
+  // otherwise it will silently render stale.
+  let lastAmp = NaN, lastComp = NaN;
+  // FIX(#12, r2): tick clock for the rebuild ceiling. Every vertex of a tick
+  // is evaluated with the same t, so a change in t is exactly one new tick —
+  // which makes this a frame counter, the thing t itself is not (see
+  // HEAVY_MIN_RECOMPUTE_TICKS).
+  let lastSeenT = NaN, ticksSinceRebuild = 0;
   return function(x, z, t, params = {}) {
-    if (Math.abs(t - lastT) > 0.016 || !cachedGrid) {
+    // Defaults mirror the simulators' own destructuring defaults, so the
+    // comparison sees exactly the values the simulator would use.
+    const { amp = 1, comp = 1 } = params;
+    // FIX(#12): the cache key used to be time alone, so with time advancing
+    // 0.008/frame against a 0.016 threshold roughly two frames in three
+    // resampled a grid computed from stale audio params. Params now take part
+    // in invalidation, guarded by HEAVY_PARAM_EPS so micro-jitter does not
+    // rebuild the simulation.
+    //
+    // FIX(#12, r2): the original wording here claimed the eleven heavy
+    // formulas had "stopped reacting to the music". They had not — they
+    // reacted on every rebuild, which is ~16-20Hz (measured: 163 rebuilds
+    // over 600 frames of simulated playback). Undersampled, not deaf. The
+    // distinction is the whole reason this fix is a ceiling and not a
+    // rewrite.
+    //
+    // Cost stays bounded: every vertex of a tick is evaluated with the same
+    // t and the same params object, so the worst case is still ONE simulation
+    // per tick (never the O(vertices × steps) blow-up this wrapper exists to
+    // prevent).
+    if (t !== lastSeenT) { lastSeenT = t; ticksSinceRebuild++; }
+
+    // FIX(#12, r2): "one per tick" was not a tight enough bound — see
+    // HEAVY_MIN_RECOMPUTE_TICKS. The time trigger keeps its original,
+    // ungated behaviour; only the params trigger #12 added is rate-limited.
+    //
+    // The exemption: a caller asking for an instant we have already rebuilt
+    // at, but with different params, is asking for a grid that has never
+    // existed — handing back the cached one is exactly the staleness #12
+    // fixed, and there is no rate to limit because no frame has elapsed. A
+    // render loop advances t on every tick, so this is unreachable from the
+    // hot path; it costs it nothing. (Volume mode can freeze its clock while
+    // params keep moving, but VOLUME_FORMULAS contains no cached sampler —
+    // these eleven are reached only through Surface and Collapse.)
+    const paramsMoved = Math.abs(amp  - lastAmp)  > HEAVY_PARAM_EPS
+                     || Math.abs(comp - lastComp) > HEAVY_PARAM_EPS;
+    const stale = !cachedGrid
+      || Math.abs(t - lastT) > HEAVY_TIME_EPS
+      || (paramsMoved && (ticksSinceRebuild >= HEAVY_MIN_RECOMPUTE_TICKS || t === lastT));
+    if (stale) {
       cachedGrid = simulator(t, params, defaultRes);
       lastT = t;
+      lastAmp = amp; lastComp = comp;
+      ticksSinceRebuild = 0;
     }
     const u = (x + 3.5) / 7.0;
     const v = (z + 3.5) / 7.0;
@@ -2303,14 +2404,23 @@ const CELLULAR_AUTOMATA = {
         const N = 64;
         const D = 0.0001, dt = 0.1, dx2 = (1.0/N)**2;
         const a = 0.1, eps = 0.01, gamma = 0.5;
-        // Persistent state: re-seed if t went backwards (track restart)
+        // FIX(#28): no state survives between calls — u and v are freshly
+        // allocated and re-seeded from the same broken front on every
+        // invocation, so each recompute restarts the medium from scratch
+        // rather than continuing the previous one. (The comment here used
+        // to claim persistent state re-seeded when t went backwards.)
         let u = new Float32Array(N*N), v = new Float32Array(N*N);
         // Initial: broken front to seed spiral
         for (let r=0; r<N; r++) for (let c=0; c<N; c++) {
           u[r*N+c] = (r < N/2) ? 1 : 0;
           v[r*N+c] = (c > N/2 && r > N/3 && r < 2*N/3) ? 0.3 : 0;
         }
-        // Run iterations dependent on t (advances the system over time)
+        // FIX(#28): the iteration count depends on comp, not on t — the
+        // integration always runs the same 60-120 Euler steps from the same
+        // initial condition, so t alone does not advance the system. What t
+        // controls is when the wrapper recomputes (see
+        // createCachedHeavySampler); animation here comes from comp moving
+        // with the audio.
         const iters = 60 + Math.round(comp*60);
         let un = new Float32Array(N*N), vn = new Float32Array(N*N);
         for (let it=0; it<iters; it++) {

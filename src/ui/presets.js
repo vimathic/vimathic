@@ -14,70 +14,116 @@ import { PARAMS, applyParam } from '../params.js';
 // preset JSON until we've thought about migration.
 const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx'];
 
+// FIX(#18, r2): the non-param fields applyState() reads. With PARAM_FIELDS this
+// defines "looks like a preset" for migratePreset(), so keep it in step with
+// applyState or valid presets get turned away. Deliberately not captureState()'s
+// list: gpuMode is written but never read back (the mode is restored from
+// gpuSelVal), so a file carrying only gpuMode tells us nothing we can apply.
+const STATE_FIELDS = [
+  'shape', 'vizMode', 'material', 'gpuSelVal', 'deformMode', 'volumeKey',
+  'gridVisible', 'camera', 'camScript', 'shader',
+];
+
+/**
+ * Coerce a snapshot's keyframe list into something the camera and the timeline
+ * renderer can consume. Exported for tests; applyState is the only caller.
+ *
+ * FIX(#18, r3): keyframes arrive from JSON we didn't write and land in
+ * onTimelineRender (modals.js), which does kf.code.split('\n') and kf.t * 100
+ * with no guards of its own. Unusable entries are dropped rather than repaired:
+ * a keyframe with no code is a no-op, and inventing a `t` would silently retime
+ * the script. Empty-string code is kept — it round-trips from an empty editor
+ * and renders fine. t is clamped exactly as addKeyframeAtPlayhead clamps it.
+ */
+export function sanitizeKeyframes(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const kf of list) {
+    if (!kf || typeof kf !== 'object') continue;
+    if (typeof kf.code !== 'string' || !Number.isFinite(kf.t)) continue;
+    out.push({ t: Math.max(0, Math.min(1, kf.t)), code: kf.code });
+  }
+  return out;
+}
+
 // ── Preset format version ─────────────────────────────────────────────────
-// Bump this constant whenever captureState() changes the snapshot shape in
-// a way that older code (or older JSON files) wouldn't read correctly.
-//
-// What counts as a breaking change vs additive change:
-//   ADDITIVE (no bump needed): adding a new optional field. Old code that
-//     doesn't know about it ignores it; new code reading old JSON treats it
-//     as undefined and the existing `?? default` guards handle it.
-//   BREAKING (bump): renaming a field, removing a field, changing the
-//     semantics of an existing field's value (e.g. seconds → milliseconds),
-//     moving a field between nested objects, splitting/merging fields.
-//
-// When you bump, add the matching `if (v < N)` block to migratePreset() that
-// transforms the previous-version shape into the new one. Migration blocks
-// run in sequence, so a v1 file picks up every block up to CURRENT.
+// Bump whenever captureState() changes the snapshot shape in a way older code
+// (or older JSON) wouldn't read correctly: renaming or removing a field,
+// changing what a value means (seconds → ms), moving one between nested
+// objects. Adding an optional field needs no bump — applyState's `?? default`
+// guards already read it as undefined. On a bump, add the matching
+// `if (v < N)` block to migratePreset(); blocks run in sequence, so a v1 file
+// picks up every step up to CURRENT.
 export const CURRENT_PRESET_VERSION = 2;
 
 /**
  * Normalize an incoming snapshot to the current schema version.
- * Returns the migrated object, or null if the input is unusable.
  *
- * Design notes — why a linear nested-if chain instead of a MIGRATIONS map:
- *   • At time of writing we have exactly one version in the wild (v2). A
- *     map indexed by version number is the same shape but with more
- *     ceremony around it.
- *   • If migrations multiply, each new `if (v < N)` block reads as a step
- *     in a transformation pipeline — no harder to follow than a map.
- *   • All migrations are pure object transforms; the function never touches
- *     the renderer / audio engine / DOM. That keeps it trivially testable
- *     with snapshot fixtures (see tests/preset-migrations.test.js if added).
+ * Contract (what callers may rely on):
+ *   • The result ALWAYS has `_version === CURRENT_PRESET_VERSION` — stamped
+ *     unconditionally at the end, so no path hands back a half-migrated
+ *     snapshot that merely looks current.
+ *   • The input is never mutated; every step copies, so a caller holding the
+ *     parsed record (the preset captured in _renderPresets' closure) sees what
+ *     it passed in. Nested objects (camera, camScript, shader) are shared, not
+ *     deep-cloned — applyState only reads them.
+ *   • A missing / non-numeric / below-1 `_version` reads as v1: the stamp only
+ *     started being written at v1, so anything without it is from that era or
+ *     hand-written, and applyState's per-field guards make junk a no-op.
+ *   • Input that isn't a preset is rejected with null. "Is a preset" is decided
+ *     by content, not by the version stamp — see the check below.
+ *   • A snapshot from a NEWER build loads best-effort with a warning: we can't
+ *     transform forward, but the same guards plus getColor()'s safe default in
+ *     shaders.js make unknown fields harmless. Only our in-memory copy is
+ *     stamped down, so the stored file still opens in the newer build.
+ *
+ * Pure object transform — never touches the renderer / audio engine / DOM,
+ * which is what keeps it testable with fixtures (tests/preset-migrations.test.js).
  *
  * @param {object} s  raw snapshot, typically JSON.parse(fileText)
- * @returns {object|null}  snapshot whose _version === CURRENT_PRESET_VERSION,
- *                         or null if migration isn't possible
+ * @returns {object|null}  a copy whose _version === CURRENT_PRESET_VERSION,
+ *                         or null if the input isn't a recognisable snapshot
  */
 export function migratePreset(s) {
   if (!s || typeof s !== 'object') return null;
-  const v = s._version ?? 0;
-  if (v < 1) return null;  // pre-versioned snapshots → reject (no known shape)
+
+  // FIX(#18, r2): recognise a snapshot by what applyState can consume, not by
+  // its version stamp. Without this, dropping the `v < 1` rejection leaves no
+  // rejection path but non-objects, and a stranger's config or a package.json
+  // comes back stamped as a current preset — reported to the user as loaded.
+  // Content-based means unversioned/hand-written presets (the point of #18)
+  // still pass. Arrays are called out explicitly: `typeof [] === 'object'`
+  // slips past the guard above.
+  if (Array.isArray(s)) return null;
+  const looksLikePreset = PARAM_FIELDS.some(f => s[f] != null)
+                       || STATE_FIELDS.some(f => s[f] != null);
+  if (!looksLikePreset) return null;
+
+  // FIX(#18): absent / NaN / 0 all mean "written before we versioned
+  // snapshots" → read as v1 and run the chain, instead of rejecting the file.
+  const rawV = s._version;
+  const v    = (Number.isFinite(rawV) && rawV >= 1) ? rawV : 1;
 
   // Forward compatibility: a file written by a newer build. We can't safely
-  // transform forward (we don't know what changed), so try our luck reading
-  // it as-is and warn. captureState's `?? default` guards plus getColor()'s
-  // safe-default in shaders.js mean a "best effort" load is usually fine.
+  // transform forward (we don't know what changed), so we read it best-effort
+  // and warn — see the contract note above for why that's survivable.
   if (v > CURRENT_PRESET_VERSION) {
     console.warn(
       `[preset] snapshot from newer build (v${v} > current v${CURRENT_PRESET_VERSION}). ` +
       `Loading as-is — some fields may be ignored.`,
     );
-    return s;
   }
 
-  // Migration chain. Add `if (v < N) s = {...transform...};` blocks as the
-  // format evolves. Each block returns the next-version shape; the chain
-  // composes naturally for older inputs (v1 → v2 → v3 → ...).
-  //
-  // Example for future use (left as a comment placeholder):
-  //   if (v < 3) {
-  //     // v3 renamed `gpuMode` (integer) to `gpuModeIdx` and removed `gpuSelVal`.
-  //     s = { ...s, _version: 3, gpuModeIdx: s.gpuMode };
-  //     delete s.gpuSelVal;
-  //   }
+  // Migration chain. Add `if (v < N) out = {...transform...};` blocks as the
+  // format evolves; each produces the next-version shape, so older inputs
+  // compose (v1 → v2 → v3 → ...). Example:
+  //   if (v < 3) { out = { ...out, gpuModeIdx: out.gpuMode }; delete out.gpuSelVal; }
+  // FIX(#18): blocks must copy, not mutate — `s` belongs to the caller.
+  let out = s;
 
-  return s;
+  // FIX(#18): unconditional stamp — what makes the @returns promise true even
+  // while the chain above is empty; the spread is also the no-mutation guarantee.
+  return { ...out, _version: CURRENT_PRESET_VERSION };
 }
 
 export const PresetMixin = {
@@ -90,6 +136,14 @@ export const PresetMixin = {
     const mv  = this.mathViz;
     const se  = this.shaderEditor;
     const ctx = { audio: this.audio, render: r, camera: cam };
+
+    // FIX(#17): bindCameraParams() seeds #ce-code with cam.getDefaultCode() on
+    // boot, so untouched default text would be baked into every preset and
+    // autosave. Store '' instead — applyState skips falsy code, so restoring
+    // such a preset leaves the editor alone rather than stomping it. Not
+    // blanked while cpActive: a running script is state worth saving.
+    const camCodeRaw = DOM.ceCode?.value ?? '';
+    const camCode    = (!cam.cpActive && camCodeRaw === cam.getDefaultCode?.()) ? '' : camCodeRaw;
 
     const state = {
       // Version stamp — read by migratePreset() on load. Sourced from
@@ -122,7 +176,7 @@ export const PresetMixin = {
       // ── Camera programmer ───────────────────────────────────────────────
       camScript: {
         active:    cam.cpActive,
-        code:      DOM.ceCode?.value ?? '',
+        code:      camCode,           // see FIX(#17) above
         params:    { ...cam.cpParams },
         keyframes: cam.cpKeyframes.map(kf => ({ t: kf.t, code: kf.code })),
       },
@@ -152,14 +206,48 @@ export const PresetMixin = {
    *   Default: r._tDurCamera (≈1000ms desktop, 600ms mobile).
    *   Pass 0 for an instant snap.
    *   Used by ClipPlayer to make scene-to-scene camera moves smooth.
+   * @param {boolean} [opts.preserveCamera]
+   *   Apply the LOOK only — leave the live camera exactly as it is. Skips the
+   *   position/target/fov tween, camPhysics, the auto-rotate wish and the whole
+   *   camera-programmer block. Set by ClipPlayer while the user drives the
+   *   camera by hand (ClipPlayer.camOverride); a preset saved with
+   *   `autoRot: false` would otherwise switch their running script off at the
+   *   very next step.
+   * @returns {boolean} false when the snapshot was refused — migratePreset()
+   *   didn't recognise it (nothing applied), or a field threw mid-apply
+   *   (state may be partly applied). True once the state has been pushed.
    */
   applyState(s, opts = {}) {
     // Normalise via migratePreset first — handles unknown shape, version skew,
-    // and future migration steps. migratePreset returns null for snapshots
-    // too old/corrupt to use.
+    // and future migration steps; null means "not a snapshot".
+    // FIX(#18, r2): report that refusal to the caller instead of returning
+    // silently — importSettings() used to announce "✔ State loaded" for a file
+    // migratePreset had just rejected.
     s = migratePreset(s);
-    if (!s) return;
+    if (!s) return false;
 
+    // FIX(#18, r3): snapshots no longer have to be machine-written to get this
+    // far, so a malformed field can throw mid-apply. Out of importSettings such
+    // a throw escaped reader.onload — no toast, no clue, half the state applied.
+    // Folding it into the boolean gives every call-site one contract to check.
+    // What a hand-written file is KNOWN to get wrong is normalised before it
+    // reaches the engine (sanitizeKeyframes); this is the net for the rest.
+    // Deferred work (onFlat, tween onDone) runs after we return, outside it.
+    try {
+      this._applyStateFields(s, opts);
+      return true;
+    } catch (err) {
+      console.error('[preset] snapshot rejected mid-apply', err);
+      return false;
+    }
+  },
+
+  /**
+   * Field-by-field apply. Private: applyState owns migration and the
+   * boolean/error contract, and every caller (import, preset list, ClipPlayer,
+   * boot restore) goes through it.
+   */
+  _applyStateFields(s, opts = {}) {
     const r   = this.render;
     const cam = this.camera;
     const mv  = this.mathViz;
@@ -177,29 +265,49 @@ export const PresetMixin = {
       r.grid.visible = s.gridVisible;
       DOM.btnToggleGrid.style.opacity = s.gridVisible ? '1' : '0.45';
     }
-    if (s.vizMode) {
-      r.setVizModeGPU(s.vizMode);
-      document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
-      const mb = DOM.modeBtn(s.vizMode);
-      if (mb) mb.classList.add('active');
+    // ── Viz mode + surface material ────────────────────────────────────────
+    // FIX(#15, r2): ONE decision, not two. WIRE/PTS force Matte and hide the
+    // material dropdown (reconstructed normals are degenerate there), so a
+    // snapshot's material can only be *remembered* in those modes, never shown.
+    // Applying mode and material as independent steps left the snapshot's
+    // mirror/metal live in a WIRE session with the dropdown hidden — unfixable
+    // by the user. Passing matKey INTO syncVizModeUI keeps the rule in one
+    // place. Both apply outside the morph block (uniform push, no geometry
+    // rebuild); 'matte' covers presets saved before the field existed.
+    const matKey = s.material ?? 'matte';
+    const matSel = document.getElementById('surface-material-sel');
+    // The viz mode that will be in effect once this snapshot is applied: the
+    // snapshot's own, or — when it carries none — whatever the engine already
+    // shows. The material rule keys off the mode the user will be looking at,
+    // not off whether the snapshot happened to name one.
+    const vizMode = s.vizMode ?? r.vizMode ?? 'surface';
+
+    if (s.vizMode) r.setVizModeGPU(s.vizMode);
+
+    let matHandled = false;
+    // The engine is switched above; the UI half goes through the same helper a
+    // click on #mode-* uses — button highlight plus the material rule. Optional
+    // call: a build without the helper still gets the engine change, and the
+    // fallback below still applies the material.
+    if (this.syncVizModeUI) {
+      this.syncVizModeUI(vizMode, matKey);
+      // The helper's material half is a no-op when the dropdown is absent.
+      matHandled = !!matSel;
     }
 
-    // ── Surface material ───────────────────────────────────────────────────
-    // Applied outside the morph block — it's a uniform push, no geometry
-    // rebuild needed. Default 'matte' for presets saved before this field
-    // existed (forward/backward compatible via the ?? guard).
-    {
-      const matKey = s.material ?? 'matte';
-      const matSel = document.getElementById('surface-material-sel');
+    if (!matHandled) {
+      // No helper (stripped build) or no dropdown in this HTML variant. Apply
+      // directly, honouring the same rule the helper enforces: outside SURF the
+      // only safe material is Matte.
+      const effective = vizMode === 'surface' ? matKey : 'matte';
       if (matSel) {
         // Setting .value + dispatching change runs controls.js's _applyMat,
         // which calls render.setSurfaceMaterial and updates the descriptor.
         // Single source of truth for the apply path.
-        matSel.value = matKey;
+        matSel.value = effective;
         matSel.dispatchEvent(new Event('change', { bubbles: true }));
       } else {
-        // No dropdown in this HTML variant — apply directly.
-        r.setSurfaceMaterial?.(matKey);
+        r.setSurfaceMaterial?.(effective);
       }
     }
 
@@ -238,6 +346,20 @@ export const PresetMixin = {
       onFlatActions.push(() => { if (mv) mv.setMode('surface'); });
     }
 
+    // FIX(#15): the branches above schedule only the ENGINE switch (inside the
+    // morph). The deform buttons and #volume-formula-wrap are pure UI, synced
+    // here and now — the helper touches no engine state, which is why calling
+    // it outside onFlat can't duplicate the scheduled mv.setMode /
+    // mv.setVolumeFormula. Optional call: a build without the helper is
+    // unaffected.
+    // FIX(#15, r2): run for EVERY snapshot. One without deformMode leaves the
+    // engine mode alone (no branch above fires), so the row has to be re-lit
+    // from mathViz._mode — the field captureState() records.
+    const deformMode = s.deformMode ?? mv?._mode ?? null;
+    if (deformMode) {
+      this.syncDeformUI?.(deformMode, s.volumeKey ?? mv?._volumeKey ?? null);
+    }
+
     if (onFlatActions.length > 0) {
       r.triggerMorphTransition(() => { for (const fn of onFlatActions) fn(); });
     }
@@ -248,7 +370,16 @@ export const PresetMixin = {
     // camera.position on the next animate() tick and the tween is invisible.
     const postTweenCameraActions = [];
 
-    if (s.camera) {
+    // opts.preserveCamera: the caller (ClipPlayer, while the user drives the
+    // camera manually) asked for a look-only apply. Both camera halves below
+    // are gated on it — the tween/physics/auto-rotate block AND the programmer
+    // block — because either one alone would still take the camera away: the
+    // first by turning auto-rotate off, the second by re-arming the preset's
+    // script over the user's. Everything above this line has already run:
+    // shape, colour, formula, shader and params are what a clip step is for.
+    const camOwned = !opts.preserveCamera;
+
+    if (s.camera && camOwned) {
       const c = s.camera;
       // Pause auto-rotate during the tween so the physics loop doesn't
       // fight with our position writes. Restore the previous state on done.
@@ -285,6 +416,14 @@ export const PresetMixin = {
         {
           duration: opts.cameraTransitionMs,
           onDone: () => {
+            // Ownership can flip DURING the tween: the user hits AUTO-ROTATE
+            // or applies a script in the first few hundred ms of a clip step.
+            // The actions below were queued while the player still owned the
+            // camera, so firing them now would switch the user's own rotation
+            // straight back off. Re-check at fire time, and only for the clip
+            // player's applies (it is the one that passes preserveCamera) —
+            // clicking a preset by hand is an explicit request for ITS camera.
+            if (opts.preserveCamera === false && this._clip?.camOverride) return;
             // Physics first, then autoRot toggles, then programmer script.
             for (const fn of postTweenCameraActions) fn();
           },
@@ -297,20 +436,25 @@ export const PresetMixin = {
     // they don't drive camera position. But cam.loadScript() sets cpActive=true
     // which makes main.js call camera.runScript() each frame; that DOES drive
     // position. So we defer loadScript to the same post-tween bucket.
-    if (s.camScript) {
+    if (s.camScript && camOwned) {
       const cs = s.camScript;
-      if (cs.code)   cam.cb.onSetCode(cs.code);
-      if (cs.params) Object.assign(cam.cpParams, cs.params);
-      cam.cpKeyframes = (cs.keyframes || []).map(kf => ({ t: kf.t, code: kf.code }));
+      // FIX(#18, r3): type the fields before they reach the editor, cpParams
+      // and `new Function` — a hand-written camScript is a valid preset now,
+      // and nothing downstream re-checks. Keyframes especially: buildTimeline()
+      // hands them straight to a renderer that assumes kf.code is a string.
+      const code = typeof cs.code === 'string' ? cs.code : '';
+      if (code) cam.cb.onSetCode(code);
+      if (cs.params && typeof cs.params === 'object') Object.assign(cam.cpParams, cs.params);
+      cam.cpKeyframes = sanitizeKeyframes(cs.keyframes);
       cam.cpSelectedKf = null;
       cam.buildTimeline();
-      if (cs.active && cs.code) {
+      if (cs.active && code) {
         if (s.camera) {
           // Camera tween in flight — defer script activation to onDone.
-          postTweenCameraActions.push(() => cam.loadScript(cs.code));
+          postTweenCameraActions.push(() => cam.loadScript(code));
         } else {
           // No camera tween — start script immediately.
-          cam.loadScript(cs.code);
+          cam.loadScript(code);
         }
       }
     }
@@ -364,7 +508,8 @@ export const PresetMixin = {
    * the other way around.
    *
    * Wires three things:
-   *   1. Restore: read PERSIST_KEY, scrub, applyState. Failures are silent.
+   *   1. Restore: read PERSIST_KEY, scrub, applyState. An unusable snapshot is
+   *      dropped and boot continues from defaults — no toast (see below).
    *   2. Debounced auto-save: any user gesture that mutates state will fire
    *      one of the existing setters/handlers; we hook the events that
    *      already exist (input/change on the panel, model swap, etc.) by
@@ -384,7 +529,15 @@ export const PresetMixin = {
         // Auto-restore: never prompt, never keep JS code. If the user wants
         // their camera script back they re-enable it via the editor.
         if (scrubbed.state.camScript) scrubbed.state.camScript.code = '';
-        this.applyState(scrubbed.state);
+        // FIX(#18, r3): the one call-site that ignored applyState's result.
+        // Boot has no user gesture to answer and no reason to interrupt with a
+        // toast, so a refused snapshot means "start from defaults" — but drop
+        // the blob too, or every reload re-reads the same corpse and the next
+        // autosave is the only thing that can clear it.
+        if (!this.applyState(scrubbed.state)) {
+          console.warn('[preset] persisted snapshot unusable — starting from defaults');
+          this._clearPersisted();
+        }
       } catch (_) {
         // Corrupt snapshot — drop it so next save starts clean.
         this._clearPersisted();
@@ -415,7 +568,10 @@ export const PresetMixin = {
         const a = this.audio, r = this.render, mv = this.mathViz;
         const cp = r.camera.position;
         return [
-          a.colorIdx, mv?._colId, mv?._key,
+          // FIX(#14): MathVisualizer's fields are _collId / _formulaKey. The
+          // old names were always undefined, so a hotkey formula swap never
+          // moved the fingerprint and never scheduled a save.
+          a.colorIdx, mv?._collId, mv?._formulaKey,
           cp.x.toFixed(2), cp.y.toFixed(2), cp.z.toFixed(2),
         ].join('|');
       } catch (_) { return ''; }
@@ -463,6 +619,13 @@ export const PresetMixin = {
 
       const scrubbed = this._scrubImportedState(state);
 
+      // FIX(#18, r2): report what applyState actually did — announcing
+      // "✔ State loaded" for JSON it turned away is the silence the rejection
+      // was reinstated to break.
+      // FIX(#18, r3): worded so it also fits a snapshot that threw mid-apply,
+      // where "nothing applied" would be a lie.
+      const REJECTED = '⚠ Preset rejected — unrecognised or malformed';
+
       if (scrubbed._hasScript) {
         // Ask user before retaining JS code
         this._confirmScriptImport(scrubbed.scriptCode, (allow) => {
@@ -470,13 +633,14 @@ export const PresetMixin = {
             // User declined — strip the code entirely
             scrubbed.state.camScript.code = '';
           }
-          this.applyState(scrubbed.state);
+          const ok = this.applyState(scrubbed.state);
+          if (!ok) { this._showToast(REJECTED, true); return; }
           this._showToast(allow ? '✔ State loaded (script kept, not auto-running)'
                                 : '✔ State loaded (script discarded)');
         });
       } else {
-        this.applyState(scrubbed.state);
-        this._showToast('✔ State loaded');
+        const ok = this.applyState(scrubbed.state);
+        this._showToast(ok ? '✔ State loaded' : REJECTED, !ok);
       }
     };
     reader.readAsText(file);
@@ -565,7 +729,12 @@ export const PresetMixin = {
     const presets = this._loadPresetList();
     const idx = presets.findIndex(p => p.name === name.trim());
     const entry = { name: name.trim(), state: this.captureState(), savedAt: Date.now() };
-    if (idx >= 0) presets[idx] = entry; else presets.push(entry);
+    // FIX(#16): re-saving under an existing name must not drop per-record
+    // fields captureState() knows nothing about — holdMs lives on the record
+    // (written by the inline editor in _renderPresets, read by
+    // ClipPlayer.buildFromPresets), not inside `state`. Spread the old record
+    // first so it survives; entry's own keys win.
+    if (idx >= 0) presets[idx] = { ...presets[idx], ...entry }; else presets.push(entry);
     try { localStorage.setItem('vimathic_presets', JSON.stringify(presets)); } catch (_) {}
     this._renderPresets();
   },
@@ -610,7 +779,13 @@ export const PresetMixin = {
         'white-space:nowrap;text-overflow:ellipsis;min-width:0';
       loadBtn.title  = `Load '${p.name}'`;
       loadBtn.textContent = p.name;
-      loadBtn.onclick = () => { this.applyState(p.state); this._showToast(`✔ ${p.name}`); };
+      // FIX(#18, r2): same honesty as Import — a record whose `state` applyState
+      // refused (hand-edited localStorage, a half-written entry) must not flash
+      // the success toast.
+      loadBtn.onclick = () => {
+        if (this.applyState(p.state)) this._showToast(`✔ ${p.name}`);
+        else this._showToast(`⚠ '${p.name}' — unusable snapshot`, true);
+      };
 
       // Hold time inline editor. Visual styling comes from the global
       // input[type=number] rule in index.html — same visual as clip-hold,

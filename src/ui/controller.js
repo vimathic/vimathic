@@ -102,7 +102,21 @@ export class UIController {
     playlist.forEach((tr, i) => {
       const d = document.createElement('div');
       d.className = 'pl-item' + (i === trackIdx ? ' active' : '');
-      d.innerHTML = `<span class="pl-num">${i+1}</span><span class="pl-name">${tr.name}</span><span class="pl-play">${i===trackIdx&&isPlaying?'▶':''}</span>`;
+      // FIX(#21): built with createElement/textContent instead of innerHTML.
+      // tr.name is the user's filename minus extension (drag-drop or file
+      // picker), so a file called `<img src=x onerror=alert(1)>.mp3` used to
+      // execute as markup on every playlist repaint. Same three spans, same
+      // classes, same order — only the insertion path changed.
+      const num = document.createElement('span');
+      num.className   = 'pl-num';
+      num.textContent = i + 1;
+      const name = document.createElement('span');
+      name.className   = 'pl-name';
+      name.textContent = tr.name;
+      const play = document.createElement('span');
+      play.className   = 'pl-play';
+      play.textContent = (i === trackIdx && isPlaying) ? '▶' : '';
+      d.append(num, name, play);
       d.onclick = () => this.audio.playAt(i);
       list.appendChild(d);
     });
@@ -234,14 +248,36 @@ export class UIController {
       if (!playing &&  clip.playing) clip.stop();
     };
 
+    // ── Status line ───────────────────────────────────────────────────────
+    // Two independent facts share one line: which step is running, and who owns
+    // the camera. Keeping the step label in a variable lets either change
+    // repaint the line without the other having to know its text.
+    let _stepLabel = '';
+    const _renderStatus = () => {
+      statusEl.textContent = clip.camOverride
+        ? `${_stepLabel}  · 🎥 MANUAL`
+        : _stepLabel;
+    };
+
     // ── Clip callbacks ────────────────────────────────────────────────────
-    clip.cb.onPlay = () => { _setPlaying(true); statusEl.textContent = 'Playing…'; };
+    clip.cb.onPlay = () => { _setPlaying(true); _stepLabel = 'Playing…'; _renderStatus(); };
 
     clip.cb.onStop = () => {
       _setPlaying(false);
+      _stepLabel = '';
       statusEl.textContent = '';
       if (progressEl) { progressEl.style.width = '0%'; progressEl.style.opacity = '0'; }
       document.querySelectorAll('#preset-list .preset-load-btn').forEach(b => b.style.boxShadow = '');
+    };
+
+    // The camera changing hands is invisible otherwise — the presets keep
+    // cycling and only the viewpoint stops following them. Say it once, in
+    // both places the user might be looking.
+    clip.cb.onCamOverride = active => {
+      _renderStatus();
+      this._showToast(active
+        ? '🎥 Camera: manual — clip steps no longer move it'
+        : '🎥 Camera: back under clip control');
     };
 
     clip.cb.onStep = (idx, step, holdMs) => {
@@ -250,7 +286,8 @@ export class UIController {
       const label   = clip.barsMode
         ? `[${idx+1}/${total}] ${step.name}  — ${step.bars ?? clip.barsCount} bars @ ${Math.round(bpm)} BPM`
         : `[${idx+1}/${total}] ${step.name}  — ${(holdMs/1000).toFixed(1)}s`;
-      statusEl.textContent = label;
+      _stepLabel = label;
+      _renderStatus();
       if (progressEl) { progressEl.style.width = '100%'; progressEl.style.opacity = '1'; }
       document.querySelectorAll('#preset-list .preset-load-btn').forEach((btn, i) =>
         btn.style.boxShadow = i === idx ? '0 0 0 1px var(--pink)' : '');

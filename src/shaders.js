@@ -94,7 +94,16 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
 
 void main(){
   vec3 pos=position;
-  float b=clamp(uBass,0.,1.2),t=clamp(uTreble,0.,1.2),m=clamp(uMid,0.,1.),bt=0./*beat disabled*/;
+  // bt is pinned to 0 by decision, not by omission — every +bt*.5 term in
+  // computeMode is meant to be inert. Driving displacement straight from uBeat
+  // snaps the whole surface on each onset, i.e. the rapid flashing DISCLAIMER
+  // warns photosensitive users about; muting it here is what keeps the default
+  // scene inside that warning. Beat detection itself still runs: it feeds the
+  // camera BPM and the beat-synced recorder, and uBeat stays declared above, so
+  // a shader written in the editor can still respond to the beat — the choice
+  // is per-shader instead of forced on everyone. Restoring bt=uBeat brings the
+  // seizure risk back to the out-of-the-box visualisation.
+  float b=clamp(uBass,0.,1.2),t=clamp(uTreble,0.,1.2),m=clamp(uMid,0.,1.),bt=0./*intentional, see note above*/;
   float a=uAmp,wi=uWI,T=uTime;
 
   if(uMathMode==0){
@@ -118,17 +127,19 @@ void main(){
   gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);
 }`;
 
-// ── Fragment shader — 36 color schemes (0-35) ─────────────────────────────────
+// ── Fragment shader — 44 color schemes (0-43) ─────────────────────────────────
+// FIX(#28): every count in this file is 44 (0..43) — COLOR_SCHEME_COUNT in
+// params.js is authoritative; the prose lagged behind the DARK series (36..43).
 //
 // Transition uniform added:
 //   uCMNext  — color scheme to blend toward
 //   uCMBlend — 0=current only, 1=next only (crossfade, 0.6 s)
 //
-// All 36 scheme functions are defined once in _COLOR_FUNS below and injected
+// All 44 scheme functions are defined once in _COLOR_FUNS below and injected
 // into both export const FS and SE_FS_TEMPLATE via template interpolation.
 // _COLOR_FUNS also contains the getColor() dispatcher, so user-written
 // fragment shaders in the editor can call getColor(uCM, t) and get every
-// palette without copy-pasting a 36-way if-cascade.
+// palette without copy-pasting a 44-way if-cascade.
 //
 // Layout:
 //   CINEMATIC  0  tealOrange   1  bladeRunner   2  matrix      3  bleachBypass
@@ -140,8 +151,10 @@ void main(){
 //   NEW       24  cyberpunkGold  25 arcticFire  26 bloodMoon  27 cosmicDust
 //             28  toxicWaste  29 cherryBlossom  30 midnightChrome 31 solarFlare
 //             32  deepSpace   33 acidRain       34 volcanic    35 bioluminescence
+//   DARK      36  charcoalSmoke  37 slateIndigo  38 mossStone  39 petrol
+//             40  emberBlack  41 burgundyVelvet 42 midnightForest 43 coalPlum
 
-// ── _COLOR_FUNS — single source of truth for all 36 GLSL color functions ─────
+// ── _COLOR_FUNS — single source of truth for all 44 GLSL color functions ─────
 // Used in both export const FS and SE_FS_TEMPLATE. Edit here only.
 //
 // IMPORTANT: when adding a new palette, update three things in lockstep:
@@ -150,10 +163,11 @@ void main(){
 //   3. Bump COLOR_SCHEME_COUNT in params.js (which feeds MIDI range, the
 //      shuffle bag in main.js, and the E-key cycle modulus).
 //
+// FIX(#28, r3): the range below read 0..23, left over from the 24-palette era.
 // getColor() is included in this block — not duplicated into FS — so user
-// fragments in the shader editor can call it too. Previously the dispatcher
-// lived inside FS only, and SE_FS_TEMPLATE users either copy-pasted a 36-way
-// if-cascade or got undefined-`c` artefacts when uCM landed outside 0..23.
+// fragments in the shader editor can call it too. Without it, SE_FS_TEMPLATE
+// users copy-pasted the if-cascade or got undefined-`c` artefacts for any uCM
+// their copy skipped; the dispatcher covers the whole 0..43 range.
 const _COLOR_FUNS = `
 vec3 tealOrange(float t){return mix(vec3(0.,0.706,0.847),vec3(1.,0.620,0.),t);}
 vec3 bladeRunner(float t){vec3 a=vec3(.051,.008,.129),b=vec3(1.,.420,.208),c=vec3(0.,.898,1.);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
@@ -325,13 +339,13 @@ uniform float uCMBlend;
 // and audio-reactive specular / rim. Skipped entirely in wireframe and points
 // modes by setting uLighting=0 in setVizModeGPU().
 //
-// NOTE: dFdx/dFdy in main() require GL_OES_standard_derivatives on WebGL1, but
-// in WebGL2 / GLSL ES 3.00 they are core built-ins and the extension directive
-// is illegal (must appear before any non-preprocessor tokens, and three.js
-// prepends its own preamble before user source). The clean fix is: don't put
-// any #extension directive here — instead set 'extensions: { derivatives: true }'
-// on the ShaderMaterial. Three.js then injects the directive into the WebGL1
-// preamble at the correct position, and skips it on WebGL2 where it's a no-op.
+// NOTE: dFdx/dFdy in main() need no #extension directive and no 'extensions'
+// flag on the ShaderMaterial. three r169 is WebGL2-only, so the shader always
+// compiles as GLSL ES 3.00 where the derivatives are core built-ins — and the
+// directive would be illegal there anyway (it must precede any non-preprocessor
+// token, while three.js prepends its own preamble to user source).
+// Don't add back 'extensions: { derivatives: true }' either — r169 honours only
+// clipCullDistance and multiDraw, and silently drops anything else.
 uniform int   uLighting;
 uniform float uTime, uBass, uTreble;
 // ── Surface material (PBR-style env reflections) ─────────────────────────
@@ -413,7 +427,13 @@ float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;for(int n=-6;n<=6;n++){float fn=float(n);s+=cos(a*fn)*exp(-r*.28*fn*fn);}return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
 void main(){vec3 pos=position;
-  float b=clamp(uBass,0.,1.2),t=clamp(uTreble,0.,1.2),m=clamp(uMid,0.,1.),bt=0./*beat disabled*/;
+  // bt=0. for the same reason as in VS: beat-driven displacement flashes the
+  // surface on every onset, which DISCLAIMER warns photosensitive users about.
+  // Here it is only a default the user body can override — uBeat is declared
+  // above and stays in scope, so an editor shader opts into beat response
+  // knowingly (read uBeat, or assign bt=uBeat first) — which is why the +bt
+  // terms in the shipped vertex snippets contribute nothing until they do.
+  float b=clamp(uBass,0.,1.2),t=clamp(uTreble,0.,1.2),m=clamp(uMid,0.,1.),bt=0./*intentional, see note above*/;
   float r=length(pos.xz),ang=atan(pos.z,pos.x),y=0.,a=uAmp,wi=uWI,T=uTime;
   ${body}
   if(uMathMode==0){pos.y=y;}
@@ -423,10 +443,11 @@ void main(){vec3 pos=position;
   vViewDir  = cameraPosition - _wp.xyz;
   gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);}`;
 
-// Template wrapping user frag body — _COLOR_FUNS provides all 36 color
+// FIX(#28): counts below track COLOR_SCHEME_COUNT — see the FS header note.
+// Template wrapping user frag body — _COLOR_FUNS provides all 44 color
 // functions AND the getColor() dispatcher, so a user fragment can just do
 // `c = getColor(uCM, t);` and cover every palette without copy-pasting a
-// 36-way if-cascade.
+// 44-way if-cascade.
 //
 // Surface materials (studio-env reflections) also apply here: the chosen
 // material runs over the user's `c` automatically (B+C). The user writes
@@ -436,13 +457,19 @@ void main(){vec3 pos=position;
 // reflect(), and read uMetalness/uReflect/etc directly inside their body —
 // the function, uniforms, and vWorldPos/vViewDir varyings are all in scope.
 const SE_FS_TEMPLATE = body => `uniform int uCM,uCMNext;uniform float uCMBlend;
-uniform float uTime,uBass,uTreble;
+uniform float uTime,uBass,uMid,uTreble,uBeat;
 ${_MATERIAL_UNIFORMS}
 varying float vH;
 varying vec3  vWorldPos;
 varying vec3  vViewDir;
 ${_COLOR_FUNS}
 ${_STUDIO_ENV}
+// uMid and uBeat are declared even though the default snippet uses neither:
+// the Neon and Lava presets read them, and without the uniforms those two
+// failed to compile at all. Audio is NOT aliased to short locals here the way
+// the vertex template does it — this body is user code that gets saved into
+// presets, so injecting names into its scope would collide with anyone who
+// declared their own.
 void main(){float t=clamp((vH+.8)*.6,.03,.97);vec3 c=vec3(0.0);
   ${body}
   vec3 color = c;
@@ -457,10 +484,12 @@ y = sin(r * 8.0 * wi + T) * (0.2 + b * 0.8) * a
   + bt * 0.5;`;
 
 // Default frag code shown in editor: routes through getColor(uCM, t), which
-// covers all 36 palettes — so picking any scheme from the dropdown Just Works
+// covers all 44 palettes — so picking any scheme from the dropdown Just Works
 // without the user editing the fragment.
 //
-// All 36 functions are callable by name from custom code:
+// FIX(#28): the list must stay complete — a name missing here reads as
+// "unsupported" to editor users even though getColor() dispatches it.
+// All 44 functions are callable by name from custom code:
 //   0  tealOrange      1  bladeRunner       2  matrix          3  bleachBypass
 //   4  outrun          5  vaporwave         6  neonNoir        7  sunsetGrid
 //   8  viridis         9  inferno          10  plasma         11  cividis
@@ -470,8 +499,12 @@ y = sin(r * 8.0 * wi + T) * (0.2 + b * 0.8) * a
 //  24  cyberpunkGold  25 arcticFire        26 bloodMoon       27 cosmicDust
 //  28  toxicWaste     29 cherryBlossom     30 midnightChrome  31 solarFlare
 //  32  deepSpace      33 acidRain          34 volcanic        35 bioluminescence
-const SE_DEFAULT_FRAG = `// t = normalised height 0..1   uCM = scheme index 0..35
-// getColor(uCM, t) dispatches to one of 36 palettes. You can also call
+//  36  charcoalSmoke  37 slateIndigo       38 mossStone       39 petrol
+//  40  emberBlack     41 burgundyVelvet    42 midnightForest  43 coalPlum
+const SE_DEFAULT_FRAG = `// t = normalised height 0..1   uCM = scheme index 0..43
+// Audio comes in as uniforms here, not short locals: uBass uMid uTreble uBeat
+// uTime. Note t is the height ramp here, not treble as in the vertex tab.
+// getColor(uCM, t) dispatches to one of 44 palettes. You can also call
 // any palette by name directly, e.g.  c = lava(t)  or  c = cyberpunkGold(t);
 c = getColor(uCM, t);`;
 
@@ -482,8 +515,8 @@ const SE_PRESETS = [
   { name:'💎 Crystal',  tab:'vert', code:`float k=sin(pos.x*12.*wi)*cos(pos.z*12.*wi);\ny = k*(0.3+b*.7)*a + sin(r*20.*wi*(0.5+t))*0.15*a + bt*sin(ang*8.)*0.3;` },
   { name:'🔥 Plasma',   tab:'vert', code:`y = turb(pos.xz*(3.+b*2.)*wi)*(0.4+b*.8)*a\n  + sin(r*15.*wi-T*4.)*exp(-r*.2)*(0.2+t*.6)*a + bt*0.6;` },
   { name:'🎆 Ramanujan',tab:'vert', code:`float s=0.;\nfor(int n=-6;n<=6;n++){float fn=float(n); s+=cos(ang*fn)*exp(-r*.25*fn*fn*(0.5+t));}\ny = tanh(s*.7)*(0.3+b*.7)*a;` },
-  { name:'🌈 Neon',     tab:'frag', code:`float h=t*6.28+T*.5;\nc=vec3(abs(sin(h+b*2.)),abs(sin(h+2.094+t)),abs(sin(h+4.189+m))) *(0.6+bt*0.4);` },
-  { name:'🔆 Lava',     tab:'frag', code:`c=lava(t)*(0.7+b*0.5+bt*0.3);` },
+  { name:'🌈 Neon',     tab:'frag', code:`float h=t*6.28+uTime*.5;\nc=vec3(abs(sin(h+uBass*2.)),abs(sin(h+2.094+t)),abs(sin(h+4.189+uMid))) *(0.6+uBeat*0.4);` },
+  { name:'🔆 Lava',     tab:'frag', code:`c=lava(t)*(0.7+uBass*0.5+uBeat*0.3);` },
 ];
 
 export class ShaderEditor {
@@ -526,15 +559,20 @@ export class ShaderEditor {
     const fullVS = SE_VS_TEMPLATE(vertBody);
     const fullFS = SE_FS_TEMPLATE(fragBody);
 
-    // FIX v6: was using renderer.compile() which in Three.js r169 does NOT
-    // throw on GLSL compile errors — it silently returns and the program
-    // ends up using fallback magenta material. The try/catch around it
-    // only caught JS-level errors (geometry construction etc.), missing
-    // every actual shader bug.
-    //
-    // Now we use compileAsync() — Promise-based variant that REJECTS when
-    // the WebGL program fails to link. It checks gl.getShaderInfoLog under
-    // the hood, so we get the actual GLSL error message (with line number).
+    // Detecting a bad shader is the whole point of this button, and neither
+    // obvious approach works in three r169:
+    //   renderer.compile()      — creates the program, returns quietly on a
+    //                             GLSL error; the try/catch around it only ever
+    //                             caught JS-level failures.
+    //   renderer.compileAsync() — resolves when the program is *ready*, not
+    //                             when it is *valid*. It does not reject on a
+    //                             link failure, so every broken shader was
+    //                             reported to the user as "compiled & applied".
+    // The supported hook is renderer.debug.onShaderError: three calls it in
+    // place of its own console.error when a program fails to link, handing over
+    // the gl objects so we can read the real InfoLog — with the line numbers
+    // _parseErrorLine needs. Installing it also stops three from logging a wall
+    // of shader source to the console on every typo.
     const tGeo  = new THREE.PlaneGeometry(1, 1, 1, 1);
     const tMat  = new THREE.ShaderMaterial({
       vertexShader:   fullVS,
@@ -542,13 +580,16 @@ export class ShaderEditor {
       uniforms:       this._render.U,
       side:           THREE.DoubleSide,
     });
-    const tMesh = new THREE.Mesh(tGeo, tMat);
-    this._render.scene.add(tMesh);
+    // Probe in a scene of its own rather than adding the test mesh to the live
+    // one: compile()/render() would then walk every material in the scene —
+    // seconds of work on a software GL — and the probe mesh could show up in
+    // the visible frame for a tick.
+    const tScene = new THREE.Scene();
+    const tCam   = new THREE.PerspectiveCamera(45, 1, 0.1, 10);
+    tCam.position.z = 2;
+    tScene.add(new THREE.Mesh(tGeo, tMat));
 
-    // Save success/failure handlers separately so we can dispose the test
-    // mesh in both paths.
     const cleanup = () => {
-      this._render.scene.remove(tMesh);
       tMat.dispose();
       tGeo.dispose();
     };
@@ -584,34 +625,37 @@ export class ShaderEditor {
       this.cb.onCompileResult({ ok: false, message: friendly, line: errorLine });
     };
 
-    // Three.js compileAsync returns Promise<void> that resolves on link success
-    // and rejects on shader/program compile failure with the InfoLog as message.
-    if (typeof this._render.renderer.compileAsync === 'function') {
-      this._render.renderer
-        .compileAsync(this._render.scene, this._render.camera)
-        .then(onSuccess)
-        .catch(onFailure);
-    } else {
-      // Older Three.js without compileAsync — fall back to sync compile +
-      // immediate render to a 1x1 RT to surface program link errors.
-      try {
-        this._render.renderer.compile(this._render.scene, this._render.camera);
-        // Force one render — gl.useProgram triggers link and reveals errors
-        // via gl.getProgramInfoLog if linkProgram failed.
-        const rt = new THREE.WebGLRenderTarget(1, 1);
-        this._render.renderer.setRenderTarget(rt);
-        this._render.renderer.render(this._render.scene, this._render.camera);
-        this._render.renderer.setRenderTarget(null);
-        rt.dispose();
-        // Check WebGL error queue
-        const gl = this._render.renderer.getContext();
-        const glErr = gl.getError();
-        if (glErr !== gl.NO_ERROR) {
-          throw new Error('WebGL error 0x' + glErr.toString(16));
-        }
-        onSuccess();
-      } catch (e) { onFailure(e); }
+    const renderer = this._render.renderer;
+    const prevHook = renderer.debug.onShaderError;
+    let captured = null;
+    renderer.debug.onShaderError = (gl, program, glVS, glFS) => {
+      // Prefer whichever stage actually failed; the program log is the
+      // fallback for link-time errors that neither shader reports.
+      const vLog = gl.getShaderInfoLog(glVS) || '';
+      const fLog = gl.getShaderInfoLog(glFS) || '';
+      captured = (vLog + fLog).trim() || (gl.getProgramInfoLog(program) || '').trim()
+              || 'Shader failed to link';
+    };
+
+    try {
+      // compile() builds the program; the link check three defers to first use
+      // is what triggers the hook, so force one render to a throwaway target.
+      // Rendering the real scene here would fight the animation loop.
+      renderer.compile(tScene, tCam);
+      const rt = new THREE.WebGLRenderTarget(1, 1);
+      const prevRT = renderer.getRenderTarget();
+      renderer.setRenderTarget(rt);
+      renderer.render(tScene, tCam);
+      renderer.setRenderTarget(prevRT);
+      rt.dispose();
+    } catch (e) {
+      captured = captured || e?.message || String(e);
+    } finally {
+      renderer.debug.onShaderError = prevHook;
     }
+
+    if (captured) onFailure(new Error(captured));
+    else onSuccess();
   }
 
   /**

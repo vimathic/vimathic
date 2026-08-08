@@ -87,8 +87,10 @@ reporter asks to remain anonymous).
 
 ## Dependency security
 
-VIMATHIC has three runtime dependencies (Three.js, gif.js, and micromark, plus
-their transitive dependencies bundled by Vite) plus build-time dependencies
+<!-- Count and names track `dependencies` in package.json. -->
+VIMATHIC has four runtime dependencies (Three.js, gif.js, micromark, and
+micromark-extension-gfm-table, plus their transitive dependencies bundled by
+Vite) plus build-time dependencies
 (Vite, vite-plugin-singlefile, Playwright for testing). We do not run
 automated dependency scanning, but all dependencies are pinned to specific
 versions in `package-lock.json`. To check for known vulnerabilities in

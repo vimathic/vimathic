@@ -51,6 +51,24 @@ const MICROMARK_OPTS = {
   htmlExtensions: [gfmTableHtml()],
 };
 
+// Drops `<!-- ... -->` blocks, including multi-line ones. Fenced code blocks
+// are masked out first: a comment shown as an HTML example inside a fence is
+// content the page is meant to display, not an aside about the page. The
+// placeholder is a Unicode private-use character, which cannot occur in real
+// prose, so restoring a fence can never collide with document text.
+const FENCE_MARK = '\uE000';
+
+function stripHtmlComments(md) {
+  const fences = [];
+  const masked = md.replace(/^ {0,3}(`{3,}|~{3,})[\s\S]*?^ {0,3}\1[ \t]*$/gm, (m) => {
+    fences.push(m);
+    return FENCE_MARK + (fences.length - 1) + FENCE_MARK;
+  });
+  return masked
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(new RegExp(FENCE_MARK + '(\\d+)' + FENCE_MARK, 'g'), (_, i) => fences[Number(i)]);
+}
+
 function parseDoc(filepath, source) {
   const slug = path.basename(filepath, '.md');
   const meta = { title: null, order: 1000, description: null, group: null };
@@ -76,7 +94,13 @@ function parseDoc(filepath, source) {
     meta.title = slug.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
   }
 
-  const html = micromark(body, MICROMARK_OPTS);
+  // `allowDangerousHtml: true` passes raw HTML straight through, and that
+  // includes comments — so an author's `<!-- note to self -->` lands verbatim
+  // in dist/docs/*.html and, because the About modal embeds the same strings,
+  // in the single-file dist/index.html that users download. Markdown comments
+  // read as private; strip them so they behave that way. Done on the source so
+  // a comment can never be half-rendered into surrounding markup.
+  const html = micromark(stripHtmlComments(body), MICROMARK_OPTS);
 
   let description = meta.description;
   if (!description) {
@@ -124,12 +148,20 @@ function loadAll(docsDir) {
   );
 }
 
+// FIX(#21): added `'` escaping. Every attribute in the templates below happens
+// to be written with double quotes, so a raw apostrophe was harmless in
+// practice — but that made the safety a property of the call sites rather than
+// of this function. One single-quoted attribute added later would have been an
+// injection point. `&` stays first: escaping it after the others would
+// re-escape the ampersands they just introduced (`&lt;` → `&amp;lt;`).
+// `&#39;` rather than `&apos;` — the numeric form is valid in HTML4 too.
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderStaticPage(doc, siteUrl, allDocs) {
@@ -248,6 +280,19 @@ Sitemap: ${siteUrl}/sitemap.xml
 `;
 }
 
+// FIX(#30): the counts in the prose below had drifted from the sources.
+// They are hand-maintained (llms.txt is a summary, not generated from the
+// catalogue), so re-check them against these files when any of them change:
+//   192 formulas  → src/math-collections.js (12 collections, 192 entries)
+//   38 GPU shaders→ the shader <optgroup>s in index.html (#gpu-sel, 0..37)
+//   44 schemes    → COLOR_SCHEME_COUNT in src/params.js (was stated as 36)
+//   122/42/28     → the tier table in MATHEMATICAL_ACCURACY.md
+//                   (was stated as 120/44/28; A+B = 164, A+B+C = 192)
+// FIX(#30, r2): the bundle size was missed in the first pass and still read
+// "~900 KB". Taken from the built artifact — dist/index.html is ~1.10 MB — and
+// quoted to one decimal so the few KB every commit adds do not make it stale
+// again. documents/index.md quotes the same file the same way; keep the two in
+// step and re-check both against dist/index.html after a release build.
 function renderLlmsTxt(siteUrl, docs) {
   const docLinks = docs
     .filter(d => d.slug !== 'index')
@@ -259,11 +304,11 @@ function renderLlmsTxt(siteUrl, docs) {
     .join('\n');
   return `# VIMATHIC
 
-> VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 36 colour schemes.
+> VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 44 colour schemes.
 
-VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 in 2031). The entire application is bundled into a single HTML file (~900 KB) plus four companion files. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
+VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 in 2031). The entire application is bundled into a single HTML file (~1.1 MB) plus four companion files. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
 
-The math accuracy is documented per-formula with tier classification: 120 formulas at IEEE 754 double precision (~10⁻¹⁴), 44 with bounded numerical approximations (10⁻³ to 10⁻⁷), and 28 at visualisation-grade. Reference values cross-checked against mpmath, scipy.special, and NIST DLMF.
+The math accuracy is documented per-formula with tier classification: 122 formulas at IEEE 754 double precision (~10⁻¹⁴), 42 with bounded numerical approximations (10⁻³ to 10⁻⁷), and 28 at visualisation-grade. Reference values cross-checked against mpmath, scipy.special, and NIST DLMF.
 
 ## Documentation
 

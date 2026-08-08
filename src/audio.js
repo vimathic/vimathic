@@ -30,10 +30,11 @@ export class AudioEngine {
     };
 
     // Web Audio graph
+    // FIX(#29): dropped `waveData` — it was allocated in ensureCtx() but
+    // getByteTimeDomainData() was never called and nothing read the buffer.
     this.audioCtx  = null;
     this.analyser  = null;
     this.fftData   = null;
-    this.waveData  = null;
 
     // Live capture (mic / display) — orthogonal to file playback
     this._liveStream = null;
@@ -61,6 +62,9 @@ export class AudioEngine {
     // User-tunable response curves (bound to sliders)
     this.bassSens   = 1.2;
     this.trebleSens = 1.0;
+    // NOTE(#29): beatPunch has no writer — render.js updateLights() reads it
+    // every frame but nothing (UI, MIDI, presets, params.js) assigns it, so it
+    // is a constant 1.0. Kept as the binding point for a "beat punch" control.
     this.beatPunch  = 1.0;
     this.waveInt    = 1.0;
     this.amp        = 0.7;
@@ -111,7 +115,13 @@ export class AudioEngine {
         this.analyser = this.audioCtx.createAnalyser();
         this.analyser.fftSize = 1024;
         this.fftData  = new Uint8Array(this.analyser.frequencyBinCount);
-        this.waveData = new Uint8Array(this.analyser.fftSize);
+        // FIX(#29): removed the unread `waveData` allocation (see constructor).
+        // WARNING(#7): the analyser doubles as the audible path, and
+        // captureMicrophone() feeds the mic into it with echoCancellation:false
+        // — open speakers plus a real mic close an acoustic loop and howl.
+        // A silent tap instead would change how file playback sounds, so the
+        // routing stays: mute monitors or capture via a loopback device
+        // (VB-Cable / BlackHole).
         this.analyser.connect(this.audioCtx.destination);
         this._fpb = this._nyq / (this.analyser.frequencyBinCount);
       }
@@ -141,6 +151,25 @@ export class AudioEngine {
   }
 
   /**
+   * FIX(#7): tear down file playback *and* the state that outlives the node.
+   * _updateSeek() and getElapsedFraction() key off audioBuffer/trackStart/
+   * trackOfs plus isPlaying, which live capture sets true, so plain
+   * _stopSource() leaves the seek bar and the camera playhead crawling across a
+   * dead track for the whole capture session. File paths keep calling
+   * _stopSource() — it must leave audioBuffer intact for _startSource().
+   * isPlaying / onPlayState stay untouched here: both callers set the play state
+   * on the next lines, and an intermediate "stopped" would flicker the transport
+   * button on every source switch.
+   */
+  _stopFilePlayback() {
+    this._stopSource();
+    this.audioBuffer = null;
+    this.trackStart  = 0;
+    this.trackOfs    = 0;
+    this.cb.onSeek(0, '0:00');
+  }
+
+  /**
    * Capture microphone input. Works with virtual loopback devices too
    * (VB-Audio Cable on Windows, BlackHole on macOS).
    * @param {string} [deviceId] specific deviceId from listAudioInputs()
@@ -148,10 +177,6 @@ export class AudioEngine {
   async captureMicrophone(deviceId) {
     try {
       await this.ensureCtx();
-      // Tear down any prior capture and file source — only one of the three
-      // (mic / display / file) can drive the analyser at a time.
-      this.stopLiveCapture();
-      this._stopSource();
 
       // Disable browser processing so the visualizer sees the raw signal.
       // Echo cancellation in particular eats bass below ~80 Hz.
@@ -164,7 +189,17 @@ export class AudioEngine {
           sampleRate:        44100,
         }
       };
+      // FIX(#7, r2): ask for the stream *before* tearing anything down — a
+      // denied prompt must leave the playing track, the seek position and
+      // isPlaying alone. Nothing below runs unless capture really happened.
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // Only one of mic / display / file may drive the analyser, so release the
+      // previous capture and the file source now that capture is certain.
+      // FIX(#7): _stopFilePlayback(), not _stopSource() — see its docblock.
+      this.stopLiveCapture();
+      this._stopFilePlayback();
+
       this._liveSrc    = this.audioCtx.createMediaStreamSource(stream);
       this._liveStream = stream;
       this._liveSrc.connect(this.analyser);
@@ -197,11 +232,10 @@ export class AudioEngine {
 
     try {
       await this.ensureCtx();
-      // MediaStream tracks are not garbage-collected while the underlying
-      // device is held — clean up any prior capture before requesting a new one.
-      await this.stopLiveCapture();
-      this._stopSource();
 
+      // FIX(#7, r2): the picker's Cancel rejects with NotAllowedError, so the
+      // request comes first and every teardown below waits for a usable stream.
+      // Cancelling leaves the playing track and its seek position untouched.
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: false,
         audio: {
@@ -217,6 +251,12 @@ export class AudioEngine {
         stream.getTracks().forEach(t => t.stop());
         return { ok: false, error: 'No audio track captured. Try sharing a tab with audio enabled.' };
       }
+
+      // Usable capture from here on. MediaStream tracks are not GC'd while the
+      // device is held, so release the previous capture together with the file
+      // source it replaces. FIX(#7): same teardown as captureMicrophone().
+      this.stopLiveCapture();
+      this._stopFilePlayback();
 
       this._liveSrc    = this.audioCtx.createMediaStreamSource(stream);
       this._liveStream = stream;
@@ -259,6 +299,13 @@ export class AudioEngine {
     this.sourceId++;
     const id = this.sourceId;
     if (!this.audioCtx || !this.audioBuffer) return;
+    // FIX(#7): keep mic/display/file mutually exclusive — capture killed the
+    // file source, but no file path killed capture, leaving both on the
+    // analyser. This is the choke point for every file start: loadPlay() and
+    // seek() come here, and crossfadeToTrack() needs a live audioSrc, which
+    // capture nulls. After the buffer guard, so a no-op start can't kill a
+    // live session.
+    if (this.liveMode) this.stopLiveCapture();
     this.audioSrc = this.audioCtx.createBufferSource();
     this.audioSrc.buffer = this.audioBuffer;
     this.audioSrc.connect(this.analyser);
@@ -281,7 +328,12 @@ export class AudioEngine {
     }
   }
 
+  // FIX(#7, r3): stopping releases live capture too. A MediaStream has no
+  // resumable position, so "paused" can only mean "not captured"; leaving the
+  // mic/display wired while isPlaying is false pushed update() into the idle-LFO
+  // branch and drove the visuals off a stream that was still audible.
   stopAudio() {
+    if (this.liveMode) this.stopLiveCapture();
     this.isPlaying = false;
     this._stopSource();
     this.cb.onPlayState(false);
@@ -289,18 +341,17 @@ export class AudioEngine {
   }
 
   async togglePlay() {
+    // FIX(#7, r3): the isPlaying test comes first. With capture running and an
+    // empty playlist the old order opened the file picker and left the mic on.
+    if (this.isPlaying) { this.stopAudio(); return; }
     if (!this.curFile && !this.playlist.length) {
       document.getElementById('audio-file').click();
       return;
     }
-    if (this.isPlaying) {
-      this.stopAudio();
-    } else {
-      await this.ensureCtx();
-      if (this.trackIdx < 0 && this.playlist.length) this.trackIdx = 0;
-      const f = this.playlist[this.trackIdx]?.file ?? this.curFile;
-      if (f) this.loadPlay(f);
-    }
+    await this.ensureCtx();
+    if (this.trackIdx < 0 && this.playlist.length) this.trackIdx = 0;
+    const f = this.playlist[this.trackIdx]?.file ?? this.curFile;
+    if (f) this.loadPlay(f);
   }
 
   // ── Load & play ───────────────────────────────────────────────────────────
@@ -327,7 +378,10 @@ export class AudioEngine {
       this.cb.onPlaylistChange();
     } catch (e) {
       console.error('Track load error:', e);
-      this.isPlaying = false;
+      // FIX(#7, r3): same invariant — a failed load must not flip the visuals
+      // to idle while a live capture is still feeding the analyser. Nothing
+      // here touches the capture, so isPlaying follows whether one is wired.
+      this.isPlaying = !!this.liveMode;
       if (!silent) this.cb.onLoading(false);
       return;
     }
@@ -362,6 +416,8 @@ export class AudioEngine {
   }
 
   _crossfadeOrLoad(file, offset = 0) {
+    // FIX(#7): capture clears audioBuffer and audioSrc, so with capture active a
+    // track change lands in loadPlay() → _startSource() → live-capture teardown.
     if (!this.audioCtx || this.audioCtx.state === 'closed' || !this.audioBuffer || !this.audioSrc) {
       this.loadPlay(file, offset);
     } else {
@@ -472,6 +528,7 @@ export class AudioEngine {
   }
 
   clearPlaylist() {
+    // stopAudio() also drops any live capture — "clear" leaves nothing audible.
     this.stopAudio();
     this.playlist = []; this.trackIdx = -1; this.curFile = null; this.audioBuffer = null;
     // Remember explicit user clear so we don't auto-reload the intro track
@@ -480,20 +537,6 @@ export class AudioEngine {
     this.cb.onPlaylistChange();
   }
 
-  /**
-   * On first load (and every load after, until user clicks Clear), fetch the
-   * bundled intro track and add it to the playlist. Once the user clicks
-   * Clear, we remember that and don't auto-reload the intro again — they
-   * explicitly chose to start fresh.
-   *
-   * No-ops gracefully if:
-   *  - localStorage flag is set ("vimathic_intro_cleared" === "true")
-   *  - the intro MP3 fetch fails (offline, file missing, etc.)
-   *  - the playlist is already non-empty (e.g. preset restored state)
-   *
-   * Called once from main.js after AudioEngine instantiation. Async but
-   * fire-and-forget — the rest of the app boots in parallel.
-   */
   /**
    * On first load (and every load after, until user clicks Clear), fetch the
    * bundled intro track and add it to the playlist. Once the user clicks
@@ -656,6 +699,9 @@ export class AudioEngine {
     this.kickEnergy  = this.kickEnergy  * 0.3 + this._energy(40,    100)   * 1.6 * 0.7;
     this.snareEnergy = this.snareEnergy * 0.3 + this._energy(150,   250)   * 1.4 * 0.7;
     this.hihatEnergy = this.hihatEnergy * 0.2 + this._energy(8000, 15000)  * 2.0 * 0.8;
+    // NOTE(#29): lastKick/Snare/HihatTime are written here and read nowhere —
+    // the per-band UI that consumed them is gone. Kept as the hook for per-band
+    // triggers (band-gated camera cuts, MIDI note-out).
     if (this.kickEnergy  > 0.55 && now - this.lastKickTime  > 200) this.lastKickTime  = now;
     if (this.snareEnergy > 0.45 && now - this.lastSnareTime > 180) this.lastSnareTime = now;
     if (this.hihatEnergy > 0.35 && now - this.lastHihatTime > 80)  this.lastHihatTime = now;

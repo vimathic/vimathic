@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
     branches: [main]
   # Allow manual runs from the Actions tab.
@@ -33,7 +33,7 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        # 126 tests validating math-collections.js against canonical references
+        # 149 tests: 131 validating math-collections.js against canonical references
         # (scipy.special, mpmath, NIST DLMF). See tests/math-validation.test.js.
         run: npm test
 
@@ -41,7 +41,13 @@ jobs:
     name: Playwright smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
+    # continue-on-error was removed here: it had been masking a real product
+    # regression (RESET ALL restored colour scheme 0 instead of 16) plus three
+    # tests that no longer matched the UI, so the suite was red and nobody saw
+    # it. All 8 pass again, and hosted runners have no GPU either, so the
+    # single-worker setting in playwright.config.js is what keeps them stable.
+    # Restore this line only as a deliberate, temporary decision — not as the
+    # default place for e2e to live.
     needs: test
 
     steps:
@@ -98,7 +104,8 @@ jobs:
         # The vimathic-docs Vite plugin also emits the static docs site,
         # sitemap, robots.txt, and llms.txt.
         #
-        # Full allowed dist/ contents (per DEPLOYMENT.md):
+        # Full allowed dist/ contents. DEPLOYMENT.md, which this list used to
+        # cite, was removed in 3a7b9db — the ALLOWED regex below is the spec:
         #   dist/index.html           ← main app, self-contained
         #   dist/second-screen.html   ← projector/2nd-monitor popup target
         #   dist/math-worker-*.js     ← Web Worker chunk(s)
@@ -125,7 +132,8 @@ jobs:
             echo "❌ Unexpected files in dist/:"
             echo "$UNEXPECTED"
             echo ""
-            echo "The single-file build guarantee is broken. See DEPLOYMENT.md."
+            echo "The single-file build guarantee is broken."
+            echo "Add the new file to the ALLOWED regex above only if it genuinely belongs in dist/."
             exit 1
           fi
           echo "✅ All dist/ root entries are on the whitelist."
@@ -151,8 +159,8 @@ jobs:
 
       - name: Verify index.html size is reasonable
         # Sanity check: if the build produces a 50 KB or 50 MB file,
-        # something went wrong. Documented target is ~900 KB; accept
-        # 300 KB to 5 MB to catch regressions without being too strict.
+        # something went wrong. Current build is ~1.1 MB; accept 300 KB to
+        # 5 MB to catch regressions without being too strict.
         run: |
           set -e
           SIZE=$(stat -c%s dist/index.html)

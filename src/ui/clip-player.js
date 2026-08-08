@@ -11,6 +11,19 @@
  * between presets. The duration is derived from the step length (40% of holdMs,
  * clamped to [200, 2500] ms) unless explicitly set via setCameraTransitionMs().
  *
+ * ── Who owns the camera ──────────────────────────────────────────────────────
+ * Two systems want to move the camera during a clip: the player (restoring each
+ * preset's saved viewpoint) and the user (AUTO-ROTATE / the Camera Programmer).
+ * The player owns it by default — PLAY always starts that way — but the user
+ * outranks it the moment they take manual control mid-clip. claimCamera() is
+ * how the UI reports that; from then on every step applies its preset's LOOK
+ * (shape, colour, formula, shader…) and leaves the camera alone, so a
+ * programmer script armed at step 3 survives steps 4, 5, 6… instead of being
+ * switched off by the next preset's `autoRot: false`.
+ *
+ * releaseCamera() hands ownership back (the user switched AUTO-ROTATE off or
+ * dragged the view), and so does the next play().
+ *
  * ── Backgrounded-tab behaviour ───────────────────────────────────────────────
  * Timing is driven by `setTimeout` against wall-clock (performance.now()),
  * NOT by requestAnimationFrame counts. This is intentional:
@@ -45,11 +58,17 @@ export class ClipPlayer {
     // null = auto-derive from holdMs; number = explicit ms (0 = instant snap, old behaviour)
     this._camTransitionMs = null;
 
+    // Manual camera override — see "Who owns the camera" above.
+    // false = the player applies each preset's camera block;
+    // true  = the user took over mid-clip and the camera is left untouched.
+    this.camOverride = false;
+
     this.cb = {
       onStep:  (_idx, _step, _holdMs) => {},
       onStop:  ()                     => {},
       onPlay:  ()                     => {},
       onTick:  (_remainMs, _totalMs)  => {},
+      onCamOverride: (_active)        => {},
     };
 
     // ── Catch-up on visibility change ─────────────────────────────────────
@@ -70,6 +89,31 @@ export class ClipPlayer {
    */
   setCameraTransitionMs(ms) {
     this._camTransitionMs = ms;
+  }
+
+  /**
+   * The user took manual control of the camera mid-clip — AUTO-ROTATE switched
+   * on, or a Camera Programmer script applied. Subsequent steps stop applying
+   * their preset's camera block.
+   *
+   * No-op while stopped: outside playback there is nothing to claim from, and
+   * arming the flag there would silently disarm the camera of the NEXT clip.
+   * play() resets it anyway; this keeps `camOverride` honest in between.
+   */
+  claimCamera() {
+    if (!this.playing || this.camOverride) return;
+    this.camOverride = true;
+    this.cb.onCamOverride(true);
+  }
+
+  /**
+   * Hand the camera back to the player — the user switched AUTO-ROTATE off or
+   * dragged the view. (stop()/play() clear the flag silently; see stop().)
+   */
+  releaseCamera() {
+    if (!this.camOverride) return;
+    this.camOverride = false;
+    this.cb.onCamOverride(false);
   }
 
   /**
@@ -100,6 +144,9 @@ export class ClipPlayer {
 
   play(startIdx = 0) {
     if (!this._steps.length) return;
+    // stop() also clears camOverride: a new clip always starts on the player's
+    // own camera logic, whatever the last one ended on — the user re-arms the
+    // programmer by hand afterwards if they want it.
     this.stop();
     this.playing = true;
     this._idx    = startIdx % this._steps.length;
@@ -109,6 +156,10 @@ export class ClipPlayer {
 
   stop() {
     this.playing = false;
+    // Camera ownership is per-clip. Cleared silently rather than through
+    // releaseCamera(): cb.onStop tears the status line down a few lines below,
+    // and announcing a handover to a player that just stopped reads as noise.
+    this.camOverride = false;
     clearTimeout(this._timerId);
     clearInterval(this._tickTimer);
     this._timerId = null;
@@ -132,7 +183,13 @@ export class ClipPlayer {
     const holdMs   = this._resolveHoldMs(step);
     const camMs    = this._resolveCamTransition(holdMs);
 
-    if (entry) this._ui.applyState(entry.state, { cameraTransitionMs: camMs });
+    // preserveCamera carries the ownership decision into applyState: with the
+    // user driving, the step is a look-only apply (no tween, no physics, no
+    // auto-rotate wish, no programmer swap).
+    if (entry) this._ui.applyState(entry.state, {
+      cameraTransitionMs: camMs,
+      preserveCamera:     this.camOverride,
+    });
 
     const morphMs     = this._ui.render.isMobile ? 800 : 1600;
     this._stepHoldMs  = holdMs;

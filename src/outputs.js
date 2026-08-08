@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+// FIX(#29): dropped the unused `import * as THREE from 'three'` — no symbol
+// from the namespace was referenced anywhere in this module.
 
 /**
  * src/output.js — Professional Video Output Module
@@ -270,7 +271,12 @@ export class OutputManager {
     this.spout         = new SpoutOutput(renderer);
     this.capabilities  = OUTPUT_CAPABILITIES;
 
-    // Transparent background state
+    // Transparent background state.
+    // NOTE(#29): dead as of today — nothing writes or reads this field. The
+    // live flag is RenderEngine.transparentBg (render.js), which modals.js
+    // toggles; this one was never wired up. Kept because alpha output belongs
+    // conceptually to the output layer (NDI/Spout carry an alpha channel),
+    // so a future transparent-output path would land here.
     this.transparentBg = false;
   }
 

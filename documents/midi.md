@@ -48,7 +48,7 @@ Every parameter that has a slider in the panel is mappable, plus a few that aren
 | Bass Sensitivity | 0 – 2.5 | How much bass moves the geometry |
 | Treble Sensitivity | 0 – 2.5 | How much treble brightens edges |
 | Bloom | 0 – 1.5 | Post-process bloom strength |
-| Color Scheme | 0 – 35 | Integer; quantized to 36 palettes |
+| Color Scheme | 0 – 43 | Integer; quantized to 44 palettes |
 | Auto-Rotate Speed | 0 – 0.002 | Slow orbit speed |
 
 CC values 0–127 are linearly mapped to the parameter range. For integer parameters (Color Scheme), the value is rounded to the nearest valid index.

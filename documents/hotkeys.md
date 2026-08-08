@@ -18,9 +18,9 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 | <kbd>R</kbd> | Randomize everything — shape, color, formula |
 | <kbd>F</kbd> | Random math formula (CPU) |
 | <kbd>D</kbd> | Next shape (sequential, looping through all 20 shapes) |
-| <kbd>T</kbd> | Next surface material — Matte / Glossy / Metallic / Glass / Velvet / Mirror (SURFACE mode only) |
+| <kbd>T</kbd> | Next surface material — Matte / Glossy / Metal / Mirror / Velvet / Glass (SURFACE mode only) |
 | <kbd>Q</kbd> | Random color scheme |
-| <kbd>E</kbd> | Next color scheme (cycles through all 36) |
+| <kbd>E</kbd> | Next color scheme (cycles through all 44) |
 | <kbd>W</kbd> | Flip camera 180° around its orbit |
 | <kbd>G</kbd> | Toggle ground grid |
 | <kbd>S</kbd> | Glitch punch — brief bloom + chromatic burst |
@@ -28,7 +28,7 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 
 The randomization keys (`R`, `Q`, `F`) use a **shuffle bag**: every color, shape, and formula will appear before any repeats. You will not see the same value twice in a row, ever — even at deck boundaries the next pick is guaranteed different from the last.
 
-> **Note on `R`:** `R` rotates colour and formula across their full pools (36 schemes, 192 formulas), but rotates **shape** across a curated subset of 9 of the 20 available — plane, sphere, torus, torus knot, cylinder, cone, icosahedron, pyramid, box. The other 11 shapes (disc, ring, circle, hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth, dodecahedron, star, solar) remain reachable through the Shape dropdown but won't appear via `R`.
+> **Note on `R`:** `R` rotates colour and formula across their full pools (44 schemes, 192 formulas), but rotates **shape** across a curated subset of 9 of the 20 available — plane, sphere, torus, torus knot, cylinder, cone, icosahedron, pyramid, box. The other 11 shapes (disc, ring, circle, hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth, dodecahedron, star, solar) remain reachable through the Shape dropdown but won't appear via `R`.
 
 ## Hold-and-drag shortcuts
 
@@ -49,7 +49,7 @@ These are the "performance" keys — they're chosen so you can hold one with the
 - `H` shows a small reference overlay in the bottom-left corner. Tap it once to show, again to hide.
 - `R` is by far the most useful key while exploring — it gives you a new combination in one keystroke.
 - `D` complements `R` — it walks through all 20 shapes in order, useful when you want to systematically compare looks instead of random surprise.
-- `T` cycles the surface material (Matte, Glossy, Metallic, Glass, Velvet, Mirror) — it only has an effect in SURFACE render mode; in Wireframe or Points it does nothing.
+- `T` cycles the surface material (Matte, Glossy, Metal, Mirror, Velvet, Glass) — it only has an effect in SURFACE render mode; in Wireframe or Points it does nothing.
 - Combine `R` and `Q`: `R` for a full reset of the look, `Q` to swap just the color afterward.
 - `S` (glitch) plus a beat-heavy moment of music produces a satisfying punch — use it as a manual accent during sets.
 - The randomization affects the dropdowns in the panel too, so whatever `R` lands on becomes the "current" selection if you want to keep iterating from there.

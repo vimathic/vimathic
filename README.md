@@ -17,10 +17,12 @@ Drop in a track — 192 mathematical formulas come to life on screen, driven by 
 
 ---
 
+<!-- Tier split is summed from the 12 per-collection headings in
+     MATHEMATICAL_ACCURACY.md — keep the two in step (122 + 42 + 28 = 192). -->
 > **164 of 192 formulas at verifiable accuracy. Open tests.**
 >
-> 120 closed-form expressions at IEEE 754 double precision (~10⁻¹⁴).
-> 44 validated approximations with bounded error ≤ 10⁻⁷.
+> 122 closed-form expressions at IEEE 754 double precision (~10⁻¹⁴).
+> 42 validated approximations with bounded error ≤ 10⁻⁷.
 > 28 visualisation-grade (qualitatively faithful, not numerically verified).
 > Cross-checked against mpmath, scipy.special, and NIST DLMF.
 > `node --test tests/math-validation.test.js`
@@ -83,18 +85,21 @@ axes — geometry, formula, colour scheme, render mode, deformation mode —
 multiply out to a state space of this size before any slider, audio input, or
 custom code enters the picture:
 
+<!-- Colour schemes track COLOR_SCHEME_COUNT in src/params.js (44). -->
 | Axis | Count |
 |---|---|
 | 3D shapes (Plane, Sphere, Torus, Icosahedron, and others) | 20 |
 | Formulas (192 CPU + 38 GPU shaders) | 230 |
-| Colour schemes | 36 |
+| Colour schemes | 44 |
 | Render modes (surface / wireframe / points) | 3 |
 | Deformation modes (surface / volume / collapse) | 3 |
 | Volume vector fields (when Volume mode is active) | 6 |
 
+<!-- (2 deform modes × 230 formulas + 6 volume fields) × 20 shapes ×
+     3 render modes × 44 schemes = 1 230 240. Recompute if any factor moves. -->
 Counting these combinations honestly — accounting for the fact that Volume
 mode replaces the formula slot with one of 6 vector fields, while Surface and
-Collapse use the chosen formula — gives **roughly one million distinct base
+Collapse use the chosen formula — gives **roughly 1.2 million distinct base
 states**.
 
 That's before:
@@ -121,10 +126,11 @@ Integral Transforms · Topology & Geometry · Cellular Automata · Quantum Mecha
 
 **Accuracy tiers** — see [MATHEMATICAL_ACCURACY.md](./MATHEMATICAL_ACCURACY.md) for full breakdown:
 
+<!-- Tier counts come from MATHEMATICAL_ACCURACY.md. -->
 | Tier | Count | What it means |
 |------|-------|---------------|
-| 🟢 A | 120 | IEEE 754 double precision — machine accuracy |
-| 🔵 B | 44  | Bounded approximation, error ≤ 10⁻³ to 10⁻⁷ |
+| 🟢 A | 122 | IEEE 754 double precision — machine accuracy |
+| 🔵 B | 42  | Bounded approximation, error ≤ 10⁻³ to 10⁻⁷ |
 | 🟡 C | 28  | Visualization-grade — qualitatively faithful, not numerically exact |
 
 This is not "math-flavoured visuals". These are canonical implementations —
@@ -135,8 +141,8 @@ Gray-Scott reaction-diffusion as a real PDE on a 64×64 grid.
 Ramanujan modular forms, Mandelbrot, wave and heat equations, Lorenz attractor, Schrödinger —
 running in real time on the GPU with audio-reactive uniforms.
 
-### 36 Colour Schemes
-Cinematic, Synthwave, Scientific, Premium, Monochrome, Trending, and a 12-palette "New" collection (cyberpunkGold, arcticFire, bloodMoon, cosmicDust, toxicWaste, cherryBlossom, midnightChrome, solarFlare, deepSpace, acidRain, volcanic, bioluminescence).
+### 44 Colour Schemes
+Cinematic, Synthwave, Scientific, Premium, Monochrome, Trending, a 12-palette "New" collection (cyberpunkGold, arcticFire, bloodMoon, cosmicDust, toxicWaste, cherryBlossom, midnightChrome, solarFlare, deepSpace, acidRain, volcanic, bioluminescence), and an 8-palette "Dark" collection (charcoalSmoke, slateIndigo, mossStone, petrol, emberBlack, burgundyVelvet, midnightForest, coalPlum).
 
 ### Deformation Modes
 - **Surface** — classic height-field displacement along Y axis
@@ -184,7 +190,7 @@ Share it as a file attachment. Open from USB. Works offline.
 src/
   main.js              — bootstrap, event loop, hotkeys
   render.js            — Three.js renderer, geometry, animation, post-processing
-  shaders.js           — GLSL shaders (36 colour schemes, 38 GPU formulas)
+  shaders.js           — GLSL shaders (44 colour schemes, 38 GPU formulas)
   math-collections.js  — 192 CPU formula implementations + 6 volume vector fields
   math-visualizer.js   — CPU math engine (worker/sync hybrid)
   math-worker.js       — Web Worker for off-main-thread evaluation

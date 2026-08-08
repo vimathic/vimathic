@@ -85,6 +85,19 @@ The **camera transition** dropdown controls how the camera moves between presets
 
 Long, smooth transitions feel cinematic. Short or instant transitions feel rhythmic.
 
+### Taking the camera back mid-clip
+
+Two things want to move the camera during a clip: the player, restoring each preset's saved viewpoint, and you. **You win.**
+
+Press **▶ PLAY** and the player drives — every step applies its preset's camera along with everything else. The moment you switch **AUTO-ROTATE** on, or click **APPLY** in the Camera Programmer, the camera becomes yours: the clip keeps cycling shapes, colours, formulas and shaders, but the viewpoint stops following it. The status line shows `🎥 MANUAL` while that's the case.
+
+This is what lets you arm a camera script *during* a set. Before, the script died at the end of the current preset — the next one carried `auto-rotate: off` and switched it back.
+
+Handing the camera back to the player:
+
+- switch **AUTO-ROTATE** off, or drag the view (dragging switches it off anyway);
+- or press **▶ PLAY** again — a new clip always starts on the player's own camera logic.
+
 ### Backgrounded tabs
 
 If you switch to another browser tab while a clip is playing, browsers throttle JavaScript timers heavily. VIMATHIC handles this: when you return to the tab, the Clip Player **recomputes which preset should be active by wall-clock** and jumps to it. You won't see "we should be on preset 5 but we're still on preset 2" — the player catches up automatically.

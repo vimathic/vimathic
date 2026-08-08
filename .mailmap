@@ -1,0 +1,8 @@
+# Canonical author identities.
+#
+# The same person authored under two spellings ("S.Melentyev" and
+# "S. Melentyev"), which split every `git shortlog -sn` / contributor
+# count in two. Map both to one canonical form.
+#
+# Format: <canonical name> <canonical email> <commit name> <commit email>
+S.Melentyev <user_akk@proton.me> S. Melentyev <user_akk@proton.me>

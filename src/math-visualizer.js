@@ -52,8 +52,12 @@ import {
 // Returns the Worker instance, or null if construction fails. A failure here
 // is recoverable (sync fallback covers the same surface), but we log it
 // clearly: a silent fallback would only surface as a mysterious FPS drop on
-// heavy formulas. The window flag is read by deploy-verification scripts to
-// confirm the worker file shipped alongside index.html.
+// heavy formulas.
+//
+// FIX(#25): window._vimathic_worker_active has two real readers — the e2e
+// smoke test and an operator debugging a deploy by hand (documents/
+// troubleshooting.md). It is a liveness claim, so every path that disarms the
+// channel must clear it — see MathVisualizer._disableWorker.
 function createMathWorker() {
   try {
     const w = new Worker(new URL('./math-worker.js', import.meta.url), { type: 'module' });
@@ -69,6 +73,22 @@ function createMathWorker() {
     return null;
   }
 }
+
+// FIX(#4): budget for an unanswered tick before the busy gate is released and
+// the frame is computed synchronously. Far above the single-digit milliseconds
+// the heaviest formulas (Gray-Scott, FitzHugh-Nagumo) cost even on mobile, so
+// a merely slow worker is never disowned.
+const WORKER_STALL_MS = 2000;
+
+// FIX(#4, r2): the first reply also pays for loading the worker's module graph
+// — under `npm run dev` that means math-collections.js through Vite's transform
+// pipeline, measured at 3.5s. Sharing WORKER_STALL_MS made every dev cold start
+// print a channel-is-dead warning about a worker that then ran fine all session.
+const WORKER_COLD_START_MS = 15000;
+
+// FIX(#4, r3): how many post-startup worker.onerror hits the channel survives
+// before a "one-off throw" stops being credible and we fall back for good.
+const WORKER_ERROR_TOLERANCE = 3;
 
 // Cubic ease-in-out for the formula-transition blend curve.
 // Smoother than a linear ramp; cheaper than a spring.
@@ -86,9 +106,20 @@ export class MathVisualizer {
     this._formulaKey = null;
     this._gridSize   = null;
 
-    // Frame throttle: mobile evaluates every 2nd frame. The formulas
-    // themselves are smooth enough that 30Hz on mobile is indistinguishable
-    // from 60Hz to the eye while halving CPU load.
+    // Tick counter, plus the mobile gate for MAIN-THREAD math: halving the
+    // evaluation rate there is invisible to the eye and buys back CPU.
+    //
+    // FIX(#11): every tick path must advance _frame — a surface-only session
+    // left it at 0, where `0 % 2 === 0` waves every frame through.
+    //
+    // FIX(#11, r2): _throttle gates only main-thread paths (Volume, Collapse,
+    // Surface sync fallback). main.js already delivers tick() every 2nd rAF on
+    // mobile, so gating the worker-backed path here stacked a second halving
+    // and landed all 192 CPU formulas at ~15Hz; worker ticks spend no
+    // main-thread time and have nothing to buy back.
+    //
+    // Rates on a 60Hz display: worker Surface 60Hz desktop / 30Hz mobile;
+    // main-thread paths 60Hz / 15Hz.
     this._frame      = 0;
     this._throttle   = render.isMobile ? 2 : 1;
 
@@ -101,10 +132,20 @@ export class MathVisualizer {
     this._workerReady = !!this._worker;
     this._pendingHF   = null;
     this._workerBusy  = false;
+    // FIX(#4): last posted tick and a one-shot log guard — both feed the
+    // stall watchdog in _tickSurface.
+    this._workerPostTime  = 0;
+    this._workerStallWarn = false;
+    // FIX(#4, r2): flips on the first reply of any kind; until then the
+    // watchdog runs on WORKER_COLD_START_MS.
+    this._workerAnswered  = false;
+    // FIX(#4, r3): post-startup onerror hits so far — see onerror below.
+    this._workerErrors    = 0;
 
     if (this._worker) {
       this._worker.onmessage = ({ data }) => {
         this._workerBusy = false;
+        this._workerAnswered = true;   // FIX(#4, r2): channel proven alive
         if (data.type === 'result') {
           // Discard if this result is from a superseded generation —
           // formula or mode changed while the worker was computing, so
@@ -131,9 +172,42 @@ export class MathVisualizer {
           this._hfBuffer.set(data.hf);
           this._pendingHF = this._hfBuffer;
         } else if (data.type === 'error') {
-          console.warn('[MathVisualizer worker]', data.message);
-          this._workerReady = false;
+          // FIX(#4, r3): go through _disableWorker. The worker sends this only
+          // when it has nothing left to serve (it disarms the formula on every
+          // path that reports one), so the channel is done — and clearing
+          // _workerReady on its own left _vimathic_worker_active still claiming
+          // a live worker, the exact lie the e2e guard and the troubleshooting
+          // doc exist to catch.
+          this._disableWorker(`worker reported: ${data.message}`);
         }
+      };
+
+      // FIX(#4): a module Worker that fails to LOAD does not throw from
+      // `new Worker()` — a 404, a syntax error or a broken import surface
+      // asynchronously, here. Unhandled, the window flag keeps claiming a live
+      // channel while _workerBusy stays latched, so every later frame quietly
+      // takes the sync branch and the failure is never logged.
+      //
+      // FIX(#4, r3): policy — onerror before the first reply means the module
+      // never loaded and the channel really is dead, while onerror after it is
+      // one bad frame worth surviving (up to WORKER_ERROR_TOLERANCE of them),
+      // because disowning the worker is permanent and moves all 192 formulas
+      // onto the main thread, throttled, for the rest of the session. Formula
+      // exceptions never arrive here at all: math-worker.js reports them as
+      // error messages, so a throw reaching this handler is worker-level.
+      this._worker.onerror = (e) => {
+        const reason = (e && e.message) ? e.message : 'worker failed to load or threw';
+        if (!this._workerAnswered || ++this._workerErrors > WORKER_ERROR_TOLERANCE) {
+          this._disableWorker(reason);
+          return;
+        }
+        // Release the gate so the next tick can post again.
+        this._workerBusy = false;
+        console.warn('[MathVisualizer] Worker threw — keeping the channel:', reason);
+      };
+      // A reply that cannot be deserialised is unrecoverable for this instance.
+      this._worker.onmessageerror = () => {
+        this._disableWorker('worker reply could not be deserialised');
       };
     }
 
@@ -256,11 +330,24 @@ export class MathVisualizer {
     if (this.active && this._gridSize) {
       const pos   = this.render.gpuMesh.geometry.attributes.position;
       const count = pos.count;
-      if (!this._prevHF || this._prevHF.length !== count) {
-        this._prevHF   = new Float32Array(count);
-        this._blendBuf = new Float32Array(count);
+      // FIX(#5c): size the snapshot as gridSize² — what _tickSurface asks for
+      // and generateSurfaceFromFormula returns — not pos.count. On every shape
+      // whose vertex count is not a perfect square (torus, torusknot, cone,
+      // cylinder, box, icosahedron, star) the lengths disagreed,
+      // _applyHFWithBlend gave up, and formula transitions never animated.
+      const gs    = Math.round(Math.sqrt(count));
+      const hfLen = gs * gs;
+      if (!this._prevHF || this._prevHF.length !== hfLen) {
+        this._prevHF   = new Float32Array(hfLen);
+        this._blendBuf = new Float32Array(hfLen);
       }
-      for (let i = 0; i < count; i++) this._prevHF[i] = pos.getY(i);
+      // applyHeightField maps hf[i] → vertex i, so the "from" state is read
+      // index-wise as well. When rounding lands hfLen above count, the tail
+      // has no vertex behind it and stays zeroed — those slots are never
+      // written back to geometry anyway.
+      const n = Math.min(count, hfLen);
+      for (let i = 0; i < n; i++)     this._prevHF[i] = pos.getY(i);
+      for (let i = n; i < hfLen; i++) this._prevHF[i] = 0;
       this._blendActive = true;
       this._blendStart  = performance.now();
     }
@@ -492,9 +579,15 @@ export class MathVisualizer {
   }
 
   /**
-   * Per-frame entry point. Called unconditionally by main.js; a no-op
-   * when inactive. Handles geometry-resize invalidation, then dispatches
-   * to the mode-specific tick.
+   * Per-frame entry point. Called from main.js's animate loop; a no-op when
+   * inactive. Handles geometry-resize invalidation, then dispatches to the
+   * mode-specific tick.
+   *
+   * FIX(#25): the call is NOT unconditional — animate() gates it on the
+   * render-rate skip (every 2nd rAF on mobile) and on isFrozen. The tick rate
+   * is therefore already halved on mobile before _throttle is consulted, which
+   * is why _throttle guards only main-thread math, and no tick arrives at all
+   * while the output is frozen.
    */
   tick(time) {
     if (!this.active) return;
@@ -643,7 +736,16 @@ export class MathVisualizer {
 
   /** Surface tick: Y-only height field, worker-preferred. */
   _tickSurface(time) {
-    if (this._frame % this._throttle !== 0) return;
+    // FIX(#11): advance the shared frame counter here too — it was moved only
+    // by _tickCollapse / _tickVolume, so a surface-only session left it at 0.
+    //
+    // FIX(#11, r2): the counter advances, but the gate does not sit here. On
+    // mobile tick() already arrives at half rate, so a gate at the top halved
+    // two more things: the worker-backed evaluation rate (~15Hz against the
+    // ~30Hz the constructor promises) and the _pendingHF application below,
+    // which stepped the geometry at half the rate it was drawn. The gate now
+    // guards only the sync fallback at the bottom of this method.
+    this._frame++;
 
     // Apply whatever the worker delivered last tick (1-frame latency).
     // The pending field is consumed before we post a new request so the
@@ -662,10 +764,31 @@ export class MathVisualizer {
     };
     const t = time + beatInt * 0.3;
 
+    // FIX(#4): stall watchdog. An unanswered post latches _workerBusy, and the
+    // worker path is then never retried — later frames fall through to the sync
+    // branch silently. Releasing the gate lets a merely slow channel recover;
+    // we skip the post for this one frame so the sync branch still produces
+    // geometry, and never terminate the worker, so a late reply is still
+    // consumed by onmessage.
+    let stalled = false;
+    const budget = this._workerAnswered ? WORKER_STALL_MS : WORKER_COLD_START_MS;
+    if (this._workerBusy && performance.now() - this._workerPostTime > budget) {
+      this._workerBusy = false;
+      stalled = true;
+      if (!this._workerStallWarn) {
+        this._workerStallWarn = true;
+        console.warn(
+          `[MathVisualizer] Worker tick unanswered for ${budget}ms — ` +
+          'computing this frame synchronously and retrying the worker.'
+        );
+      }
+    }
+
     // Worker path: post next tick, return immediately. The result lands
     // in onmessage and is picked up at the top of the next tick.
-    if (this._workerReady && this._worker && !this._workerBusy) {
+    if (this._workerReady && this._worker && !this._workerBusy && !stalled) {
       this._workerBusy = true;
+      this._workerPostTime = performance.now();   // FIX(#4): watchdog baseline
       this._worker.postMessage({
         type: 'tick',
         time: t,
@@ -679,6 +802,10 @@ export class MathVisualizer {
 
     // Sync fallback: compute on main thread and apply immediately.
     if (!this._formulaFn) return;
+    // FIX(#11, r2): the mobile gate lives here — the one Surface path that
+    // spends main-thread time, so the one with CPU to buy back. A stalled frame
+    // is exempt: the watchdog skipped the post so this branch covers it.
+    if (!stalled && this._frame % this._throttle !== 0) return;
     const hf = generateSurfaceFromFormula(this._formulaFn, audioParams, this._gridSize, 3.5, t);
     this._applyHFWithBlend(hf);
   }
@@ -686,6 +813,30 @@ export class MathVisualizer {
   /** Tear down the worker. Called from main.js on beforeunload. */
   dispose() {
     if (this._worker) { this._worker.terminate(); this._worker = null; }
+  }
+
+  // ── Private — worker channel ─────────────────────────────────────────────
+
+  /**
+   * FIX(#4): disarm the worker channel after an unrecoverable failure and fall
+   * back to synchronous evaluation for the rest of the session. Clears the busy
+   * gate (nothing will answer the in-flight tick) and the pending buffer (it
+   * belongs to a dead channel), and clears _vimathic_worker_active — leaving
+   * that flag true is exactly the lie the e2e guard and the troubleshooting doc
+   * exist to catch. Idempotent; warns once, in the same shape as
+   * createMathWorker(), so both failure modes read identically in the console.
+   */
+  _disableWorker(reason) {
+    if (!this._workerReady) return;
+    this._workerReady = false;
+    this._workerBusy  = false;
+    this._pendingHF   = null;
+    if (typeof window !== 'undefined') window._vimathic_worker_active = false;
+    console.warn(
+      '[MathVisualizer] Worker failed — math will run synchronously on main thread.\n' +
+      'Cause:', reason, '\n' +
+      'Hint: math-worker-*.js must be at the same path as index.html on the server.'
+    );
   }
 
   // ── Private — volume / collapse helpers ──────────────────────────────────
@@ -858,10 +1009,8 @@ export class MathVisualizer {
     const rawT    = Math.min(1, elapsed / this._blendDuration);
     const blendT  = easeInOutCubic(rawT);
 
-    // _prevHF can mismatch hf in size if a geometry rebuild slipped
-    // between the snapshot and the first new tick. Skip the blend rather
-    // than try to interpolate between incompatible shapes.
-    if (!this._prevHF || this._prevHF.length !== hf.length) {
+    // Nothing to blend from — first field after activation.
+    if (!this._prevHF) {
       this._blendActive = false;
       this._applyHF(hf);
       return;
@@ -871,10 +1020,22 @@ export class MathVisualizer {
       this._blendBuf = new Float32Array(hf.length);
     }
 
+    // FIX(#5c): blend over the overlap instead of abandoning the transition
+    // on any length mismatch. The snapshot in setFormula and the field the
+    // worker returns are sized the same way now, so the overlap is normally
+    // the whole field; the min() only matters if a geometry rebuild slipped
+    // between the snapshot and this tick, and even then the shared prefix is
+    // still a legitimate "from" state. Entries past the overlap have no
+    // previous value, so they pass through unblended — identical to what the
+    // no-blend path would have written for them.
     const buf  = this._blendBuf;
     const prev = this._prevHF;
-    for (let i = 0, n = hf.length; i < n; i++) {
+    const n    = Math.min(prev.length, hf.length);
+    for (let i = 0; i < n; i++) {
       buf[i] = prev[i] + (hf[i] - prev[i]) * blendT;
+    }
+    for (let i = n, len = hf.length; i < len; i++) {
+      buf[i] = hf[i];
     }
 
     this._applyHF(buf);

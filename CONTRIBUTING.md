@@ -10,17 +10,20 @@ This project follows the [Contributor Covenant 2.1](./CODE_OF_CONDUCT.md). By pa
 
 ## Before you start: scope freeze (Phase 0–2)
 
-VIMATHIC is at **v1.0-beta** and currently in a stability period. Until roughly Week 10 post-launch, the following are **frozen** and PRs in these areas will be closed without merge:
+<!-- The freeze ends by an edit to this section, never by a date — a
+     dated window expires unnoticed and then reads as if it were still live. -->
+<!-- Dependency list tracks `dependencies` in package.json. -->
+VIMATHIC is at **v1.0-beta** and currently in a stability period. This freeze is lifted by an edit to *this section* — not by a date passing — so if you are reading this list, it is still in effect. The following are **frozen** and PRs in these areas will be closed without merge:
 
 - New mathematical formulas (192 is the curated count)
 - New GPU shaders (38 is intentional)
-- New colour schemes (36 covers the design space)
+- New colour schemes (44 covers the design space)
 - New base shapes (20 + deformation modes cover geometry)
 - New keyboard shortcuts (hotkey surface is full)
 - Major architecture refactors
-- New external dependencies (currently 3: `three`, `gif.js`, `micromark`)
+- New external dependencies (currently 4: `three`, `gif.js`, `micromark`, `micromark-extension-gfm-table`)
 
-This is not "we don't want your ideas" — it's "the next 10 weeks are for catching regressions, not adding surface area." If your idea fits one of these categories, **open an issue** with the `phase-3-consideration` label and it'll be reviewed during the next direction-setting cycle.
+This is not "we don't want your ideas" — it's "this phase is for catching regressions, not adding surface area." The freeze ends when 1.0 leaves beta and this section is rewritten to say so; until then, assume it holds. If your idea fits one of these categories, **open an issue** with the `phase-3-consideration` label and it'll be reviewed during the next direction-setting cycle.
 
 ## What's accepted right now
 
@@ -57,7 +60,7 @@ Use the [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.md). I
 4. **Run the test suite locally before pushing:**
 
 ```bash
-   npm test           # math validation (126 tests)
+   npm test           # math validation + preset migrations (149 tests)
    npm run test:e2e   # Playwright smoke tests
    npm run build      # single-file build check
 ```
@@ -67,6 +70,8 @@ Use the [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.md). I
 
 ### Contributing a MIDI controller mapping
 
+<!-- Step 5 below targets `main` — there is no `dev` branch and CI's
+     pull_request trigger only watches `main`, so a `dev` PR runs no checks. -->
 If your controller sends standard CC and you've worked out a useful default mapping, please contribute it.
 
 1. Create `documents/midi-<vendor>-<model>.md` (e.g. `midi-akai-mpk-mini.md`)
@@ -83,7 +88,7 @@ If your controller sends standard CC and you've worked out a useful default mapp
 
 3. List the mapping as a table: CC number → parameter → recommended knob/pad on the controller
 4. One paragraph at the top describing why this mapping (e.g. "Knob row 1 lives nearest the master fader, so amplitude goes there")
-5. Open PR against `dev`
+5. Open PR against `main`
 
 ## Licensing of contributions
 

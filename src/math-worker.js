@@ -15,7 +15,7 @@
 //         Resolve a formula from MATH_COLLECTIONS and arm it for future
 //         ticks. Unknown ids respond with an error message and clear the
 //         active formula — the main thread treats that as "fall back to
-//         sync mode" via the worker.onerror path.
+//         sync mode" in its onmessage handler.
 //
 //   IN  { type: 'tick', time, gridSize, extent, audioParams }
 //         Evaluate the active formula over a gridSize×gridSize grid spanning
@@ -28,7 +28,10 @@
 //         wait for an ack and re-arms with setFormula when needed.
 //
 //   OUT { type: 'result', hf: Float32Array }   — buffer transferred, not copied
-//   OUT { type: 'error',  message: string }    — diagnostic; never thrown
+//   OUT { type: 'error',  message: string }    — diagnostic; never thrown.
+//         FIX(#4): every failure this module can name travels here. Nothing
+//         escapes to worker.onerror, which carries no formula name and which
+//         MathVisualizer._disableWorker reads as a dead Worker instance.
 
 import { getFormula, generateSurfaceFromFormula } from './math-collections.js';
 
@@ -37,46 +40,59 @@ import { getFormula, generateSurfaceFromFormula } from './math-collections.js';
 let formulaFn   = null;
 let formulaKey  = null;
 
+// FIX(#4, r3): the whole handler runs under try/catch — that is what makes the
+// "never thrown" promise above true. Any of the 192 catalogue formulas can
+// throw on a hostile audio param, and an exception that reaches worker.onerror
+// arrives on the main thread indistinguishable from "this Worker never loaded",
+// costing the off-thread channel for the rest of the session. The catch also
+// disarms: a formula that threw once throws again on every following tick.
 self.onmessage = ({ data }) => {
-  switch (data.type) {
+  try {
+    switch (data.type) {
 
-    case 'setFormula': {
-      const f = getFormula(data.collectionId, data.formulaKey);
-      if (!f) {
-        // Unknown id: report and disarm. Leaving a stale formulaFn armed
-        // would silently keep producing output the caller no longer wants.
-        self.postMessage({ type: 'error', message: `Formula not found: ${data.collectionId}/${data.formulaKey}` });
-        formulaFn = null;
-        return;
+      case 'setFormula': {
+        const f = getFormula(data.collectionId, data.formulaKey);
+        if (!f) {
+          // Unknown id: report and disarm. Leaving a stale formulaFn armed
+          // would silently keep producing output the caller no longer wants.
+          self.postMessage({ type: 'error', message: `Formula not found: ${data.collectionId}/${data.formulaKey}` });
+          formulaFn = null;
+          return;
+        }
+        formulaFn  = f.f;
+        formulaKey = data.formulaKey;
+        break;
       }
-      formulaFn  = f.f;
-      formulaKey = data.formulaKey;
-      break;
-    }
 
-    case 'tick': {
-      if (!formulaFn) return;
-      const { time, gridSize, extent = 3.5, audioParams, gen } = data;
-      const hf = generateSurfaceFromFormula(formulaFn, audioParams, gridSize, extent, time);
-      // Echo the generation token back unchanged. The main thread uses it
-      // to discard results that were superseded by a setFormula/setMode
-      // call that happened while this tick was being computed.
-      // Second argument is the transfer list — moves ownership of the
-      // ArrayBuffer to the main thread instead of structured-cloning it.
-      self.postMessage({ type: 'result', hf, gen }, [hf.buffer]);
-      break;
-    }
+      case 'tick': {
+        if (!formulaFn) return;
+        const { time, gridSize, extent = 3.5, audioParams, gen } = data;
+        const hf = generateSurfaceFromFormula(formulaFn, audioParams, gridSize, extent, time);
+        // Echo the generation token back unchanged. The main thread uses it
+        // to discard results that were superseded by a setFormula/setMode
+        // call that happened while this tick was being computed.
+        // Second argument is the transfer list — moves ownership of the
+        // ArrayBuffer to the main thread instead of structured-cloning it.
+        self.postMessage({ type: 'result', hf, gen }, [hf.buffer]);
+        break;
+      }
 
-    case 'deactivate': {
-      formulaFn  = null;
-      formulaKey = null;
-      break;
-    }
+      case 'deactivate': {
+        formulaFn  = null;
+        formulaKey = null;
+        break;
+      }
 
-    default:
-      // Defensive: protocol-level errors should be loud, not silent. If a
-      // future caller sends a new message type, this surface makes the
-      // mismatch obvious instead of producing zero frames.
-      self.postMessage({ type: 'error', message: `Unknown message type: ${data.type}` });
+      default:
+        // Defensive: protocol-level errors should be loud, not silent. If a
+        // future caller sends a new message type, this surface makes the
+        // mismatch obvious instead of producing zero frames.
+        self.postMessage({ type: 'error', message: `Unknown message type: ${data.type}` });
+    }
+  } catch (e) {
+    const where = `${(data && data.type) || 'message'}${formulaKey ? ` (${formulaKey})` : ''}`;
+    formulaFn  = null;
+    formulaKey = null;
+    self.postMessage({ type: 'error', message: `${where} threw: ${(e && e.message) || e}` });
   }
 };
