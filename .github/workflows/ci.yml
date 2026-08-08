@@ -40,6 +40,10 @@ jobs:
   e2e:
     name: Playwright smoke tests
     runs-on: ubuntu-latest
+    # This is the JOB budget. The PER-TEST budget is in playwright.config.js and
+    # is a different number for CI — the two are sized against each other, so
+    # move them together.
+    #
     # 30, not 15: at one worker on a GPU-less runner the suite needs ~3-4 min
     # of wall clock locally and every failure costs two retries on top, and the
     # 15-minute budget this job was given ran out mid-run — the job was killed

@@ -133,12 +133,30 @@ test.describe('Clip player — camera ownership', () => {
   test('switching AUTO-ROTATE off hands the camera back to the player', async ({ page }) => {
     // cam-b turns auto-rotate ON when it is applied — that is the observable:
     // once the player owns the camera again, the button flips without a click.
-    await boot(page, [preset('cam-a', 13, false), preset('cam-b', 5, true)]);
+    //
+    // ── Why this clip holds each step for 8s instead of the usual 1.2s ────────
+    // The click below is a CLAIM only if it turns auto-rotate ON, and cam-b
+    // switches it on by itself. So if a step boundary lands between reading the
+    // button and the click arriving, the button is already ON and the click
+    // RELEASES instead — nothing reports MANUAL and the test fails on a race it
+    // never meant to test. On a GPU-less runner a single click takes seconds,
+    // which is the same order as a 1.2s hold, so the boundary lands inside the
+    // click. It failed first-attempt on both runs there and passed on retry.
+    //
+    // Reproduced deterministically here by crossing a boundary before the click
+    // (`waitForTimeout(2900)` in front of it at the default hold): identical
+    // failure, same `Received string: "[2/2] cam-b — 1.2s"`. Two fixes were
+    // tried and measured first — asserting the pre-state, then riding to the
+    // start of a fresh step — and neither survives a click that outlasts the
+    // step. The step has to be longer than a click, so it is.
+    const HOLD = 8000;
+    await boot(page, [preset('cam-a', 13, false, HOLD), preset('cam-b', 5, true, HOLD)]);
     await setCamMode(page, '0');
 
     await page.locator('#btn-clip-play').click();
     await expect(clipStatus(page)).toContainText('[1/2]');
 
+    await expect(arBtn(page)).toHaveText(/AUTO-ROTATE: OFF/);
     await arBtn(page).click();                       // claim
     await expect(clipStatus(page)).toContainText('MANUAL');
 
@@ -147,7 +165,7 @@ test.describe('Clip player — camera ownership', () => {
     await expect(clipStatus(page)).not.toContainText('MANUAL');
 
     // Within two steps cam-b comes round and the player turns rotation on.
-    await expect(arBtn(page)).toHaveText(/AUTO-ROTATE: ON/, { timeout: 3 * STEP_MS });
+    await expect(arBtn(page)).toHaveText(/AUTO-ROTATE: ON/, { timeout: 3 * stepMs(HOLD) });
 
     await page.locator('#btn-clip-stop').click();
   });
