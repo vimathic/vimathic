@@ -16,7 +16,7 @@ export default defineConfig({
   // was in fact running fine. The suite takes ~1.5 min serialised, well inside
   // the job's 15-minute budget.
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? 'github' : 'list',
+  reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',

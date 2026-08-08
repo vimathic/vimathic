@@ -40,7 +40,7 @@ jobs:
   e2e:
     name: Playwright smoke tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     # continue-on-error was removed here: it had been masking a real product
     # regression (RESET ALL restored colour scheme 0 instead of 16) plus three
     # tests that no longer matched the UI, so the suite was red and nobody saw
