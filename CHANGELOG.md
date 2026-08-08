@@ -46,6 +46,58 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Fixed
 
+- **Hénon Map no longer tears the mesh.** Its divergence guard tested the
+  double, but the height field is Float32 — a diverging orbit reached ~1e38 and
+  became ±Infinity on the way into the vertex buffer, so every triangle touching
+  such a vertex was dropped. Reachable at plain boot defaults, with nothing
+  playing. The orbit now escapes at |x| > 10, the same bound Tinkerbell already
+  used, which leaves the canonical attractor untouched.
+- **"Curl of Vector Field" draws something.** The central-difference stencil was
+  correct but was applied to a gradient field, and the curl of a gradient is
+  identically zero: the formula returned ~1e-14 everywhere and rendered a flat,
+  single-colour plate. The field is now rotational.
+- **A preset saved on a GPU shader comes back as that shader.** Switching from
+  DEFORM: VOLUME to a GPU shader leaves the visualizer's mode field untouched,
+  so the snapshot carried `deformMode: volume` next to the shader and restoring
+  it re-armed the CPU deformation — which sets `uMathMode = 1` and makes the GPU
+  displacement no-op. Also visible on a plain page reload, which restores the
+  same snapshot.
+- **A preset with no custom shader can now clear a live one.** The apply path
+  only handled `hasCustom: true`, so one shader-carrying step in a clip locked
+  its program in for the whole set and no preset could get the built-in look
+  back.
+- **A custom shader survives the POINTS mode.** The points proxy is rebuilt on
+  every entry into PTS and was always built from the built-in program, so an
+  applied shader silently vanished there and reappeared in SURF; shader-editor
+  RESET had the mirror bug and reported success while the points kept the old
+  program. Both materials now go through one owner, and editor vertex shaders
+  write `gl_PointSize`.
+- **A camera tween interrupted by a second one no longer costs you damping.**
+  The tween borrows OrbitControls damping and returned it on completion only, so
+  clicking a second preset within the transition left the orbit camera snapping
+  1:1 for the rest of the session.
+- **The Camera Programmer playhead stops when the track stops.** It read the
+  audio context clock without checking playback state, so with the transport at
+  0:00 it kept crawling and every keyframe added from a stopped track landed at
+  a time that depended on how long the user spent typing.
+- **Clip camera mode "Snap (instant, old)" keeps each preset's camera script.**
+  The instant path fires its post-tween queue synchronously, and the queue was
+  drained before the camera-programmer block had pushed the script into it.
+- **Switching ♩ BARS → ⏱ SEC mid-clip keeps the hold.** The bars branch built
+  its steps with a 0 ms sentinel, so a live switch to seconds strobed through
+  presets at morph speed while the Hold(s) box still read 5.
+- **A MIDI encoder mapped to "Color Scheme" stays inside the palette.** Relative
+  mode had a lower clamp but no ceiling, so past scheme 43 the picture froze and
+  the colour dropdown blanked. Enumerated params now wrap; continuous params keep
+  their deliberate "extended values stay extended" behaviour.
+- **Exported GIFs play for as long as you asked.** The per-frame delay is stored
+  in centiseconds, and capturing at an unrounded period left a 10 s export
+  playing 10.50 s at the default 15 fps and 9.00 s at 30 fps — and walked a
+  beat-synced loop out of its bar. The capture period is now quantised to what
+  the format can express, rounded so the rate never exceeds the one you picked:
+  a 24 fps export records at 20 and a 30 fps export at 25, and the file plays
+  back at exactly the rate it was captured at. The reported fps in the finished
+  file's metadata is the real one.
 - **Camera control taken by hand during a clip now outranks the presets.**
   Switching AUTO-ROTATE on — or applying a Camera Programmer script — while the
   Clip Player was cycling used to last exactly one hold time: the next preset

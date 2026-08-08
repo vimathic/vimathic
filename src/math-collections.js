@@ -521,6 +521,13 @@ const FRACTALS_AND_CHAOS = {
         for (let i=0; i<20; i++) {
           const nx=1-a*px*px+py; py=b*px; px=nx;
           if (!isFinite(px)||!isFinite(py)) return 0;
+          // Escape before the doubles overflow, not after. The canonical
+          // attractor lives inside |x|<=1.3, so anything past 10 is a diverging
+          // orbit: at 20 iterations it reaches ~1e38, and testing isFinite on
+          // the double lets those through — the Float32 height field then
+          // stores +-Infinity and the rasteriser drops every triangle touching
+          // such a vertex. Same escape tinkerbell already carries.
+          if (Math.abs(px) > 10 || Math.abs(py) > 10) return 0;
         }
         return py * 0.3 * amp;
       }
@@ -1058,9 +1065,16 @@ const LINEAR_ALGEBRA = {
       formula: '∇×F = (∂Fz/∂x − ∂Fx/∂z)ŷ',
       f(x, z, t, {amp=1, freq=1}) {
         const h=0.01, f2=freq;
-        const dFz_dx=(Math.cos((x+h)*f2)*Math.sin(z*f2)-Math.cos((x-h)*f2)*Math.sin(z*f2))/(2*h);
-        const dFx_dz=(Math.sin(x*f2)*Math.cos((z+h)*f2)-Math.sin(x*f2)*Math.cos((z-h)*f2))/(2*h);
-        return (dFz_dx-dFx_dz) * amp * 0.25;
+        // F must be rotational, or there is nothing to see: the previous field
+        // was F = (sin(x·f)·cos(z·f), cos(x·f)·sin(z·f)), a gradient field, and
+        // the curl of a gradient is identically zero — the stencil below was
+        // correct and returned 1e-14 everywhere, i.e. a dead-flat plate.
+        // F = (Fx, Fz) = (−sin(z·f), sin(x·f)) has curl (cos(x·f)+cos(z·f))·f.
+        // Dividing by f keeps a derivative-valued formula from scaling with the
+        // frequency slider.
+        const dFz_dx=(Math.sin((x+h)*f2)-Math.sin((x-h)*f2))/(2*h);
+        const dFx_dz=(-Math.sin((z+h)*f2)+Math.sin((z-h)*f2))/(2*h);
+        return (dFz_dx-dFx_dz)/Math.max(f2,1e-6) * amp * 0.25;
       }
     },
     jacobian: {
@@ -3024,8 +3038,9 @@ export function generateCollapseScalarField(fn, params = {}, basePositions, time
 }
 
 // ── Volume formula collection ─────────────────────────────────────────────────
-// Формат: f(x, y, z, time, {amp, freq, comp}) → {dx, dy, dz}
-// Можно добавлять сюда новые формулы или генерировать через AI API
+// Signature: f(x, y, z, time, {amp, freq, comp}) → {dx, dy, dz}
+// New entries go here; keep the signature identical — the visualizer calls
+// every volume formula through it without introspection.
 export const VOLUME_FORMULAS = {
   lorenzField: {
     name: 'Lorenz Vector Field',

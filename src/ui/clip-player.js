@@ -136,7 +136,9 @@ export class ClipPlayer {
   setStepHold(idx, holdMs) { if (this._steps[idx]) this._steps[idx].holdMs = holdMs; }
 
   _resolveHoldMs(step) {
-    if (!this.barsMode) return step.holdMs ?? 5000;
+    // Positivity test, not `??`: a legacy or hand-built step carrying holdMs 0
+    // would otherwise schedule a step shorter than the morph itself.
+    if (!this.barsMode) return step.holdMs > 0 ? step.holdMs : 5000;
     const bpm   = this._ui.audio.estimatedBpm || 120;
     const barMs = (60000 / bpm) * 4;
     return Math.round(barMs * (step.bars ?? this.barsCount));

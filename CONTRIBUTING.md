@@ -60,7 +60,7 @@ Use the [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.md). I
 4. **Run the test suite locally before pushing:**
 
 ```bash
-   npm test           # math validation + preset migrations (149 tests)
+   npm test           # every unit suite in tests/ (208 tests)
    npm run test:e2e   # Playwright smoke tests
    npm run build      # single-file build check
 ```

@@ -149,6 +149,13 @@ export const PARAMS = {
     // Keep all three aligned — same rule as waveInt's range above.
     min: 0, max: COLOR_SCHEME_COUNT - 1, default: 16,
     integer: true,
+    // The one enumerated param in the registry, so the one that needs a real
+    // ceiling: past 43 there is no palette and no <option>, the shader falls
+    // back to a fixed look and DOM.colorSel.selectedIndex goes -1, i.e. the
+    // dropdown blanks and the operator cannot see where they are. An encoder
+    // on a palette selector should be endless, and 'E' already cycles with
+    // `(colorIdx + 1) % COLOR_SCHEME_COUNT`, so wrap rather than clamp.
+    wrap: true,
     format: v => String(Math.round(v)),
     get: ctx => ctx.audio.colorIdx,
     set: (ctx, v) => {
@@ -246,7 +253,14 @@ export function applyParam(ctx, id, value) {
   // localStorage round-trip. Fall back to default rather than propagate.
   if (!Number.isFinite(value)) value = p.default;
   if (p.integer) value = Math.round(value);
-  if (value < p.min) value = p.min;
+  // `wrap` opts a param out of the "extended values stay extended" policy
+  // above, for enumerated params where a value past max means nothing. Every
+  // writer funnels through here — MIDI relative mode, preset and autosave
+  // restore, RESET ALL, hotkeys — so this is the only place that needs it.
+  if (p.wrap) {
+    const n = p.max - p.min + 1;
+    value = p.min + (((value - p.min) % n) + n) % n;
+  } else if (value < p.min) value = p.min;
   p.set(ctx, value);
   syncParamUI(id, value);
 }

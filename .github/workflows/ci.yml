@@ -33,19 +33,25 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        # 149 tests: 131 validating math-collections.js against canonical references
+        # 208 tests: 133 validating math-collections.js against canonical references
         # (scipy.special, mpmath, NIST DLMF). See tests/math-validation.test.js.
         run: npm test
 
   e2e:
     name: Playwright smoke tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 30, not 15: at one worker on a GPU-less runner the suite needs ~3-4 min
+    # of wall clock locally and every failure costs two retries on top, and the
+    # 15-minute budget this job was given ran out mid-run — the job was killed
+    # with "exceeded the maximum execution time" and reported nothing at all,
+    # which reads exactly like a product failure and is not one.
+    timeout-minutes: 30
     # continue-on-error was removed here: it had been masking a real product
     # regression (RESET ALL restored colour scheme 0 instead of 16) plus three
     # tests that no longer matched the UI, so the suite was red and nobody saw
-    # it. All 8 pass again, and hosted runners have no GPU either, so the
-    # single-worker setting in playwright.config.js is what keeps them stable.
+    # it. The 8 smoke tests pass again (14 e2e in total with the clip-camera
+    # suite), and hosted runners have no GPU either, so the single-worker
+    # setting in playwright.config.js is what keeps them stable.
     # Restore this line only as a deliberate, temporary decision — not as the
     # default place for e2e to live.
     needs: test

@@ -218,4 +218,36 @@ test.describe('Clip player — camera ownership', () => {
 
     await page.locator('#btn-clip-stop').click();
   });
+
+  test('flipping ♩ BARS → ⏱ SEC mid-clip keeps the Hold(s) value', async ({ page }) => {
+    // The controller half of the hold contract, and the only place it is
+    // reachable: _startClip's time-base branch is DOM-only. It used to build
+    // its steps with a 0 ms sentinel in bars mode ("holdMs unused there"), and
+    // _setMode does not rebuild them — so a live switch to seconds left every
+    // step with a 0 ms hold while #clip-hold still read its number.
+    //
+    // No holdMs on the records: the default from buildFromPresets is exactly
+    // what is under test. SKIP is what makes it observable — the status line is
+    // written by onStep, so without it the reading would have to wait out a
+    // 16 s bars step.
+    await boot(page, [
+      { name: 'hold-a', state: { _version: 2, colorIdx: 13 } },
+      { name: 'hold-b', state: { _version: 2, colorIdx: 5  } },
+    ]);
+    await revealControl(page, '#clip-hold');
+    await page.locator('#clip-hold').fill('2');
+
+    await page.locator('#clip-mode-bars').click();
+    await page.locator('#btn-clip-play').click();
+    await expect(clipStatus(page)).toContainText('bars @');
+
+    await page.locator('#clip-mode-sec').click();
+    await page.locator('#btn-clip-skip').click();
+
+    await expect(clipStatus(page), 'the step hold collapsed to 0 ms')
+      .toContainText('— 2.0s');
+    await expect(clipStatus(page)).not.toContainText('— 0.0s');
+
+    await page.locator('#btn-clip-stop').click();
+  });
 });

@@ -283,7 +283,9 @@ function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
-class TransitionManager {
+// Exported for tests/camera-tween-damping.test.js: the cancel path below is
+// half of a fix, and a hand-rolled stand-in would not pin it.
+export class TransitionManager {
   constructor() {
     // Map<slot, tween> — at most one active tween per slot
     this._slots = new Map();
@@ -296,9 +298,13 @@ class TransitionManager {
    * @param {function} onUpdate   — called with eased progress [0, 1] every tick
    * @param {function} [onDone]   — called once when progress reaches 1
    * @param {function} [easeFn]   — defaults to cubic in-out
+   * @param {function} [onCancel] — called instead of onDone if the tween is
+   *                                aborted, so state a tween borrowed for its
+   *                                duration (and restores in onDone) is still
+   *                                given back when a replacement pre-empts it
    * @returns {{ cancel: function }} — call .cancel() to abort early
    */
-  start(slot, duration, onUpdate, onDone, easeFn = easeInOutCubic) {
+  start(slot, duration, onUpdate, onDone, easeFn = easeInOutCubic, onCancel) {
     // Cancel any in-flight tween in this slot
     this._slots.get(slot)?.cancel();
 
@@ -306,7 +312,7 @@ class TransitionManager {
     const startTime = performance.now();
 
     const tween = {
-      cancel: () => { cancelled = true; this._slots.delete(slot); },
+      cancel: () => { cancelled = true; this._slots.delete(slot); onCancel?.(); },
       tick:   () => {
         if (cancelled) return false;
         const raw    = Math.min(1, (performance.now() - startTime) / duration);
@@ -324,6 +330,9 @@ class TransitionManager {
     this._slots.set(slot, tween);
     return tween;
   }
+
+  /** Abort the tween in a slot, running its onCancel. */
+  cancel(slot) { this._slots.get(slot)?.cancel(); }
 
   /** Must be called once per animation frame (from RenderEngine.updateUniforms) */
   tick() {
@@ -536,6 +545,14 @@ export class RenderEngine {
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
 
+    // Which program source is live. The shader editor may replace it, and the
+    // points proxy is rebuilt on every entry into POINTS mode — without a
+    // single owner the proxy was always constructed from the built-ins, so an
+    // applied custom shader silently vanished in PTS and reappeared in SURF.
+    // Write both through applyShaderSource() and there is nowhere to forget.
+    this.activeVS = VS;
+    this.activeFS = FS;
+
     // ── Shape state ───────────────────────────────────────────────────────────
     // Startup shape: pyramid-smooth (matches HTML default + RESET ALL target).
     // Initialize as 'plane' first so setShape() has valid prior state, then swap.
@@ -744,6 +761,15 @@ export class RenderEngine {
   tweenCameraTo(target, opts = {}) {
     const dur = opts.duration ?? this._tDurCamera;
 
+    // Retire any in-flight camera tween BEFORE reading enableDamping below.
+    // A tween borrows damping for its duration and gives it back in _commit,
+    // which only runs when it completes; a second preset clicked mid-flight
+    // used to snapshot the borrowed `false` and then "restore" it, so the
+    // orbit camera lost its damping for the rest of the session. Cancelling
+    // here runs the outgoing tween's onCancel first, so the snapshot below
+    // reads the user's real setting.
+    this.transitions.cancel('camera');
+
     // Helper: write final state and re-sync OrbitControls' internal spherical.
     const _commit = (toPos, toTarget, toFov, prevDamping) => {
       this.camera.position.set(toPos.x, toPos.y, toPos.z);
@@ -811,7 +837,11 @@ export class RenderEngine {
     }, () => {
       // Snap to exact final values and restore damping.
       _commit(toPos, toTarget, toFov, prevDamping);
-    }, opts.easing);
+    }, opts.easing, () => {
+      // Pre-empted by another camera move: hand damping back, but leave the
+      // camera where it is — the replacement tween snapshots from here.
+      this.orbit.enableDamping = prevDamping;
+    });
   }
 
   updateLights(time, audio) {
@@ -852,6 +882,28 @@ export class RenderEngine {
     this.glitchUntil  = Date.now() + duration;
   }
 
+  /**
+   * Install a GLSL program pair into every material that draws the GPU mesh,
+   * and remember it as the live source so a proxy built later inherits it.
+   * Called with no arguments to go back to the built-ins.
+   *
+   * Single owner on purpose: there are two materials (gpuMat and the POINTS
+   * proxy) and three writers (the shader editor's apply, its reset, and the
+   * proxy's own construction). Every combination of "one writer missed one
+   * material" was a visible bug: a custom shader that disappeared in PTS, and
+   * a RESET that reported success while the points kept the old program.
+   */
+  applyShaderSource(vs = VS, fs = FS) {
+    this.activeVS = vs;
+    this.activeFS = fs;
+    for (const m of [this.gpuMat, this.gpuPtsProxy?.material]) {
+      if (!m) continue;
+      m.vertexShader   = vs;
+      m.fragmentShader = fs;
+      m.needsUpdate    = true;
+    }
+  }
+
   // ── Viz modes ────────────────────────────────────────────────────────────────
   setVizModeGPU(mode) {
     this.vizMode = mode;
@@ -880,7 +932,7 @@ export class RenderEngine {
       this.gpuMesh.visible = false;
       this.U.uPointSize.value = 5.0;
       const ptsMat = new THREE.ShaderMaterial({
-        vertexShader: VS, fragmentShader: FS, uniforms: this.U,
+        vertexShader: this.activeVS, fragmentShader: this.activeFS, uniforms: this.U,
         side: THREE.DoubleSide,
         // Shares uniforms (including uLighting=0) with gpuMat.
         // FIX(#29): no `extensions: { derivatives: true }` — ignored by r169,
