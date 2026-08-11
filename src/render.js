@@ -574,11 +574,12 @@ export class RenderEngine {
     // ── Transition system ─────────────────────────────────────────────────────
     this.transitions = new TransitionManager();
     // Durations (ms) — shorter on mobile to stay within GPU budget
-    this._tDurShape  = isMobile ? 300 : 400;   // half the morph (deflate or inflate)
-    this._tDurMode   = isMobile ? 600 : 1200;  // GPU mode crossfade
-    this._tDurColor  = isMobile ? 300 : 600;   // color scheme crossfade
-    this._tDurCPU    = isMobile ? 400 : 800;   // CPU formula blend
-    this._tDurCamera = isMobile ? 600 : 1000;  // preset-driven camera tween (default)
+    this._tDurShape    = isMobile ? 300 : 400;   // half the morph (deflate or inflate)
+    this._tDurMode     = isMobile ? 600 : 1200;  // GPU mode crossfade
+    this._tDurColor    = isMobile ? 300 : 600;   // color scheme crossfade
+    this._tDurCPU      = isMobile ? 400 : 800;   // CPU formula blend
+    this._tDurCamera   = isMobile ? 600 : 1000;  // preset-driven camera tween (default)
+    this._tDurMaterial = isMobile ? 400 : 700;   // surface-material scalar tween (default)
 
     // Viz / render mode
     this.vizMode    = 'surface';
@@ -708,9 +709,17 @@ export class RenderEngine {
    * Crossfades between two color schemes in the fragment shader over ~0.6s.
    * Same interrupt-safe pattern as setGPUModeAnimated().
    *
-   * @param {number} cm — target color scheme index
+   * @param {number} cm                — target color scheme index
+   * @param {object} [opts]
+   * @param {number} [opts.duration]   — milliseconds, default this._tDurColor.
+   *                                     AUTO COLOUR asks for a longer fade than
+   *                                     a hand-picked palette: an unattended
+   *                                     change should read as drift, not as a
+   *                                     cut, so the cycler scales it off its own
+   *                                     period (see ui/auto-cycle.js).
    */
-  setColorSchemeAnimated(cm) {
+  setColorSchemeAnimated(cm, opts = {}) {
+    const dur = opts.duration ?? this._tDurColor;
     const startBlend = this.U.uCMBlend.value;
     if (startBlend > 0) {
       this.U.uCM.value      = this.U.uCMNext.value;
@@ -718,7 +727,7 @@ export class RenderEngine {
     }
     this.U.uCMNext.value  = cm;
 
-    this.transitions.start('color', this._tDurColor, p => {
+    this.transitions.start('color', dur, p => {
       this.U.uCMBlend.value = p;
     }, () => {
       this.U.uCM.value      = cm;
@@ -959,12 +968,74 @@ export class RenderEngine {
    */
   setSurfaceMaterial(name) {
     const m = RenderEngine.SURFACE_MATERIALS[name] ?? RenderEngine.SURFACE_MATERIALS.matte;
+    // An instant set is the last word: retire any material tween first, or the
+    // one still in flight keeps writing the four scalars every frame and the
+    // "instant" values survive for a few frames at most. RESET ALL and the
+    // WIRE/PTS force-to-Matte both come through here.
+    this.transitions.cancel('material');
     this.currentMaterial = name;
     this.U.uMaterial.value  = m.on ? 1 : 0;
     this.U.uMetalness.value = m.metalness;
     this.U.uRoughness.value = m.roughness;
     this.U.uReflect.value   = m.reflect;
     this.U.uFresnelP.value  = m.fresnelP;
+  }
+
+  /**
+   * Same preset switch, faded instead of cut. Interpolates the four reflection
+   * scalars from wherever they are right now to the target preset's, so a
+   * Glossy → Mirror change slides through the intermediate finishes rather than
+   * snapping. Interrupt-safe by construction: the start values are read from
+   * the live uniforms at call time, so a second call mid-fade continues from
+   * the frame on screen (the TransitionManager's 'material' slot cancels the
+   * first tween).
+   *
+   * ── Why uMaterial is forced on for the whole fade ──────────────────────────
+   * The FS reflection block is gated on `uMaterial > 0`, and Matte's preset
+   * carries reflect 0. Every term inside the block is multiplied by uReflect,
+   * so running the block with Matte's scalars renders identically to skipping
+   * it — which means holding the gate open costs nothing visually and lets
+   * matte→metal grow out of the flat look instead of popping on at frame one
+   * (and metal→matte fade to flat instead of snapping off at the last frame).
+   * The gate is set to the target's real `on` flag when the tween commits, so
+   * Matte still ends up costing nothing once it is reached.
+   *
+   * @param {string} name              — key into RenderEngine.SURFACE_MATERIALS
+   * @param {object} [opts]
+   * @param {number} [opts.duration]   — milliseconds, default this._tDurMaterial.
+   *                                     <= 0 delegates to the instant path.
+   */
+  setSurfaceMaterialAnimated(name, opts = {}) {
+    const dur = opts.duration ?? this._tDurMaterial;
+    if (!(dur > 0)) { this.setSurfaceMaterial(name); return; }
+
+    const to = RenderEngine.SURFACE_MATERIALS[name] ?? RenderEngine.SURFACE_MATERIALS.matte;
+    const from = {
+      metalness: this.U.uMetalness.value,
+      roughness: this.U.uRoughness.value,
+      reflect:   this.U.uReflect.value,
+      fresnelP:  this.U.uFresnelP.value,
+    };
+
+    // Name the destination immediately, before the pixels get there: preset
+    // capture and the WIRE/PTS material rule both read currentMaterial, and
+    // mid-fade they should see where we are going, not where we came from.
+    this.currentMaterial   = name;
+    this.U.uMaterial.value = 1;
+
+    const lerp = (a, b, p) => a + (b - a) * p;
+    this.transitions.start('material', dur, p => {
+      this.U.uMetalness.value = lerp(from.metalness, to.metalness, p);
+      this.U.uRoughness.value = lerp(from.roughness, to.roughness, p);
+      this.U.uReflect.value   = lerp(from.reflect,   to.reflect,   p);
+      this.U.uFresnelP.value  = lerp(from.fresnelP,  to.fresnelP,  p);
+    }, () => {
+      this.U.uMaterial.value  = to.on ? 1 : 0;
+      this.U.uMetalness.value = to.metalness;
+      this.U.uRoughness.value = to.roughness;
+      this.U.uReflect.value   = to.reflect;
+      this.U.uFresnelP.value  = to.fresnelP;
+    });
   }
 
   // ── Shape switching ──────────────────────────────────────────────────────────

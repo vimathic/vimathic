@@ -24,6 +24,21 @@
  * releaseCamera() hands ownership back (the user switched AUTO-ROTATE off or
  * dragged the view), and so does the next play().
  *
+ * ── Who owns colour and material ─────────────────────────────────────────────
+ * The same question, one level down, for the two look parameters that can now
+ * drive themselves: the ⟳ AUTO toggles beside Color Scheme and Surface Material
+ * (src/ui/auto-cycle.js). While one of them is on, it owns its parameter — every
+ * step still applies its preset's shape, formula, shader and camera, but stops
+ * writing the colour / material the preset carries, so an unattended cycle isn't
+ * reset to the snapshot's palette a few times a minute.
+ *
+ * Unlike the camera's claim, this ownership is not per-clip state: it belongs to
+ * the AUTO buttons, and is read fresh at every step (`_ui.autoColor.enabled`).
+ * Turning AUTO off mid-clip therefore gives the presets their colour back at the
+ * very next step, with no handover call to make. Loading a preset BY HAND still
+ * applies its colour and material whatever AUTO is doing — an explicit click is
+ * an instruction, a clip step is a schedule.
+ *
  * ── Backgrounded-tab behaviour ───────────────────────────────────────────────
  * Timing is driven by `setTimeout` against wall-clock (performance.now()),
  * NOT by requestAnimationFrame counts. This is intentional:
@@ -187,10 +202,14 @@ export class ClipPlayer {
 
     // preserveCamera carries the ownership decision into applyState: with the
     // user driving, the step is a look-only apply (no tween, no physics, no
-    // auto-rotate wish, no programmer swap).
+    // auto-rotate wish, no programmer swap). preserveColor / preserveMaterial
+    // do the same for the two parameters an AUTO toggle may be cycling — read
+    // per step, so switching AUTO off hands them back immediately.
     if (entry) this._ui.applyState(entry.state, {
       cameraTransitionMs: camMs,
       preserveCamera:     this.camOverride,
+      preserveColor:      !!this._ui.autoColor?.enabled,
+      preserveMaterial:   !!this._ui.autoMaterial?.enabled,
     });
 
     const morphMs     = this._ui.render.isMobile ? 800 : 1600;
