@@ -70,6 +70,17 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Fixed
 
+- **`R` and `F` can land on a GPU shader.** The FORMULA dropdown holds two
+  families — 38 GPU shaders (numeric values) and 192 CPU math formulas
+  (`m:collection:key`) — and the randomiser built its pool from
+  `getAllFormulasList()`, which knows only the second. No amount of pressing
+  reached a shader: they were not in the bag at all. Both families are in the
+  pool now, with the family chosen by a coin flip before the shuffle bag draws
+  inside it, so a shader comes up about as often as a formula rather than one
+  press in six. The pick is applied through the same branch the dropdown's own
+  change handler uses, which also gives the hotkeys the GPU path they never
+  had (`mathViz.deactivate()` + `setGPUModeAnimated`) instead of routing every
+  draw through `setFormula`.
 - **Hénon Map no longer tears the mesh.** Its divergence guard tested the
   double, but the height field is Float32 — a diverging orbit reached ~1e38 and
   became ±Infinity on the way into the vertex buffer, so every triangle touching
