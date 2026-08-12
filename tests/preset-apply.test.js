@@ -398,3 +398,66 @@ describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () =>
     assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'matte', 'squares']);
   });
 });
+
+// ── The camera tween is a borrower, not a setting ─────────────────────────────
+// _applyStateFields used to pause the physics loop by writing cam.autoRot =
+// false for the tween's duration, without telling the button that reads the
+// same flag. For the whole tween — with the default "Auto (40% of step)" that
+// is around 30% of every clip step — the label said ON while the flag said
+// OFF, so a click in that window did the opposite of what it promised: it
+// switched rotation ON and claimed the camera away from the clip player
+// instead of switching it off and handing it back. Restoring afterwards did
+// not save it either, because the onDone re-check drops the whole queue once
+// the user has taken the camera.
+//
+// The tween now holds the camera through a flag of its own (cam.tweenHold,
+// which isScriptDriving() and main.js's physics branch both honour), and the
+// user's setting is never touched.
+describe('applyState — a camera tween must not touch the auto-rotate setting', () => {
+  const CAM = { _version: 2, camera: { x: 3, y: 4, z: 5, tx: 0, ty: 0, tz: 0, fov: 50 } };
+  let ui;
+  beforeEach(() => { ui = makeUi(); });
+
+  test('the setting the button shows is the setting that survives the tween', () => {
+    ui.camera.autoRot = true;                       // the user switched it on
+
+    assert.equal(ui.applyState(CAM, { cameraTransitionMs: 2000, preserveCamera: false }), true);
+    assert.equal(ui.camera.autoRot, true,
+      'the button still reads ON, so a click in this window must read ON too');
+    assert.equal(ui.camera.tweenHold, true,
+      'the tween needs the physics loop to stand down — through its own flag');
+
+    ui.render.finishTween();
+    assert.equal(ui.camera.tweenHold, false);
+    assert.equal(ui.camera.autoRot, true);
+  });
+
+  test('the hold is released even when the user takes the camera mid-tween', () => {
+    ui.camera.autoRot = true;
+    assert.equal(ui.applyState(CAM, { cameraTransitionMs: 2000, preserveCamera: false }), true);
+
+    ui._clip = { camOverride: true };               // AUTO-ROTATE pressed mid-step
+    ui.render.finishTween();                        // onDone drops the queued wishes
+
+    assert.equal(ui.camera.tweenHold, false,
+      'a hold left standing would freeze the camera for the rest of the session');
+  });
+
+  // A real control: this passes before and after, and it is what stops the fix
+  // from being "stop touching autoRot anywhere", which would silently drop the
+  // wishes a snapshot is allowed to carry.
+  test('control — a preset that carries an auto-rotate wish still applies it', () => {
+    ui.camera.autoRot = true;
+    const snap = { _version: 2, camera: { ...CAM.camera, autoRot: false } };
+
+    assert.equal(ui.applyState(snap, { cameraTransitionMs: 2000, preserveCamera: false }), true);
+    ui.render.finishTween();
+    assert.equal(ui.camera.autoRot, false, 'the snapshot asked for OFF and gets it');
+  });
+
+  test('the instant path releases the hold too', () => {
+    ui.camera.autoRot = true;
+    assert.equal(ui.applyState(CAM, { cameraTransitionMs: 0, preserveCamera: false }), true);
+    assert.equal(ui.camera.tweenHold, false, '"Snap (instant, old)" commits synchronously');
+  });
+});

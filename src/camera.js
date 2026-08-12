@@ -103,6 +103,13 @@ export class CameraSystem {
     // in via the AUTO-ROTATE button. A spinning startup view was reported
     // as disorienting before any audio is loaded.
     this.autoRot   = false;
+    // Held true by whoever is tweening the camera (preset and clip applies,
+    // through RenderEngine.tweenCameraTo). Automated motion stands down while
+    // it is up, the same way it does for userInt — but unlike autoRot this is
+    // not a user setting, so a tween can borrow the camera without changing
+    // what the AUTO-ROTATE button reports. Flipping autoRot for this is what
+    // used to make the button do the opposite of its own label mid-clip.
+    this.tweenHold = false;
     // Set by controls.js while the user is dragging the orbit camera.
     // updatePhysics and runScript both bail out while this is true so
     // automated motion can't fight the user's mouse.
@@ -243,7 +250,7 @@ export class CameraSystem {
    * errors are caught per-tick in runScript().
    */
   loadScript(code) {
-    this.cb.onScriptStatus('clear', '');
+    this._setScriptStatus('clear', '');
     try {
       this.cpFn = new Function('ctx', `const {time,bass,mid,treble,beat,bpm,R,cam,target,state,p,sin,cos,abs,pow,lerp,clamp,orbit}=ctx; ${code}`);
       this.cpActive  = true;
@@ -252,11 +259,36 @@ export class CameraSystem {
       // FIX(#13, r2): fresh script → fresh roll. Armed while auto-rotate is off
       // it gets no runScript() tick, so the old bank angle would hang around.
       this.cpRoll    = 0;
-      this.cb.onScriptStatus('ok', '✔ Running');
-      setTimeout(() => this.cb.onScriptStatus('clear', ''), 2000);
+      this._setScriptStatus('ok', '✔ Running', 2000);
     } catch (e) {
-      this.cb.onScriptStatus('error', '⚠ Parse: ' + e.message);
+      this._setScriptStatus('error', '⚠ Parse: ' + e.message);
       this.cpActive = false;
+    }
+  }
+
+  /**
+   * Write the status line, cancelling any auto-clear still pending.
+   *
+   * FIX: the 2 s tidy-up armed by "✔ Running" used to outlive whatever came
+   * next. A runtime error arrives one frame after the apply and disarms the
+   * script; two seconds later the stale timer blanked it, leaving an operator
+   * with a camera back on auto-orbit and no explanation anywhere. Pressing
+   * APPLY twice inside two seconds wiped a parse error the same way. One
+   * writer, and the timer belongs to the message that armed it.
+   *
+   * @param {string} type          — 'ok' | 'error' | 'clear'
+   * @param {string} msg           — text for the badge
+   * @param {number} [autoClearMs] — blank the line after this long; 0 = keep
+   */
+  _setScriptStatus(type, msg, autoClearMs = 0) {
+    clearTimeout(this._statusTimer);
+    this._statusTimer = null;
+    this.cb.onScriptStatus(type, msg);
+    if (autoClearMs > 0) {
+      this._statusTimer = setTimeout(() => {
+        this._statusTimer = null;
+        this.cb.onScriptStatus('clear', '');
+      }, autoClearMs);
     }
   }
 
@@ -268,7 +300,7 @@ export class CameraSystem {
   resetScript() {
     this.cpActive = false; this.cpFn = null; this.cpSource = null; this._cpState = {};
     this.cb.onSetCode(CP_DEFAULT);
-    this.cb.onScriptStatus('clear', '');
+    this._setScriptStatus('clear', '');
     this.camera.fov = 45; this.camera.updateProjectionMatrix();
     // FIX(#13, r2): drop the stored roll alongside the visible one — levelling
     // rotation.z alone would be undone by applyRoll() on the next frame.
@@ -284,7 +316,7 @@ export class CameraSystem {
    * last bank angle after the script stopped, and OrbitControls cannot undo it.
    */
   isScriptDriving() {
-    return this.cpActive && this.autoRot && !this.userInt;
+    return this.cpActive && this.autoRot && !this.userInt && !this.tweenHold;
   }
 
   /**
@@ -345,7 +377,7 @@ export class CameraSystem {
     try {
       this.cpFn(ctx);
     } catch (e) {
-      this.cb.onScriptStatus('error', '⚠ ' + e.message);
+      this._setScriptStatus('error', '⚠ ' + e.message);
       this.cpActive = false; return;
     }
 
@@ -353,10 +385,29 @@ export class CameraSystem {
     // script writing fov=99999 used to lock the projection matrix into
     // an unrecoverable state; clamp keeps the picture usable while the
     // user fixes the typo.
-    if (typeof ctx.rotAngle === 'number') this.rotAngle = ctx.rotAngle;
-    this.camera.position.set(ctx.cam.x, ctx.cam.y, ctx.cam.z);
-    this.orbit.target.set(ctx.target.x, ctx.target.y, ctx.target.z);
-    if (ctx.fov !== this.camera.fov) { this.camera.fov = Math.max(10, Math.min(160, ctx.fov)); this.camera.updateProjectionMatrix(); }
+    //
+    // FIX: a clamp is not a guard — Math.max(10, Math.min(160, NaN)) is NaN,
+    // and only `roll` below had the finite check its comment claims parity
+    // with. NaN here is unrecoverable by fixing the script: every value is
+    // seeded back from the camera each tick, and the default template and most
+    // gallery presets read it through lerp(), which keeps NaN forever. One
+    // frame of `pow(bass - 0.5, 0.5)` was enough to stop the scene drawing
+    // until RESET. Keeping the last good value leaves the picture usable,
+    // which is exactly what the clamp above is for.
+    const keep = (v, prev) => (Number.isFinite(v) ? v : prev);
+    if (Number.isFinite(ctx.rotAngle)) this.rotAngle = ctx.rotAngle;
+    this.camera.position.set(
+      keep(ctx.cam.x, this.camera.position.x),
+      keep(ctx.cam.y, this.camera.position.y),
+      keep(ctx.cam.z, this.camera.position.z),
+    );
+    this.orbit.target.set(
+      keep(ctx.target.x, this.orbit.target.x),
+      keep(ctx.target.y, this.orbit.target.y),
+      keep(ctx.target.z, this.orbit.target.z),
+    );
+    const fov = keep(ctx.fov, this.camera.fov);
+    if (fov !== this.camera.fov) { this.camera.fov = Math.max(10, Math.min(160, fov)); this.camera.updateProjectionMatrix(); }
     this.orbit.update();
     // FIX(#13, r2): only record the roll — applyRoll() puts it on after main.js's
     // last orbit.update(), which would otherwise wipe a tilt applied here (see

@@ -501,7 +501,11 @@ function animate() {
   if (camera.isScriptDriving()) {
     camera.setElapsedForKeyframe(audio.getElapsedFraction());
     camera.runScript(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
-  } else if (camera.autoRot && !camera.userInt) {
+  } else if (camera.autoRot && !camera.userInt && !camera.tweenHold) {
+    // tweenHold: a preset or clip step is tweening the camera right now, and
+    // physics writing position on the same frame would make the tween
+    // invisible. It used to be expressed by switching autoRot off, which is
+    // the user's own setting — see the flag's note in camera.js.
     camera.updatePhysics(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
   }
 

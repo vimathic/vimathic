@@ -451,10 +451,18 @@ export const PresetMixin = {
 
     if (s.camera && camOwned) {
       const c = s.camera;
-      // Pause auto-rotate during the tween so the physics loop doesn't
-      // fight with our position writes. Restore the previous state on done.
-      const prevAutoRot = cam.autoRot;
-      cam.autoRot = false;
+      // Hold the camera for the tween's duration so the physics loop and any
+      // live programmer script don't fight our position writes.
+      //
+      // FIX: this used to write cam.autoRot = false and restore it afterwards.
+      // autoRot is the AUTO-ROTATE button's own state, and nothing told the
+      // button — so for the whole tween (about 30% of a clip step on the
+      // default camera setting) the label read ON while the flag read OFF, and
+      // the click handler builds both the new value and its claim/release
+      // decision out of that flag. A click in that window did the opposite of
+      // the label: rotation on, camera claimed from the clip player. Holding
+      // through a flag of the tween's own leaves the user's setting alone.
+      cam.tweenHold = true;
 
       // Defer setCamPhysics — it sets autoRot=true internally, which makes
       // main.js call camera.updatePhysics() each frame and overwrite our
@@ -469,13 +477,9 @@ export const PresetMixin = {
           cam.autoRot = c.autoRot;
           cam.cb.onAutoRotChanged(c.autoRot);
         });
-      } else if (!c.physics) {
-        // No physics, no wish — restore pre-tween state at end.
-        postTweenCameraActions.push(() => {
-          cam.autoRot = prevAutoRot;
-          cam.cb.onAutoRotChanged(prevAutoRot);
-        });
       }
+      // Nothing to restore when there is no wish: the hold above is released in
+      // onDone and the user's setting was never disturbed.
 
       // Built here, fired after the camera-programmer block below — with a
       // zero/negative duration tweenCameraTo commits synchronously and runs
@@ -492,6 +496,10 @@ export const PresetMixin = {
         {
           duration: opts.cameraTransitionMs,
           onDone: () => {
+            // Released first, and before the re-check below can return: a hold
+            // left standing would keep the physics loop and the programmer
+            // script switched off for the rest of the session.
+            cam.tweenHold = false;
             // Ownership can flip DURING the tween: the user hits AUTO-ROTATE
             // or applies a script in the first few hundred ms of a clip step.
             // The actions below were queued while the player still owned the
