@@ -152,13 +152,20 @@ export class MIDIController {
    *                            preserves any existing mode for that CC.
    */
   setMapping(cc, paramId, mode) {
+    // FIX: read the entry being updated BEFORE the dedupe loop runs. The loop
+    // deletes every CC bound to this paramId — including this one when the
+    // binding is unchanged — so reading afterwards always found nothing and
+    // the mode fell through to 'relative'. That is precisely the ⊙ re-learn
+    // case: wiggle the fader already bound to a param and its ABS choice was
+    // silently lost, after which the fader's position is decoded as an
+    // encoder delta.
+    const existing = this._map[cc];
     for (const k of Object.keys(this._map)) {
       if (this._map[k]?.paramId === paramId && paramId !== 'none') delete this._map[k];
     }
     if (paramId === 'none') {
       delete this._map[cc];
     } else {
-      const existing = this._map[cc];
       this._map[cc] = {
         paramId,
         mode: mode ?? existing?.mode ?? 'relative',
@@ -309,7 +316,13 @@ export class MIDIController {
           if (def.integer) val = Math.round(val);
           // Lower clamp at def.min so a knob spam at the bottom doesn't
           // drift negative. No upper clamp — extended values stay extended.
-          if (val < def.min) val = def.min;
+          //
+          // FIX: enumerated params are exempt. applyParam wraps them (0 → 43),
+          // but clamping here meant it never saw the negative value that a
+          // wrap needs, so the same encoder was endless clockwise and dead
+          // anticlockwise. Passing the value through is enough — applyParam is
+          // the funnel every writer goes through, and it does the wrapping.
+          if (!def.wrap && val < def.min) val = def.min;
         } else {
           // Absolute: linear CC→range mapping. Standard MIDI knob.
           val = def.min + val01 * (def.max - def.min);
@@ -425,11 +438,30 @@ export class ShuffleBag {
     this._last  = null;
   }
 
-  /** Draw the next item. Never throws once constructed; auto-refills. */
-  next() {
-    if (this._deck.length === 0) this._refill();
-    this._last = this._deck.pop();
-    return this._last;
+  /**
+   * Draw the next item. Never throws once constructed; auto-refills.
+   *
+   * @param {*} [current] — what is on screen right now, when the caller knows.
+   *
+   * FIX: the bag guards its own seam — it will not deal the same value twice in
+   * a row — but it is not the only writer of the things it draws. E steps the
+   * palette, D steps the shape, and the dropdowns, presets and clip steps write
+   * both; after any of those the bag's memory names a value that is no longer
+   * live, so its next draw could hand back exactly what is already on screen
+   * and the keypress did nothing at all. Naming the live value lets it redraw
+   * once, which is what AutoCycler._draw does for the same reason.
+   */
+  next(current) {
+    const draw = () => {
+      if (this._deck.length === 0) this._refill();
+      this._last = this._deck.pop();
+      return this._last;
+    };
+    const v = draw();
+    // One redraw, not a loop: the pool may be size 1 (nothing else to deal) and
+    // a second draw is all the guarantee the deck can give anyway.
+    if (current != null && this._items.length > 1 && this._eq(v, current)) return draw();
+    return v;
   }
 
   /** Most recently drawn item, or null if .next() has never been called. */

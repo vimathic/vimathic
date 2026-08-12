@@ -53,6 +53,9 @@ function makeRender() {
   return {
     U, gpuMat, gpuMesh, scene,
     gpuPtsProxy: null,
+    // No imported model on the stage — see tests/model-import-stage.test.js for
+    // what changes when there is one. The real constructor sets this too.
+    modelMeshes: [],
     activeVS: VS, activeFS: FS,
     vizMode: 'surface',
     currentParticleStyle: 'squares',
@@ -167,5 +170,86 @@ describe('the style table matches the dropdown it is driven by', () => {
     const plain = Object.entries(RenderEngine.PARTICLE_STYLES)
       .filter(([, s]) => s.mask === 0 && !s.glow && !s.trail);
     assert.deepEqual(plain.map(([k]) => k), ['squares']);
+  });
+});
+
+// ── The smoke trail's buffer outlives the trail ───────────────────────────────
+// AfterimagePass accumulates into two render targets and exposes no way to
+// clear them; EffectComposer skips a disabled pass entirely rather than letting
+// it decay. So switching the smoke style off froze whatever frame was in the
+// buffer, and switching it back on — a style round trip, a preset, a clip step —
+// blended that stale frame into the live picture for the length of a decay:
+// a ghost of a shape the operator had already left, on top of the new one.
+describe('the trail starts from a clean buffer', () => {
+  // Its own minimal host: makeRender above deliberately stubs setAfterglow, so
+  // this block drives the real one through the prototype.
+  function makeHost() {
+    const log = [];
+    const pass = {
+      enabled: false,
+      uniforms: { damp: { value: 0.87 } },
+      textureOld: { name: 'old' },
+      textureComp: { name: 'comp' },
+    };
+    return {
+      log,
+      afterimagePass: pass,
+      composer: { passes: [pass] },
+      renderer: {
+        _rt: { name: 'scene-target' },
+        getRenderTarget() { return this._rt; },
+        setRenderTarget(t) { log.push(['setRenderTarget', t?.name ?? null]); this._rt = t; },
+        getClearColor(c) { return c; },
+        getClearAlpha() { return 1; },
+        setClearColor(c, a) { log.push(['setClearColor', c, a]); },
+        clear() { log.push(['clear']); },
+      },
+      setAfterglow(...a)      { return RenderEngine.prototype.setAfterglow.apply(this, a); },
+      _fxPass(...a)           { return RenderEngine.prototype._fxPass.apply(this, a); },
+      _clearAfterimage(...a)  { return RenderEngine.prototype._clearAfterimage.apply(this, a); },
+    };
+  }
+
+  test('enabling a pass that was off clears both accumulation targets', () => {
+    const host = makeHost();
+
+    host.setAfterglow(true, 0.93);
+
+    const cleared = host.log.filter(e => e[0] === 'setRenderTarget').map(e => e[1]);
+    assert.ok(cleared.includes('old'),  'textureOld still holds the frame the trail stopped on');
+    assert.ok(cleared.includes('comp'), 'and textureComp holds its composite');
+    assert.equal(host.log.filter(e => e[0] === 'clear').length, 2, 'one clear per target');
+    assert.equal(host.renderer._rt.name, 'scene-target',
+      'the render target in force when we were called has to be given back');
+  });
+
+  test('control — enabling a pass that is already on does not blink it', () => {
+    const host = makeHost();
+    host.afterimagePass.enabled = true;
+
+    host.setAfterglow(true, 0.93);
+
+    assert.equal(host.log.filter(e => e[0] === 'clear').length, 0,
+      'a preset re-applying the same style mid-trail must not wipe the trail');
+    assert.equal(host.afterimagePass.uniforms.damp.value, 0.93, 'but the amount still lands');
+  });
+
+  test('control — disabling clears nothing', () => {
+    const host = makeHost();
+    host.afterimagePass.enabled = true;
+
+    host.setAfterglow(false);
+
+    assert.equal(host.log.length, 0, 'there is nothing to reset on the way out');
+    assert.equal(host.afterimagePass.enabled, false);
+  });
+
+  test('control — a pass that was never built is still a no-op', () => {
+    const host = makeHost();
+    host.afterimagePass = null;
+
+    host.setAfterglow(false);
+
+    assert.equal(host.log.length, 0);
   });
 });

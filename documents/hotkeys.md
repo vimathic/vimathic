@@ -40,9 +40,11 @@ Hold the key, then drag horizontally with mouse, two-finger touchpad swipe, or s
 |---|---|---|
 | <kbd>L</kbd> / <kbd>X</kbd> | Bass sensitivity | 0.1 – 3.0 |
 | <kbd>K</kbd> / <kbd>Z</kbd> | Treble sensitivity | 0.1 – 3.0 |
-| <kbd>J</kbd> / <kbd>V</kbd> | Amplitude | 0.1 – 2.0 |
-| <kbd>N</kbd> / <kbd>C</kbd> | Wave intensity | 0.1 – 3.0 |
-| <kbd>B</kbd> / <kbd>A</kbd> | Bloom | 0.0 – 2.0 |
+| <kbd>J</kbd> / <kbd>V</kbd> | Amplitude | 0.2 – 2.0 |
+| <kbd>N</kbd> / <kbd>C</kbd> | Wave intensity | 0.3 – 5.0 |
+| <kbd>B</kbd> / <kbd>A</kbd> | Bloom | 0.1 – 2.0 |
+
+Each range is one full window sweep of the drag; the panel slider shows the narrower everyday range and grows to fit when a drag takes a value past it. The floor is 0.1 even where the parameter itself allows 0 — dragging one to exactly zero makes the picture go still, which reads as a fault mid-set.
 
 These are the "performance" keys — they're chosen so you can hold one with the left hand and aim the mouse with the right, like a modulation wheel. The slider in the side panel moves in sync as you drag.
 

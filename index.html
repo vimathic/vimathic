@@ -226,6 +226,12 @@
       margin:9px 0 4px;border-bottom:1px solid rgba(255,58,122,.18);padding-bottom:3px;
       cursor:pointer;user-select:none;transition:color .15s}
     .sec:hover{color:var(--accent)}
+    /* A collapsed section hides its rows without touching their inline display.
+       That style has other owners — controls.js hides the material row in
+       WIRE/PTS and shows it again in SURF — and a section that cached one of
+       their values replayed it on expand, hiding a row the panel wanted
+       visible. !important because the other owner writes inline. */
+    .sec-collapsed{display:none!important}
     /* Animated arrow: ▸ rotates 90° to ▾ when section expanded.
        Original markup contains '▸ TITLE' as plain text — JS at end of <body>
        rewrites this into <span class="sec-arrow">▸</span> + ' TITLE' so the
@@ -1576,7 +1582,7 @@
     <!-- Virtual Camera -->
     <div class="out-section">
       <div class="out-stitle"> VIRTUAL CAMERA (captureStream)
-        <span class="out-badge ok" id="out-vcam-badge">Chrome ✓</span>
+        <span class="out-badge na" id="out-vcam-badge">—</span>
       </div>
       <div class="out-desc">
         Exposes the canvas as a <b>MediaStream</b>. OBS picks it up as a Browser Source (zero setup)
@@ -1742,11 +1748,10 @@
   const arrow  = document.getElementById('ctrl-collapse');
   const isMob  = () => window.innerWidth <= 768;
 
-  // ── Desktop: click header to collapse/expand ────────────────────────
-  header.addEventListener('click', () => {
-    const collapsed = panel.classList.toggle('collapsed');
-    if (arrow) arrow.textContent = collapsed ? '▲' : '▼';
-  });
+  // Desktop click-to-collapse lives in controls.js, which owns the floating
+  // expand button beside it. Two listeners on this header — one here keeping
+  // the state in the class, one there keeping it in a boolean — is what let a
+  // swipe desynchronise them.
 
   // ── Mobile: swipe-down on handle to collapse, swipe-up to expand ────
   let startY = 0, startExpanded = true;
@@ -1885,17 +1890,18 @@
 
     sec.addEventListener('click', () => {
       const expanded = sec.classList.toggle('expanded');
+      // FIX: a class, not a cached inline display. This used to snapshot
+      // el.style.display on the way down and replay it on the way up — but that
+      // property has a second owner (controls.js hides the material row in
+      // WIRE/PTS and shows it in SURF), so a section collapsed while the row
+      // was hidden cached 'none' and put it back every time it expanded. The
+      // row then stayed invisible in SURF, taking its ⟳ AUTO button with it,
+      // for the rest of the session. The class hides the rows while collapsed
+      // and gets out of the way afterwards, leaving the display to whoever
+      // actually owns it. display:none removes it from layout, including
+      // <details>, exactly as before.
       sec._collapsibleSiblings.forEach(el => {
-        // Use display:none to truly remove from layout (including <details>)
-        // Save original display so we can restore exactly
-        if (!expanded) {
-          if (!el.dataset._origDisplay) {
-            el.dataset._origDisplay = el.style.display || '';
-          }
-          el.style.display = 'none';
-        } else {
-          el.style.display = el.dataset._origDisplay || '';
-        }
+        el.classList.toggle('sec-collapsed', !expanded);
       });
     });
   });
@@ -1954,8 +1960,14 @@ function makeSearchable(selId) {
   wrap.appendChild(drop);
 
   // Sync input text to selected option
-  function syncLabel() {
-    input.value = '';
+  function syncLabel(clearQuery = true) {
+    // FIX: clearing the query is right when the label is being re-synced after
+    // a selection, and wrong when something else writes the value while the
+    // operator is mid-search — AUTO COLOUR, a clip step, a MIDI CC and the
+    // palette hotkeys all write DOM.colorSel.value. Any of them used to erase
+    // a half-typed query while the dropdown stayed open on the filter derived
+    // from it.
+    if (clearQuery) input.value = '';
     input.placeholder = sel.options[sel.selectedIndex]?.text || '— select —';
   }
 
@@ -2010,7 +2022,12 @@ function makeSearchable(selId) {
   function close() { wrap.classList.remove('open'); }
 
   input.addEventListener('focus', () => open());
-  input.addEventListener('input', () => render(input.value));
+  // FIX: reopen on typing and on a click. Picking an item calls close() while
+  // preventDefault keeps focus in the field, so no further `focus` event can
+  // ever fire — after the first selection, typing filtered a list nobody could
+  // see and clicking the field did nothing. The arrow was the only way back.
+  input.addEventListener('input', () => open());
+  input.addEventListener('click', () => open());
   input.addEventListener('blur', () => setTimeout(close, 150));
   input.addEventListener('keydown', e => {
     if (e.key === 'Escape') { close(); input.blur(); }
@@ -2028,7 +2045,8 @@ function makeSearchable(selId) {
 
   // When the user clicks an item in the custom dropdown, the click handler
   // dispatches a real 'change' event — this listener handles that path.
-  sel.addEventListener('change', syncLabel);
+  // Wrapped so the Event object cannot land in syncLabel's parameter.
+  sel.addEventListener('change', () => syncLabel());
 
   // FIX: programmatic `sel.value = X` (clip player, hotkey R/Q/E/F, preset
   // applyState, MIDI param dispatch) does NOT fire a `change` event per spec.
@@ -2044,7 +2062,15 @@ function makeSearchable(selId) {
       configurable: true,
       enumerable:   true,
       get() { return _valDesc.get.call(this); },
-      set(v) { _valDesc.set.call(this, v); syncLabel(); },
+      set(v) {
+        _valDesc.set.call(this, v);
+        // Keep the operator's query while they are typing in this field; the
+        // placeholder still follows the new value, which is all this shadowed
+        // setter was added for.
+        const typing = document.activeElement === input;
+        syncLabel(!typing);
+        if (typing && wrap.classList.contains('open')) render(input.value);
+      },
     });
   }
 

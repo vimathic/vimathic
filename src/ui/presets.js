@@ -142,8 +142,18 @@ export const PresetMixin = {
     // autosave. Store '' instead — applyState skips falsy code, so restoring
     // such a preset leaves the editor alone rather than stomping it. Not
     // blanked while cpActive: a running script is state worth saving.
+    // FIX: while a script is RUNNING, its source is cam.cpSource — set by
+    // loadScript alongside cpFn. #ce-code is only the editor buffer, and the
+    // camera preset gallery (modals.js) and selectKeyframe both overwrite it
+    // without loading anything, so a snapshot built from it recorded whatever
+    // script the user happened to be reading. Restoring such a preset runs
+    // that one, because applyState calls loadScript on the carried code.
+    // With no script running the buffer IS the state worth saving, and
+    // FIX(#17) below still applies to it.
     const camCodeRaw = DOM.ceCode?.value ?? '';
-    const camCode    = (!cam.cpActive && camCodeRaw === cam.getDefaultCode?.()) ? '' : camCodeRaw;
+    const camCode    = cam.cpActive
+      ? (cam.cpSource ?? camCodeRaw)
+      : (camCodeRaw === cam.getDefaultCode?.() ? '' : camCodeRaw);
 
     const state = {
       // Version stamp — read by migratePreset() on load. Sourced from
@@ -153,7 +163,11 @@ export const PresetMixin = {
       // ── Visual ──────────────────────────────────────────────────────────
       shape:       r.currentShape,
       vizMode:     r.vizMode,
-      material:    r.currentMaterial ?? 'matte',
+      // FIX: ask the panel, which knows the difference between "the finish on
+      // screen" and "the finish chosen". WIRE and PTS force Matte for as long
+      // as they are on screen, so a preset saved in either mode recorded Matte
+      // and handed it back on the way out, losing the operator's pick.
+      material:    this.getPresetMaterial?.() ?? r.currentMaterial ?? 'matte',
       // 'squares' covers both a build without particle styles and a snapshot
       // taken before the field existed — the two are the same look.
       particleStyle: r.currentParticleStyle ?? 'squares',
@@ -185,10 +199,19 @@ export const PresetMixin = {
       },
 
       // ── Custom shader ───────────────────────────────────────────────────
+      // FIX: hasCustom describes the LIVE program (se.customVS is set only on a
+      // successful compile), so the bodies beside it have to describe the same
+      // program. se._vert/_frag are draft buffers — the gallery writes them
+      // without compiling, switchTab writes them, and compileAndApply writes
+      // them before its own trial compile, so a failed APPLY leaves broken
+      // source there. Pairing the live flag with the draft text meant a preset
+      // could carry a shader that was only being read, and applying it
+      // compiled that one. _appliedVert/_appliedFrag are the bodies that last
+      // compiled; with nothing custom live the draft is the right thing to keep.
       shader: {
         hasCustom: !!se.customVS,
-        vert:      se._vert,
-        frag:      se._frag,
+        vert:      se.customVS ? (se._appliedVert ?? se._vert) : se._vert,
+        frag:      se.customFS ? (se._appliedFrag ?? se._frag) : se._frag,
       },
     };
 
@@ -358,7 +381,13 @@ export const PresetMixin = {
 
       if (s.gpuSelVal.startsWith('m:')) {
         const [, colId, key] = s.gpuSelVal.split(':');
-        onFlatActions.push(() => { if (mv) mv.setFormula(colId, key); });
+        // FIX(r2): same live check as ui.applyMathFormula. The flat frame is up
+        // to 400 ms away, and a shader picked in that window — by hand or by
+        // the next clip step — owns the surface; arming this formula then sets
+        // uMathMode = 1 and the shader draws nothing at all.
+        onFlatActions.push(() => {
+          if (mv && DOM.gpuSel.value === s.gpuSelVal) mv.setFormula(colId, key);
+        });
       } else {
         // GPU shader mode — has its own crossfade (uModeBlend), doesn't need
         // to be inside the morph. Schedule it but NOT inside onFlat.
@@ -432,10 +461,18 @@ export const PresetMixin = {
 
     if (s.camera && camOwned) {
       const c = s.camera;
-      // Pause auto-rotate during the tween so the physics loop doesn't
-      // fight with our position writes. Restore the previous state on done.
-      const prevAutoRot = cam.autoRot;
-      cam.autoRot = false;
+      // Hold the camera for the tween's duration so the physics loop and any
+      // live programmer script don't fight our position writes.
+      //
+      // FIX: this used to write cam.autoRot = false and restore it afterwards.
+      // autoRot is the AUTO-ROTATE button's own state, and nothing told the
+      // button — so for the whole tween (about 30% of a clip step on the
+      // default camera setting) the label read ON while the flag read OFF, and
+      // the click handler builds both the new value and its claim/release
+      // decision out of that flag. A click in that window did the opposite of
+      // the label: rotation on, camera claimed from the clip player. Holding
+      // through a flag of the tween's own leaves the user's setting alone.
+      cam.tweenHold = true;
 
       // Defer setCamPhysics — it sets autoRot=true internally, which makes
       // main.js call camera.updatePhysics() each frame and overwrite our
@@ -450,13 +487,9 @@ export const PresetMixin = {
           cam.autoRot = c.autoRot;
           cam.cb.onAutoRotChanged(c.autoRot);
         });
-      } else if (!c.physics) {
-        // No physics, no wish — restore pre-tween state at end.
-        postTweenCameraActions.push(() => {
-          cam.autoRot = prevAutoRot;
-          cam.cb.onAutoRotChanged(prevAutoRot);
-        });
       }
+      // Nothing to restore when there is no wish: the hold above is released in
+      // onDone and the user's setting was never disturbed.
 
       // Built here, fired after the camera-programmer block below — with a
       // zero/negative duration tweenCameraTo commits synchronously and runs
@@ -473,6 +506,10 @@ export const PresetMixin = {
         {
           duration: opts.cameraTransitionMs,
           onDone: () => {
+            // Released first, and before the re-check below can return: a hold
+            // left standing would keep the physics loop and the programmer
+            // script switched off for the rest of the session.
+            cam.tweenHold = false;
             // Ownership can flip DURING the tween: the user hits AUTO-ROTATE
             // or applies a script in the first few hundred ms of a clip step.
             // The actions below were queued while the player still owned the
@@ -501,7 +538,12 @@ export const PresetMixin = {
       // hands them straight to a renderer that assumes kf.code is a string.
       const code = typeof cs.code === 'string' ? cs.code : '';
       if (code) cam.cb.onSetCode(code);
-      if (cs.params && typeof cs.params === 'object') Object.assign(cam.cpParams, cs.params);
+      if (cs.params && typeof cs.params === 'object') {
+        Object.assign(cam.cpParams, cs.params);
+        // The sliders show cpParams; they have to be told when a snapshot
+        // rewrites it, or the next drag starts from the previous value.
+        cam.cb.onParamsChanged?.();
+      }
       cam.cpKeyframes = sanitizeKeyframes(cs.keyframes);
       cam.cpSelectedKf = null;
       cam.buildTimeline();
@@ -816,14 +858,36 @@ export const PresetMixin = {
     // ClipPlayer.buildFromPresets), not inside `state`. Spread the old record
     // first so it survives; entry's own keys win.
     if (idx >= 0) presets[idx] = { ...presets[idx], ...entry }; else presets.push(entry);
-    try { localStorage.setItem('vimathic_presets', JSON.stringify(presets)); } catch (_) {}
+    const ok = this._writePresetList(presets);
     this._renderPresets();
+    return ok;
+  },
+
+  /**
+   * Write the preset list, reporting whether it landed.
+   *
+   * FIX: all three writers swallowed the failure — `catch (_) {}` — and the
+   * SAVE handler cleared the name field regardless, so a refused write (quota
+   * exceeded, private mode, storage blocked for the origin) redrew the list
+   * without the preset AND threw away the typed name, with nothing on screen
+   * to say why.
+   *
+   * @returns {boolean} true when the list was stored
+   */
+  _writePresetList(list) {
+    try {
+      localStorage.setItem('vimathic_presets', JSON.stringify(list));
+      return true;
+    } catch (_) {
+      return false;
+    }
   },
 
   deletePreset(name) {
     const presets = this._loadPresetList().filter(p => p.name !== name);
-    try { localStorage.setItem('vimathic_presets', JSON.stringify(presets)); } catch (_) {}
+    const ok = this._writePresetList(presets);
     this._renderPresets();
+    return ok;
   },
 
   _loadPresetList() {
@@ -880,9 +944,10 @@ export const PresetMixin = {
       holdEl.style.flexShrink = '0';
       holdEl.addEventListener('change', () => {
         p.holdMs = Math.max(500, +holdEl.value * 1000);
-        try { localStorage.setItem('vimathic_presets', JSON.stringify(this._loadPresetList().map(
+        const stored = this._writePresetList(this._loadPresetList().map(
           x => x.name === p.name ? { ...x, holdMs: p.holdMs } : x
-        ))); } catch (_) {}
+        ));
+        if (!stored) this._showToast?.('⚠ Could not save the hold — storage is full or blocked', true);
       });
 
       // Delete button — compact (×8px, no padding around the cross)

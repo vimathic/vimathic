@@ -52,6 +52,9 @@ export class FormulaPicker {
     // ShuffleBag throws on an empty pool; an absent family must degrade to
     // "draw from the other one", not take the hotkey down.
     this._gpuBag = gpuValues.length ? new ShuffleBag(gpuValues.slice()) : null;
+    // Kept so a live 'm:collection:key' value can be turned back into the
+    // record the CPU bag deals — see _nextCpu.
+    this._cpuItems = cpuFormulas.slice();
     this._cpuBag = cpuFormulas.length
       // Compared by (collectionId, key): getAllFormulasList() builds fresh
       // objects on every call, so reference identity would not survive a
@@ -72,15 +75,24 @@ export class FormulaPicker {
    * the caller applies it through the same branch the dropdown's own change
    * handler uses and no third code path can drift from the other two.
    */
-  next() {
-    if (!this._gpuBag) return this._nextCpu();
-    if (!this._cpuBag) return this._gpuBag.next();
-    return this._random() < this.gpuShare ? this._gpuBag.next() : this._nextCpu();
+  next(current) {
+    // `current` is the #gpu-sel value on screen. Forwarded to whichever bag
+    // draws, so a draw that would hand back what is already selected — after
+    // the dropdown, a preset or a clip step moved it — is redrawn once instead
+    // of reading as a keypress that did nothing.
+    if (!this._gpuBag) return this._nextCpu(current);
+    if (!this._cpuBag) return this._gpuBag.next(current);
+    return this._random() < this.gpuShare ? this._gpuBag.next(current) : this._nextCpu(current);
   }
 
-  _nextCpu() {
+  _nextCpu(current) {
     if (!this._cpuBag) return null;
-    const pick = this._cpuBag.next();
+    // The CPU bag deals {collectionId, key} records, so the comparison has to
+    // happen on the assembled value the selector actually holds.
+    const cur  = typeof current === 'string' && current.startsWith('m:') ? current : null;
+    const pick = this._cpuBag.next(
+      cur ? this._cpuItems.find(p => `m:${p.collectionId}:${p.key}` === cur) ?? null : null,
+    );
     return `m:${pick.collectionId}:${pick.key}`;
   }
 }

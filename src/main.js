@@ -18,6 +18,7 @@ import { MathVisualizer } from './math-visualizer.js';
 import { getAllFormulasList } from './math-collections.js';
 import { FormulaPicker, isMathValue } from './formula-picker.js';
 import { DOM } from './dom.js';
+import { isAboutModalOpen } from './ui/about-modal.js';
 
 // ── App config ──────────────────────────────────────────────────────────────
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
@@ -48,7 +49,16 @@ const ctx    = { audio, render, camera };
 
 // MIDI → engine: one PARAMS lookup replaces the per-parameter switch.
 // Adding a new mappable parameter is now a single-place change in params.js.
-midi.cb.onParamSet = (id, val) => applyParam(ctx, id, val);
+midi.cb.onParamSet = (id, val) => {
+  applyParam(ctx, id, val);
+  // A knob turn is a manual pick, so the AUTO COLOUR countdown restarts with
+  // it — same rule as the dropdown and the hotkeys. Deferred here rather than
+  // inside applyParam because only this site knows the write came from a
+  // person: applyParam is also how a clip step and an autosave restore write,
+  // and deferring on those would keep an armed AUTO from ever firing during a
+  // clip. Same reason the preset path is deliberately left alone.
+  if (id === 'colorIdx') ui.autoColor?.defer();
+};
 
 // Relative MIDI mode reads the current engine value before adding the
 // delta. PARAMS[id].get is the canonical reader for every mappable
@@ -73,6 +83,10 @@ const mathViz = new MathVisualizer(render, audio);
 // shape's coordinates. The hook also captures a fresh pristine reference
 // that mode transitions restore from to start with clean geometry.
 render.cb.onShapeChange = () => mathViz.onShapeChange();
+
+// A bloom punch that hands the value back moves the slider with it — the S
+// hotkey used to write the engine and the panel by hand, from the key handler.
+render.cb.onBloomRestored = v => syncParamUI('bloom', v);
 
 // RenderEngine's constructor calls setShape('pyramid-smooth') before this
 // callback was wired, so the very first shape (boot geometry) has no
@@ -151,35 +165,29 @@ function _getPicker() {
 }
 
 /**
- * Apply a #gpu-sel value exactly as the dropdown's own change handler would,
- * so the three entry points (dropdown, R, F) cannot drift apart.
+ * Set the colour scheme the way the palette dropdown does — engine, the value
+ * the dropdown shows, and the AUTO COLOUR countdown.
  *
- * @param {string}   value    — 'm:collection:key' or a numeric shader index
- * @param {function} [onFlat] — extra work for the flat frame of the morph. R
- *   passes its shape swap: for a CPU formula both must land inside ONE morph
- *   (two would cancel each other), while a GPU shader has no geometry morph of
- *   its own — uMode crossfades — so the shape gets a morph to itself.
+ * FIX: Q, E and R each wrote those first two by hand and never deferred, so a
+ * hand-picked palette could be crossfaded away a tenth of a second later if the
+ * cycler happened to be near the end of its period — the app appearing to fight
+ * the operator. AutoCycler's class doc states the invariant ("hotkeys, the
+ * dropdown and preset loads all keep writing colour … defer() restarts the
+ * countdown, so a manual pick gets its full period of screen time"); defer()
+ * had exactly two call sites, both change handlers on a <select>.
  */
-function _applyFormulaValue(value, onFlat) {
-  DOM.gpuSel.value = value;
-  if (isMathValue(value)) {
-    const [, colId, key] = value.split(':');
-    render.triggerMorphTransition(() => {
-      if (onFlat) onFlat();
-      mathViz.setFormula(colId, key);
-    });
-  } else {
-    mathViz.deactivate();
-    render.setGPUModeAnimated(+value);
-    if (onFlat) render.triggerMorphTransition(onFlat);
-  }
+function _pickColorScheme(i) {
+  audio.colorIdx = i;
+  render.setColorSchemeAnimated(i);
+  DOM.colorSel.value = i;
+  ui.autoColor?.defer();
 }
 
 // Pick and apply a random formula — GPU shader or CPU formula.
 function _randomFormula() {
   const picker = _getPicker();
   if (!picker) return;
-  _applyFormulaValue(picker.next());
+  ui.applyFormulaValue(picker.next(DOM.gpuSel?.value));
 }
 
 // ── D hotkey: sequential shape cycling ──────────────────────────────────
@@ -212,36 +220,13 @@ function _cycleShape() {
   render.setShapeAnimated(next);
 }
 
-// ── T hotkey: sequential surface-material cycling ───────────────────────
-//
-// Same pattern as D for shapes — reads options from the live
-// <select id="surface-material-sel">, steps to the next, loops.
-//
-// No-op when the material dropdown is hidden. The dropdown is hidden in
-// WIRE/PTS viz modes (where reflections look degenerate, material is
-// forced to Matte), so T does nothing there — matching the rule that
-// materials are only meaningful on filled surfaces. Driving the change
-// event re-runs controls.js's _applyMat so render.setSurfaceMaterial and
-// the descriptor line update through the single existing path.
-let _materialCycle = null;
-function _cycleMaterial() {
-  const sel = document.getElementById('surface-material-sel');
-  if (!sel) return;
-  // Hidden dropdown → materials unavailable (WIRE/PTS). Ignore the key.
-  // offsetParent is null when the element or an ancestor is display:none.
-  if (sel.offsetParent === null) return;
-  if (!_materialCycle) {
-    _materialCycle = Array.from(sel.options).map(o => o.value);
-  }
-  if (!_materialCycle.length) return;
-  const i    = _materialCycle.indexOf(sel.value);
-  const next = _materialCycle[(i + 1) % _materialCycle.length];
-  sel.value = next;
-  sel.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
 window.addEventListener('keydown', e => {
   if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  // The About dialog is modal for the pointer and was not for the keyboard, so
+  // space toggled playback and D changed the shape behind a reader's back — on
+  // first run, where the modal opens itself. Escape still reaches its own
+  // listener in controls.js, which is what closes this.
+  if (isAboutModalOpen()) return;
   // Ignore auto-repeat keydown. Hotkeys here are single-action triggers
   // (D = next shape, F = random formula, R = randomise all, space = play/
   // pause), not held-state inputs. Without this filter, holding D would
@@ -260,12 +245,10 @@ window.addEventListener('keydown', e => {
       break;
     }
 
-    // T — step to next surface material, looping. No-op in WIRE/PTS
-    // (dropdown hidden, material forced to Matte there).
-    case 't': {
-      _cycleMaterial();
-      break;
-    }
+    // T — step to next surface material, looping. No-op outside SURF, where
+    // the finish is forced to Matte. The panel owns the rule; see
+    // ui.cycleMaterial in controls.js.
+    case 't': ui.cycleMaterial(); break;
 
     // F — random math formula from catalog (shuffle-bag, no repeats)
     case 'f': {
@@ -276,13 +259,15 @@ window.addEventListener('keydown', e => {
     // R — randomise everything: color scheme + shape + formula.
     // Each draw comes from a shared shuffle-bag, so values do not repeat
     // until the corresponding pool is exhausted. The shape swap rides in the
-    // formula's morph callback when there is one (see _applyFormulaValue), so
+    // formula's morph callback when there is one (see ui.applyFormulaValue), so
     // both apply at the same flat frame instead of one cancelling the other.
     case 'r': {
-      const shape    = _shapeBag.next();
-      audio.colorIdx = _colorBag.next();
-      render.setColorSchemeAnimated(audio.colorIdx);
-      DOM.colorSel.value = audio.colorIdx;
+      // Each bag is told what is on screen: the deck only remembers what IT
+      // dealt, and D, E, the dropdowns, presets and clip steps all write these
+      // same values — after any of those, a blind draw can hand back what is
+      // already there and R looks like a dropped keypress.
+      const shape = _shapeBag.next(render.currentShape);
+      _pickColorScheme(_colorBag.next(audio.colorIdx));
       DOM.shapeSel.value = shape;
 
       const picker = _getPicker();
@@ -291,39 +276,28 @@ window.addEventListener('keydown', e => {
         render.setShapeAnimated(shape);
         break;
       }
-      _applyFormulaValue(picker.next(), () => render.setShape(shape));
+      ui.applyFormulaValue(picker.next(DOM.gpuSel?.value), () => render.setShape(shape));
       break;
     }
 
     case 'q':
-      audio.colorIdx = _colorBag.next();
-      render.setColorSchemeAnimated(audio.colorIdx);
-      DOM.colorSel.value = audio.colorIdx;
+      _pickColorScheme(_colorBag.next(audio.colorIdx));
       break;
     case 'e':
       // Cycle forward through every defined scheme. Was hardcoded to %24,
       // which silently skipped schemes 24-35.
-      audio.colorIdx = (audio.colorIdx + 1) % COLOR_SCHEME_COUNT;
-      render.setColorSchemeAnimated(audio.colorIdx);
-      DOM.colorSel.value = audio.colorIdx;
+      _pickColorScheme((audio.colorIdx + 1) % COLOR_SCHEME_COUNT);
       break;
-    case 'w': {
-      camera.rotAngle += Math.PI;
-      const r = CFG.autoRotRadius;
-      render.camera.position.set(Math.sin(camera.rotAngle)*r, render.camera.position.y, Math.cos(camera.rotAngle)*r);
-      render.orbit.update();
-      break;
-    }
+    // W — flip to the other side of the subject. The camera system owns
+    // rotAngle and the camera, so it owns the turn; see flipAzimuth().
+    case 'w': camera.flipAzimuth(); break;
     // G — fade grid in/out. Was 'C' historically; moved to G when C was
     // claimed by the hold-and-drag alias for Wave Intensity (see
     // controls.js _fsParams). Single-letter alias for 'grid'.
-    case 'g': {
-      const target = render.grid.visible ? 0 : 0.1;
-      let t2 = 0;
-      const fade = () => { t2+=.05; render.grid.material.opacity += (target-render.grid.material.opacity)*.2; if(t2<1) requestAnimationFrame(fade); else render.grid.visible=target>0; };
-      fade();
-      break;
-    }
+    // FIX: the fade now lives on the engine that owns the grid. Keeping it
+    // here meant the key handler owned grid.material.opacity while everything
+    // else owned grid.visible, and the two drifted apart — see fadeGrid().
+    case 'g': render.fadeGrid(!render.grid.visible); break;
     case 'h': DOM.hotkeyHint.classList.toggle('visible'); break;
 
     // Note: the letters L K J N B V C A X Z are all reserved for hold-and-
@@ -334,18 +308,10 @@ window.addEventListener('keydown', e => {
     case 's': {
       e.preventDefault();
       render.triggerGlitch(200);
-      // Capture original bloom only on the first press; subsequent presses
-      // within the punch window reuse it so rapid taps don't accumulate.
-      if (_bloomOrig === null) _bloomOrig = render.bloomPass.strength;
-      clearTimeout(_bloomTimer);
-      render.bloomPass.strength = Math.min(1.5, _bloomOrig + 0.8);
-      _bloomTimer = setTimeout(() => {
-        const v = _bloomOrig ?? 0.55;
-        render.bloomPass.strength = v;
-        syncParamUI('bloom', v);
-        _bloomOrig  = null;
-        _bloomTimer = null;
-      }, 200);
+      // The punch lives on the engine that owns bloom — see punchBloom. The
+      // panel follows through onBloomRestored, wired beside the other engine
+      // callbacks above.
+      render.punchBloom();
       // Restart the beat-ring flash via Web Animations API — no layout reflow.
       const ring = DOM.beatRing;
       ring.classList.remove('flash');
@@ -375,9 +341,6 @@ window.addEventListener('beforeunload', () => {
 // ── Freeze-frame & grid toggle ────────────────────────────────────────────────
 let isFrozen = false;
 
-// Bloom glitch: track original value so rapid S presses don't accumulate
-let _bloomOrig  = null;
-let _bloomTimer = null;
 
 DOM.btnFreezeFrame.addEventListener('click', () => {
   isFrozen = !isFrozen;
@@ -466,6 +429,15 @@ function animate() {
   // mathViz.setVolumeTimePaused(isFrozen) call on the freeze button.
   audio.update(time);
 
+  // The camera editor's playhead is a readout of the same audio clock as the
+  // seek bar, not a visual effect — FIX: it sat below the freeze gate, so under
+  // STOP MOTION the transport kept advancing while the timeline marker stood
+  // still and "+ ADD KEYFRAME", which reads the live fraction, dropped its
+  // keyframe where the marker was not.
+  if (DOM.camEditorOverlay.classList.contains('open')) {
+    camera.updatePlayhead(audio.getElapsedFraction());
+  }
+
   // Freeze holds the last composed frame but skips the visual updates below.
   if (isFrozen) {
     render.composer.render();
@@ -495,13 +467,12 @@ function animate() {
   if (camera.isScriptDriving()) {
     camera.setElapsedForKeyframe(audio.getElapsedFraction());
     camera.runScript(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
-  } else if (camera.autoRot && !camera.userInt) {
+  } else if (camera.autoRot && !camera.userInt && !camera.tweenHold) {
+    // tweenHold: a preset or clip step is tweening the camera right now, and
+    // physics writing position on the same frame would make the tween
+    // invisible. It used to be expressed by switching autoRot off, which is
+    // the user's own setting — see the flag's note in camera.js.
     camera.updatePhysics(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
-  }
-
-  // Update timeline playhead when the camera editor is open.
-  if (DOM.camEditorOverlay.classList.contains('open')) {
-    camera.updatePlayhead(audio.getElapsedFraction());
   }
 
   render.orbit.update();

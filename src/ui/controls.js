@@ -7,8 +7,8 @@
 // Called once from UIController.bindAll().
 
 import { DOM } from '../dom.js';
-import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT } from '../params.js';
-import { bindAboutModal, ABOUT_OVERLAY_ID } from './about-modal.js';
+import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT, DRAG_FLOOR } from '../params.js';
+import { bindAboutModal, closeAbout, isAboutModalOpen } from './about-modal.js';
 import { AutoCycler } from './auto-cycle.js';
 
 export function bindControls(ui) {
@@ -117,7 +117,12 @@ export function bindControls(ui) {
       if (_matWrap) _matWrap.style.display = '';
       // Restore the material the user (or the preset) had before switching away.
       _matSel.value = _savedMaterial;
-      _applyMat();
+      // FIX: only when it actually changes. Every clip step calls through here,
+      // and re-applying the finish already in force restarts the fade at its
+      // default duration — cutting short the cadence-scaled crossfade AUTO
+      // MATERIAL asked for, on every step. Clicking the already-active ◄ SURF
+      // button took the same path.
+      if (r.currentMaterial !== _savedMaterial) _applyMat();
     } else {
       // WIRE / PTS — force Matte and hide the dropdown. Instant: the material
       // is being taken away because it cannot be drawn correctly here, and a
@@ -138,11 +143,18 @@ export function bindControls(ui) {
     isPlaying: () => !!a.isPlaying,
     bpm:       () => a.estimatedBpm,
     // Material is forced to Matte and its dropdown hidden in WIRE/PTS, where
-    // the reconstructed normal makes reflections nonsense. offsetParent is null
-    // exactly then (the test the T hotkey already uses), so AUTO holds its
+    // the reconstructed normal makes reflections nonsense. AUTO holds its
     // breath there and picks up again on the way back to SURF, rather than
     // switching itself off behind the user's back.
-    canFire:   () => !!_matSel && _matSel.offsetParent !== null,
+    //
+    // FIX: this used to ask `_matSel.offsetParent !== null`, i.e. "is the row
+    // on screen". offsetParent is null under any display:none ancestor, and
+    // collapsing the panel — or just the ▸ VISUAL STYLE section — is one, so an
+    // armed AUTO MATERIAL froze for as long as the panel stayed shut while AUTO
+    // COLOUR kept running and nothing reported the stall. Clearing the view
+    // mid-set is ordinary. The question is about the viz mode, so it is asked
+    // of the engine.
+    canFire:   () => !!_matSel && r.vizMode === 'surface',
     apply:     (key, ms) => { _matSel.value = key; _applyMat(ms); },
     // Twice the colour period. A finish change rewrites how the whole surface
     // reads, and on the colour cadence the two together strobe.
@@ -150,6 +162,26 @@ export function bindControls(ui) {
     onToggle:  on => DOM.surfaceMaterialAuto?.classList.toggle('active', on),
   });
   DOM.surfaceMaterialAuto?.addEventListener('click', () => ui.autoMaterial.toggle());
+
+  /**
+   * Step to the next surface finish — the T hotkey.
+   *
+   * FIX: this lived in main.js's keydown switch, where no test could reach it
+   * (importing main.js boots the app), and it decided whether materials are
+   * available by asking whether the dropdown was on screen — so T went dead
+   * whenever the panel was merely collapsed. Same substitution as AUTO
+   * MATERIAL's veto above: the viz mode is the engine's to answer. Deferring
+   * the AUTO countdown is now deliberate too; the old version got it only as a
+   * side effect of dispatching a change event.
+   */
+  ui.cycleMaterial = () => {
+    if (!_matSel || r.vizMode !== 'surface') return;
+    const opts = Array.from(_matSel.options).map(o => o.value);
+    if (!opts.length) return;
+    _matSel.value = opts[(opts.indexOf(_matSel.value) + 1) % opts.length];
+    _applyMat();
+    ui.autoMaterial?.defer();
+  };
 
   // ── Particle style (PTS viz mode) ─────────────────────────────────────────
   // The PTS counterpart of Surface Material, and the same rule in mirror image:
@@ -216,6 +248,12 @@ export function bindControls(ui) {
   // when a user picks an `m:` formula while in volume mode. See the
   // gpu-sel handler for the motivation. Without this ordering the call
   // would hit a temporal dead zone.
+  // The live formula/shader selection. Every path writes it — the dropdown by
+  // definition, the R/F hotkeys through main.js, and applyState — so it is what
+  // work queued for a flat frame asks when it finally runs.
+  const _gpuSel        = () => document.getElementById('gpu-sel');
+  const _isMathSel     = () => !!_gpuSel()?.value?.startsWith('m:');
+
   const _deformBtns    = ['surface','volume','collapse'];
   const _volWrap       = document.getElementById('volume-formula-wrap');
   const _volSel        = document.getElementById('volume-formula-sel');
@@ -246,7 +284,12 @@ export function bindControls(ui) {
       _volDesc.textContent = _volDescriptions[key] ?? '';
       // Morph transition into volume mode
       r.triggerMorphTransition(() => {
-        if (ui.mathViz) ui.mathViz.setVolumeFormula(key);
+        // Same live check as applyMathFormula, for the same reason:
+        // setVolumeFormula sets uMathMode = 1, and a GPU shader picked inside
+        // the morph window would then draw nothing. The panel keeps showing
+        // VOLUME, which is the state applyState already documents for a
+        // shader-carrying snapshot — a stale highlight beats a blank screen.
+        if (_isMathSel() && ui.mathViz) ui.mathViz.setVolumeFormula(key);
         if (runFormula) runFormula();
       });
     } else {
@@ -259,39 +302,111 @@ export function bindControls(ui) {
     }
   };
 
-  document.getElementById('gpu-sel').addEventListener('change', e => {
-    const val = e.target.value;
-    if (val.startsWith('m:')) {
-      // CPU math formula. The 192 m:-formulas are scalar fields (Z = f(x,y))
-      // — they only fit Surface and Collapse modes. Volume mode uses a
-      // separate 6-formula registry of vector fields (_volSel above).
+  /**
+   * Apply a CPU (`m:`) formula, moving the deform panel with the engine.
+   *
+   * MathVisualizer.setFormula auto-exits volume mode — the 192 scalar formulas
+   * have nothing to apply there — and the panel has to follow, or it describes
+   * a mode the engine has left.
+   *
+   * FIX: this used to live inside the dropdown's change handler only, while the
+   * R and F hotkeys called setFormula through their own path in main.js. So a
+   * hotkey press in DEFORM: VOLUME moved the engine to Collapse and left
+   * VOLUME highlighted with its formula row open — one click away from writing
+   * a volume formula that no longer applies. Exposed on `ui` so the hotkeys use
+   * the same one, which is what their own JSDoc already claims.
+   *
+   * @param {string}     colId  — collection id
+   * @param {string}     key    — formula key
+   * @param {function}   [onFlat] — extra work for the same flat frame (R's
+   *                                shape swap: two morphs would cancel out)
+   */
+  /**
+   * The finish a preset should record.
+   *
+   * FIX: captureState read render.currentMaterial, and WIRE/PTS force Matte for
+   * as long as they are on screen — so a preset saved in either mode recorded
+   * Matte and handed it back on the way out, losing the operator's pick. The
+   * pick itself lived only as a closure variable in this file with no reader.
+   * In SURF the live finish is the answer; anywhere else it is what a return to
+   * SURF would restore.
+   */
+  ui.getPresetMaterial = () => (r.vizMode === 'surface' ? r.currentMaterial : _savedMaterial) ?? 'matte';
+
+  ui.applyMathFormula = (colId, key, onFlat) => {
+    const want = `m:${colId}:${key}`;
+    // Written here rather than assumed: the guard below reads this value back
+    // at the flat frame, so the claim "this formula is the selection" has to be
+    // made by the same function that later checks it. Both callers write it
+    // too — the dropdown because the value came from it, main.js explicitly —
+    // and a third caller that forgot would otherwise get a formula that
+    // silently never arms.
+    _gpuSel().value = want;
+    const runFormula = () => {
+      if (onFlat) onFlat();
+      // FIX(r2): ask what is selected NOW. The flat frame is up to 400 ms
+      // away, and by then a GPU shader — from this dropdown, from R/F, or from
+      // an applied preset — may own the surface. Arming the formula then sets
+      // uMathMode = 1, and the shader's displacement is gated on
+      // uMathMode == 0, so it draws nothing at all.
       //
-      // If we're currently in Volume mode and the user picks an m:-formula,
-      // auto-switch to Collapse mode so the formula actually applies —
-      // collapse runs the scalar formula along surface normals on the 3D
-      // shape, which is the closest 3D-preserving rendering. Without this
-      // auto-switch the formula change appeared to do nothing: setFormula
-      // updates _formulaFn but _tickVolume only reads _volumeFn, so the
-      // mesh kept showing the previous volume deformation.
-      const [, colId, key] = val.split(':');
-      const isVolumeActive = document.getElementById('deform-volume')?.classList.contains('active');
-      if (isVolumeActive) {
-        // Combined: switch mode AND apply formula inside one morph.
-        _setDeformMode('collapse', () => {
-          if (ui.mathViz) ui.mathViz.setFormula(colId, key);
-        });
-        ui._showToast?.('Volume → Collapse · scalar formulas need a surface mode');
-      } else {
-        r.triggerMorphTransition(() => {
-          if (ui.mathViz) ui.mathViz.setFormula(colId, key);
-        });
-      }
+      // This replaces render.cancelPendingMorph(), which was both too blunt
+      // and wired to only two of the three entry points: it dropped the whole
+      // queued closure, and applyState bundles the shape swap into that same
+      // closure. #gpu-sel is the one value every path writes, so asking it
+      // covers all three and leaves the rest of the queue alone.
+      if (_gpuSel().value !== want) return;
+      if (ui.mathViz) ui.mathViz.setFormula(colId, key);
+    };
+    const isVolumeActive = document.getElementById('deform-volume')?.classList.contains('active');
+    if (isVolumeActive) {
+      // Combined: switch mode AND apply formula inside one morph.
+      _setDeformMode('collapse', runFormula);
+      ui._showToast?.('Volume → Collapse · scalar formulas need a surface mode');
     } else {
-      // GPU shader — deactivate math and switch uMode with crossfade
-      if (ui.mathViz) ui.mathViz.deactivate();
-      r.setGPUModeAnimated(+val);
+      r.triggerMorphTransition(runFormula);
     }
-  });
+  };
+
+  /**
+   * Apply a #gpu-sel value — a CPU formula or a GPU shader — for whoever asked:
+   * this dropdown, the R and F hotkeys, or a preset.
+   *
+   * The CPU branch carries the volume→collapse auto-switch (the 192
+   * m:-formulas are scalar fields, Z = f(x,y), and only fit Surface and
+   * Collapse; Volume uses a separate registry of vector fields, so without the
+   * switch the formula change appeared to do nothing — setFormula updates
+   * _formulaFn while _tickVolume only reads _volumeFn).
+   *
+   * FIX: main.js kept its own copy of this branch, and the doc block over it
+   * claimed "the three entry points cannot drift apart" while being the drift.
+   * Its copy could not be tested either — reaching it means importing main.js,
+   * which boots the whole app. One function now, in the layer that owns the
+   * panel, and main.js calls it.
+   *
+   * @param {string}   value    — 'm:collection:key' or a numeric shader index
+   * @param {function} [onFlat] — extra work for the flat frame. R passes its
+   *   shape swap: for a CPU formula both must land inside ONE morph (two would
+   *   cancel each other), while a GPU shader has no geometry morph of its own —
+   *   uMode crossfades — so the shape gets a morph to itself.
+   */
+  ui.applyFormulaValue = (value, onFlat) => {
+    const val = String(value);
+    if (val.startsWith('m:')) {
+      const [, colId, key] = val.split(':');
+      ui.applyMathFormula(colId, key, onFlat);
+      return;
+    }
+    // GPU shader — deactivate math and switch uMode with crossfade. A formula
+    // still queued for a flat frame disarms itself when it gets there and finds
+    // this value in #gpu-sel — see applyMathFormula.
+    _gpuSel().value = val;
+    if (ui.mathViz) ui.mathViz.deactivate();
+    r.setGPUModeAnimated(+val);
+    if (onFlat) r.triggerMorphTransition(onFlat);
+  };
+
+  document.getElementById('gpu-sel').addEventListener('change', e => ui.applyFormulaValue(e.target.value));
 
   // ── Viz mode buttons ──────────────────────────────────────────────────────
   //
@@ -586,21 +701,44 @@ export function bindControls(ui) {
   const panel       = document.querySelector('.controls-panel');
   const collapseBtn = document.getElementById('ctrl-collapse');
 
-  let ctrlCollapsed = false;
-
+  // FIX: the class is the state. This kept a module-local boolean while the
+  // inline script in index.html toggled the class directly — two owners of one
+  // fact, on the same element and the same header. A mobile swipe writes the
+  // class without the boolean knowing, so the next header tap set the boolean
+  // to a value the class already had and the panel did not move. The duplicate
+  // listener in index.html went with this change; the swipe handlers there stay,
+  // because they already write the same class.
   DOM.ctrlHeader.addEventListener('click', () => {
-    ctrlCollapsed = !ctrlCollapsed;
-    panel.classList.toggle('collapsed', ctrlCollapsed);
-    collapseBtn.style.display = ctrlCollapsed ? 'none' : '';
+    const collapsed = panel.classList.toggle('collapsed');
+    collapseBtn.style.display = collapsed ? 'none' : '';
+    if (collapseBtn) collapseBtn.textContent = collapsed ? '▲' : '▼';
   });
 
   // ── Enhanced fullscreen mode ──────────────────────────────────────────────
   let _fsActive = false;
 
-  const _enterFS = () => {
-    // Optional chaining covers older browsers and the jsdom test environment
-    // where requestFullscreen is undefined.
-    document.documentElement.requestFullscreen?.().catch(() => {});
+  // FIX: hide the panel only once the browser has actually gone fullscreen.
+  // This used to fire the request, swallow any failure and hide the panel
+  // regardless — and `fs-hidden` is `opacity:0;pointer-events:none`, with
+  // #btn-fullscreen (the control that would undo it) living inside that very
+  // panel. So where the request cannot succeed — no requestFullscreen at all,
+  // which is the case the optional chaining was there for, or a promise
+  // rejected by an iframe without allow="fullscreen" — no `fullscreenchange`
+  // ever arrives either, and the entire panel stayed invisible and unclickable
+  // for the rest of the session. Nothing else could bring it back.
+  const _enterFS = async () => {
+    const req = document.documentElement.requestFullscreen;
+    if (!req) {
+      ui._showToast?.('⚠ Fullscreen is not available in this browser');
+      return;
+    }
+    try {
+      await req.call(document.documentElement);
+    } catch (_) {
+      // Refused by policy (embedded without allow="fullscreen") or by the user.
+      ui._showToast?.('⚠ Fullscreen was refused by the browser');
+      return;
+    }
     panel.classList.add('fs-hidden');
     document.body.style.cursor = 'none';
     _fsActive = true;
@@ -639,10 +777,10 @@ export function bindControls(ui) {
   // to the same param via PARAMS[id], so there's no duplicated state and
   // adding more aliases later is a one-line change here.
   //
-  // Why min uses Math.max(p.min, 0.1): some PARAMS allow min=0 (bassSens,
-  // trebleSens, bloom) but hold-and-drag at exactly 0 makes the
-  // visualizer go silent, which feels broken mid-performance. 0.1 keeps a
-  // sliver of motion. PARAMS.min stays at 0 for MIDI / preset / reset paths.
+  // Why min uses Math.max(p.min, DRAG_FLOOR): some PARAMS allow min=0
+  // (bassSens, trebleSens, bloom) but hold-and-drag at exactly 0 makes the
+  // visualizer go silent, which feels broken mid-performance. The floor keeps
+  // a sliver of motion. PARAMS.min stays at 0 for MIDI / preset / reset paths.
   // FIX(#28): waveInt is not in that list — params.js declares min 0.3
   // (aligned with the index.html slider), so the clamp never moves it.
   const _fsParams = {
@@ -663,6 +801,13 @@ export function bindControls(ui) {
 
   document.addEventListener('keydown', e => {
     if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+    // FIX: and not through the About dialog. It is aria-modal and modal for the
+    // pointer, but nothing told the keyboard — so a key pressed while reading
+    // the docs armed a hold-and-drag on a parameter behind the overlay. A
+    // brand-new profile is in exactly that state, since the modal auto-opens on
+    // first run. Escape is a separate listener and deliberately not guarded,
+    // or the modal could not be closed by key.
+    if (isAboutModalOpen()) return;
     const key = e.key.toLowerCase();
     if (_fsParams[key]) { _dragKey = key; e.preventDefault(); }
   });
@@ -717,7 +862,7 @@ export function bindControls(ui) {
     const p = PARAMS[id];
     if (!p) return;
     const hi        = p.extendedMax ?? p.max;
-    const lo        = Math.max(p.min, 0.1);
+    const lo        = Math.max(p.min, DRAG_FLOOR);
     const cur       = p.get(ctx);
     const spdBase   = (hi - lo) / 600;
     const absVal    = Math.abs(cur);
@@ -806,7 +951,13 @@ export function bindControls(ui) {
   document.getElementById('btn-preset-save').addEventListener('click', () => {
     const name = presetNameInput?.value.trim();
     if (!name) { ui._showToast('⚠ Enter a preset name', true); return; }
-    ui.savePreset(name);
+    // FIX: the write can fail — quota, private mode, storage blocked for the
+    // origin — and this used to clear the field and say nothing, so the list
+    // simply redrew without the preset and the typed name was gone too.
+    if (ui.savePreset(name) === false) {
+      ui._showToast('⚠ Could not save — storage is full or blocked', true);
+      return;
+    }
     if (presetNameInput) presetNameInput.value = '';
   });
   if (presetNameInput) {
@@ -821,6 +972,18 @@ export function bindControls(ui) {
   const mfi = document.getElementById('model-file');
   mdz.addEventListener('click',  () => mfi.click());
   mfi.addEventListener('change', e => { if (e.target.files[0]) ml.load(e.target.files[0], (v,p,m)=>ui.setLoading(v,p,m), ()=>({ vs:se.customVS, fs:se.customFS })); });
+  // FIX: ✕ CLEAR MODEL was revealed by every import and bound by nobody — an
+  // imported model could not be removed for the rest of the session (clear()
+  // was reached only from beforeunload). Clearing the file input too: without
+  // it, picking the same file again fires no 'change' event, so the one way
+  // back to the model would be dead as well.
+  const bcm = document.getElementById('btn-clear-model');
+  bcm.addEventListener('click', () => {
+    ml.clear();
+    document.getElementById('model-info').textContent = '';
+    mfi.value = '';
+    bcm.style.display = 'none';
+  });
   mdz.addEventListener('dragover',  e => { e.preventDefault(); e.stopPropagation(); mdz.classList.add('drag-over'); });
   mdz.addEventListener('dragleave', () => mdz.classList.remove('drag-over'));
   mdz.addEventListener('drop',      e => { e.preventDefault(); e.stopPropagation(); mdz.classList.remove('drag-over'); if(e.dataTransfer.files[0]) ml.load(e.dataTransfer.files[0], (v,p,m)=>ui.setLoading(v,p,m), ()=>({ vs:se.customVS, fs:se.customFS })); });
@@ -828,9 +991,18 @@ export function bindControls(ui) {
   // ── Close any open modal on Escape ────────────────────────────────────────
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
-    ['shader-editor-overlay','cam-editor-overlay','audio-src-overlay','output-overlay', ABOUT_OVERLAY_ID].forEach(id => {
+    ['shader-editor-overlay','cam-editor-overlay','audio-src-overlay','output-overlay'].forEach(id => {
       document.getElementById(id)?.classList.remove('open');
     });
+    // About has more to put away than the .open class — see closeAbout.
+    closeAbout();
+    // FIX: and out of fullscreen mode. The button that says "✕ EXIT
+    // FULLSCREEN" is inside the panel fullscreen hides, so it can neither be
+    // seen nor clicked — leaving the browser's own Escape as the only way back,
+    // and that only restores the panel by way of `fullscreenchange`. This makes
+    // the app's own state follow the same key, whether or not the event
+    // arrives.
+    if (_fsActive) _exitFS();
   });
 
   // ── About / documentation modal ──────────────────────────────────────────

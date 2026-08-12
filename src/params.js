@@ -51,6 +51,14 @@ import { DOM } from './dom.js';
 //         36..43 DARK series (Charcoal Smoke..Coal Plum)
 export const COLOR_SCHEME_COUNT = 44;
 
+// Floor for hold-and-drag. Some params allow min = 0 (bassSens, trebleSens,
+// bloom), and dragging one to exactly 0 makes the visualiser go silent, which
+// reads as broken mid-performance — 0.1 keeps a sliver of motion. min stays 0
+// for the MIDI, preset and RESET paths. Exported so the drag path and the
+// documented range table cannot drift apart; tests/docs-consistency.test.js
+// checks them against each other.
+export const DRAG_FLOOR = 0.1;
+
 export const PARAMS = {
   amp: {
     label:   'Amplitude',
@@ -173,7 +181,13 @@ export const PARAMS = {
     min: 0, max: 0.002, default: 0.00002,
     format: v => v.toFixed(5),
     get: ctx => ctx.camera.cpParams.rotSpeed,
-    set: (ctx, v) => { ctx.camera.cpParams.rotSpeed = v; },
+    set: (ctx, v) => {
+      ctx.camera.cpParams.rotSpeed = v;
+      // Same reason as the preset path: this param has no slider of its own in
+      // the panel, only the camera editor's, and a MIDI CC moving it must move
+      // the thumb too.
+      ctx.camera.cb?.onParamsChanged?.();
+    },
     midi: true,
   },
 };
@@ -345,6 +359,12 @@ export const MIDI_PARAMS = [
       id, label: p.label,
       min: p.min, max: p.max, default: p.default,
       integer: !!p.integer,
+      // FIX: `wrap` has to travel with the rest. The MIDI decoder lower-clamps
+      // a relative delta before handing it on, and applyParam — where the wrap
+      // lives — never saw a value below min. An encoder on the palette was
+      // endless clockwise and dead anticlockwise, which is exactly what the
+      // wrap flag exists to prevent.
+      wrap: !!p.wrap,
     })),
   { id: 'none', label: '— Unassigned —', min: 0, max: 1, default: 0 },
 ];

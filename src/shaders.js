@@ -477,7 +477,16 @@ void main(){vec3 pos=position;
   float b=clamp(uBass,0.,1.2),t=clamp(uTreble,0.,1.2),m=clamp(uMid,0.,1.),bt=0./*intentional, see note above*/;
   float r=length(pos.xz),ang=atan(pos.z,pos.x),y=0.,a=uAmp,wi=uWI,T=uTime;
   ${body}
-  if(uMathMode==0){pos.y=y;}
+  // FIX: scale by uMorphProgress, exactly as the built-in VS does in both of
+  // its branches. The template declared the uniform and never read it, so
+  // while an editor program was live a shape swap — D, R, a preset, a clip
+  // step, all of which drive uMorphProgress 1 → 0 → 1 and swap the geometry at
+  // the flat frame — produced no deflate and no inflate, just a cut in the
+  // middle of an animation the rest of the app was still performing. The else
+  // branch reproduces the built-in's CPU path, including its double scaling in
+  // collapse mode (math-visualizer applies morphScale before this): parity
+  // with the reference, not a new behaviour.
+  if(uMathMode==0){pos.y=y*uMorphProgress;}else{pos.y=pos.y*uMorphProgress;}
   vH=pos.y;
   // An editor shader is now installed on the POINTS proxy too, and a vertex
   // program that leaves gl_PointSize unwritten draws points of undefined size.
@@ -575,6 +584,14 @@ export class ShaderEditor {
     this._frag   = SE_DEFAULT_FRAG;
     this.customVS = null;
     this.customFS = null;
+    // FIX: the bodies behind customVS/customFS — i.e. the last source that
+    // actually compiled. _vert/_frag cannot stand in for them: they are draft
+    // buffers the gallery, switchTab and compileAndApply's own pre-compile
+    // write all move without anything having been applied. captureState needs
+    // the source of the program that is LIVE, because applying a snapshot
+    // with hasCustom compiles whatever body it carries.
+    this._appliedVert = null;
+    this._appliedFrag = null;
 
     // ── Callbacks — UI wires these in bindAll() ───────────────────────
     this.cb = {
@@ -598,6 +615,10 @@ export class ShaderEditor {
   compileAndApply() {
     const errEl = document.getElementById('se-error');
     errEl.textContent = '';
+    // Whatever this run reports owns the status line from here on — see the
+    // timer armed on success below.
+    clearTimeout(this._okTimer);
+    this._okTimer = null;
     const vertBody = this._tab === 'vert' ? document.getElementById('se-code').value : this._vert;
     const fragBody = this._tab === 'frag' ? document.getElementById('se-code').value : this._frag;
     if (this._tab === 'vert') this._vert = vertBody;
@@ -645,13 +666,24 @@ export class ShaderEditor {
       cleanup();
       this.customVS = fullVS;
       this.customFS = fullFS;
+      // FIX: remember the bodies, not just the assembled programs — a preset
+      // stores the body and re-wraps it in the template on restore.
+      this._appliedVert = vertBody;
+      this._appliedFrag = fragBody;
       // One call reaches gpuMat, the live POINTS proxy, and any proxy built
       // later — see RenderEngine.applyShaderSource().
       this._render.applyShaderSource(fullVS, fullFS);
       errEl.style.color = 'var(--green)';
       errEl.textContent = '✔ Compiled & applied';
       this.cb.onCompileResult({ ok: true, message: '✔ Compiled & applied', line: null });
-      setTimeout(() => {
+      // FIX: keep the handle. This tidy-up used to outlive whatever came next,
+      // so a failure reported within two seconds — pressing APPLY twice while
+      // fixing a typo is the ordinary way to get there — had its red message
+      // and its line number blanked by the previous run's timer, leaving an
+      // editor that said nothing about a shader that had not compiled. The
+      // camera programmer's status line had the same defect.
+      this._okTimer = setTimeout(() => {
+        this._okTimer = null;
         errEl.textContent = '';
         this.cb.onCompileResult({ ok: true, message: '', line: null });
       }, 2000);
@@ -660,7 +692,18 @@ export class ShaderEditor {
     const onFailure = (err) => {
       cleanup();
       const errorMsg  = err?.message || String(err) || 'Shader compile error';
-      const errorLine = this._parseErrorLine(errorMsg, this._tab === 'vert' ? fullVS : fullFS, vertBody);
+      // Both arguments follow the tab: the source the driver numbered its
+      // message against, and the body the operator is looking at.
+      const onVert = this._tab === 'vert';
+      const src    = onVert
+        ? (_failedSource?.vert ?? fullVS)
+        : (_failedSource?.frag ?? fullFS);
+      // A failure in the stage the operator is NOT looking at gets no gutter
+      // mark: its line number counts through a different buffer entirely.
+      const sameTab   = !_failedSource?.stage || _failedSource.stage === this._tab;
+      const errorLine = sameTab
+        ? this._parseErrorLine(errorMsg, src, onVert ? vertBody : fragBody)
+        : null;
       const friendly  = this._friendlyError(errorMsg);
       errEl.style.color = '#f66';
       errEl.textContent = friendly;
@@ -670,6 +713,7 @@ export class ShaderEditor {
     const renderer = this._render.renderer;
     const prevHook = renderer.debug.onShaderError;
     let captured = null;
+    let _failedSource = null;
     renderer.debug.onShaderError = (gl, program, glVS, glFS) => {
       // Prefer whichever stage actually failed; the program log is the
       // fallback for link-time errors that neither shader reports.
@@ -677,6 +721,19 @@ export class ShaderEditor {
       const fLog = gl.getShaderInfoLog(glFS) || '';
       captured = (vLog + fLog).trim() || (gl.getProgramInfoLog(program) || '').trim()
               || 'Shader failed to link';
+      // FIX: keep the source the DRIVER numbered its message against. three.js
+      // prepends its own preamble — precision qualifiers, defines, built-in
+      // uniforms — to the program before compiling it, so counting lines from
+      // our own template output lands short by however long that preamble is.
+      // Optional-chained because the honest fallback when a context does not
+      // expose it is our assembled string, which is what was used before.
+      _failedSource = {
+        vert:  gl.getShaderSource?.(glVS) || null,
+        frag:  gl.getShaderSource?.(glFS) || null,
+        // Which stage the operator's message actually came from: a line from
+        // the other buffer is worse than no line at all.
+        stage: vLog.trim() ? 'vert' : (fLog.trim() ? 'frag' : null),
+      };
     };
 
     try {
@@ -707,13 +764,25 @@ export class ShaderEditor {
    * Returns user-body-relative line number (1-based) or null.
    */
   _parseErrorLine(msg, fullShader, userBody) {
-    // Count how many lines the template preamble adds
-    const preambleLines = fullShader.split('\n').length - userBody.split('\n').length - 1;
     const m = msg.match(/ERROR:\s*\d+:(\d+)/);
     if (!m) return null;
-    const absLine = parseInt(m[1], 10);
-    const relLine = absLine - Math.max(0, preambleLines);
-    return relLine >= 1 ? relLine : null;
+
+    // FIX: locate the body inside the assembled program instead of subtracting
+    // line counts. The old arithmetic — full.lines - body.lines - 1 — treats
+    // the template as a pure prefix, and it is not: it closes main() after the
+    // body, so the trailing lines were counted as preamble and every reported
+    // line came out short. It was also called with the VERTEX body while the
+    // FRAGMENT tab was on screen, so on that tab the "preamble" was the
+    // difference between two unrelated buffers.
+    const at = fullShader.indexOf(userBody);
+    if (at < 0) return null;
+    const preambleLines = fullShader.slice(0, at).split('\n').length - 1;
+
+    const relLine = parseInt(m[1], 10) - preambleLines;
+    // A line outside the body belongs to the template, not to anything the
+    // operator can see or fix. Painting the gutter there points at the wrong
+    // text with the same confidence as a right answer.
+    return relLine >= 1 && relLine <= userBody.split('\n').length ? relLine : null;
   }
 
   /** Trim noisy WebGL driver boilerplate for cleaner display */
@@ -732,6 +801,10 @@ export class ShaderEditor {
    */
   revertToBuiltIn() {
     this.customVS = null; this.customFS = null;
+    // Cleared with the programs they describe: no custom program is live, so
+    // there is no applied body either. The editor text is deliberately left
+    // alone (see the test of the same name).
+    this._appliedVert = null; this._appliedFrag = null;
     this._render.applyShaderSource();
   }
 
@@ -784,8 +857,6 @@ export class ModelLoader {
     onLoading(true, 0, 'LOADING MODEL…');
     this.clear();
     const r = this._render;
-    r.gpuMesh.visible = false;
-    if (r.gpuPtsProxy) r.gpuPtsProxy.visible = false;
     const ext = file.name.split('.').pop().toLowerCase();
     const url = URL.createObjectURL(file);
     try {
@@ -805,19 +876,32 @@ export class ModelLoader {
       this._applyShader(group, vs || VS, fs || FS);
       this._model = group;
       r.scene.add(group);
+      // FIX: the engine takes the stage over, instead of this method reaching
+      // in to hide gpuMesh. Hiding it here was undone by the next viz-mode
+      // change, and left the particle mask up over the model's triangles.
+      r.setExternalModel(this._meshes);
       document.getElementById('model-info').textContent = `✔ ${file.name} — ${this._meshes.length} mesh(es)`;
       document.getElementById('btn-clear-model').style.display = '';
       onLoading(true, 1, 'DONE');
     } catch (e) {
       console.error('Model load error:', e);
       document.getElementById('model-info').textContent = '⚠ ' + e.message;
-      r.gpuMesh.visible = true;
-      if (r.gpuPtsProxy) r.gpuPtsProxy.visible = true;
+      // Nothing took the stage, so give it back — clear() above may have
+      // removed a model that was working perfectly well before this attempt.
+      r.setExternalModel(null);
     }
     URL.revokeObjectURL(url);
     setTimeout(() => onLoading(false), 300);
   }
 
+  /**
+   * Remove the imported model and give the stage back to the engine.
+   *
+   * FIX: the release was missing, so this left an empty scene — the built-in
+   * mesh was hidden by load() and nothing turned it back on. That is also why
+   * wiring up ✕ CLEAR MODEL needed this half first: the button would have
+   * removed the model and shown nothing at all.
+   */
   clear() {
     if (!this._model) return;
     this._render.scene.remove(this._model);
@@ -826,6 +910,7 @@ export class ModelLoader {
       (Array.isArray(m.material) ? m.material : [m.material]).forEach(mt => mt.dispose());
     });
     this._model = null; this._meshes = [];
+    this._render.setExternalModel(null);
   }
 
   _centerAndScale(group) {

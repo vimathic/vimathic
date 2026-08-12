@@ -67,7 +67,16 @@ function bindOutputModal(ui) {
     // OUTPUT_CAPABILITIES actually says — and survives any future runtime
     // capability re-detection.
     const vcamBadge = document.getElementById('out-vcam-badge');
-    if (vcamBadge) vcamBadge.textContent = out.capabilities.virtualCamera ? 'Chrome ✓' : 'Not supported';
+    // The badge names what was measured — captureStream — not a browser, and
+    // its colour follows the answer: the markup used to ship a green "Chrome ✓"
+    // that only ever changed its text, so an unsupported browser was told so in
+    // the green of a working feature.
+    if (vcamBadge) {
+      const can = out.capabilities.virtualCamera;
+      vcamBadge.textContent = can ? 'Supported ✓' : 'Not supported';
+      vcamBadge.classList.toggle('ok', can);
+      vcamBadge.classList.toggle('na', !can);
+    }
 
     document.getElementById('output-overlay').classList.add('open');
   };
@@ -129,9 +138,14 @@ function bindOutputModal(ui) {
 
   if (vcamStartBtn) vcamStartBtn.addEventListener('click', () => {
     if (!out.capabilities.virtualCamera) {
-      setOutFeedback('⚠ captureStream not supported — use Chrome', '#f77'); return;
+      setOutFeedback('⚠ captureStream is not available in this browser', '#f77'); return;
     }
-    const fps = parseInt(document.getElementById('out-vcam-fps')?.value ?? '60', 10);
+    // FIX: the `??` guarded a missing ELEMENT, not an empty one. A cleared
+    // <input type="number"> has value '' — a string — so the default never
+    // fired and parseInt('') is NaN, which captureStream then resolves however
+    // it likes while the feedback line reported "active @ NaNfps".
+    const typed = parseInt(document.getElementById('out-vcam-fps')?.value ?? '', 10);
+    const fps   = Number.isFinite(typed) ? typed : 60;
     const res = out.vcam.start(fps);
     if (res.ok) {
       vcamStartBtn.style.display   = 'none';
@@ -147,6 +161,11 @@ function bindOutputModal(ui) {
   if (vcamStopBtn) vcamStopBtn.addEventListener('click', () => {
     out.vcam.stop();
     out.vcam.hidePreview();
+    // FIX: give the green back. The start branch adds .active-out, which
+    // repaints the button as running, and nothing removed it — reopening the
+    // modal only refreshes the capability badge — so from the first stop
+    // onward the panel showed a Virtual Camera that was not running.
+    vcamStartBtn?.classList.remove('active-out');
     vcamStopBtn.style.display    = 'none';
     vcamPreviewBtn.style.display = 'none';
     vcamStartBtn.style.display   = '';
@@ -600,6 +619,22 @@ function bindCameraEditor(ui) {
     });
   };
 
+  // ── Timeline scrub ───────────────────────────────────────────────────────
+  // FIX: three things asserted this and nothing implemented it — the panel's
+  // own label ("TIMELINE — drag keyframes · click to scrub"), `cursor:pointer`
+  // on the bar, and the keyframe marker's click handler calling
+  // stopPropagation "so the click doesn't bubble to the bar and create a
+  // phantom seek". The bar had no listener at all. Keyframe `t` and the
+  // playhead are both track fractions, so seeking the track is what scrubbing
+  // this bar can mean.
+  const _tlBar = document.getElementById('ce-tl-bar');
+  _tlBar?.addEventListener('click', e => {
+    const rect = _tlBar.getBoundingClientRect();
+    if (!rect.width) return;
+    const pct = (e.clientX - rect.left) / rect.width;
+    ui.audio.seek(Math.max(0, Math.min(1, pct)));
+  });
+
   // ── Timeline builder ─────────────────────────────────────────────────────
   // Rebuilt from scratch on every render — the keyframe list is small
   // (typically <20) so wholesale rebuild is simpler than a diff-based
@@ -858,7 +893,7 @@ function bindShaderEditor(ui) {
 function bindCameraParams(ui) {
   const cam = ui.camera;
 
-  [
+  const ROWS = [
     ['cp-rot',       'rotSpeed',  v => (+v).toFixed(5)],
     ['cp-radius',    'radius',    v => (+v).toFixed(1)],
     ['cp-height',    'height',    v => (+v).toFixed(1)],
@@ -867,7 +902,9 @@ function bindCameraParams(ui) {
     ['cp-damp',      'damping',   v => (+v).toFixed(3)],
     ['cp-fov',       'fov',       v => v + '°'],
     ['cp-roll',      'roll',      v => (+v).toFixed(2)],
-  ].forEach(([id, key, fmtFn]) => {
+  ];
+
+  ROWS.forEach(([id, key, fmtFn]) => {
     const el  = document.getElementById(id);
     const vEl = document.getElementById(id+'-v');
     if (!el) return;
@@ -876,6 +913,29 @@ function bindCameraParams(ui) {
       if (vEl) vEl.textContent = fmtFn(el.value);
     });
   });
+
+  /**
+   * Push cpParams onto the sliders.
+   *
+   * FIX: these eight rows were one-way. A preset applies its whole cpParams
+   * block (presets.js Object.assign) and a MIDI CC writes rotSpeed, and
+   * neither had any way to move the panel — so after loading a preset the
+   * sliders still showed the previous values. The damage is not just a stale
+   * label: the thumb is where the old value was, so the first drag writes from
+   * THERE and jumps the camera to a number nobody chose.
+   */
+  const syncParamsUI = () => {
+    for (const [id, key, fmtFn] of ROWS) {
+      const el  = document.getElementById(id);
+      const vEl = document.getElementById(id+'-v');
+      const v   = cam.cpParams[key];
+      if (!el || v == null) continue;
+      el.value = v;
+      if (vEl) vEl.textContent = fmtFn(v);
+    }
+  };
+  cam.cb.onParamsChanged = syncParamsUI;
+  syncParamsUI();          // and once now, so the panel opens on the real values
 
   // Seed the code textarea with the default script so the editor doesn't
   // open empty on first launch.

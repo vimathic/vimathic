@@ -550,9 +550,18 @@ export class MathVisualizer {
   }
 
   /**
-   * Return control of the height field to the GPU shader. Resets pos.y to
-   * zero on both the main mesh and the points-mesh proxy so the next GPU
-   * frame starts from a flat surface.
+   * Return control of the geometry to the GPU shader, leaving the mesh as the
+   * shape made it.
+   *
+   * FIX: this used to zero pos.y and nothing else, and its doc block claimed
+   * that left "a flat surface" — true only of Surface mode. Volume and Collapse
+   * write all three components, so switching from DEFORM: VOLUME to a GPU
+   * shader left the mesh permanently displaced sideways underneath it (a
+   * radius-2 sphere came out over two units out of shape on X and Z), with
+   * nothing to put it back short of changing shape. Restoring the pristine
+   * snapshot is what every mode transition already does for this exact reason
+   * — see setMode. The Y-zeroing stays as the fallback for the one case with
+   * no snapshot yet: deactivate before any shape has been announced.
    */
   deactivate() {
     this._generation++;
@@ -568,6 +577,13 @@ export class MathVisualizer {
 
     this.render.U.uMathMode.value = 0;
 
+    if (this._pristinePositions) {
+      this._restorePristineToMesh();
+      return;
+    }
+
+    // No snapshot yet — nothing has announced a shape. Y is all this path can
+    // have touched, and it is what the old code did in every case.
     const pos = this.render.gpuMesh.geometry.attributes.position;
     for (let i = 0; i < pos.count; i++) pos.setY(i, 0);
     pos.needsUpdate = true;
@@ -808,6 +824,14 @@ export class MathVisualizer {
     if (!stalled && this._frame % this._throttle !== 0) return;
     const hf = generateSurfaceFromFormula(this._formulaFn, audioParams, this._gridSize, 3.5, t);
     this._applyHFWithBlend(hf);
+    // FIX: a main-thread apply supersedes the tick still in flight. Without
+    // this the worker's answer for an OLDER time arrives carrying the current
+    // generation, is accepted, and is applied at the top of the next tick — the
+    // surface steps backwards one frame and then forwards again. Bumping the
+    // generation reuses the guard in onmessage that already exists for a
+    // formula changing mid-computation; the worker echoes gen unchanged, so
+    // nothing on that side needs to know.
+    this._generation++;
   }
 
   /** Tear down the worker. Called from main.js on beforeunload. */

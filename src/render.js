@@ -283,6 +283,12 @@ function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
+// The ground grid's resting opacity. Every path that shows the grid sets only
+// `visible`, so the material must be back at this value whenever it is hidden —
+// see fadeGrid(), which is the only thing allowed to move it.
+export const GRID_OPACITY = 0.1;
+const GRID_FADE_MS = 400;
+
 // Exported for tests/camera-tween-damping.test.js: the cancel path below is
 // half of a fix, and a hand-rolled stand-in would not pin it.
 export class TransitionManager {
@@ -319,9 +325,15 @@ export class TransitionManager {
         const eased  = easeFn(raw);
         onUpdate(eased);
         if (raw >= 1) {
-          onDone?.();
+          // FIX: retire this tween BEFORE its onDone runs. A callback that
+          // starts a new tween in the same slot — a morph triggered from the
+          // flat frame of the morph before it — used to have its replacement
+          // deleted the instant it was installed, by this line and by the loop
+          // in tick(). The work queued for that second morph then never ran at
+          // all, silently.
           this._slots.delete(slot);
-          return false; // remove from active set
+          onDone?.();
+          return false; // already removed from the active set
         }
         return true; // keep running
       },
@@ -337,7 +349,9 @@ export class TransitionManager {
   /** Must be called once per animation frame (from RenderEngine.updateUniforms) */
   tick() {
     for (const [slot, tween] of this._slots) {
-      if (!tween.tick()) this._slots.delete(slot);
+      // Only retire the tween we just ticked: its onDone may have installed a
+      // replacement in the same slot, and deleting that would drop it.
+      if (!tween.tick() && this._slots.get(slot) === tween) this._slots.delete(slot);
     }
   }
 
@@ -534,7 +548,8 @@ export class RenderEngine {
     this.scene.add(this.stars);
 
     this.grid = new THREE.GridHelper(9, 28, 0x88aaff, 0x3355aa);
-    this.grid.position.y = -1.3; this.grid.material.transparent = true; this.grid.material.opacity = 0.1;
+    this.grid.position.y = -1.3; this.grid.material.transparent = true;
+    this.grid.material.opacity = GRID_OPACITY;
     this.scene.add(this.grid);
 
     // ── GPU mesh + uniforms ───────────────────────────────────────────────────
@@ -578,6 +593,12 @@ export class RenderEngine {
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
 
+    // The meshes of an imported model, while one is on the stage. Empty means
+    // the procedural mesh is what draws. ModelLoader hands them over through
+    // setExternalModel() — see it for why the engine has to know, rather than
+    // the loader flipping gpuMesh.visible behind its back.
+    this.modelMeshes = [];
+
     // Which program source is live. The shader editor may replace it, and the
     // points proxy is rebuilt on every entry into POINTS mode — without a
     // single owner the proxy was always constructed from the built-ins, so an
@@ -602,6 +623,10 @@ export class RenderEngine {
     // geometry.
     this.cb = {
       onShapeChange: (_shape) => {},
+      // Fired when a bloom punch hands the value back, so the panel slider can
+      // follow. Not fired when something else claimed bloom meanwhile — see
+      // punchBloom.
+      onBloomRestored: (_value) => {},
     };
 
     // ── Transition system ─────────────────────────────────────────────────────
@@ -637,6 +662,12 @@ export class RenderEngine {
     this.U.uCM.value = 16;          // Amber color scheme (matches color-sel default)
     this.setVizModeGPU('wireframe'); // wireframe (matches mode-wireframe.active in HTML)
     if (this.grid) this.grid.visible = false;
+
+    // No frame has been drawn, so no GPU mode has been seen. updateUniforms()
+    // maintains this; setGPUModeAnimated() reads it to know whether it has
+    // anything to fade FROM. The page boots on the CPU formula path
+    // (main.js selects one), so `false` is also the honest starting value.
+    this._gpuModeWasShown = false;
   }
 
   // ── Uniforms ─────────────────────────────────────────────────────────────────
@@ -653,6 +684,12 @@ export class RenderEngine {
     this.U.uWI.value     = audio.waveInt;
     // uCM is NOT updated here during a color crossfade — setColorSchemeAnimated()
     // manages uCM/uCMNext/uCMBlend directly.
+
+    // Who owns the surface in the frame about to be drawn. The vertex shader
+    // applies a GPU mode only under `if (uMathMode == 0)`, so while the CPU
+    // formula path is active no mode is on screen no matter what uMode says —
+    // and a crossfade may only fade from something that was actually seen.
+    this._gpuModeWasShown = this.U.uMathMode.value === 0;
 
     // Advance grain noise time
     if (this.filmGrainVigPass.enabled) {
@@ -684,18 +721,45 @@ export class RenderEngine {
    * @param {()=>void} [onFlat] — called at the flat frame (uMorphProgress === 0)
    */
   triggerMorphTransition(onFlat) {
+    // FIX: queue the work instead of closing over it. Restarting the slots
+    // below cancels the in-flight morph, and a cancelled tween never runs its
+    // onDone — which is where onFlat lived, so the scheduled work was dropped.
+    // That is not decoration: applyState puts the shape swap, the formula
+    // change and the deform switch in there on purpose, to land together at
+    // one flat frame. Load a preset, press a shape hotkey inside the 400 ms
+    // window, and the preset's geometry work vanished while its UI half had
+    // already been written. A superseded morph now hands its queue to the
+    // morph replacing it, and it runs at THAT morph's flat frame — still at a
+    // flat frame, which is the whole point (the mesh is invisible there).
+    if (onFlat) (this._pendingMorphFlat ??= []).push(onFlat);
+
     // Cancel any in-flight morph
     this.transitions.start('morph-deflate', 0, () => {});
     this.transitions.start('morph-inflate', 0, () => {});
-    this.U.uMorphProgress.value = 1.0;
 
     const dur = this._tDurShape;
 
-    this.transitions.start('morph-deflate', dur, p => {
-      this.U.uMorphProgress.value = 1.0 - p;
+    // FIX: keep collapsing from where the surface actually is. This used to
+    // hard-write uMorphProgress back to 1.0 and run a fresh full-length
+    // deflate, so a shape pressed mid-morph sprang the half-collapsed mesh back
+    // to full size and started over — the largest visible discontinuity
+    // available, in the one mechanism whose entire job is to avoid a cut — and
+    // pushed the flat frame a whole duration further away. setShapeAnimated's
+    // own doc block promises the opposite. The remaining travel is
+    // proportional, so the morph still lands at the same speed; the clamp
+    // covers a morph triggered from the flat frame itself, where there is
+    // nothing left to collapse and the duration would otherwise be zero.
+    const from = this.U.uMorphProgress.value;
+
+    this.transitions.start('morph-deflate', Math.max(1, dur * from), p => {
+      this.U.uMorphProgress.value = from * (1.0 - p);
     }, () => {
       this.U.uMorphProgress.value = 0.0;
-      if (onFlat) onFlat();
+      // Drained before running: a callback that triggers another morph must
+      // not see its own entry still queued.
+      const pending = this._pendingMorphFlat ?? [];
+      this._pendingMorphFlat = [];
+      for (const fn of pending) fn();
 
       this.transitions.start('morph-inflate', dur, p => {
         this.U.uMorphProgress.value = p;
@@ -712,19 +776,39 @@ export class RenderEngine {
    * On completion uMode is updated and uModeBlend resets to 0 so the shader
    * evaluates only one branch in steady state (no performance penalty).
    *
-   * Interrupt-safe: if called mid-fade, the current blend value is inherited
-   * so the visual stays continuous.
+   * Interrupt-safe: the shader can only mix two modes, so an interrupted fade
+   * has to collapse to one of its ends — it collapses to whichever end is
+   * nearer, which is the most continuity two slots can give.
    *
    * @param {number} mode — integer mode index
    */
   setGPUModeAnimated(mode) {
-    // Inherit current blend position so interrupts look continuous
-    const startBlend = this.U.uModeBlend.value;
-    // Mid-fade: the "from" is now wherever the blend currently sits
-    if (startBlend > 0) {
-      this.U.uMode.value     = this.U.uModeNext.value;
+    // FIX: only fade from a mode that was actually on screen. Leaving the CPU
+    // formula path there is none — uMathMode gated the shader's displacement
+    // off, so uMode still held the boot default or a mode from an earlier GPU
+    // session, and the fade spent its first third drawing that at full
+    // strength. bootPersist restores a saved shader through the same pair of
+    // calls, so every reload opened on mode 0 before arriving where it was
+    // asked to be. With nothing to fade from, the chosen mode is simply on.
+    if (!this._gpuModeWasShown) {
+      this.transitions.cancel('mode');
+      this.U.uMode.value      = mode;
+      this.U.uModeNext.value  = mode;
       this.U.uModeBlend.value = 0.0;
+      return;
     }
+
+    const startBlend = this.U.uModeBlend.value;
+    // FIX: mid-fade, collapse to the NEARER end. Taking uModeNext whenever the
+    // blend was above zero picked the far end for exactly the common case —
+    // interrupting a fade shortly after it began — and cut the frame to a mode
+    // the user had barely glimpsed, only to fade away from it. Now the jump is
+    // at most half a step, and below the halfway point the "from" end simply
+    // stays where the eye already is.
+    if (startBlend > 0.5) {
+      this.U.uMode.value = this.U.uModeNext.value;
+    }
+    this.U.uModeBlend.value = 0.0;
     this.U.uModeNext.value  = mode;
 
     this.transitions.start('mode', this._tDurMode, p => {
@@ -754,10 +838,15 @@ export class RenderEngine {
   setColorSchemeAnimated(cm, opts = {}) {
     const dur = opts.duration ?? this._tDurColor;
     const startBlend = this.U.uCMBlend.value;
-    if (startBlend > 0) {
-      this.U.uCM.value      = this.U.uCMNext.value;
-      this.U.uCMBlend.value = 0.0;
+    // Same near-end rule as setGPUModeAnimated, and it bites hardest here:
+    // AUTO COLOUR scales its fade off the track's period, up to 3 s, so
+    // picking a palette by hand half a second into an automatic drift used to
+    // cut the screen to the palette the cycler had chosen — full strength, one
+    // frame — before fading to the one actually asked for.
+    if (startBlend > 0.5) {
+      this.U.uCM.value = this.U.uCMNext.value;
     }
+    this.U.uCMBlend.value = 0.0;
     this.U.uCMNext.value  = cm;
 
     this.transitions.start('color', dur, p => {
@@ -777,8 +866,14 @@ export class RenderEngine {
    * always relative to where the camera actually IS, not where it was
    * supposed to be — handles user dragging the orbit mid-tween cleanly.
    *
-   * Auto-rotate is paused for the tween's duration so the camera physics
-   * loop doesn't fight with our position writes. Restored on completion.
+   * Automated camera motion has to stand down for the tween's duration, or the
+   * physics loop and a programmer script overwrite these position writes on the
+   * next frame and the tween is invisible. That is the CALLER's job and its
+   * signal is CameraSystem.tweenHold — this method has no reference to the
+   * camera system. It used to be described here as "auto-rotate is paused",
+   * which was both the wrong owner and the wrong mechanism: the pause was done
+   * by writing the user's AUTO-ROTATE setting, so the button spent every clip
+   * step describing the opposite of its own flag.
    *
    * Interruption: starting a new camera tween cancels any in-flight one
    * (TransitionManager slot 'camera').
@@ -934,16 +1029,47 @@ export class RenderEngine {
    * proxy's own construction). Every combination of "one writer missed one
    * material" was a visible bug: a custom shader that disappeared in PTS, and
    * a RESET that reported success while the points kept the old program.
+   *
+   * FIX: an imported model is a third family of materials, and it was missed
+   * the same way — with a model up, gpuMat and the proxy are both hidden, so
+   * APPLY and RESET printed "✔ Compiled & applied" while the only thing on
+   * screen kept the program it was built with. Only a re-import picked a
+   * change up.
    */
   applyShaderSource(vs = VS, fs = FS) {
     this.activeVS = vs;
     this.activeFS = fs;
-    for (const m of [this.gpuMat, this.gpuPtsProxy?.material]) {
+    for (const m of [this.gpuMat, this.gpuPtsProxy?.material, ...this.modelMeshes.map(x => x.material)]) {
       if (!m) continue;
       m.vertexShader   = vs;
       m.fragmentShader = fs;
       m.needsUpdate    = true;
     }
+  }
+
+  /**
+   * Hand the stage to an imported model, or take it back.
+   *
+   * FIX: ModelLoader used to write `r.gpuMesh.visible = false` once and hope.
+   * Nothing else in the engine knew a second drawer existed, so every path
+   * that touches the procedural mesh — viz-mode buttons, preset apply, RESET
+   * ALL — undid it, and the shader editor's single owner never reached the
+   * model at all. Making the model an engine-level fact is what closes all of
+   * those at once, rather than teaching each caller about model imports.
+   *
+   * Taking the stage back replays the recorded viz mode, so a mode chosen
+   * while the model was up (the panel accepted the click and highlighted the
+   * button) is what the user gets when the model leaves.
+   *
+   * @param {THREE.Mesh[]|null} meshes — the model's meshes, or null to release
+   */
+  setExternalModel(meshes) {
+    this.modelMeshes = meshes ?? [];
+    // Re-running the current mode is the whole implementation: it hides or
+    // shows the procedural mesh, drops or rebuilds the points proxy, and puts
+    // the particle mask where it belongs — all in one place that already knows
+    // the rules.
+    this.setVizModeGPU(this.vizMode);
   }
 
   // ── Viz modes ────────────────────────────────────────────────────────────────
@@ -961,7 +1087,7 @@ export class RenderEngine {
       this.gpuPtsProxy.material?.dispose();
       this.gpuPtsProxy = null;
     }
-    this.gpuMesh.visible  = true;
+    this.gpuMesh.visible  = this.modelMeshes.length === 0;
     this.gpuMat.wireframe = false;
     this.U.uPointSize.value = 1.0;
     if (mode !== 'points') {
@@ -976,6 +1102,22 @@ export class RenderEngine {
     // surface area for derivatives to sample; points are single-pixel quads
     // where dFdx/dFdy of vWorldPos is degenerate. Turn lighting off for both.
     this.U.uLighting.value = (mode === 'surface') ? 1 : 0;
+
+    // FIX: while an imported model is on the stage, the mode is recorded and
+    // nothing else happens — the procedural mesh stays hidden and no points
+    // proxy is built. Before this, every mode button (and every preset apply,
+    // and RESET ALL) popped the built-in pyramid back inside the model, with
+    // nothing in the UI able to hide it again. PTS was worse than that: the
+    // proxy raises uPtStyle, the model's meshes share this very uniform block,
+    // and gl_PointCoord is undefined for triangles — the mask then discards
+    // the model entirely. setExternalModel(null) replays the mode recorded
+    // here, so the choice made meanwhile is not lost.
+    if (this.modelMeshes.length) {
+      this.U.uPtStyle.value = 0;
+      this.setAfterglow(false);
+      return;
+    }
+
     if (mode === 'wireframe') {
       this.gpuMat.wireframe = true;
     } else if (mode === 'points') {
@@ -1009,7 +1151,9 @@ export class RenderEngine {
    *
    * Outside PTS the style is only remembered. Nothing to apply: the proxy does
    * not exist, and uPtStyle must stay 0 because gl_PointCoord is undefined for
-   * the triangles the mesh draws.
+   * the triangles the mesh draws. An imported model is the same situation for
+   * the same reason — it draws triangles through this uniform block — so it
+   * gets the same treatment.
    *
    * ── About the trail ──────────────────────────────────────────────────────
    * The smoke style borrows the composer's AfterimagePass: every frame blends
@@ -1028,7 +1172,7 @@ export class RenderEngine {
     this.currentParticleStyle = s ? name : 'squares';
     const style = s ?? RenderEngine.PARTICLE_STYLES.squares;
 
-    if (this.vizMode !== 'points') return;
+    if (this.vizMode !== 'points' || this.modelMeshes.length) return;
 
     this.U.uPointSize.value = style.size;
     this.U.uPtStyle.value   = style.mask;
@@ -1352,10 +1496,97 @@ export class RenderEngine {
     this.composer.setPixelRatio(dpr);
   }
 
+  /**
+   * Fade the ground grid in or out. The only writer of grid.material.opacity
+   * outside construction.
+   *
+   * FIX: the fade used to live in main.js's G handler as a bare rAF loop that
+   * approached its target geometrically and stopped at ~0.1% opacity, then set
+   * visible = false. Nothing ever put the opacity back, and every other way of
+   * showing the grid — the ⊞ GRID button, a preset, leaving transparent
+   * background — writes only `visible`. So after one G the grid could be
+   * switched "on" and stay invisible, with the button lit and reporting ON.
+   * Ending both directions at GRID_OPACITY keeps those paths honest.
+   *
+   * Fading IN also had to raise `visible` up front: with it set only at the
+   * end, the whole fade ran on a hidden object and the grid popped in at full
+   * strength instead of appearing gradually.
+   */
+  fadeGrid(on) {
+    const g = this.grid;
+    if (!g) return;
+    // Fading in starts from nothing and raises `visible` up front, so the fade
+    // is actually seen. Fading out starts wherever the material is now, which
+    // may be mid-fade if G was pressed twice quickly.
+    if (on) { g.material.opacity = 0; g.visible = true; }
+    const from   = g.material.opacity;
+    const target = on ? GRID_OPACITY : 0;
+    this.transitions.start('grid-fade', GRID_FADE_MS, p => {
+      g.material.opacity = from + (target - from) * p;
+    }, () => {
+      g.visible = on;
+      // Hidden grids rest at full opacity, never at the 0 the fade ended on.
+      // That is what keeps every other path honest: the ⊞ GRID button, a
+      // preset and setTransparentBackground all write only `visible`, and a
+      // grid left at 0 would come back invisible while its button read ON.
+      if (!on) g.material.opacity = GRID_OPACITY;
+    });
+  }
+
+  /**
+   * Punch the bloom up for a moment — the S hotkey's flash.
+   *
+   * FIX: this lived in main.js's key handler, which captured the strength on
+   * the first press and wrote it back 200 ms later without asking what the
+   * value was by then. Every other writer of bloom goes through
+   * PARAMS.bloom.set — the panel slider, a MIDI CC, a clip step, a preset
+   * apply, RESET ALL — and nothing modulates it per frame, so any write inside
+   * that window is somebody's fresh intent. It was overwritten. The restore now
+   * happens only if the punch is still the value on the engine, and the engine
+   * owns the state the way it owns the grid fade.
+   *
+   * @param {number} [amount] — added to the captured strength, clamped at 1.5
+   * @param {number} [ms]     — how long the punch lasts
+   */
+  punchBloom(amount = 0.8, ms = 200) {
+    if (!this.bloomPass) return;
+    // Only the first press of a rapid burst captures: later ones inside the
+    // window would otherwise capture the punched value and never come back.
+    if (this._bloomPunchOrig == null) this._bloomPunchOrig = this.bloomPass.strength;
+    clearTimeout(this._bloomPunchTimer);
+
+    const punch = Math.min(1.5, this._bloomPunchOrig + amount);
+    this.bloomPass.strength = punch;
+
+    this._bloomPunchTimer = setTimeout(() => {
+      const orig = this._bloomPunchOrig ?? 0.55;
+      this._bloomPunchTimer = null;
+      this._bloomPunchOrig  = null;
+      // Somebody set bloom while the punch was up: that is a fresh intent and
+      // this timer has no business undoing it.
+      if (this.bloomPass.strength !== punch) return;
+      this.bloomPass.strength = orig;
+      this.cb.onBloomRestored?.(orig);
+    }, ms);
+  }
+
   /** Toggle transparent background for alpha-channel output (chroma-key free). */
   setTransparentBackground(enabled) {
+    const wasEnabled = this.transparentBg;
     this.transparentBg = enabled;
     if (enabled) {
+      // FIX: remember what the grid was doing. The restore branch used to
+      // write `true` unconditionally, and the grid ships hidden — so one
+      // on→off round trip put a grid into the scene (and into captureStream,
+      // the second screen and the recorder) that the user never switched on,
+      // leaving the ⊞ GRID button reading the opposite of reality from then
+      // on. Stars need no such care: nothing else writes stars.visible, so
+      // true is always the right answer for them.
+      //
+      // FIX(r2): only on the way IN. Enabling twice — the panel button and the
+      // output modal drive the same call — used to re-snapshot the `false` we
+      // had just forced ourselves, losing a grid that was genuinely on.
+      if (!wasEnabled) this._gridBeforeTransparent = this.grid.visible;
       this.scene.background = null;
       this.scene.fog        = null;
       this.renderer.setClearColor(0x000000, 0);
@@ -1366,7 +1597,12 @@ export class RenderEngine {
       this.scene.fog        = new THREE.FogExp2(0x050515, 0.007);
       this.renderer.setClearColor(0x050515, 1);
       this.stars.visible = true;
-      this.grid.visible  = true;
+      // FIX(r2): give the grid back only if nothing claimed it meanwhile. The
+      // snapshot is right for a bare round trip and wrong the moment ⊞ GRID,
+      // the G fade or a preset writes grid.visible in between — restoring then
+      // switched OFF a grid the operator had just switched on, with the button
+      // left lit. Still false means nobody touched what we forced.
+      if (!this.grid.visible) this.grid.visible = this._gridBeforeTransparent ?? false;
     }
   }
 
@@ -1420,6 +1656,33 @@ export class RenderEngine {
    * @param {boolean}    enabled  — what the setter was asked to do
    * @param {()=>object} build    — constructs the pass; called at most once
    */
+  /**
+   * Empty an AfterimagePass's two accumulation targets.
+   *
+   * Transparent black rather than the scene's clear colour: the pass's shader
+   * takes a max() against the previous frame, so a black-but-opaque buffer
+   * would pin output alpha near 1 for the whole decay — visible in the
+   * transparent-background output path, which is exactly where an unexpected
+   * opaque frame costs the most.
+   */
+  _clearAfterimage(pass) {
+    const r = this.renderer;
+    if (!r || !pass?.textureOld || !pass?.textureComp) return;
+    const prevTarget = r.getRenderTarget();
+    const prevColor  = new THREE.Color();
+    r.getClearColor(prevColor);
+    const prevAlpha  = r.getClearAlpha();
+
+    r.setClearColor(0x000000, 0);
+    for (const target of [pass.textureOld, pass.textureComp]) {
+      r.setRenderTarget(target);
+      r.clear(true, false, false);
+    }
+
+    r.setRenderTarget(prevTarget);
+    r.setClearColor(prevColor, prevAlpha);
+  }
+
   _fxPass(key, enabled, build) {
     if (!enabled) return this[key];
     if (!this[key]) {
@@ -1490,6 +1753,15 @@ export class RenderEngine {
     const pass = this._fxPass('afterimagePass', enabled, () => new AfterimagePass(0.87));
     if (!pass) return; // never built ⇒ already off
     if (enabled) {
+      // FIX: start from an empty buffer. AfterimagePass accumulates into two
+      // render targets and offers no way to clear them, and the composer skips
+      // a disabled pass outright rather than letting it decay — so switching
+      // the trail off froze whatever frame was in there, and switching it back
+      // on (a style round trip, a preset, a clip step) blended that stale frame
+      // into the live picture for the length of a decay: a ghost of a shape the
+      // operator had already left. Only on a genuine off→on, so a preset
+      // re-applying the same style mid-trail does not blink it.
+      if (!pass.enabled) this._clearAfterimage(pass);
       // AfterimagePass exposes its uniform as 'damp'
       pass.uniforms['damp'].value = Math.min(0.98, Math.max(0.0, amount));
     }

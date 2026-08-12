@@ -51,6 +51,12 @@ export class AudioEngine {
     // crossfade cleanup) compare against current id to bail out when a newer
     // source has taken over — prevents zombie tracks restarting playback.
     this.sourceId    = 0;
+    // FIX: the same guard, one level up. loadPlay() awaits a file read and a
+    // decode before it writes anything, so without an id the load that
+    // FINISHED last won instead of the one requested last — a big track could
+    // land on top of the small one the user switched to, and overwrite a live
+    // capture connected in the meantime.
+    this.loadId      = 0;
 
     // Per-frame readouts consumed by render/camera. Initial values are
     // mid-range so the visualizer doesn't snap to zero before first analysis.
@@ -359,6 +365,7 @@ export class AudioEngine {
   // which is auto-loaded on boot from browser cache and has no perceptible
   // load time — flashing the indicator for ~200ms looked like a glitch.
   async loadPlay(file, offset = 0, { silent = false } = {}) {
+    const loadId = ++this.loadId;   // FIX: see this.loadId in the constructor
     this._cancelCrossfade();
     if (!silent) this.cb.onLoading(true, 0, 'LOADING TRACK…');
     this._stopSource();
@@ -368,8 +375,13 @@ export class AudioEngine {
     try {
       await this.ensureCtx();
       const buf = await this._readFile(file, { silent });
+      if (loadId !== this.loadId) return;   // a newer load took over while we read
       if (!silent) this.cb.onLoading(true, 0.7, 'DECODING AUDIO…');
-      this.audioBuffer = await this.audioCtx.decodeAudioData(buf);
+      // Decoded into a local first: assigning straight to this.audioBuffer
+      // would clobber the newer load's buffer before the check below.
+      const decoded = await this.audioCtx.decodeAudioData(buf);
+      if (loadId !== this.loadId) return;   // …or while we decoded
+      this.audioBuffer = decoded;
       if (!silent) this.cb.onLoading(true, 1.0, 'READY');
       this._startSource(offset);
       this.cb.onDuration(fmt(this.audioBuffer.duration));
@@ -377,11 +389,21 @@ export class AudioEngine {
       this.cb.onPlayState(true);
       this.cb.onPlaylistChange();
     } catch (e) {
+      // A superseded load failing says nothing about the one that replaced it:
+      // reporting it would stop a track that is playing perfectly well.
+      if (loadId !== this.loadId) return;
       console.error('Track load error:', e);
       // FIX(#7, r3): same invariant — a failed load must not flip the visuals
       // to idle while a live capture is still feeding the analyser. Nothing
       // here touches the capture, so isPlaying follows whether one is wired.
       this.isPlaying = !!this.liveMode;
+      // FIX: and say so. The success path a few lines up pairs isPlaying with
+      // onPlayState; this one assigned and returned, so a track that failed to
+      // decode left the app silent while #play-btn still read "⏸ STOP" and
+      // every play-state consumer — clip sync included — believed it was
+      // running. loadPlay stops the previous source before the try block, so
+      // by here the old track is already gone.
+      this.cb.onPlayState(this.isPlaying);
       if (!silent) this.cb.onLoading(false);
       return;
     }
@@ -503,7 +525,13 @@ export class AudioEngine {
     Array.from(files)
       .filter(f => f.type.startsWith('audio/'))
       .forEach(f => {
-        if (!this.playlist.find(t => t.name === f.name))
+        // FIX: compare like with like. The stored `name` is the display name,
+        // stripped of its extension, and this compared it against the raw
+        // filename — so for any file that has an extension the guard could
+        // never match and the same track piled up a row per drop. Comparing
+        // the File's own name also keeps song.mp3 and song.wav as two rows,
+        // which deduping by display name would not.
+        if (!this.playlist.find(t => t.file?.name === f.name))
           this.playlist.push({ file: f, name: f.name.replace(/\.[^.]+$/, '') });
       });
     this.cb.onPlaylistChange();
@@ -552,13 +580,18 @@ export class AudioEngine {
    * fire-and-forget — the rest of the app boots in parallel.
    */
   async _loadIntroIfNeeded() {
-    // Don't reload if user explicitly cleared on a previous session.
-    try {
-      if (localStorage.getItem('vimathic_intro_cleared') === 'true') return;
-    } catch {} // localStorage can throw in some sandboxed contexts
+    // Both refusals, asked as one question — because they have to be asked
+    // twice: once before paying for the fetch, and again before acting on it.
+    const declined = () => {
+      // Don't reload if the user explicitly cleared, now or in a past session.
+      try {
+        if (localStorage.getItem('vimathic_intro_cleared') === 'true') return true;
+      } catch {} // localStorage can throw in some sandboxed contexts
+      // Don't override an existing playlist (e.g. from preset restore).
+      return this.playlist.length > 0;
+    };
 
-    // Don't override an existing playlist (e.g. from preset restore).
-    if (this.playlist.length > 0) return;
+    if (declined()) return;
 
     try {
       // The bundled intro track is emitted to dist/vimathic-intro.mp3 by
@@ -575,6 +608,13 @@ export class AudioEngine {
         'S.Melentyev - Vimathic.mp3',
         { type: 'audio/mpeg', lastModified: Date.now() }
       );
+      // FIX: ask again. The two refusals above were answered before an await
+      // of a 3.9 MB fetch, and acted on seconds later — so a track dropped in
+      // that window got the intro mixed into it, and a CLEAR pressed in that
+      // window got the intro back AND playing, through addFiles' auto-play
+      // branch, moments after the operator asked for it to go. The JSDoc above
+      // promises both no-ops.
+      if (declined()) return;
       this.addFiles([file], { silent: true });
     } catch (err) {
       // Silent fail — the user simply won't have the intro track in their

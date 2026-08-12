@@ -85,7 +85,17 @@ function makeUi() {
     setVizModeGPU: m => calls.push(['setVizModeGPU', m]),
     setSurfaceMaterial: m => calls.push(['setSurfaceMaterial', m]),
     setGPUModeAnimated(n) { calls.push(['setGPUModeAnimated', n]); this.uMathMode = 0; },
-    triggerMorphTransition(onFlat) { calls.push(['morph']); onFlat?.(); },
+    // Runs the work immediately by default (most tests only care that it was
+    // queued at all). deferMorph models the real 400 ms gap between queueing and
+    // the flat frame, which is where a superseding selection lands.
+    deferMorph: false,
+    _queuedFlat: [],
+    triggerMorphTransition(onFlat) {
+      calls.push(['morph']);
+      if (!onFlat) return;
+      if (this.deferMorph) this._queuedFlat.push(onFlat); else onFlat();
+    },
+    flatFrame() { const q = this._queuedFlat; this._queuedFlat = []; q.forEach(fn => fn()); },
     tweenCameraTo(target, opts = {}) {
       calls.push(['tweenCameraTo', opts.duration]);
       // Same contract as the real one: duration <= 0 commits synchronously.
@@ -96,7 +106,7 @@ function makeUi() {
   };
   const camera = {
     autoRot: false, cpActive: false, cpParams: {}, cpKeyframes: [], cpSelectedKf: null,
-    cb: { onAutoRotChanged() {}, onSetCode() {} },
+    cb: { onAutoRotChanged() {}, onSetCode() {}, onParamsChanged: () => calls.push(['paramsChanged']) },
     setCamPhysics: p => calls.push(['setCamPhysics', p]),
     loadScript(code) { this.cpActive = true; calls.push(['loadScript', code]); },
     buildTimeline() {},
@@ -396,5 +406,133 @@ describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () =>
     assert.equal(ui.called('setColorSchemeAnimated').length, 0);
     // vizMode absent → the engine's own mode is what the material rule keys off.
     assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'matte', 'squares']);
+  });
+});
+
+// ── The camera tween is a borrower, not a setting ─────────────────────────────
+// _applyStateFields used to pause the physics loop by writing cam.autoRot =
+// false for the tween's duration, without telling the button that reads the
+// same flag. For the whole tween — with the default "Auto (40% of step)" that
+// is around 30% of every clip step — the label said ON while the flag said
+// OFF, so a click in that window did the opposite of what it promised: it
+// switched rotation ON and claimed the camera away from the clip player
+// instead of switching it off and handing it back. Restoring afterwards did
+// not save it either, because the onDone re-check drops the whole queue once
+// the user has taken the camera.
+//
+// The tween now holds the camera through a flag of its own (cam.tweenHold,
+// which isScriptDriving() and main.js's physics branch both honour), and the
+// user's setting is never touched.
+describe('applyState — a camera tween must not touch the auto-rotate setting', () => {
+  const CAM = { _version: 2, camera: { x: 3, y: 4, z: 5, tx: 0, ty: 0, tz: 0, fov: 50 } };
+  let ui;
+  beforeEach(() => { ui = makeUi(); });
+
+  test('the setting the button shows is the setting that survives the tween', () => {
+    ui.camera.autoRot = true;                       // the user switched it on
+
+    assert.equal(ui.applyState(CAM, { cameraTransitionMs: 2000, preserveCamera: false }), true);
+    assert.equal(ui.camera.autoRot, true,
+      'the button still reads ON, so a click in this window must read ON too');
+    assert.equal(ui.camera.tweenHold, true,
+      'the tween needs the physics loop to stand down — through its own flag');
+
+    ui.render.finishTween();
+    assert.equal(ui.camera.tweenHold, false);
+    assert.equal(ui.camera.autoRot, true);
+  });
+
+  test('the hold is released even when the user takes the camera mid-tween', () => {
+    ui.camera.autoRot = true;
+    assert.equal(ui.applyState(CAM, { cameraTransitionMs: 2000, preserveCamera: false }), true);
+
+    ui._clip = { camOverride: true };               // AUTO-ROTATE pressed mid-step
+    ui.render.finishTween();                        // onDone drops the queued wishes
+
+    assert.equal(ui.camera.tweenHold, false,
+      'a hold left standing would freeze the camera for the rest of the session');
+  });
+
+  // A real control: this passes before and after, and it is what stops the fix
+  // from being "stop touching autoRot anywhere", which would silently drop the
+  // wishes a snapshot is allowed to carry.
+  test('control — a preset that carries an auto-rotate wish still applies it', () => {
+    ui.camera.autoRot = true;
+    const snap = { _version: 2, camera: { ...CAM.camera, autoRot: false } };
+
+    assert.equal(ui.applyState(snap, { cameraTransitionMs: 2000, preserveCamera: false }), true);
+    ui.render.finishTween();
+    assert.equal(ui.camera.autoRot, false, 'the snapshot asked for OFF and gets it');
+  });
+
+  test('the instant path releases the hold too', () => {
+    ui.camera.autoRot = true;
+    assert.equal(ui.applyState(CAM, { cameraTransitionMs: 0, preserveCamera: false }), true);
+    assert.equal(ui.camera.tweenHold, false, '"Snap (instant, old)" commits synchronously');
+  });
+});
+
+// ── Regression on the fix itself (found by adversarial review of 49c69cd) ─────
+// applyState queues the snapshot's formula for a flat frame up to 400 ms away.
+// If a GPU shader takes the surface in that window — the operator picking one,
+// or the next clip step — arming the formula sets uMathMode = 1 and the shader
+// draws nothing at all. The first attempt at this rule was
+// render.cancelPendingMorph(), called from the dropdown and the hotkeys but not
+// from applyState, which is how the stale formula still reached the preset's own
+// morph. Every queued callback now checks the live selection itself.
+describe('applyState — a queued formula asks whether it is still the selection', () => {
+  const SNAP = { _version: 2, gpuSelVal: 'm:fractals:henon' };
+  let ui;
+  beforeEach(() => { ui = makeUi(); ui.render.deferMorph = true; });
+
+  test('a shader taken during the morph window disarms it', () => {
+    assert.equal(ui.applyState(SNAP), true);
+    assert.equal(ui.called('setFormula').length, 0, 'precondition: queued, not run');
+
+    document.getElementById('gpu-sel').value = '20';   // a shader, from anywhere
+    ui.render.flatFrame();
+
+    assert.equal(ui.called('setFormula').length, 0,
+      'uMathMode would go back to 1 and the shader\'s displacement is gated on 0');
+  });
+
+  test('control — nothing supersedes it, so it arms at the flat frame', () => {
+    assert.equal(ui.applyState(SNAP), true);
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setFormula')[0], ['setFormula', 'fractals:henon']);
+  });
+
+  test('control — the rest of the queued work is untouched by the check', () => {
+    assert.equal(ui.applyState({ ...SNAP, shape: 'torus' }), true);
+    document.getElementById('gpu-sel').value = '20';
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setShape')[0], ['setShape', 'torus'],
+      'the shape dropdown was written synchronously; the swap has to land');
+  });
+});
+
+// The camera editor's eight sliders read cpParams and nothing told them when a
+// snapshot rewrote it wholesale — so after applying a preset the thumbs still
+// sat at the previous values, and the next drag wrote from there.
+describe('applyState — a snapshot that carries camera params says so', () => {
+  test('the panel is told when cpParams is rewritten', () => {
+    const ui = makeUi();
+
+    assert.equal(ui.applyState({
+      _version: 2,
+      camScript: { active: false, code: 'ctx.cam.y = 1;', params: { radius: 15 }, keyframes: [] },
+    }), true);
+
+    assert.equal(ui.camera.cpParams.radius, 15, 'precondition: the params were applied');
+    assert.equal(ui.called('paramsChanged').length, 1,
+      'the sliders show these values; nothing else can move them');
+  });
+
+  test('control — a snapshot with no params does not fire it', () => {
+    const ui = makeUi();
+    assert.equal(ui.applyState({ _version: 2, colorIdx: 9 }), true);
+    assert.equal(ui.called('paramsChanged').length, 0);
   });
 });
