@@ -151,6 +151,45 @@ export function bindControls(ui) {
   });
   DOM.surfaceMaterialAuto?.addEventListener('click', () => ui.autoMaterial.toggle());
 
+  // ── Particle style (PTS viz mode) ─────────────────────────────────────────
+  // The PTS counterpart of Surface Material, and the same rule in mirror image:
+  // a point sprite only exists while POINTS is the mode, so the row is shown
+  // there and hidden everywhere else. Unlike the material there is nothing to
+  // force — outside PTS the style is simply not drawn, so the pick is kept as
+  // it is and comes back with the mode (render.currentParticleStyle).
+  const _ptsSel  = DOM.particleStyleSel;
+  const _ptsDesc = DOM.particleStyleDesc;
+  const _ptsWrap = DOM.particleStyleWrap;
+  const _ptsDescriptions = {
+    squares: 'Flat square sprites — the original look',
+    dots:    'Small round particles with a soft edge',
+    smoke:   'Small particles trailing a decaying smoke wake',
+  };
+
+  const _applyParticle = () => {
+    if (!_ptsSel) return;
+    const key = _ptsSel.value;
+    if (_ptsDesc) _ptsDesc.textContent = _ptsDescriptions[key] ?? '';
+    r.setParticleStyle?.(key);
+  };
+  if (_ptsSel) _ptsSel.addEventListener('change', _applyParticle);
+
+  // Called by the viz-mode buttons and by ui.syncVizModeUI (preset load).
+  // `presetStyle` is a snapshot's style; an unknown key is ignored rather than
+  // assigned, because writing an unknown value to a <select> silently blanks it
+  // — the same trap _syncMaterialForVizMode guards against.
+  const _syncParticleForVizMode = (vizMode, presetStyle = null) => {
+    if (!_ptsSel) return;
+    if (presetStyle && Array.from(_ptsSel.options).some(o => o.value === presetStyle)) {
+      _ptsSel.value = presetStyle;
+    }
+    if (_ptsWrap) _ptsWrap.style.display = vizMode === 'points' ? '' : 'none';
+    // Always applied, not only in PTS: outside it the engine just files the
+    // choice away (setParticleStyle returns early), which is what makes the
+    // style survive a trip through SURF and come back with the mode.
+    _applyParticle();
+  };
+
   // The viz-mode button row. Declared here so the boot sync just below and
   // _setVizModeBtns further down share one list.
   const _vizBtns = ['surface','wireframe','points'];
@@ -167,6 +206,7 @@ export function bindControls(ui) {
       m => document.getElementById('mode-' + m)?.classList.contains('active')
     ) || 'wireframe';
     _syncMaterialForVizMode(bootMode);
+    _syncParticleForVizMode(bootMode);
   }
 
   // ── Deform mode (Surface / Volume / Collapse) ─────────────────────────────
@@ -273,6 +313,8 @@ export function bindControls(ui) {
       // Material is only meaningful on filled surfaces — force Matte and
       // hide the dropdown in WIRE/PTS, restore the saved material in SURF.
       _syncMaterialForVizMode(mode);
+      // Mirror image for particles: their row belongs to PTS and nowhere else.
+      _syncParticleForVizMode(mode);
     });
   });
 
@@ -338,11 +380,15 @@ export function bindControls(ui) {
    *   It becomes the remembered pick: shown immediately in SURF, restored on
    *   the way back from WIRE/PTS (where Matte stays forced). Omit for a plain
    *   UI refresh that must leave the material choice alone.
+   * @param {string|null} particleStyle  Particle style from the same snapshot,
+   *   for the PTS row. Same contract: omit to leave the current choice alone,
+   *   and an unknown key is ignored rather than blanking the dropdown.
    */
-  ui.syncVizModeUI = (mode, material = null) => {
+  ui.syncVizModeUI = (mode, material = null, particleStyle = null) => {
     _setVizModeBtns(mode);
-    // no-ops when the material select is absent
+    // both no-op when their select is absent
     _syncMaterialForVizMode(mode, material);
+    _syncParticleForVizMode(mode, particleStyle);
   };
 
   if (_volSel) {
@@ -418,9 +464,10 @@ export function bindControls(ui) {
     // adapter as every other mode switch. A blanket `.mbtn` clear here left the
     // clip time-base row dark, and setVizModeGPU alone left a mirror material
     // live in WIRE with its dropdown hidden. 'matte' also resets the remembered
-    // SURF pick, which would otherwise outlive the reset.
+    // SURF pick, which would otherwise outlive the reset — and 'squares' does
+    // the same for the remembered PTS particle style.
     r.setVizModeGPU('wireframe');
-    ui.syncVizModeUI('wireframe', 'matte');
+    ui.syncVizModeUI('wireframe', 'matte', 'squares');
 
     r.setShapeAnimated('pyramid-smooth');
     DOM.shapeSel.value = 'pyramid-smooth';

@@ -368,6 +368,31 @@ export class RenderEngine {
     glass:  { on:true,  metalness:0.1, roughness:0.05, reflect:0.70, fresnelP:5.0 },
   };
 
+  // ── Particle styles (PTS viz mode) ────────────────────────────────────
+  // A point primitive is a screen-aligned square, so POINTS mode had exactly
+  // one look. Each style here is the four things that turn that square into
+  // something else: how big it is, which mask the fragment shader runs over
+  // gl_PointCoord (_POINT_MASK in shaders.js), how it blends, and how much
+  // afterglow trails behind it.
+  //
+  //   size    — gl_PointSize, in framebuffer pixels
+  //   mask    — uPtStyle: 0 square · 1 round dot · 2 soft puff
+  //   glow    — additive blending (and no depth write, which additive needs
+  //             to accumulate instead of z-rejecting its own cloud)
+  //   trail   — AfterimagePass damp, 0 = pass stays off
+  //
+  // Keys must match the <option value> in index.html #particle-style-sel and
+  // the descriptions in ui/controls.js — same contract as SURFACE_MATERIALS.
+  static PARTICLE_STYLES = {
+    squares: { size: 5.0, mask: 0, glow: false, trail: 0    },
+    dots:    { size: 2.6, mask: 1, glow: false, trail: 0    },
+    // Smoke is the dots' particle, not a bigger one: the sprite is only wide
+    // enough to give the falloff somewhere to fade, and the visible core lands
+    // near the dots'. What makes it read as smoke is the wake, so the damp sits
+    // high — a shorter one looks like a smear rather than a trail of particles.
+    smoke:   { size: 3.4, mask: 2, glow: true,  trail: 0.93 },
+  };
+
   // ── Composer pipeline order ───────────────────────────────────────────────
   // Property names of every pass, in the order the composer must execute them.
   // The composer renders passes in array order, so this list IS the picture:
@@ -385,6 +410,10 @@ export class RenderEngine {
     this.isMobile = isMobile;
     this.CFG      = CFG;
     this.currentMaterial = 'matte';
+    // Remembered across viz-mode switches the same way the surface material is:
+    // PTS is often a place you pass through, and coming back to a look you
+    // chose should not cost another trip to the dropdown.
+    this.currentParticleStyle = 'squares';
 
     // ── Three.js core ─────────────────────────────────────────────────────────
     this.scene    = new THREE.Scene();
@@ -533,6 +562,10 @@ export class RenderEngine {
                uRoughness:    { value: 1.0 },
                uReflect:      { value: 0.0 },
                uFresnelP:     { value: 1.5 },
+               // Particle style — 0 keeps the square point sprite the FS mask
+               // is a no-op for. Only ever raised while the POINTS proxy draws:
+               // gl_PointCoord is undefined for triangles. See setParticleStyle.
+               uPtStyle:      { value: 0   },
              };
     this.gpuMat  = new THREE.ShaderMaterial({
       vertexShader: VS, fragmentShader: FS, uniforms: this.U,
@@ -931,6 +964,14 @@ export class RenderEngine {
     this.gpuMesh.visible  = true;
     this.gpuMat.wireframe = false;
     this.U.uPointSize.value = 1.0;
+    if (mode !== 'points') {
+      // Leaving PTS: the particle mask must not run over triangles, and the
+      // smoke style's afterglow belongs to the style, not to the session — a
+      // trail left armed would smear the surface the user just switched to.
+      // The chosen style itself is remembered in currentParticleStyle.
+      this.U.uPtStyle.value = 0;
+      this.setAfterglow(false);
+    }
     // SURF lighting is only meaningful on filled surfaces. Wireframe has no
     // surface area for derivatives to sample; points are single-pixel quads
     // where dFdx/dFdy of vWorldPos is degenerate. Turn lighting off for both.
@@ -939,7 +980,6 @@ export class RenderEngine {
       this.gpuMat.wireframe = true;
     } else if (mode === 'points') {
       this.gpuMesh.visible = false;
-      this.U.uPointSize.value = 5.0;
       const ptsMat = new THREE.ShaderMaterial({
         vertexShader: this.activeVS, fragmentShader: this.activeFS, uniforms: this.U,
         side: THREE.DoubleSide,
@@ -951,7 +991,59 @@ export class RenderEngine {
       // dispose note at the top of this method.
       this.gpuPtsProxy = new THREE.Points(this.gpuMesh.geometry, ptsMat);
       this.scene.add(this.gpuPtsProxy);
+      // Point size, mask, blending and trail all come from the style rather
+      // than from a literal here — the proxy is rebuilt on every entry into
+      // PTS, so this is also what restores the style after a mode round-trip.
+      this.setParticleStyle(this.currentParticleStyle);
     }
+  }
+
+  // ── Particle style (PTS viz mode) ─────────────────────────────────────────
+  /**
+   * Apply one of RenderEngine.PARTICLE_STYLES to the points proxy.
+   *
+   * Three things move together and that is why they live in one call: the
+   * sprite size (a uniform), the fragment mask (a uniform), and the material's
+   * blending — a soft additive puff and a crisp opaque dot want opposite
+   * settings, and setting one without the others gives neither look.
+   *
+   * Outside PTS the style is only remembered. Nothing to apply: the proxy does
+   * not exist, and uPtStyle must stay 0 because gl_PointCoord is undefined for
+   * the triangles the mesh draws.
+   *
+   * ── About the trail ──────────────────────────────────────────────────────
+   * The smoke style borrows the composer's AfterimagePass: every frame blends
+   * with a decayed copy of the previous one, so each particle drags a wake of
+   * ever-fainter copies of itself. That is a screen-space effect on purpose —
+   * it works the same whether the positions come from a GPU shader or from the
+   * CPU worker, where a "render the cloud again at t-dt" trick would show
+   * nothing at all (CPU positions are baked into the attribute buffer, not
+   * computed from uTime). The pass is the style's for as long as the style is
+   * live; setVizModeGPU turns it off on the way out of PTS.
+   *
+   * @param {string} name — key into RenderEngine.PARTICLE_STYLES
+   */
+  setParticleStyle(name) {
+    const s = RenderEngine.PARTICLE_STYLES[name];
+    this.currentParticleStyle = s ? name : 'squares';
+    const style = s ?? RenderEngine.PARTICLE_STYLES.squares;
+
+    if (this.vizMode !== 'points') return;
+
+    this.U.uPointSize.value = style.size;
+    this.U.uPtStyle.value   = style.mask;
+
+    const m = this.gpuPtsProxy?.material;
+    if (m) {
+      // A masked sprite has partial alpha at its rim; without transparent the
+      // rim is drawn opaque and the round dot is square again.
+      m.transparent = style.mask > 0;
+      m.blending    = style.glow ? THREE.AdditiveBlending : THREE.NormalBlending;
+      m.depthWrite  = !style.glow;
+      m.needsUpdate = true;
+    }
+
+    this.setAfterglow(style.trail > 0, style.trail || 0.87);
   }
 
   // ── Surface material (studio-env reflections) ─────────────────────────────

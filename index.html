@@ -906,6 +906,16 @@
       </div>
       <div id="surface-material-desc" style="font-size:8px;color:#445;font-family:monospace;padding:3px 2px;min-height:12px"></div>
     </div>
+    <!-- Particle style — the PTS counterpart of Surface Material. Ships hidden
+         because the boot viz mode is WIRE; controls.js shows it in PTS only. -->
+    <div class="cg" id="particle-style-wrap" style="display:none"><label>Particle Style</label>
+      <select id="particle-style-sel">
+        <option value="squares" selected>Squares (large)</option>
+        <option value="dots">Dots (small)</option>
+        <option value="smoke">Smoke trail (small + wake)</option>
+      </select>
+      <div id="particle-style-desc" style="font-size:8px;color:#445;font-family:monospace;padding:3px 2px;min-height:12px"></div>
+    </div>
     <div class="cg"><label>Bloom <span id="blmv" class="vd">0.55</span></label>
       <input type="range" id="bloom" min="0" max="1.5" step="0.05" value="0.55"></div>
 

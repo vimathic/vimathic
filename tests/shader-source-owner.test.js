@@ -54,7 +54,7 @@ function makeRender() {
   const U = {
     uTime: { value: 0 }, uBass: { value: 0 }, uMid: { value: 0 }, uTreble: { value: 0 },
     uAmp: { value: 1 }, uBeat: { value: 0 }, uWI: { value: 1 },
-    uPointSize: { value: 1 }, uLighting: { value: 1 },
+    uPointSize: { value: 1 }, uLighting: { value: 1 }, uPtStyle: { value: 0 },
     uMode: { value: 0 }, uMathMode: { value: 0 }, uModeNext: { value: 0 },
     uMorphProgress: { value: 1 }, uModeBlend: { value: 0 },
   };
@@ -76,8 +76,15 @@ function makeRender() {
       getRenderTarget() { return null; },
       setRenderTarget() {},
     },
+    // Entering PTS applies the current particle style, which needs these two.
+    // The style itself is pinned in tests/particle-style.test.js; here they
+    // exist so setVizModeGPU can run its real body.
+    currentParticleStyle: 'squares',
+    afterglow: null,
+    setAfterglow(on, amount) { this.afterglow = { on, amount }; },
     applyShaderSource(...a) { return RenderEngine.prototype.applyShaderSource.apply(this, a); },
     setVizModeGPU(...a)     { return RenderEngine.prototype.setVizModeGPU.apply(this, a); },
+    setParticleStyle(...a)  { return RenderEngine.prototype.setParticleStyle.apply(this, a); },
   };
 }
 

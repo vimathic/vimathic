@@ -291,6 +291,38 @@ const _MATERIAL_UNIFORMS = `
 uniform int   uMaterial;
 uniform float uMetalness, uRoughness, uReflect, uFresnelP;`;
 
+// ── Particle shaping (PTS mode) ───────────────────────────────────────────────
+// A point primitive is a screen-aligned square, which is why the POINTS mode
+// used to offer exactly one look: big squares. gl_PointCoord gives the position
+// inside that square, so a mask over it turns the same primitive into a round
+// dot or a soft puff at no extra draw cost.
+//
+// Gated on uPtStyle > 0, and setParticleStyle() only ever raises it while the
+// POINTS proxy is the thing drawing. That gate is not cosmetic: gl_PointCoord
+// is undefined for triangle primitives, so the mesh and wireframe paths must
+// not reach this code at all.
+//
+// Shared by FS and SE_FS_TEMPLATE — a custom shader from the editor gets the
+// particle styles too, for the same reason the material block is shared: one
+// owner, no drift between the built-in look and the user's.
+const _POINT_UNIFORMS = `
+uniform int uPtStyle;`;
+
+const _POINT_MASK = `
+  float _pAlpha = 1.0;
+  if (uPtStyle > 0) {
+    // 0 at the centre of the sprite, 1 at the edge of its inscribed circle.
+    float _pd = length(gl_PointCoord - vec2(0.5)) * 2.0;
+    if (_pd > 1.0) discard;                 // square corners → round particle
+    _pAlpha = uPtStyle == 2
+      // Smoke: no hard edge at all. The core is bright and the falloff carries
+      // most of the sprite, so the afterimage trail behind it reads as a wake
+      // of ever-fainter particles rather than as a streak.
+      ? pow(1.0 - _pd, 2.2)
+      // Dot: solid core, antialiased rim.
+      : smoothstep(1.0, 0.55, _pd);
+  }`;
+
 const _STUDIO_ENV = `
 // Procedural studio environment — dark floor, brighter ceiling, three
 // soft-box highlights. Sampled by reflect(-V,N); no cubemap texture needed
@@ -352,6 +384,10 @@ uniform float uTime, uBass, uTreble;
 // uMaterial: 0 = Matte (reflections off, original look). >0 enables the
 // reflection path. Shared with SE_FS_TEMPLATE via _MATERIAL_UNIFORMS.
 ${_MATERIAL_UNIFORMS}
+// ── Particle style (PTS mode) ────────────────────────────────────────────
+// 0 = square sprite (the original), 1 = round dot, 2 = soft smoke puff.
+// Shared with SE_FS_TEMPLATE via _POINT_UNIFORMS.
+${_POINT_UNIFORMS}
 varying float vH;
 varying vec3  vWorldPos;
 varying vec3  vViewDir;
@@ -412,7 +448,12 @@ void main(){
   // vWorldPos, vViewDir in scope — all present here.
   ${_MATERIAL_BLOCK}
 
-  gl_FragColor = vec4(color, 1.0);
+  // ── Particle shaping ────────────────────────────────────────────────────
+  // No-op unless the POINTS proxy is drawing (uPtStyle == 0 everywhere else),
+  // so the surface and wireframe paths are bit-for-bit what they were.
+  ${_POINT_MASK}
+
+  gl_FragColor = vec4(color, _pAlpha);
 }`;
 
 // ── ShaderEditor ──────────────────────────────────────────────────────────────
@@ -463,6 +504,7 @@ void main(){vec3 pos=position;
 const SE_FS_TEMPLATE = body => `uniform int uCM,uCMNext;uniform float uCMBlend;
 uniform float uTime,uBass,uMid,uTreble,uBeat;
 ${_MATERIAL_UNIFORMS}
+${_POINT_UNIFORMS}
 varying float vH;
 varying vec3  vWorldPos;
 varying vec3  vViewDir;
@@ -478,7 +520,8 @@ void main(){float t=clamp((vH+.8)*.6,.03,.97);vec3 c=vec3(0.0);
   ${body}
   vec3 color = c;
   ${_MATERIAL_BLOCK}
-  gl_FragColor=vec4(color,1.);}`;
+  ${_POINT_MASK}
+  gl_FragColor=vec4(color,_pAlpha);}`;
 
 // ── Shader editor default code snippets ───────────────────────────────────────
 const SE_DEFAULT_VERT = `// b bass  t treble  m mid  bt beat  T time  wi waveInt  a amp
