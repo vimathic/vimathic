@@ -16,7 +16,7 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 | <kbd>Space</kbd> | Play / pause audio |
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous / next track in playlist |
 | <kbd>R</kbd> | Randomize everything — shape, color, formula |
-| <kbd>F</kbd> | Random math formula (CPU) |
+| <kbd>F</kbd> | Random formula — GPU shader or CPU math formula |
 | <kbd>D</kbd> | Next shape (sequential, looping through all 20 shapes) |
 | <kbd>T</kbd> | Next surface material — Matte / Glossy / Metal / Mirror / Velvet / Glass (SURFACE mode only) |
 | <kbd>Q</kbd> | Random color scheme |
@@ -28,7 +28,9 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 
 The randomization keys (`R`, `Q`, `F`) use a **shuffle bag**: every color, shape, and formula will appear before any repeats. You will not see the same value twice in a row, ever — even at deck boundaries the next pick is guaranteed different from the last.
 
-> **Note on `R`:** `R` rotates colour and formula across their full pools (44 schemes, 192 formulas), but rotates **shape** across a curated subset of 9 of the 20 available — plane, sphere, torus, torus knot, cylinder, cone, icosahedron, pyramid, box. The other 11 shapes (disc, ring, circle, hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth, dodecahedron, star, solar) remain reachable through the Shape dropdown but won't appear via `R`.
+> **Note on `F` and `R`:** the FORMULA dropdown holds two families — 38 GPU shaders and 192 CPU math formulas — and both randomizers draw from both. The choice of family is a coin flip, then the shuffle bag picks inside it, so a shader comes up about as often as a formula even though there are five times more formulas. Each family keeps its own no-repeat deck.
+
+> **Note on `R`:** `R` rotates colour and formula across their full pools (44 schemes, 38 shaders + 192 formulas), but rotates **shape** across a curated subset of 9 of the 20 available — plane, sphere, torus, torus knot, cylinder, cone, icosahedron, pyramid, box. The other 11 shapes (disc, ring, circle, hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth, dodecahedron, star, solar) remain reachable through the Shape dropdown but won't appear via `R`.
 
 ## Hold-and-drag shortcuts
 

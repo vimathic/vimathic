@@ -135,6 +135,52 @@ test.describe('Hotkeys', () => {
     // 'h' left the hotkey-hint overlay open — harmless, nothing runs after it.
     expect(errors).toEqual([]);
   });
+
+  // ── The randomiser must reach BOTH families in #gpu-sel ──────────────────
+  // 38 GPU shaders (numeric values) and 192 CPU formulas (`m:collection:key`)
+  // share that dropdown. The pool behind R and F was built from the CPU
+  // catalogue alone, so a GPU shader could not come up at all — the shape of
+  // bug that only an end-to-end press can catch, because the unit test for the
+  // pool (tests/formula-picker.test.js) cannot see how main.js fills it.
+  //
+  // 16 presses with an early exit: the two families are drawn by a coin flip,
+  // so seeing only one of them 16 times running is a 3-in-100 000 event, and
+  // the loop stops as soon as both have appeared — usually within four.
+  const bothFamilies = async (page, key, tries = 16) => {
+    const sel  = page.locator('#gpu-sel');
+    const seen = new Set();
+    for (let i = 0; i < tries && seen.size < 2; i++) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(120);
+      seen.add((await sel.inputValue()).startsWith('m:') ? 'cpu' : 'gpu');
+    }
+    return [...seen].sort();
+  };
+
+  test('F lands on GPU shaders as well as CPU formulas', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto('/');
+    await page.locator('canvas').waitFor();
+
+    expect(await bothFamilies(page, 'f')).toEqual(['cpu', 'gpu']);
+    expect(errors).toEqual([]);
+  });
+
+  test('R does too, and still randomises the shape with it', async ({ page }) => {
+    // R applies the same pick plus a shape swap, and the two families take
+    // different routes to get there: a CPU formula rides inside the shape's
+    // morph, a GPU shader crossfades while the shape morphs separately.
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto('/');
+    await page.locator('canvas').waitFor();
+
+    const shapeBefore = await page.locator('#shape-sel').inputValue();
+    expect(await bothFamilies(page, 'r')).toEqual(['cpu', 'gpu']);
+    await expect(page.locator('#shape-sel')).not.toHaveValue(shapeBefore);
+    expect(errors).toEqual([]);
+  });
 });
 
 // ── 4. RESET ALL produces a known-good state ──────────────────────────────────
