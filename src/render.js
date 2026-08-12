@@ -285,6 +285,12 @@ function easeInOutCubic(t) {
 
 // Exported for tests/camera-tween-damping.test.js: the cancel path below is
 // half of a fix, and a hand-rolled stand-in would not pin it.
+// The ground grid's resting opacity. Every path that shows the grid sets only
+// `visible`, so the material must be back at this value whenever it is hidden —
+// see fadeGrid(), which is the only thing allowed to move it.
+export const GRID_OPACITY = 0.1;
+const GRID_FADE_MS = 400;
+
 export class TransitionManager {
   constructor() {
     // Map<slot, tween> — at most one active tween per slot
@@ -534,7 +540,8 @@ export class RenderEngine {
     this.scene.add(this.stars);
 
     this.grid = new THREE.GridHelper(9, 28, 0x88aaff, 0x3355aa);
-    this.grid.position.y = -1.3; this.grid.material.transparent = true; this.grid.material.opacity = 0.1;
+    this.grid.position.y = -1.3; this.grid.material.transparent = true;
+    this.grid.material.opacity = GRID_OPACITY;
     this.scene.add(this.grid);
 
     // ── GPU mesh + uniforms ───────────────────────────────────────────────────
@@ -684,6 +691,18 @@ export class RenderEngine {
    * @param {()=>void} [onFlat] — called at the flat frame (uMorphProgress === 0)
    */
   triggerMorphTransition(onFlat) {
+    // FIX: queue the work instead of closing over it. Restarting the slots
+    // below cancels the in-flight morph, and a cancelled tween never runs its
+    // onDone — which is where onFlat lived, so the scheduled work was dropped.
+    // That is not decoration: applyState puts the shape swap, the formula
+    // change and the deform switch in there on purpose, to land together at
+    // one flat frame. Load a preset, press a shape hotkey inside the 400 ms
+    // window, and the preset's geometry work vanished while its UI half had
+    // already been written. A superseded morph now hands its queue to the
+    // morph replacing it, and it runs at THAT morph's flat frame — still at a
+    // flat frame, which is the whole point (the mesh is invisible there).
+    if (onFlat) (this._pendingMorphFlat ??= []).push(onFlat);
+
     // Cancel any in-flight morph
     this.transitions.start('morph-deflate', 0, () => {});
     this.transitions.start('morph-inflate', 0, () => {});
@@ -695,7 +714,11 @@ export class RenderEngine {
       this.U.uMorphProgress.value = 1.0 - p;
     }, () => {
       this.U.uMorphProgress.value = 0.0;
-      if (onFlat) onFlat();
+      // Drained before running: a callback that triggers another morph must
+      // not see its own entry still queued.
+      const pending = this._pendingMorphFlat ?? [];
+      this._pendingMorphFlat = [];
+      for (const fn of pending) fn();
 
       this.transitions.start('morph-inflate', dur, p => {
         this.U.uMorphProgress.value = p;
@@ -703,6 +726,21 @@ export class RenderEngine {
         this.U.uMorphProgress.value = 1.0;
       });
     });
+  }
+
+  /**
+   * Discard work queued for the next flat frame, without touching the morph
+   * animation itself.
+   *
+   * Carrying pending work across a restart is right between morphs, but wrong
+   * when the CPU path is being abandoned: switching to a GPU shader supersedes
+   * a queued setFormula outright, and letting it land afterwards re-arms the
+   * CPU deformation over the shader (uMathMode back to 1, and the shader's own
+   * displacement is gated on uMathMode == 0 — so it draws nothing). Callers
+   * that take ownership away from the queue say so by calling this.
+   */
+  cancelPendingMorph() {
+    this._pendingMorphFlat = [];
   }
 
   // ── Animated GPU shader mode crossfade ───────────────────────────────────────
@@ -1352,10 +1390,55 @@ export class RenderEngine {
     this.composer.setPixelRatio(dpr);
   }
 
+  /**
+   * Fade the ground grid in or out. The only writer of grid.material.opacity
+   * outside construction.
+   *
+   * FIX: the fade used to live in main.js's G handler as a bare rAF loop that
+   * approached its target geometrically and stopped at ~0.1% opacity, then set
+   * visible = false. Nothing ever put the opacity back, and every other way of
+   * showing the grid — the ⊞ GRID button, a preset, leaving transparent
+   * background — writes only `visible`. So after one G the grid could be
+   * switched "on" and stay invisible, with the button lit and reporting ON.
+   * Ending both directions at GRID_OPACITY keeps those paths honest.
+   *
+   * Fading IN also had to raise `visible` up front: with it set only at the
+   * end, the whole fade ran on a hidden object and the grid popped in at full
+   * strength instead of appearing gradually.
+   */
+  fadeGrid(on) {
+    const g = this.grid;
+    if (!g) return;
+    // Fading in starts from nothing and raises `visible` up front, so the fade
+    // is actually seen. Fading out starts wherever the material is now, which
+    // may be mid-fade if G was pressed twice quickly.
+    if (on) { g.material.opacity = 0; g.visible = true; }
+    const from   = g.material.opacity;
+    const target = on ? GRID_OPACITY : 0;
+    this.transitions.start('grid-fade', GRID_FADE_MS, p => {
+      g.material.opacity = from + (target - from) * p;
+    }, () => {
+      g.visible = on;
+      // Hidden grids rest at full opacity, never at the 0 the fade ended on.
+      // That is what keeps every other path honest: the ⊞ GRID button, a
+      // preset and setTransparentBackground all write only `visible`, and a
+      // grid left at 0 would come back invisible while its button read ON.
+      if (!on) g.material.opacity = GRID_OPACITY;
+    });
+  }
+
   /** Toggle transparent background for alpha-channel output (chroma-key free). */
   setTransparentBackground(enabled) {
     this.transparentBg = enabled;
     if (enabled) {
+      // FIX: remember what the grid was doing. The restore branch used to
+      // write `true` unconditionally, and the grid ships hidden — so one
+      // on→off round trip put a grid into the scene (and into captureStream,
+      // the second screen and the recorder) that the user never switched on,
+      // leaving the ⊞ GRID button reading the opposite of reality from then
+      // on. Stars need no such care: nothing else writes stars.visible, so
+      // true is always the right answer for them.
+      this._gridBeforeTransparent = this.grid.visible;
       this.scene.background = null;
       this.scene.fog        = null;
       this.renderer.setClearColor(0x000000, 0);
@@ -1366,7 +1449,7 @@ export class RenderEngine {
       this.scene.fog        = new THREE.FogExp2(0x050515, 0.007);
       this.renderer.setClearColor(0x050515, 1);
       this.stars.visible = true;
-      this.grid.visible  = true;
+      this.grid.visible  = this._gridBeforeTransparent ?? this.grid.visible;
     }
   }
 

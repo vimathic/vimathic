@@ -1,0 +1,154 @@
+// tests/grid-visibility.test.js
+//
+// Contract tests for the ground grid — who owns its opacity, and what leaving
+// transparent-background mode restores.
+//
+// Run:
+//   node --test tests/grid-visibility.test.js
+//
+// ── The two defects pinned here ───────────────────────────────────────────────
+// 1. G faded the grid out and left the material at ~0.1% opacity for good. The
+//    fade lived in main.js as a bare rAF loop approaching its target
+//    geometrically (0.1 · 0.8^20 ≈ 0.0012), then set visible = false. Every
+//    other way of showing the grid — the ⊞ GRID button, applying a preset,
+//    leaving transparent background — writes only `visible`. So after one G the
+//    grid could be switched "on" and stay invisible while the button lit up and
+//    reported ON. Recovery took a G press (which reads visible === true and
+//    fades further DOWN) followed by another one.
+//    The same loop set `visible` only at the END, so a fade-IN ran entirely on a
+//    hidden object: no fade at all, just a pop at full strength 330 ms later.
+//
+// 2. Leaving transparent background switched the grid ON rather than restoring
+//    it. The grid ships hidden (the constructor's last statement, matching
+//    #btn-toggle-grid's shipped 0.45 opacity = OFF), so one on→off round trip of
+//    TRANSPARENT BG put a grid into the scene the user never enabled — and into
+//    everything reading the same canvas: captureStream, the second screen, the
+//    WebM recorder. The ⊞ GRID button then read the opposite of reality, and
+//    stayed inverted.
+//
+// Stars are deliberately left alone: nothing else writes stars.visible, so
+// restoring them to true is always the right answer. The control case below
+// pins that, so a future "symmetry" cleanup does not add state it doesn't need.
+//
+// ── What "run against the unfixed code first" means in each half ──────────────
+// The transparent-background cases are a true before/after: run against the old
+// setTransparentBackground, "a grid that was off stays off" fails while both its
+// controls pass, so the assertions discriminate rather than pin current
+// behaviour.
+// The fade cases cannot be, honestly: before the fix there was no fadeGrid() to
+// call — the loop lived inside main.js's key switch, unreachable without booting
+// the app. They fail against the old tree only because the method is missing.
+// The old end state was established by reading instead: the loop ran 20 steps of
+// `opacity += (0 - opacity) * 0.2`, i.e. 0.1 · 0.8^20 ≈ 0.0012, and set
+// visible = false without ever restoring opacity.
+
+import { test, describe, before, beforeEach, after } from 'node:test';
+import assert from 'node:assert/strict';
+
+globalThis.document = {
+  getElementById: () => ({ value: '', style: {}, classList: { add() {}, remove() {}, toggle() {} } }),
+  querySelectorAll: () => [],
+};
+
+let RenderEngine, TransitionManager, GRID_OPACITY, THREE;
+before(async () => {
+  ({ RenderEngine, TransitionManager, GRID_OPACITY } = await import('../src/render.js'));
+  THREE = await import('three');
+});
+
+const realNow = performance.now.bind(performance);
+let clock = 0;
+before(() => { performance.now = () => clock; });
+after(()  => { performance.now = realNow; });
+
+let host;
+
+beforeEach(() => {
+  clock = 0;
+  host = {
+    transitions: new TransitionManager(),
+    grid:  { visible: false, material: { opacity: GRID_OPACITY, transparent: true } },
+    stars: { visible: true },
+    scene: {}, renderer: { setClearColor() {} },
+  };
+});
+
+const fadeGrid    = on => RenderEngine.prototype.fadeGrid.call(host, on);
+const transparent = on => RenderEngine.prototype.setTransparentBackground.call(host, on);
+const advance = ms => { for (let d = 0; d < ms; d += 16) { clock += 16; host.transitions.tick(); } };
+
+describe('the G fade leaves the grid usable by everything else', () => {
+
+  test('after fading out, switching the grid on actually shows something', () => {
+    host.grid.visible = true;
+
+    fadeGrid(false);
+    advance(600);
+
+    assert.equal(host.grid.visible, false);
+    assert.equal(host.grid.material.opacity, GRID_OPACITY,
+      'opacity must be back at rest, or the next "show" produces an invisible grid');
+
+    host.grid.visible = true;                     // what #btn-toggle-grid does
+    assert.ok(host.grid.material.opacity > 0.05, 'the grid the button turned on is visible');
+  });
+
+  test('fading in shows the grid while it fades, not after', () => {
+    fadeGrid(true);
+
+    assert.equal(host.grid.visible, true, 'a hidden object cannot fade in');
+    advance(200);
+    assert.ok(host.grid.material.opacity > 0 && host.grid.material.opacity < GRID_OPACITY,
+      'precondition: mid-fade');
+
+    advance(600);
+    assert.equal(host.grid.material.opacity, GRID_OPACITY);
+    assert.equal(host.grid.visible, true);
+  });
+
+  test('control — two fades in a row settle, they do not stack', () => {
+    fadeGrid(true);
+    advance(600);
+    fadeGrid(false);
+    advance(600);
+    fadeGrid(true);
+    advance(600);
+
+    assert.equal(host.grid.visible, true);
+    assert.equal(host.grid.material.opacity, GRID_OPACITY);
+  });
+});
+
+describe('transparent background restores what it hid', () => {
+
+  test('a grid that was off stays off after a round trip', () => {
+    host.grid.visible = false;                    // the shipped state
+
+    transparent(true);
+    assert.equal(host.grid.visible, false);
+    transparent(false);
+
+    assert.equal(host.grid.visible, false,
+      'leaving transparent mode must not switch on a grid the user never enabled');
+  });
+
+  test('control — a grid that was on comes back on', () => {
+    host.grid.visible = true;
+
+    transparent(true);
+    assert.equal(host.grid.visible, false, 'hidden while transparent, as documented');
+    transparent(false);
+
+    assert.equal(host.grid.visible, true);
+  });
+
+  test('control — stars always come back, they have no other owner', () => {
+    host.stars.visible = true;
+
+    transparent(true);
+    assert.equal(host.stars.visible, false);
+    transparent(false);
+
+    assert.equal(host.stars.visible, true);
+  });
+});

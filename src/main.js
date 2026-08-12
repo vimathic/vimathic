@@ -169,6 +169,15 @@ function _applyFormulaValue(value, onFlat) {
       mathViz.setFormula(colId, key);
     });
   } else {
+    // FIX: a GPU shader replaces the CPU formula outright, so any formula
+    // change still queued for the next flat frame must go. Without this, two
+    // formula-hotkey presses inside the morph window (400 ms desktop) left the
+    // panel, #gpu-sel and uMode all on the shader while the queued
+    // mathViz.setFormula re-armed the CPU path over it — uMathMode back to 1,
+    // and the shader's displacement is gated on uMathMode == 0, so it drew
+    // nothing at all. The dropdown's own handler in controls.js takes the same
+    // branch and needs the same disclaimer.
+    render.cancelPendingMorph();
     mathViz.deactivate();
     render.setGPUModeAnimated(+value);
     if (onFlat) render.triggerMorphTransition(onFlat);
@@ -317,13 +326,10 @@ window.addEventListener('keydown', e => {
     // G — fade grid in/out. Was 'C' historically; moved to G when C was
     // claimed by the hold-and-drag alias for Wave Intensity (see
     // controls.js _fsParams). Single-letter alias for 'grid'.
-    case 'g': {
-      const target = render.grid.visible ? 0 : 0.1;
-      let t2 = 0;
-      const fade = () => { t2+=.05; render.grid.material.opacity += (target-render.grid.material.opacity)*.2; if(t2<1) requestAnimationFrame(fade); else render.grid.visible=target>0; };
-      fade();
-      break;
-    }
+    // FIX: the fade now lives on the engine that owns the grid. Keeping it
+    // here meant the key handler owned grid.material.opacity while everything
+    // else owned grid.visible, and the two drifted apart — see fadeGrid().
+    case 'g': render.fadeGrid(!render.grid.visible); break;
     case 'h': DOM.hotkeyHint.classList.toggle('visible'); break;
 
     // Note: the letters L K J N B V C A X Z are all reserved for hold-and-

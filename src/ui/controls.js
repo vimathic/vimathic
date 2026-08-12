@@ -287,7 +287,11 @@ export function bindControls(ui) {
         });
       }
     } else {
-      // GPU shader — deactivate math and switch uMode with crossfade
+      // GPU shader — deactivate math and switch uMode with crossfade.
+      // FIX: same disclaimer as the R/F hotkeys in main.js — a formula still
+      // queued for the next flat frame would re-arm the CPU path over the
+      // shader, and the shader's displacement is gated on uMathMode == 0.
+      r.cancelPendingMorph();
       if (ui.mathViz) ui.mathViz.deactivate();
       r.setGPUModeAnimated(+val);
     }
