@@ -7,7 +7,7 @@
 // Called once from UIController.bindAll().
 
 import { DOM } from '../dom.js';
-import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT } from '../params.js';
+import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT, DRAG_FLOOR } from '../params.js';
 import { bindAboutModal, ABOUT_OVERLAY_ID } from './about-modal.js';
 import { AutoCycler } from './auto-cycle.js';
 
@@ -772,10 +772,10 @@ export function bindControls(ui) {
   // to the same param via PARAMS[id], so there's no duplicated state and
   // adding more aliases later is a one-line change here.
   //
-  // Why min uses Math.max(p.min, 0.1): some PARAMS allow min=0 (bassSens,
-  // trebleSens, bloom) but hold-and-drag at exactly 0 makes the
-  // visualizer go silent, which feels broken mid-performance. 0.1 keeps a
-  // sliver of motion. PARAMS.min stays at 0 for MIDI / preset / reset paths.
+  // Why min uses Math.max(p.min, DRAG_FLOOR): some PARAMS allow min=0
+  // (bassSens, trebleSens, bloom) but hold-and-drag at exactly 0 makes the
+  // visualizer go silent, which feels broken mid-performance. The floor keeps
+  // a sliver of motion. PARAMS.min stays at 0 for MIDI / preset / reset paths.
   // FIX(#28): waveInt is not in that list — params.js declares min 0.3
   // (aligned with the index.html slider), so the clamp never moves it.
   const _fsParams = {
@@ -850,7 +850,7 @@ export function bindControls(ui) {
     const p = PARAMS[id];
     if (!p) return;
     const hi        = p.extendedMax ?? p.max;
-    const lo        = Math.max(p.min, 0.1);
+    const lo        = Math.max(p.min, DRAG_FLOOR);
     const cur       = p.get(ctx);
     const spdBase   = (hi - lo) / 600;
     const absVal    = Math.abs(cur);

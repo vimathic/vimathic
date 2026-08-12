@@ -27,11 +27,22 @@ If you connect a controller after the page is loaded, VIMATHIC picks it up autom
 Learn mode binds the next incoming CC message to a parameter of your choice.
 
 1. Open the **MIDI** section in the control panel.
-2. Click **LEARN**.
-3. Move the knob or fader you want to use on your controller.
-4. From the dropdown, pick the parameter to map.
+2. In the empty row at the bottom of the mapping list, pick the parameter from the dropdown.
+3. Click **⊙ LEARN** on that row — it starts listening.
+4. Move the knob or fader you want to use.
 
-That's it. Move the same knob now and the mapped parameter moves with it. The mapping list under **LEARN** shows every active binding, sorted by CC number.
+That's it. Move the same control now and the parameter moves with it. The mapping list shows every active binding, sorted by CC number, and each row has its own **⊙** to re-learn it onto a different control.
+
+The panel's **🎛 LEARN MODE** button is a reminder rather than a step: pressed on its own it just tells you to use the row's ⊙, and pressed while a row is listening it cancels.
+
+## REL and ABS
+
+Each row carries a mode badge you can click:
+
+- **REL** — relative. The controller sends ticks and each one nudges the value from wherever it is. This is what a new mapping starts as, because endless encoders are the common case and a relative binding never jumps a value on the first touch.
+- **ABS** — absolute. The controller's position *is* the value, mapped linearly across the parameter range. This is what a potentiometer or a fader wants: its physical position should mean something.
+
+Set the badge to match the hardware. A fader left in REL is read as a stream of ticks, so its position stops meaning anything: the top half of its travel is decoded as a large negative delta and pushes the parameter the wrong way.
 
 ## Manual mapping
 
@@ -51,7 +62,7 @@ Every parameter that has a slider in the panel is mappable, plus a few that aren
 | Color Scheme | 0 – 43 | Integer; quantized to 44 palettes |
 | Auto-Rotate Speed | 0 – 0.002 | Slow orbit speed |
 
-CC values 0–127 are linearly mapped to the parameter range. For integer parameters (Color Scheme), the value is rounded to the nearest valid index.
+In **ABS** mode, CC values 0–127 are mapped linearly across the parameter range. In **REL** mode the incoming byte is a signed tick count and the range only sets the step size. For integer parameters (Color Scheme), the value is rounded to the nearest valid index, and that one wraps rather than sticking at either end.
 
 ## Bluetooth MIDI
 
@@ -71,7 +82,7 @@ The **CLEAR** button in the MIDI section removes all mappings at once. There is 
 
 - Bind the **Color Scheme** parameter to a button or pad — even though it's a continuous CC, the quantization means a single tap on a velocity-sensitive pad cleanly steps through palettes.
 - Bind **Bass Sensitivity** and **Treble Sensitivity** to two knobs on the same row. Together they give you a quick "EQ tilt" feel during a set.
-- For performance, bind **Amplitude** to a fader on your master MIDI controller and pull it down to neutralize the visualization between songs. Same idea as an output trim.
+- For performance, bind **Amplitude** to a fader on your master MIDI controller and pull it down to neutralize the visualization between songs — same idea as an output trim. Switch that row to **ABS** first: in REL the fader's position is read as ticks, and pulling it down drives amplitude *up*.
 - Mappings persist per browser. If you use VIMATHIC on a second machine, you'll need to remap (or export/import the localStorage key `vimathic_midi_map`).
 
 ## Troubleshooting

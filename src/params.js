@@ -51,6 +51,14 @@ import { DOM } from './dom.js';
 //         36..43 DARK series (Charcoal Smoke..Coal Plum)
 export const COLOR_SCHEME_COUNT = 44;
 
+// Floor for hold-and-drag. Some params allow min = 0 (bassSens, trebleSens,
+// bloom), and dragging one to exactly 0 makes the visualiser go silent, which
+// reads as broken mid-performance — 0.1 keeps a sliver of motion. min stays 0
+// for the MIDI, preset and RESET paths. Exported so the drag path and the
+// documented range table cannot drift apart; tests/docs-consistency.test.js
+// checks them against each other.
+export const DRAG_FLOOR = 0.1;
+
 export const PARAMS = {
   amp: {
     label:   'Amplitude',

@@ -83,7 +83,14 @@ function parseDoc(filepath, source) {
       if (!m) continue;
       const [, key, value] = m;
       const trimmed = value.trim().replace(/^["']|["']$/g, '');
-      if (key === 'order') meta.order = parseInt(trimmed, 10) || 1000;
+      if (key === 'order') {
+        // FIX: `|| 1000` turned a legitimate `order: 0` into the default, and
+        // documents/index.md (the Overview tab) declares exactly that — so it
+        // sorted last and the About modal, which opens DOCS[0] on first run,
+        // opened Quick Start instead of the overview it was written to show.
+        const n = parseInt(trimmed, 10);
+        meta.order = Number.isFinite(n) ? n : 1000;
+      }
       else if (key === 'title') meta.title = trimmed;
       else if (key === 'description') meta.description = trimmed;
       else if (key === 'group') meta.group = trimmed;
