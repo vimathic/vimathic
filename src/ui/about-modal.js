@@ -106,6 +106,19 @@ function close(overlay) {
  * dismiss it. One close path for both ways out, which is what the comment above
  * already claims.
  */
+/**
+ * Is the About dialog on screen?
+ *
+ * The overlay is `role="dialog" aria-modal="true"` and modal for the POINTER
+ * only — its backdrop takes pointer-events when open. Nothing consulted it for
+ * keys, so every global hotkey kept firing behind it: space toggled playback,
+ * D changed shape, and hold-and-drag armed on a keypress meant for the reader.
+ * A brand-new profile lands in exactly that state, because the modal
+ * auto-opens on first run.
+ */
+export const isAboutModalOpen = () =>
+  !!document.getElementById(ABOUT_OVERLAY_ID)?.classList.contains('open');
+
 export function closeAbout() {
   const overlay = document.getElementById(ABOUT_OVERLAY_ID);
   if (overlay) close(overlay);

@@ -623,6 +623,10 @@ export class RenderEngine {
     // geometry.
     this.cb = {
       onShapeChange: (_shape) => {},
+      // Fired when a bloom punch hands the value back, so the panel slider can
+      // follow. Not fired when something else claimed bloom meanwhile — see
+      // punchBloom.
+      onBloomRestored: (_value) => {},
     };
 
     // ── Transition system ─────────────────────────────────────────────────────
@@ -1527,6 +1531,43 @@ export class RenderEngine {
       // grid left at 0 would come back invisible while its button read ON.
       if (!on) g.material.opacity = GRID_OPACITY;
     });
+  }
+
+  /**
+   * Punch the bloom up for a moment — the S hotkey's flash.
+   *
+   * FIX: this lived in main.js's key handler, which captured the strength on
+   * the first press and wrote it back 200 ms later without asking what the
+   * value was by then. Every other writer of bloom goes through
+   * PARAMS.bloom.set — the panel slider, a MIDI CC, a clip step, a preset
+   * apply, RESET ALL — and nothing modulates it per frame, so any write inside
+   * that window is somebody's fresh intent. It was overwritten. The restore now
+   * happens only if the punch is still the value on the engine, and the engine
+   * owns the state the way it owns the grid fade.
+   *
+   * @param {number} [amount] — added to the captured strength, clamped at 1.5
+   * @param {number} [ms]     — how long the punch lasts
+   */
+  punchBloom(amount = 0.8, ms = 200) {
+    if (!this.bloomPass) return;
+    // Only the first press of a rapid burst captures: later ones inside the
+    // window would otherwise capture the punched value and never come back.
+    if (this._bloomPunchOrig == null) this._bloomPunchOrig = this.bloomPass.strength;
+    clearTimeout(this._bloomPunchTimer);
+
+    const punch = Math.min(1.5, this._bloomPunchOrig + amount);
+    this.bloomPass.strength = punch;
+
+    this._bloomPunchTimer = setTimeout(() => {
+      const orig = this._bloomPunchOrig ?? 0.55;
+      this._bloomPunchTimer = null;
+      this._bloomPunchOrig  = null;
+      // Somebody set bloom while the punch was up: that is a fresh intent and
+      // this timer has no business undoing it.
+      if (this.bloomPass.strength !== punch) return;
+      this.bloomPass.strength = orig;
+      this.cb.onBloomRestored?.(orig);
+    }, ms);
   }
 
   /** Toggle transparent background for alpha-channel output (chroma-key free). */

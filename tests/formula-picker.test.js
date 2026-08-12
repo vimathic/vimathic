@@ -136,3 +136,41 @@ describe('FormulaPicker — no repeats inside a family', () => {
     assert.equal(new Set(draws.filter(isMathValue)).size, 4);
   });
 });
+
+// The picker forwards "what is on screen" to whichever bag draws. Without it a
+// draw could return the value already selected — after the dropdown, a preset
+// or a clip step moved it — and F would read as a dropped keypress.
+describe('FormulaPicker.next(current) — a draw is not what is already selected', () => {
+
+  test('the GPU half does not redraw the live shader', () => {
+    const picker = new FormulaPicker({ gpuValues: ['0', '1'], cpuFormulas: [], rng: undefined, random: () => 0 });
+    const first  = picker.next();
+    const other  = first === '0' ? '1' : '0';
+
+    assert.notEqual(picker.next(other), other);
+  });
+
+  test('the CPU half compares on the assembled m: value, not on the record', () => {
+    // The bag deals {collectionId, key} objects while the selector holds a
+    // string, so the comparison has to be made on the string.
+    const picker = new FormulaPicker({
+      gpuValues: [],
+      cpuFormulas: [
+        { collectionId: 'fractals', key: 'henon' },
+        { collectionId: 'waves',    key: 'standing' },
+      ],
+      random: () => 0.99,
+    });
+    const first = picker.next();
+    const other = first === 'm:fractals:henon' ? 'm:waves:standing' : 'm:fractals:henon';
+
+    assert.notEqual(picker.next(other), other);
+  });
+
+  test('control — with no argument it draws exactly as before', () => {
+    const picker = new FormulaPicker({ gpuValues: GPU, cpuFormulas: CPU, random: rng(0.1, 0.9) });
+    const drawn  = drawMany(picker, 20);
+    assert.equal(drawn.length, 20);
+    assert.ok(drawn.every(v => v != null), 'a family that is present must always yield a value');
+  });
+});

@@ -438,11 +438,30 @@ export class ShuffleBag {
     this._last  = null;
   }
 
-  /** Draw the next item. Never throws once constructed; auto-refills. */
-  next() {
-    if (this._deck.length === 0) this._refill();
-    this._last = this._deck.pop();
-    return this._last;
+  /**
+   * Draw the next item. Never throws once constructed; auto-refills.
+   *
+   * @param {*} [current] — what is on screen right now, when the caller knows.
+   *
+   * FIX: the bag guards its own seam — it will not deal the same value twice in
+   * a row — but it is not the only writer of the things it draws. E steps the
+   * palette, D steps the shape, and the dropdowns, presets and clip steps write
+   * both; after any of those the bag's memory names a value that is no longer
+   * live, so its next draw could hand back exactly what is already on screen
+   * and the keypress did nothing at all. Naming the live value lets it redraw
+   * once, which is what AutoCycler._draw does for the same reason.
+   */
+  next(current) {
+    const draw = () => {
+      if (this._deck.length === 0) this._refill();
+      this._last = this._deck.pop();
+      return this._last;
+    };
+    const v = draw();
+    // One redraw, not a loop: the pool may be size 1 (nothing else to deal) and
+    // a second draw is all the guarantee the deck can give anyway.
+    if (current != null && this._items.length > 1 && this._eq(v, current)) return draw();
+    return v;
   }
 
   /** Most recently drawn item, or null if .next() has never been called. */

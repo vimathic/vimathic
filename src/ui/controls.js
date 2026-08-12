@@ -8,7 +8,7 @@
 
 import { DOM } from '../dom.js';
 import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT, DRAG_FLOOR } from '../params.js';
-import { bindAboutModal, closeAbout } from './about-modal.js';
+import { bindAboutModal, closeAbout, isAboutModalOpen } from './about-modal.js';
 import { AutoCycler } from './auto-cycle.js';
 
 export function bindControls(ui) {
@@ -801,6 +801,13 @@ export function bindControls(ui) {
 
   document.addEventListener('keydown', e => {
     if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+    // FIX: and not through the About dialog. It is aria-modal and modal for the
+    // pointer, but nothing told the keyboard — so a key pressed while reading
+    // the docs armed a hold-and-drag on a parameter behind the overlay. A
+    // brand-new profile is in exactly that state, since the modal auto-opens on
+    // first run. Escape is a separate listener and deliberately not guarded,
+    // or the modal could not be closed by key.
+    if (isAboutModalOpen()) return;
     const key = e.key.toLowerCase();
     if (_fsParams[key]) { _dragKey = key; e.preventDefault(); }
   });

@@ -18,6 +18,7 @@ import { MathVisualizer } from './math-visualizer.js';
 import { getAllFormulasList } from './math-collections.js';
 import { FormulaPicker, isMathValue } from './formula-picker.js';
 import { DOM } from './dom.js';
+import { isAboutModalOpen } from './ui/about-modal.js';
 
 // ── App config ──────────────────────────────────────────────────────────────
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
@@ -82,6 +83,10 @@ const mathViz = new MathVisualizer(render, audio);
 // shape's coordinates. The hook also captures a fresh pristine reference
 // that mode transitions restore from to start with clean geometry.
 render.cb.onShapeChange = () => mathViz.onShapeChange();
+
+// A bloom punch that hands the value back moves the slider with it — the S
+// hotkey used to write the engine and the panel by hand, from the key handler.
+render.cb.onBloomRestored = v => syncParamUI('bloom', v);
 
 // RenderEngine's constructor calls setShape('pyramid-smooth') before this
 // callback was wired, so the very first shape (boot geometry) has no
@@ -182,7 +187,7 @@ function _pickColorScheme(i) {
 function _randomFormula() {
   const picker = _getPicker();
   if (!picker) return;
-  ui.applyFormulaValue(picker.next());
+  ui.applyFormulaValue(picker.next(DOM.gpuSel?.value));
 }
 
 // ── D hotkey: sequential shape cycling ──────────────────────────────────
@@ -217,6 +222,11 @@ function _cycleShape() {
 
 window.addEventListener('keydown', e => {
   if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  // The About dialog is modal for the pointer and was not for the keyboard, so
+  // space toggled playback and D changed the shape behind a reader's back — on
+  // first run, where the modal opens itself. Escape still reaches its own
+  // listener in controls.js, which is what closes this.
+  if (isAboutModalOpen()) return;
   // Ignore auto-repeat keydown. Hotkeys here are single-action triggers
   // (D = next shape, F = random formula, R = randomise all, space = play/
   // pause), not held-state inputs. Without this filter, holding D would
@@ -252,8 +262,12 @@ window.addEventListener('keydown', e => {
     // formula's morph callback when there is one (see ui.applyFormulaValue), so
     // both apply at the same flat frame instead of one cancelling the other.
     case 'r': {
-      const shape = _shapeBag.next();
-      _pickColorScheme(_colorBag.next());
+      // Each bag is told what is on screen: the deck only remembers what IT
+      // dealt, and D, E, the dropdowns, presets and clip steps all write these
+      // same values — after any of those, a blind draw can hand back what is
+      // already there and R looks like a dropped keypress.
+      const shape = _shapeBag.next(render.currentShape);
+      _pickColorScheme(_colorBag.next(audio.colorIdx));
       DOM.shapeSel.value = shape;
 
       const picker = _getPicker();
@@ -262,12 +276,12 @@ window.addEventListener('keydown', e => {
         render.setShapeAnimated(shape);
         break;
       }
-      ui.applyFormulaValue(picker.next(), () => render.setShape(shape));
+      ui.applyFormulaValue(picker.next(DOM.gpuSel?.value), () => render.setShape(shape));
       break;
     }
 
     case 'q':
-      _pickColorScheme(_colorBag.next());
+      _pickColorScheme(_colorBag.next(audio.colorIdx));
       break;
     case 'e':
       // Cycle forward through every defined scheme. Was hardcoded to %24,
@@ -294,18 +308,10 @@ window.addEventListener('keydown', e => {
     case 's': {
       e.preventDefault();
       render.triggerGlitch(200);
-      // Capture original bloom only on the first press; subsequent presses
-      // within the punch window reuse it so rapid taps don't accumulate.
-      if (_bloomOrig === null) _bloomOrig = render.bloomPass.strength;
-      clearTimeout(_bloomTimer);
-      render.bloomPass.strength = Math.min(1.5, _bloomOrig + 0.8);
-      _bloomTimer = setTimeout(() => {
-        const v = _bloomOrig ?? 0.55;
-        render.bloomPass.strength = v;
-        syncParamUI('bloom', v);
-        _bloomOrig  = null;
-        _bloomTimer = null;
-      }, 200);
+      // The punch lives on the engine that owns bloom — see punchBloom. The
+      // panel follows through onBloomRestored, wired beside the other engine
+      // callbacks above.
+      render.punchBloom();
       // Restart the beat-ring flash via Web Animations API — no layout reflow.
       const ring = DOM.beatRing;
       ring.classList.remove('flash');
@@ -335,9 +341,6 @@ window.addEventListener('beforeunload', () => {
 // ── Freeze-frame & grid toggle ────────────────────────────────────────────────
 let isFrozen = false;
 
-// Bloom glitch: track original value so rapid S presses don't accumulate
-let _bloomOrig  = null;
-let _bloomTimer = null;
 
 DOM.btnFreezeFrame.addEventListener('click', () => {
   isFrozen = !isFrozen;
@@ -426,6 +429,15 @@ function animate() {
   // mathViz.setVolumeTimePaused(isFrozen) call on the freeze button.
   audio.update(time);
 
+  // The camera editor's playhead is a readout of the same audio clock as the
+  // seek bar, not a visual effect — FIX: it sat below the freeze gate, so under
+  // STOP MOTION the transport kept advancing while the timeline marker stood
+  // still and "+ ADD KEYFRAME", which reads the live fraction, dropped its
+  // keyframe where the marker was not.
+  if (DOM.camEditorOverlay.classList.contains('open')) {
+    camera.updatePlayhead(audio.getElapsedFraction());
+  }
+
   // Freeze holds the last composed frame but skips the visual updates below.
   if (isFrozen) {
     render.composer.render();
@@ -461,11 +473,6 @@ function animate() {
     // invisible. It used to be expressed by switching autoRot off, which is
     // the user's own setting — see the flag's note in camera.js.
     camera.updatePhysics(time, audio.bass, audio.mid, audio.treble, audio.beatInt);
-  }
-
-  // Update timeline playhead when the camera editor is open.
-  if (DOM.camEditorOverlay.classList.contains('open')) {
-    camera.updatePlayhead(audio.getElapsedFraction());
   }
 
   render.orbit.update();

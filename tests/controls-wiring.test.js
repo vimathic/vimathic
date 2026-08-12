@@ -694,3 +694,32 @@ describe('the panel has one owner of "collapsed"', () => {
     assert.equal(byId('ctrl-collapse').style.display, '');
   });
 });
+
+// The About dialog is aria-modal and modal for the POINTER — its backdrop takes
+// pointer-events when open — but nothing consulted it for keys. So a key
+// pressed while reading the docs armed a hold-and-drag on a parameter behind
+// the overlay, and a brand-new profile is in exactly that state: the modal
+// opens itself on first run.
+describe('hold-and-drag does not reach through the About dialog', () => {
+
+  test('a drag key pressed over the dialog arms nothing', () => {
+    ui.audio.bassSens = 1.2;
+    byId('about-overlay').classList.add('open');
+
+    fireDoc('keydown', { key: 'l' });
+    fireDoc('mousemove', { movementX: 200 });
+
+    assert.equal(ui.audio.bassSens, 1.2,
+      '200 px of drag would have written about 2.17 into a parameter nobody was aiming at');
+  });
+
+  test('control — with the dialog closed the same keys still drag', () => {
+    ui.audio.bassSens = 1.2;
+    byId('about-overlay').classList.remove('open');
+
+    fireDoc('keydown', { key: 'l' });
+    fireDoc('mousemove', { movementX: 200 });
+
+    assert.notEqual(ui.audio.bassSens, 1.2, 'this is the feature, and it has to survive the guard');
+  });
+});
