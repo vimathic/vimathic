@@ -97,10 +97,18 @@ function makeEl(id = '') {
 }
 function newEl(id) { const el = makeEl(id); el.classList._o = el; return el; }
 
-const els = new Map();
+const els     = new Map();
+const selEls  = new Map();
+const docLtnr = new Map();
 const byId = id => {
   if (!els.has(id)) els.set(id, newEl(id));
   return els.get(id);
+};
+// .controls-panel is looked up by selector and is the element fullscreen mode
+// hides, so it needs to be a real stub rather than null.
+const bySel = sel => {
+  if (!selEls.has(sel)) selEls.set(sel, newEl(sel));
+  return selEls.get(sel);
 };
 globalThis.document = {
   body: newEl('body'),
@@ -108,11 +116,15 @@ globalThis.document = {
   getElementById: byId,
   createElement: () => newEl(),
   querySelectorAll: () => [],
-  querySelector:    () => null,
-  addEventListener() {}, removeEventListener() {},
+  querySelector:    bySel,
+  addEventListener(type, fn) {
+    if (!docLtnr.has(type)) docLtnr.set(type, []);
+    docLtnr.get(type).push(fn);
+  },
+  removeEventListener() {},
   activeElement: { tagName: 'BODY' },
   fullscreenElement: null,
-  exitFullscreen: () => Promise.resolve(),
+  exitFullscreen() { this.fullscreenElement = null; return Promise.resolve(); },
 };
 globalThis.requestAnimationFrame = fn => { fn(0); return 0; };
 globalThis.localStorage = { getItem: () => '1', setItem() {}, removeItem() {} };
@@ -126,6 +138,11 @@ const fire = (id, type, extra = {}) => {
   const el = byId(id);
   (el._listeners.get(type) ?? []).forEach(fn => fn({ type, target: el, currentTarget: el, preventDefault() {}, stopPropagation() {}, ...extra }));
 };
+/** The same for listeners the app put on `document`. */
+const fireDoc = (type, extra = {}) =>
+  (docLtnr.get(type) ?? []).forEach(fn => fn({ type, preventDefault() {}, stopPropagation() {}, ...extra }));
+/** Let an awaited fullscreen request settle. */
+const settle = () => new Promise(r => setImmediate(r));
 
 function makeUi() {
   const calls = [];
@@ -173,7 +190,18 @@ function makeUi() {
 
 let ui;
 beforeEach(() => {
-  els.clear();
+  // Reset the elements in place rather than dropping them: dom.js resolved its
+  // whole table at import, so DOM.btnFullscreen and friends hold these exact
+  // objects. Replacing them would leave the app bound to elements no test can
+  // reach — which is precisely what made two controls here fail at first.
+  for (const el of [...els.values(), ...selEls.values(), document.body, document.documentElement]) {
+    el._classes.clear();
+    el._listeners.clear();
+    el.textContent = ''; el.value = ''; el.style = {}; el.offsetParent = {};
+  }
+  docLtnr.clear();
+  document.fullscreenElement = null;
+  document.documentElement.requestFullscreen = () => { document.fullscreenElement = document.documentElement; return Promise.resolve(); };
   ui = makeUi();
   bindControls(ui);
 });
@@ -241,5 +269,79 @@ describe('a scalar formula moves the deform panel with the engine', () => {
     assert.equal(byId('deform-collapse').classList.contains('active'), false);
     assert.equal(ui.called('toast').length, 0);
     assert.ok(ui.called('setFormula').length);
+  });
+});
+
+// ── Fullscreen: the way out has to exist ──────────────────────────────────────
+// _enterFS fired requestFullscreen and then hid the panel unconditionally,
+// swallowing any failure. The panel's fs-hidden class is
+// `opacity:0;pointer-events:none`, and #btn-fullscreen — the button that would
+// undo it, relabelled to "✕ EXIT FULLSCREEN" — lives inside that same panel.
+// So the exit branch was unreachable by click, and the only way back was the
+// browser's own Escape reaching `fullscreenchange`. Where the request never
+// succeeds — no requestFullscreen at all (iOS Safari, and the reason for the
+// optional chaining), or a rejected promise (an iframe without
+// allow="fullscreen") — that event never fires and the whole panel is invisible
+// and unclickable for the rest of the session.
+describe('fullscreen mode cannot trap the operator', () => {
+  const panel = () => document.querySelector('.controls-panel');
+
+  test('a refused request leaves the panel where it is', async () => {
+    document.documentElement.requestFullscreen = () => Promise.reject(new Error('disallowed by permissions policy'));
+
+    fire('btn-fullscreen', 'click');
+    await settle();
+
+    assert.equal(panel().classList.contains('fs-hidden'), false,
+      'the panel is the only way to reach anything — it cannot be hidden on a promise that failed');
+    assert.notEqual(document.body.style.cursor, 'none');
+    assert.ok(ui.called('toast').length, 'and the operator is told why nothing happened');
+  });
+
+  test('no fullscreen API at all leaves the panel where it is', async () => {
+    document.documentElement.requestFullscreen = undefined;
+
+    fire('btn-fullscreen', 'click');
+    await settle();
+
+    assert.equal(panel().classList.contains('fs-hidden'), false);
+    assert.ok(ui.called('toast').length);
+  });
+
+  test('Escape leaves the app-side fullscreen mode', async () => {
+    fire('btn-fullscreen', 'click');
+    await settle();
+    assert.equal(panel().classList.contains('fs-hidden'), true, 'precondition: we got in');
+
+    fireDoc('keydown', { key: 'Escape' });
+
+    assert.equal(panel().classList.contains('fs-hidden'), false,
+      'the button that would undo this is inside the panel it hides');
+    assert.equal(document.body.style.cursor, '');
+  });
+
+  test('control — a granted request does hide the panel', async () => {
+    fire('btn-fullscreen', 'click');
+    await settle();
+
+    assert.equal(panel().classList.contains('fs-hidden'), true);
+    assert.equal(document.body.style.cursor, 'none');
+    assert.match(byId('btn-fullscreen').textContent, /EXIT/);
+  });
+
+  test('control — the browser leaving fullscreen still restores the panel', async () => {
+    fire('btn-fullscreen', 'click');
+    await settle();
+
+    document.fullscreenElement = null;
+    fireDoc('fullscreenchange');
+
+    assert.equal(panel().classList.contains('fs-hidden'), false);
+    assert.match(byId('btn-fullscreen').textContent, /FULLSCREEN/);
+  });
+
+  test('control — Escape outside fullscreen leaves the panel alone', () => {
+    fireDoc('keydown', { key: 'Escape' });
+    assert.equal(panel().classList.contains('fs-hidden'), false);
   });
 });

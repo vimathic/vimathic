@@ -631,10 +631,28 @@ export function bindControls(ui) {
   // ── Enhanced fullscreen mode ──────────────────────────────────────────────
   let _fsActive = false;
 
-  const _enterFS = () => {
-    // Optional chaining covers older browsers and the jsdom test environment
-    // where requestFullscreen is undefined.
-    document.documentElement.requestFullscreen?.().catch(() => {});
+  // FIX: hide the panel only once the browser has actually gone fullscreen.
+  // This used to fire the request, swallow any failure and hide the panel
+  // regardless — and `fs-hidden` is `opacity:0;pointer-events:none`, with
+  // #btn-fullscreen (the control that would undo it) living inside that very
+  // panel. So where the request cannot succeed — no requestFullscreen at all,
+  // which is the case the optional chaining was there for, or a promise
+  // rejected by an iframe without allow="fullscreen" — no `fullscreenchange`
+  // ever arrives either, and the entire panel stayed invisible and unclickable
+  // for the rest of the session. Nothing else could bring it back.
+  const _enterFS = async () => {
+    const req = document.documentElement.requestFullscreen;
+    if (!req) {
+      ui._showToast?.('⚠ Fullscreen is not available in this browser');
+      return;
+    }
+    try {
+      await req.call(document.documentElement);
+    } catch (_) {
+      // Refused by policy (embedded without allow="fullscreen") or by the user.
+      ui._showToast?.('⚠ Fullscreen was refused by the browser');
+      return;
+    }
     panel.classList.add('fs-hidden');
     document.body.style.cursor = 'none';
     _fsActive = true;
@@ -877,6 +895,13 @@ export function bindControls(ui) {
     ['shader-editor-overlay','cam-editor-overlay','audio-src-overlay','output-overlay', ABOUT_OVERLAY_ID].forEach(id => {
       document.getElementById(id)?.classList.remove('open');
     });
+    // FIX: and out of fullscreen mode. The button that says "✕ EXIT
+    // FULLSCREEN" is inside the panel fullscreen hides, so it can neither be
+    // seen nor clicked — leaving the browser's own Escape as the only way back,
+    // and that only restores the panel by way of `fullscreenchange`. This makes
+    // the app's own state follow the same key, whether or not the event
+    // arrives.
+    if (_fsActive) _exitFS();
   });
 
   // ── About / documentation modal ──────────────────────────────────────────

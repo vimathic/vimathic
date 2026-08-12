@@ -344,13 +344,9 @@ window.addEventListener('keydown', e => {
       // which silently skipped schemes 24-35.
       _pickColorScheme((audio.colorIdx + 1) % COLOR_SCHEME_COUNT);
       break;
-    case 'w': {
-      camera.rotAngle += Math.PI;
-      const r = CFG.autoRotRadius;
-      render.camera.position.set(Math.sin(camera.rotAngle)*r, render.camera.position.y, Math.cos(camera.rotAngle)*r);
-      render.orbit.update();
-      break;
-    }
+    // W — flip to the other side of the subject. The camera system owns
+    // rotAngle and the camera, so it owns the turn; see flipAzimuth().
+    case 'w': camera.flipAzimuth(); break;
     // G — fade grid in/out. Was 'C' historically; moved to G when C was
     // claimed by the hold-and-drag alias for Wave Intensity (see
     // controls.js _fsParams). Single-letter alias for 'grid'.

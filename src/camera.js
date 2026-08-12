@@ -320,6 +320,37 @@ export class CameraSystem {
   }
 
   /**
+   * Flip the camera to the opposite side of what it is looking at — the W
+   * hotkey, "Flip camera 180° around its orbit".
+   *
+   * A flip is a reflection through the target's vertical axis: distance from
+   * the target and height are the operator's, and a turn does not get to
+   * change them.
+   *
+   * FIX: this lived in main.js's keydown switch and built the new position out
+   * of rotAngle and the constant CFG.autoRotRadius instead of reading where the
+   * camera was. rotAngle only moves inside updatePhysics, which is gated on
+   * `autoRot && !userInt`, and auto-rotate ships OFF — so in a default session
+   * it is permanently 0 and W flipped nothing: it threw the camera onto a
+   * circle of radius 7.2 at azimuth 180°, then back to 0° on the next press,
+   * discarding the zoom and the angle each time. The orbit target was ignored
+   * as well, so after panning the turn was not even around the subject.
+   *
+   * rotAngle still advances by π: it is the accumulator the physics loop and
+   * the programmer's orbit() helper share, and leaving it behind would have
+   * auto-rotate swing the camera back on its next tick.
+   */
+  flipAzimuth() {
+    const t = this.orbit.target;
+    const p = this.camera.position;
+    this.rotAngle += Math.PI;
+    this.camera.position.set(2 * t.x - p.x, p.y, 2 * t.z - p.z);
+    // OrbitControls caches the camera's position as a spherical coordinate;
+    // update() is what re-derives it, and without it the next drag snaps back.
+    this.orbit.update();
+  }
+
+  /**
    * Per-frame evaluation of the active script. Builds the ctx bag once,
    * runs the active keyframe (if any) as a pre-script, then the main
    * script. Both can mutate ctx.cam / ctx.target / ctx.fov / ctx.roll /
