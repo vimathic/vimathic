@@ -15,6 +15,26 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Added
 
+- **A real solar system** behind the Solar System shape. It used to be six
+  invented spheres on circular orbits at made-up distances, one of them wearing
+  a torus for a ring; it is now the eight planets, built from published J2000
+  orbital and physical elements. Distance and radius each run through a power
+  law — nothing else fits Mercury and Neptune in one frame — but the compression
+  keeps the running order and the direction of every ratio, and orbital speed is
+  then re-derived from the compressed distances by Kepler's third law instead of
+  being a separate table that disagrees with the geometry. Kepler's second law
+  runs per frame, so Mercury visibly hurries through perihelion. Every surface is
+  generated rather than drawn: banded flow warped by noise for the giants, a
+  cloud deck for Venus, regolith and craters for the rocky worlds and the Moon,
+  and for Earth a land field whose sea level was measured to leave 29 % of the
+  sphere dry with clouds thinning over the deserts. Saturn, Jupiter, Uranus and
+  Neptune get their real ring band radii, with the divisions painted as gaps
+  rather than stripes; Earth gets the Moon and an atmosphere, four others get a
+  limb glow, and the main belt is sampled with the four Kirkwood gaps swept
+  clear. The studio light rig is swapped for a single star at the origin while
+  the shape is up, at an exposure worked out rather than dialled in. All of it is
+  seeded from each object's own name, so leaving the shape and coming back gives
+  you the same solar system, and a preset or a recording replays it. (#36)
 - **Particle styles for POINTS mode** — a Particle Style row that appears with
   PTS the way Surface Material appears with SURF. POINTS drew one thing, a
   large square sprite, because that is what a point primitive is; a mask over
