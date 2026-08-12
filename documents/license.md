@@ -15,7 +15,7 @@ This page explains the VIMATHIC license in plain language. The full legal text i
 
 **Read, study, and modify the code.** All source is on GitHub. Read it, learn from it, fork it for your own learning or art.
 
-**Schools, universities, and non-profit educational organisations** can use VIMATHIC immediately under either the **Apache 2.0** or **GPL v3** terms — recipient's choice, no waiting for the Change Date. Use it in teaching, classroom demonstrations, research, exhibitions — go ahead. After 2031-05-09, all use falls under GPL v3 (see below).
+**Schools, universities, and non-profit educational organisations** can use VIMATHIC immediately under either the **Apache 2.0** or **GPL v3** terms — recipient's choice, no waiting for the Change Date. Use it in teaching, classroom demonstrations, research, exhibitions — go ahead. Once a version reaches its Change Date — **2030-05-18** for the current 1.0.0-beta — all use of it falls under GPL v3 (see below).
 
 ## What requires permission — for now
 
@@ -27,9 +27,11 @@ The code is under **Business Source License 1.1** ("BUSL-1.1"). The short versio
 
 If you want to do any of these — or anything else that feels like it might cross the line — please email **vimathic.info@proton.me** and we'll talk. Reasonable use cases are usually OK; we just want to know.
 
-## What happens in 2031
+## What happens on the Change Date
 
-On **2031-05-09**, the entire codebase automatically converts to **GPL v3** — a strong open-source copyleft license. From that date, anyone can use, modify, and distribute the code, including commercially. The condition: any derivative work that you distribute must also be open-source under GPL v3.
+Each released version automatically converts to **GPL v3** — a strong open-source copyleft license — **four years after that version was published**, and in no case later than 2031-05-09. Version 1.0.0-beta was published on 2026-05-18, so it converts on **2030-05-18**.
+
+From a version's Change Date, anyone can use, modify, and distribute that code, including commercially. The condition: any derivative work that you distribute must also be open-source under GPL v3.
 
 In practice this means:
 
@@ -48,7 +50,7 @@ VIMATHIC ships with an intro track — *S. Melentyev — Vimathic.mp3* — that 
 - **Private rehearsals, learning, personal demos** — fine
 - **Public performance, monetised streams, sampling, commercial use** — requires written permission from the author
 
-The track's licensing terms are independent of the BUSL-1.1 schedule. The GPL v3 conversion in 2031 covers the code, not the track. See [LICENSE.txt](https://github.com/vimathic/vimathic/blob/main/LICENSE.txt) for the full bundled-media clause.
+The track's licensing terms are independent of the BUSL-1.1 schedule. The GPL v3 conversion on the Change Date covers the code, not the track. See [LICENSE.txt](https://github.com/vimathic/vimathic/blob/main/LICENSE.txt) for the full bundled-media clause.
 
 ## Forks & Contributions
 
@@ -61,7 +63,7 @@ When you open a pull request, you grant two things:
 
 You retain copyright on your contribution. The grant above is non-exclusive — you can still use your own code anywhere else, under any terms you like.
 
-This dual-grant model is how the project sustains itself: VIMATHIC stays free and source-available (open-source GPL v3 from 2031), while commercial derivatives may incorporate community contributions. It's disclosed upfront so there are no surprises later.
+This dual-grant model is how the project sustains itself: VIMATHIC stays free and source-available (open-source GPL v3 from its Change Date — 2030-05-18 for 1.0.0-beta), while commercial derivatives may incorporate community contributions. It's disclosed upfront so there are no surprises later.
 
 No Contributor License Agreement form, no paperwork — opening the PR is your acknowledgment of these terms. Full text in [CONTRIBUTING.md on GitHub](https://github.com/vimathic/vimathic/blob/main/CONTRIBUTING.md).
 

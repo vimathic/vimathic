@@ -78,6 +78,7 @@ Details:
 - [ ] I have not reformatted unrelated files
 - [ ] I have added comments to any non-obvious code
 - [ ] My contribution is licensed under BUSL-1.1 (auto-converts to GPL v3
-      on 2031-05-09 along with the rest of the project)
+      four years after the release it ships in, along with the rest of the
+      project — 2030-05-18 for 1.0.0-beta)
 - [ ] I have the right to submit this contribution (e.g. if employed, my
       employer permits open-source contributions)
