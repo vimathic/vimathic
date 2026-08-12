@@ -606,6 +606,10 @@ export class ShaderEditor {
   compileAndApply() {
     const errEl = document.getElementById('se-error');
     errEl.textContent = '';
+    // Whatever this run reports owns the status line from here on — see the
+    // timer armed on success below.
+    clearTimeout(this._okTimer);
+    this._okTimer = null;
     const vertBody = this._tab === 'vert' ? document.getElementById('se-code').value : this._vert;
     const fragBody = this._tab === 'frag' ? document.getElementById('se-code').value : this._frag;
     if (this._tab === 'vert') this._vert = vertBody;
@@ -663,7 +667,14 @@ export class ShaderEditor {
       errEl.style.color = 'var(--green)';
       errEl.textContent = '✔ Compiled & applied';
       this.cb.onCompileResult({ ok: true, message: '✔ Compiled & applied', line: null });
-      setTimeout(() => {
+      // FIX: keep the handle. This tidy-up used to outlive whatever came next,
+      // so a failure reported within two seconds — pressing APPLY twice while
+      // fixing a typo is the ordinary way to get there — had its red message
+      // and its line number blanked by the previous run's timer, leaving an
+      // editor that said nothing about a shader that had not compiled. The
+      // camera programmer's status line had the same defect.
+      this._okTimer = setTimeout(() => {
+        this._okTimer = null;
         errEl.textContent = '';
         this.cb.onCompileResult({ ok: true, message: '', line: null });
       }, 2000);
@@ -672,7 +683,18 @@ export class ShaderEditor {
     const onFailure = (err) => {
       cleanup();
       const errorMsg  = err?.message || String(err) || 'Shader compile error';
-      const errorLine = this._parseErrorLine(errorMsg, this._tab === 'vert' ? fullVS : fullFS, vertBody);
+      // Both arguments follow the tab: the source the driver numbered its
+      // message against, and the body the operator is looking at.
+      const onVert = this._tab === 'vert';
+      const src    = onVert
+        ? (_failedSource?.vert ?? fullVS)
+        : (_failedSource?.frag ?? fullFS);
+      // A failure in the stage the operator is NOT looking at gets no gutter
+      // mark: its line number counts through a different buffer entirely.
+      const sameTab   = !_failedSource?.stage || _failedSource.stage === this._tab;
+      const errorLine = sameTab
+        ? this._parseErrorLine(errorMsg, src, onVert ? vertBody : fragBody)
+        : null;
       const friendly  = this._friendlyError(errorMsg);
       errEl.style.color = '#f66';
       errEl.textContent = friendly;
@@ -682,6 +704,7 @@ export class ShaderEditor {
     const renderer = this._render.renderer;
     const prevHook = renderer.debug.onShaderError;
     let captured = null;
+    let _failedSource = null;
     renderer.debug.onShaderError = (gl, program, glVS, glFS) => {
       // Prefer whichever stage actually failed; the program log is the
       // fallback for link-time errors that neither shader reports.
@@ -689,6 +712,19 @@ export class ShaderEditor {
       const fLog = gl.getShaderInfoLog(glFS) || '';
       captured = (vLog + fLog).trim() || (gl.getProgramInfoLog(program) || '').trim()
               || 'Shader failed to link';
+      // FIX: keep the source the DRIVER numbered its message against. three.js
+      // prepends its own preamble — precision qualifiers, defines, built-in
+      // uniforms — to the program before compiling it, so counting lines from
+      // our own template output lands short by however long that preamble is.
+      // Optional-chained because the honest fallback when a context does not
+      // expose it is our assembled string, which is what was used before.
+      _failedSource = {
+        vert:  gl.getShaderSource?.(glVS) || null,
+        frag:  gl.getShaderSource?.(glFS) || null,
+        // Which stage the operator's message actually came from: a line from
+        // the other buffer is worse than no line at all.
+        stage: vLog.trim() ? 'vert' : (fLog.trim() ? 'frag' : null),
+      };
     };
 
     try {
@@ -719,13 +755,25 @@ export class ShaderEditor {
    * Returns user-body-relative line number (1-based) or null.
    */
   _parseErrorLine(msg, fullShader, userBody) {
-    // Count how many lines the template preamble adds
-    const preambleLines = fullShader.split('\n').length - userBody.split('\n').length - 1;
     const m = msg.match(/ERROR:\s*\d+:(\d+)/);
     if (!m) return null;
-    const absLine = parseInt(m[1], 10);
-    const relLine = absLine - Math.max(0, preambleLines);
-    return relLine >= 1 ? relLine : null;
+
+    // FIX: locate the body inside the assembled program instead of subtracting
+    // line counts. The old arithmetic — full.lines - body.lines - 1 — treats
+    // the template as a pure prefix, and it is not: it closes main() after the
+    // body, so the trailing lines were counted as preamble and every reported
+    // line came out short. It was also called with the VERTEX body while the
+    // FRAGMENT tab was on screen, so on that tab the "preamble" was the
+    // difference between two unrelated buffers.
+    const at = fullShader.indexOf(userBody);
+    if (at < 0) return null;
+    const preambleLines = fullShader.slice(0, at).split('\n').length - 1;
+
+    const relLine = parseInt(m[1], 10) - preambleLines;
+    // A line outside the body belongs to the template, not to anything the
+    // operator can see or fix. Painting the gutter there points at the wrong
+    // text with the same confidence as a right answer.
+    return relLine >= 1 && relLine <= userBody.split('\n').length ? relLine : null;
   }
 
   /** Trim noisy WebGL driver boilerplate for cleaner display */
