@@ -138,11 +138,18 @@ export function bindControls(ui) {
     isPlaying: () => !!a.isPlaying,
     bpm:       () => a.estimatedBpm,
     // Material is forced to Matte and its dropdown hidden in WIRE/PTS, where
-    // the reconstructed normal makes reflections nonsense. offsetParent is null
-    // exactly then (the test the T hotkey already uses), so AUTO holds its
+    // the reconstructed normal makes reflections nonsense. AUTO holds its
     // breath there and picks up again on the way back to SURF, rather than
     // switching itself off behind the user's back.
-    canFire:   () => !!_matSel && _matSel.offsetParent !== null,
+    //
+    // FIX: this used to ask `_matSel.offsetParent !== null`, i.e. "is the row
+    // on screen". offsetParent is null under any display:none ancestor, and
+    // collapsing the panel — or just the ▸ VISUAL STYLE section — is one, so an
+    // armed AUTO MATERIAL froze for as long as the panel stayed shut while AUTO
+    // COLOUR kept running and nothing reported the stall. Clearing the view
+    // mid-set is ordinary. The question is about the viz mode, so it is asked
+    // of the engine.
+    canFire:   () => !!_matSel && r.vizMode === 'surface',
     apply:     (key, ms) => { _matSel.value = key; _applyMat(ms); },
     // Twice the colour period. A finish change rewrites how the whole surface
     // reads, and on the colour cadence the two together strobe.
@@ -259,6 +266,40 @@ export function bindControls(ui) {
     }
   };
 
+  /**
+   * Apply a CPU (`m:`) formula, moving the deform panel with the engine.
+   *
+   * MathVisualizer.setFormula auto-exits volume mode — the 192 scalar formulas
+   * have nothing to apply there — and the panel has to follow, or it describes
+   * a mode the engine has left.
+   *
+   * FIX: this used to live inside the dropdown's change handler only, while the
+   * R and F hotkeys called setFormula through their own path in main.js. So a
+   * hotkey press in DEFORM: VOLUME moved the engine to Collapse and left
+   * VOLUME highlighted with its formula row open — one click away from writing
+   * a volume formula that no longer applies. Exposed on `ui` so the hotkeys use
+   * the same one, which is what their own JSDoc already claims.
+   *
+   * @param {string}     colId  — collection id
+   * @param {string}     key    — formula key
+   * @param {function}   [onFlat] — extra work for the same flat frame (R's
+   *                                shape swap: two morphs would cancel out)
+   */
+  ui.applyMathFormula = (colId, key, onFlat) => {
+    const runFormula = () => {
+      if (onFlat) onFlat();
+      if (ui.mathViz) ui.mathViz.setFormula(colId, key);
+    };
+    const isVolumeActive = document.getElementById('deform-volume')?.classList.contains('active');
+    if (isVolumeActive) {
+      // Combined: switch mode AND apply formula inside one morph.
+      _setDeformMode('collapse', runFormula);
+      ui._showToast?.('Volume → Collapse · scalar formulas need a surface mode');
+    } else {
+      r.triggerMorphTransition(runFormula);
+    }
+  };
+
   document.getElementById('gpu-sel').addEventListener('change', e => {
     const val = e.target.value;
     if (val.startsWith('m:')) {
@@ -274,18 +315,7 @@ export function bindControls(ui) {
       // updates _formulaFn but _tickVolume only reads _volumeFn, so the
       // mesh kept showing the previous volume deformation.
       const [, colId, key] = val.split(':');
-      const isVolumeActive = document.getElementById('deform-volume')?.classList.contains('active');
-      if (isVolumeActive) {
-        // Combined: switch mode AND apply formula inside one morph.
-        _setDeformMode('collapse', () => {
-          if (ui.mathViz) ui.mathViz.setFormula(colId, key);
-        });
-        ui._showToast?.('Volume → Collapse · scalar formulas need a surface mode');
-      } else {
-        r.triggerMorphTransition(() => {
-          if (ui.mathViz) ui.mathViz.setFormula(colId, key);
-        });
-      }
+      ui.applyMathFormula(colId, key);
     } else {
       // GPU shader — deactivate math and switch uMode with crossfade.
       // FIX: same disclaimer as the R/F hotkeys in main.js — a formula still

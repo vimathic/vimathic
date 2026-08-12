@@ -48,7 +48,16 @@ const ctx    = { audio, render, camera };
 
 // MIDI → engine: one PARAMS lookup replaces the per-parameter switch.
 // Adding a new mappable parameter is now a single-place change in params.js.
-midi.cb.onParamSet = (id, val) => applyParam(ctx, id, val);
+midi.cb.onParamSet = (id, val) => {
+  applyParam(ctx, id, val);
+  // A knob turn is a manual pick, so the AUTO COLOUR countdown restarts with
+  // it — same rule as the dropdown and the hotkeys. Deferred here rather than
+  // inside applyParam because only this site knows the write came from a
+  // person: applyParam is also how a clip step and an autosave restore write,
+  // and deferring on those would keep an armed AUTO from ever firing during a
+  // clip. Same reason the preset path is deliberately left alone.
+  if (id === 'colorIdx') ui.autoColor?.defer();
+};
 
 // Relative MIDI mode reads the current engine value before adding the
 // delta. PARAMS[id].get is the canonical reader for every mappable
@@ -164,10 +173,13 @@ function _applyFormulaValue(value, onFlat) {
   DOM.gpuSel.value = value;
   if (isMathValue(value)) {
     const [, colId, key] = value.split(':');
-    render.triggerMorphTransition(() => {
-      if (onFlat) onFlat();
-      mathViz.setFormula(colId, key);
-    });
+    // FIX: through the shared path, not a private copy of half of it.
+    // setFormula auto-exits volume mode, and only the dropdown's handler used
+    // to move the panel with it — so R and F left DEFORM: VOLUME highlighted
+    // over an engine that had gone to Collapse, with the volume formula row
+    // still open. That is exactly the drift this function's own doc says
+    // cannot happen.
+    ui.applyMathFormula(colId, key, onFlat);
   } else {
     // FIX: a GPU shader replaces the CPU formula outright, so any formula
     // change still queued for the next flat frame must go. Without this, two
@@ -182,6 +194,25 @@ function _applyFormulaValue(value, onFlat) {
     render.setGPUModeAnimated(+value);
     if (onFlat) render.triggerMorphTransition(onFlat);
   }
+}
+
+/**
+ * Set the colour scheme the way the palette dropdown does — engine, the value
+ * the dropdown shows, and the AUTO COLOUR countdown.
+ *
+ * FIX: Q, E and R each wrote those first two by hand and never deferred, so a
+ * hand-picked palette could be crossfaded away a tenth of a second later if the
+ * cycler happened to be near the end of its period — the app appearing to fight
+ * the operator. AutoCycler's class doc states the invariant ("hotkeys, the
+ * dropdown and preset loads all keep writing colour … defer() restarts the
+ * countdown, so a manual pick gets its full period of screen time"); defer()
+ * had exactly two call sites, both change handlers on a <select>.
+ */
+function _pickColorScheme(i) {
+  audio.colorIdx = i;
+  render.setColorSchemeAnimated(i);
+  DOM.colorSel.value = i;
+  ui.autoColor?.defer();
 }
 
 // Pick and apply a random formula — GPU shader or CPU formula.
@@ -236,9 +267,12 @@ let _materialCycle = null;
 function _cycleMaterial() {
   const sel = document.getElementById('surface-material-sel');
   if (!sel) return;
-  // Hidden dropdown → materials unavailable (WIRE/PTS). Ignore the key.
-  // offsetParent is null when the element or an ancestor is display:none.
-  if (sel.offsetParent === null) return;
+  // Materials unavailable outside SURF (WIRE/PTS force Matte). Ignore the key.
+  // FIX: this used to test `sel.offsetParent === null`, which is also true when
+  // the panel or the VISUAL STYLE section is merely collapsed — so T went dead
+  // whenever the operator cleared the view, for a reason that has nothing to do
+  // with materials. Same substitution as AUTO MATERIAL's veto in controls.js.
+  if (render.vizMode !== 'surface') return;
   if (!_materialCycle) {
     _materialCycle = Array.from(sel.options).map(o => o.value);
   }
@@ -288,10 +322,8 @@ window.addEventListener('keydown', e => {
     // formula's morph callback when there is one (see _applyFormulaValue), so
     // both apply at the same flat frame instead of one cancelling the other.
     case 'r': {
-      const shape    = _shapeBag.next();
-      audio.colorIdx = _colorBag.next();
-      render.setColorSchemeAnimated(audio.colorIdx);
-      DOM.colorSel.value = audio.colorIdx;
+      const shape = _shapeBag.next();
+      _pickColorScheme(_colorBag.next());
       DOM.shapeSel.value = shape;
 
       const picker = _getPicker();
@@ -305,16 +337,12 @@ window.addEventListener('keydown', e => {
     }
 
     case 'q':
-      audio.colorIdx = _colorBag.next();
-      render.setColorSchemeAnimated(audio.colorIdx);
-      DOM.colorSel.value = audio.colorIdx;
+      _pickColorScheme(_colorBag.next());
       break;
     case 'e':
       // Cycle forward through every defined scheme. Was hardcoded to %24,
       // which silently skipped schemes 24-35.
-      audio.colorIdx = (audio.colorIdx + 1) % COLOR_SCHEME_COUNT;
-      render.setColorSchemeAnimated(audio.colorIdx);
-      DOM.colorSel.value = audio.colorIdx;
+      _pickColorScheme((audio.colorIdx + 1) % COLOR_SCHEME_COUNT);
       break;
     case 'w': {
       camera.rotAngle += Math.PI;
