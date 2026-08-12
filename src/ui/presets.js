@@ -534,7 +534,12 @@ export const PresetMixin = {
       // hands them straight to a renderer that assumes kf.code is a string.
       const code = typeof cs.code === 'string' ? cs.code : '';
       if (code) cam.cb.onSetCode(code);
-      if (cs.params && typeof cs.params === 'object') Object.assign(cam.cpParams, cs.params);
+      if (cs.params && typeof cs.params === 'object') {
+        Object.assign(cam.cpParams, cs.params);
+        // The sliders show cpParams; they have to be told when a snapshot
+        // rewrites it, or the next drag starts from the previous value.
+        cam.cb.onParamsChanged?.();
+      }
       cam.cpKeyframes = sanitizeKeyframes(cs.keyframes);
       cam.cpSelectedKf = null;
       cam.buildTimeline();

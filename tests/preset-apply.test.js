@@ -106,7 +106,7 @@ function makeUi() {
   };
   const camera = {
     autoRot: false, cpActive: false, cpParams: {}, cpKeyframes: [], cpSelectedKf: null,
-    cb: { onAutoRotChanged() {}, onSetCode() {} },
+    cb: { onAutoRotChanged() {}, onSetCode() {}, onParamsChanged: () => calls.push(['paramsChanged']) },
     setCamPhysics: p => calls.push(['setCamPhysics', p]),
     loadScript(code) { this.cpActive = true; calls.push(['loadScript', code]); },
     buildTimeline() {},
@@ -510,5 +510,29 @@ describe('applyState — a queued formula asks whether it is still the selection
 
     assert.deepEqual(ui.called('setShape')[0], ['setShape', 'torus'],
       'the shape dropdown was written synchronously; the swap has to land');
+  });
+});
+
+// The camera editor's eight sliders read cpParams and nothing told them when a
+// snapshot rewrote it wholesale — so after applying a preset the thumbs still
+// sat at the previous values, and the next drag wrote from there.
+describe('applyState — a snapshot that carries camera params says so', () => {
+  test('the panel is told when cpParams is rewritten', () => {
+    const ui = makeUi();
+
+    assert.equal(ui.applyState({
+      _version: 2,
+      camScript: { active: false, code: 'ctx.cam.y = 1;', params: { radius: 15 }, keyframes: [] },
+    }), true);
+
+    assert.equal(ui.camera.cpParams.radius, 15, 'precondition: the params were applied');
+    assert.equal(ui.called('paramsChanged').length, 1,
+      'the sliders show these values; nothing else can move them');
+  });
+
+  test('control — a snapshot with no params does not fire it', () => {
+    const ui = makeUi();
+    assert.equal(ui.applyState({ _version: 2, colorIdx: 9 }), true);
+    assert.equal(ui.called('paramsChanged').length, 0);
   });
 });

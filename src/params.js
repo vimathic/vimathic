@@ -173,7 +173,13 @@ export const PARAMS = {
     min: 0, max: 0.002, default: 0.00002,
     format: v => v.toFixed(5),
     get: ctx => ctx.camera.cpParams.rotSpeed,
-    set: (ctx, v) => { ctx.camera.cpParams.rotSpeed = v; },
+    set: (ctx, v) => {
+      ctx.camera.cpParams.rotSpeed = v;
+      // Same reason as the preset path: this param has no slider of its own in
+      // the panel, only the camera editor's, and a MIDI CC moving it must move
+      // the thumb too.
+      ctx.camera.cb?.onParamsChanged?.();
+    },
     midi: true,
   },
 };

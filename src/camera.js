@@ -162,6 +162,10 @@ export class CameraSystem {
     this.cb = {
       onScriptStatus:   (_type, _msg)          => {},
       onSetCode:        (_code)                => {},
+      // Fired when something other than the sliders writes cpParams — a
+      // preset apply or a MIDI CC — so the panel can follow. Without it those
+      // eight sliders were write-only and the thumbs went stale.
+      onParamsChanged:  ()                     => {},
       onSwitchToCode:   ()                     => {},
       onOpenEditor:     (_defaultCode, _pres)  => {},
       onTimelineRender: (_keyframes, _sel)     => {},
