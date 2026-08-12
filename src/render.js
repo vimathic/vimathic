@@ -746,21 +746,6 @@ export class RenderEngine {
     });
   }
 
-  /**
-   * Discard work queued for the next flat frame, without touching the morph
-   * animation itself.
-   *
-   * Carrying pending work across a restart is right between morphs, but wrong
-   * when the CPU path is being abandoned: switching to a GPU shader supersedes
-   * a queued setFormula outright, and letting it land afterwards re-arms the
-   * CPU deformation over the shader (uMathMode back to 1, and the shader's own
-   * displacement is gated on uMathMode == 0 — so it draws nothing). Callers
-   * that take ownership away from the queue say so by calling this.
-   */
-  cancelPendingMorph() {
-    this._pendingMorphFlat = [];
-  }
-
   // ── Animated GPU shader mode crossfade ───────────────────────────────────────
   /**
    * Crossfades from the current GPU mode to a new one over ~1.2s.
@@ -858,8 +843,14 @@ export class RenderEngine {
    * always relative to where the camera actually IS, not where it was
    * supposed to be — handles user dragging the orbit mid-tween cleanly.
    *
-   * Auto-rotate is paused for the tween's duration so the camera physics
-   * loop doesn't fight with our position writes. Restored on completion.
+   * Automated camera motion has to stand down for the tween's duration, or the
+   * physics loop and a programmer script overwrite these position writes on the
+   * next frame and the tween is invisible. That is the CALLER's job and its
+   * signal is CameraSystem.tweenHold — this method has no reference to the
+   * camera system. It used to be described here as "auto-rotate is paused",
+   * which was both the wrong owner and the wrong mechanism: the pause was done
+   * by writing the user's AUTO-ROTATE setting, so the button spent every clip
+   * step describing the opposite of its own flag.
    *
    * Interruption: starting a new camera tween cancels any in-flight one
    * (TransitionManager slot 'camera').
@@ -1521,6 +1512,7 @@ export class RenderEngine {
 
   /** Toggle transparent background for alpha-channel output (chroma-key free). */
   setTransparentBackground(enabled) {
+    const wasEnabled = this.transparentBg;
     this.transparentBg = enabled;
     if (enabled) {
       // FIX: remember what the grid was doing. The restore branch used to
@@ -1530,7 +1522,11 @@ export class RenderEngine {
       // leaving the ⊞ GRID button reading the opposite of reality from then
       // on. Stars need no such care: nothing else writes stars.visible, so
       // true is always the right answer for them.
-      this._gridBeforeTransparent = this.grid.visible;
+      //
+      // FIX(r2): only on the way IN. Enabling twice — the panel button and the
+      // output modal drive the same call — used to re-snapshot the `false` we
+      // had just forced ourselves, losing a grid that was genuinely on.
+      if (!wasEnabled) this._gridBeforeTransparent = this.grid.visible;
       this.scene.background = null;
       this.scene.fog        = null;
       this.renderer.setClearColor(0x000000, 0);
@@ -1541,7 +1537,12 @@ export class RenderEngine {
       this.scene.fog        = new THREE.FogExp2(0x050515, 0.007);
       this.renderer.setClearColor(0x050515, 1);
       this.stars.visible = true;
-      this.grid.visible  = this._gridBeforeTransparent ?? this.grid.visible;
+      // FIX(r2): give the grid back only if nothing claimed it meanwhile. The
+      // snapshot is right for a bare round trip and wrong the moment ⊞ GRID,
+      // the G fade or a preset writes grid.visible in between — restoring then
+      // switched OFF a grid the operator had just switched on, with the button
+      // left lit. Still false means nobody touched what we forced.
+      if (!this.grid.visible) this.grid.visible = this._gridBeforeTransparent ?? false;
     }
   }
 

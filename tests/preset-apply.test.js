@@ -85,7 +85,17 @@ function makeUi() {
     setVizModeGPU: m => calls.push(['setVizModeGPU', m]),
     setSurfaceMaterial: m => calls.push(['setSurfaceMaterial', m]),
     setGPUModeAnimated(n) { calls.push(['setGPUModeAnimated', n]); this.uMathMode = 0; },
-    triggerMorphTransition(onFlat) { calls.push(['morph']); onFlat?.(); },
+    // Runs the work immediately by default (most tests only care that it was
+    // queued at all). deferMorph models the real 400 ms gap between queueing and
+    // the flat frame, which is where a superseding selection lands.
+    deferMorph: false,
+    _queuedFlat: [],
+    triggerMorphTransition(onFlat) {
+      calls.push(['morph']);
+      if (!onFlat) return;
+      if (this.deferMorph) this._queuedFlat.push(onFlat); else onFlat();
+    },
+    flatFrame() { const q = this._queuedFlat; this._queuedFlat = []; q.forEach(fn => fn()); },
     tweenCameraTo(target, opts = {}) {
       calls.push(['tweenCameraTo', opts.duration]);
       // Same contract as the real one: duration <= 0 commits synchronously.
@@ -459,5 +469,46 @@ describe('applyState — a camera tween must not touch the auto-rotate setting',
     ui.camera.autoRot = true;
     assert.equal(ui.applyState(CAM, { cameraTransitionMs: 0, preserveCamera: false }), true);
     assert.equal(ui.camera.tweenHold, false, '"Snap (instant, old)" commits synchronously');
+  });
+});
+
+// ── Regression on the fix itself (found by adversarial review of 49c69cd) ─────
+// applyState queues the snapshot's formula for a flat frame up to 400 ms away.
+// If a GPU shader takes the surface in that window — the operator picking one,
+// or the next clip step — arming the formula sets uMathMode = 1 and the shader
+// draws nothing at all. The first attempt at this rule was
+// render.cancelPendingMorph(), called from the dropdown and the hotkeys but not
+// from applyState, which is how the stale formula still reached the preset's own
+// morph. Every queued callback now checks the live selection itself.
+describe('applyState — a queued formula asks whether it is still the selection', () => {
+  const SNAP = { _version: 2, gpuSelVal: 'm:fractals:henon' };
+  let ui;
+  beforeEach(() => { ui = makeUi(); ui.render.deferMorph = true; });
+
+  test('a shader taken during the morph window disarms it', () => {
+    assert.equal(ui.applyState(SNAP), true);
+    assert.equal(ui.called('setFormula').length, 0, 'precondition: queued, not run');
+
+    document.getElementById('gpu-sel').value = '20';   // a shader, from anywhere
+    ui.render.flatFrame();
+
+    assert.equal(ui.called('setFormula').length, 0,
+      'uMathMode would go back to 1 and the shader\'s displacement is gated on 0');
+  });
+
+  test('control — nothing supersedes it, so it arms at the flat frame', () => {
+    assert.equal(ui.applyState(SNAP), true);
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setFormula')[0], ['setFormula', 'fractals:henon']);
+  });
+
+  test('control — the rest of the queued work is untouched by the check', () => {
+    assert.equal(ui.applyState({ ...SNAP, shape: 'torus' }), true);
+    document.getElementById('gpu-sel').value = '20';
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setShape')[0], ['setShape', 'torus'],
+      'the shape dropdown was written synchronously; the swap has to land');
   });
 });

@@ -22,13 +22,18 @@
 // that morph's flat frame. Nothing is applied early — the flat frame is the
 // whole point of the mechanism, since that is when the geometry is invisible.
 //
-// ── The deliberate-drop half ──────────────────────────────────────────────────
-// Carrying work forward is right for morph-to-morph, but wrong in one case:
-// switching to a GPU shader supersedes a queued CPU formula outright. Without a
-// way to say so, a queued setFormula would land after the shader was applied and
-// re-arm the CPU path over it (uMathMode back to 1, shader displacement gated
-// off). cancelPendingMorph() is that way to say so, and main.js's GPU branch
-// calls it.
+// ── The superseded-work half ──────────────────────────────────────────────────
+// Carrying work forward is right for morph-to-morph, but a queued CPU formula
+// must not land after a GPU shader has taken the surface (uMathMode back to 1,
+// shader displacement gated off). That was first written here as
+// cancelPendingMorph(), and adversarial review showed it wrong twice over: it
+// dropped the whole queued closure — including the shape swap applyState bundles
+// into it — and it was wired to two of the three places that switch to a shader.
+// The queue is no longer cancellable; each queued callback disarms ITSELF by
+// checking the live #gpu-sel value when it runs. That contract lives with the
+// callers, and is pinned in tests/controls-wiring.test.js and
+// tests/preset-apply.test.js. What stays here is the queue's own promise:
+// everything queued gets its flat frame, in order, exactly once.
 //
 // ── Controls ──────────────────────────────────────────────────────────────────
 // "runs at the flat frame, not on the way there" and "an uninterrupted morph
@@ -70,7 +75,6 @@ beforeEach(() => {
 });
 
 const morph  = fn => RenderEngine.prototype.triggerMorphTransition.call(host, fn);
-const drop   = ()  => RenderEngine.prototype.cancelPendingMorph.call(host);
 /** Advance the clock in frame-sized steps, ticking the manager as the loop does. */
 const advance = ms => {
   for (let done = 0; done < ms; done += 16) { clock += 16; host.transitions.tick(); }
@@ -119,23 +123,26 @@ describe('a morph carries its scheduled work', () => {
     assert.equal(host.U.uMorphProgress.value, 1, 'and the mesh inflates again afterwards');
   });
 
-  test('cancelPendingMorph drops queued work on purpose', () => {
-    morph(() => applied.push('cpu-formula'));
+  test('a callback that disarms itself does not take its neighbours with it', () => {
+    // What the callers now do instead of cancelling the queue: the work that a
+    // shader supersedes checks a live value and returns; everything else queued
+    // for that flat frame still runs.
+    let armed = true;
+    morph(() => { if (armed) applied.push('cpu-formula'); });
     advance(100);
 
-    drop();                                        // a GPU shader supersedes it
+    armed = false;                                 // a GPU shader took the surface
     morph(() => applied.push('shape'));
     advance(DUR + 32);
 
     assert.deepEqual(applied, ['shape'],
-      'a formula the shader replaced must not re-arm at the next flat frame');
+      'the formula disarmed itself; the shape swap queued beside it must still land');
   });
 
-  test('control — cancelPendingMorph on an idle engine is harmless', () => {
-    drop();
-    morph(() => applied.push('work'));
-    advance(DUR + 32);
-
-    assert.deepEqual(applied, ['work']);
+  test('nothing can empty the queue behind the caller\'s back', () => {
+    // There is deliberately no cancel on this API. A blunt one existed briefly
+    // and threw away the shape swap that applyState bundles with the formula.
+    assert.equal(RenderEngine.prototype.cancelPendingMorph, undefined,
+      'work is disarmed one callback at a time, by the caller that queued it');
   });
 });

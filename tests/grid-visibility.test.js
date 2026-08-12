@@ -152,3 +152,53 @@ describe('transparent background restores what it hid', () => {
     assert.equal(host.stars.visible, true);
   });
 });
+
+// ── Regression on the fix itself (found by adversarial review of 49c69cd) ─────
+// Snapshotting on the way in and restoring on the way out is right for a bare
+// round trip, and wrong the moment anything writes grid.visible in between —
+// ⊞ GRID, the G fade and a preset all do. Restoring then switched OFF a grid the
+// operator had just switched on, with the button left lit: the same class of
+// lie the original fix set out to remove, pointing the other way. A second
+// enable made it worse by re-snapshotting the value we had forced ourselves.
+describe('leaving transparent background gives the grid back, but does not take it away', () => {
+
+  test('a grid switched on inside transparent mode stays on', () => {
+    host.grid.visible = false;                       // shipped state
+    transparent(true);
+    assert.equal(host.grid.visible, false, 'precondition: transparent mode hides it');
+
+    host.grid.visible = true;                        // ⊞ GRID, pressed in there
+    transparent(false);
+
+    assert.equal(host.grid.visible, true,
+      'the operator turned it on and the button says ON — leaving must not undo that');
+  });
+
+  test('a second enable does not overwrite the snapshot with its own doing', () => {
+    host.grid.visible = true;                        // the operator had it on
+    transparent(true);
+    transparent(true);                               // e.g. the panel button and the modal
+    transparent(false);
+
+    assert.equal(host.grid.visible, true, 'the state that came in is the state that comes back');
+  });
+
+  test('control — the plain round trip still restores what it found', () => {
+    host.grid.visible = false;
+    transparent(true);
+    transparent(false);
+    assert.equal(host.grid.visible, false, 'the grid ships hidden and must come back hidden');
+
+    host.grid.visible = true;
+    transparent(true);
+    transparent(false);
+    assert.equal(host.grid.visible, true);
+  });
+
+  test('control — stars come back either way', () => {
+    transparent(true);
+    assert.equal(host.stars.visible, false);
+    transparent(false);
+    assert.equal(host.stars.visible, true, 'nothing else writes stars.visible');
+  });
+});

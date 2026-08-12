@@ -158,6 +158,26 @@ export function bindControls(ui) {
   });
   DOM.surfaceMaterialAuto?.addEventListener('click', () => ui.autoMaterial.toggle());
 
+  /**
+   * Step to the next surface finish — the T hotkey.
+   *
+   * FIX: this lived in main.js's keydown switch, where no test could reach it
+   * (importing main.js boots the app), and it decided whether materials are
+   * available by asking whether the dropdown was on screen — so T went dead
+   * whenever the panel was merely collapsed. Same substitution as AUTO
+   * MATERIAL's veto above: the viz mode is the engine's to answer. Deferring
+   * the AUTO countdown is now deliberate too; the old version got it only as a
+   * side effect of dispatching a change event.
+   */
+  ui.cycleMaterial = () => {
+    if (!_matSel || r.vizMode !== 'surface') return;
+    const opts = Array.from(_matSel.options).map(o => o.value);
+    if (!opts.length) return;
+    _matSel.value = opts[(opts.indexOf(_matSel.value) + 1) % opts.length];
+    _applyMat();
+    ui.autoMaterial?.defer();
+  };
+
   // ── Particle style (PTS viz mode) ─────────────────────────────────────────
   // The PTS counterpart of Surface Material, and the same rule in mirror image:
   // a point sprite only exists while POINTS is the mode, so the row is shown
@@ -223,6 +243,12 @@ export function bindControls(ui) {
   // when a user picks an `m:` formula while in volume mode. See the
   // gpu-sel handler for the motivation. Without this ordering the call
   // would hit a temporal dead zone.
+  // The live formula/shader selection. Every path writes it — the dropdown by
+  // definition, the R/F hotkeys through main.js, and applyState — so it is what
+  // work queued for a flat frame asks when it finally runs.
+  const _gpuSel        = () => document.getElementById('gpu-sel');
+  const _isMathSel     = () => !!_gpuSel()?.value?.startsWith('m:');
+
   const _deformBtns    = ['surface','volume','collapse'];
   const _volWrap       = document.getElementById('volume-formula-wrap');
   const _volSel        = document.getElementById('volume-formula-sel');
@@ -253,7 +279,12 @@ export function bindControls(ui) {
       _volDesc.textContent = _volDescriptions[key] ?? '';
       // Morph transition into volume mode
       r.triggerMorphTransition(() => {
-        if (ui.mathViz) ui.mathViz.setVolumeFormula(key);
+        // Same live check as applyMathFormula, for the same reason:
+        // setVolumeFormula sets uMathMode = 1, and a GPU shader picked inside
+        // the morph window would then draw nothing. The panel keeps showing
+        // VOLUME, which is the state applyState already documents for a
+        // shader-carrying snapshot — a stale highlight beats a blank screen.
+        if (_isMathSel() && ui.mathViz) ui.mathViz.setVolumeFormula(key);
         if (runFormula) runFormula();
       });
     } else {
@@ -286,8 +317,28 @@ export function bindControls(ui) {
    *                                shape swap: two morphs would cancel out)
    */
   ui.applyMathFormula = (colId, key, onFlat) => {
+    const want = `m:${colId}:${key}`;
+    // Written here rather than assumed: the guard below reads this value back
+    // at the flat frame, so the claim "this formula is the selection" has to be
+    // made by the same function that later checks it. Both callers write it
+    // too — the dropdown because the value came from it, main.js explicitly —
+    // and a third caller that forgot would otherwise get a formula that
+    // silently never arms.
+    _gpuSel().value = want;
     const runFormula = () => {
       if (onFlat) onFlat();
+      // FIX(r2): ask what is selected NOW. The flat frame is up to 400 ms
+      // away, and by then a GPU shader — from this dropdown, from R/F, or from
+      // an applied preset — may own the surface. Arming the formula then sets
+      // uMathMode = 1, and the shader's displacement is gated on
+      // uMathMode == 0, so it draws nothing at all.
+      //
+      // This replaces render.cancelPendingMorph(), which was both too blunt
+      // and wired to only two of the three entry points: it dropped the whole
+      // queued closure, and applyState bundles the shape swap into that same
+      // closure. #gpu-sel is the one value every path writes, so asking it
+      // covers all three and leaves the rest of the queue alone.
+      if (_gpuSel().value !== want) return;
       if (ui.mathViz) ui.mathViz.setFormula(colId, key);
     };
     const isVolumeActive = document.getElementById('deform-volume')?.classList.contains('active');
@@ -300,32 +351,45 @@ export function bindControls(ui) {
     }
   };
 
-  document.getElementById('gpu-sel').addEventListener('change', e => {
-    const val = e.target.value;
+  /**
+   * Apply a #gpu-sel value — a CPU formula or a GPU shader — for whoever asked:
+   * this dropdown, the R and F hotkeys, or a preset.
+   *
+   * The CPU branch carries the volume→collapse auto-switch (the 192
+   * m:-formulas are scalar fields, Z = f(x,y), and only fit Surface and
+   * Collapse; Volume uses a separate registry of vector fields, so without the
+   * switch the formula change appeared to do nothing — setFormula updates
+   * _formulaFn while _tickVolume only reads _volumeFn).
+   *
+   * FIX: main.js kept its own copy of this branch, and the doc block over it
+   * claimed "the three entry points cannot drift apart" while being the drift.
+   * Its copy could not be tested either — reaching it means importing main.js,
+   * which boots the whole app. One function now, in the layer that owns the
+   * panel, and main.js calls it.
+   *
+   * @param {string}   value    — 'm:collection:key' or a numeric shader index
+   * @param {function} [onFlat] — extra work for the flat frame. R passes its
+   *   shape swap: for a CPU formula both must land inside ONE morph (two would
+   *   cancel each other), while a GPU shader has no geometry morph of its own —
+   *   uMode crossfades — so the shape gets a morph to itself.
+   */
+  ui.applyFormulaValue = (value, onFlat) => {
+    const val = String(value);
     if (val.startsWith('m:')) {
-      // CPU math formula. The 192 m:-formulas are scalar fields (Z = f(x,y))
-      // — they only fit Surface and Collapse modes. Volume mode uses a
-      // separate 6-formula registry of vector fields (_volSel above).
-      //
-      // If we're currently in Volume mode and the user picks an m:-formula,
-      // auto-switch to Collapse mode so the formula actually applies —
-      // collapse runs the scalar formula along surface normals on the 3D
-      // shape, which is the closest 3D-preserving rendering. Without this
-      // auto-switch the formula change appeared to do nothing: setFormula
-      // updates _formulaFn but _tickVolume only reads _volumeFn, so the
-      // mesh kept showing the previous volume deformation.
       const [, colId, key] = val.split(':');
-      ui.applyMathFormula(colId, key);
-    } else {
-      // GPU shader — deactivate math and switch uMode with crossfade.
-      // FIX: same disclaimer as the R/F hotkeys in main.js — a formula still
-      // queued for the next flat frame would re-arm the CPU path over the
-      // shader, and the shader's displacement is gated on uMathMode == 0.
-      r.cancelPendingMorph();
-      if (ui.mathViz) ui.mathViz.deactivate();
-      r.setGPUModeAnimated(+val);
+      ui.applyMathFormula(colId, key, onFlat);
+      return;
     }
-  });
+    // GPU shader — deactivate math and switch uMode with crossfade. A formula
+    // still queued for a flat frame disarms itself when it gets there and finds
+    // this value in #gpu-sel — see applyMathFormula.
+    _gpuSel().value = val;
+    if (ui.mathViz) ui.mathViz.deactivate();
+    r.setGPUModeAnimated(+val);
+    if (onFlat) r.triggerMorphTransition(onFlat);
+  };
+
+  document.getElementById('gpu-sel').addEventListener('change', e => ui.applyFormulaValue(e.target.value));
 
   // ── Viz mode buttons ──────────────────────────────────────────────────────
   //

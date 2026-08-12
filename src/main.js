@@ -160,43 +160,6 @@ function _getPicker() {
 }
 
 /**
- * Apply a #gpu-sel value exactly as the dropdown's own change handler would,
- * so the three entry points (dropdown, R, F) cannot drift apart.
- *
- * @param {string}   value    — 'm:collection:key' or a numeric shader index
- * @param {function} [onFlat] — extra work for the flat frame of the morph. R
- *   passes its shape swap: for a CPU formula both must land inside ONE morph
- *   (two would cancel each other), while a GPU shader has no geometry morph of
- *   its own — uMode crossfades — so the shape gets a morph to itself.
- */
-function _applyFormulaValue(value, onFlat) {
-  DOM.gpuSel.value = value;
-  if (isMathValue(value)) {
-    const [, colId, key] = value.split(':');
-    // FIX: through the shared path, not a private copy of half of it.
-    // setFormula auto-exits volume mode, and only the dropdown's handler used
-    // to move the panel with it — so R and F left DEFORM: VOLUME highlighted
-    // over an engine that had gone to Collapse, with the volume formula row
-    // still open. That is exactly the drift this function's own doc says
-    // cannot happen.
-    ui.applyMathFormula(colId, key, onFlat);
-  } else {
-    // FIX: a GPU shader replaces the CPU formula outright, so any formula
-    // change still queued for the next flat frame must go. Without this, two
-    // formula-hotkey presses inside the morph window (400 ms desktop) left the
-    // panel, #gpu-sel and uMode all on the shader while the queued
-    // mathViz.setFormula re-armed the CPU path over it — uMathMode back to 1,
-    // and the shader's displacement is gated on uMathMode == 0, so it drew
-    // nothing at all. The dropdown's own handler in controls.js takes the same
-    // branch and needs the same disclaimer.
-    render.cancelPendingMorph();
-    mathViz.deactivate();
-    render.setGPUModeAnimated(+value);
-    if (onFlat) render.triggerMorphTransition(onFlat);
-  }
-}
-
-/**
  * Set the colour scheme the way the palette dropdown does — engine, the value
  * the dropdown shows, and the AUTO COLOUR countdown.
  *
@@ -219,7 +182,7 @@ function _pickColorScheme(i) {
 function _randomFormula() {
   const picker = _getPicker();
   if (!picker) return;
-  _applyFormulaValue(picker.next());
+  ui.applyFormulaValue(picker.next());
 }
 
 // ── D hotkey: sequential shape cycling ──────────────────────────────────
@@ -252,37 +215,6 @@ function _cycleShape() {
   render.setShapeAnimated(next);
 }
 
-// ── T hotkey: sequential surface-material cycling ───────────────────────
-//
-// Same pattern as D for shapes — reads options from the live
-// <select id="surface-material-sel">, steps to the next, loops.
-//
-// No-op when the material dropdown is hidden. The dropdown is hidden in
-// WIRE/PTS viz modes (where reflections look degenerate, material is
-// forced to Matte), so T does nothing there — matching the rule that
-// materials are only meaningful on filled surfaces. Driving the change
-// event re-runs controls.js's _applyMat so render.setSurfaceMaterial and
-// the descriptor line update through the single existing path.
-let _materialCycle = null;
-function _cycleMaterial() {
-  const sel = document.getElementById('surface-material-sel');
-  if (!sel) return;
-  // Materials unavailable outside SURF (WIRE/PTS force Matte). Ignore the key.
-  // FIX: this used to test `sel.offsetParent === null`, which is also true when
-  // the panel or the VISUAL STYLE section is merely collapsed — so T went dead
-  // whenever the operator cleared the view, for a reason that has nothing to do
-  // with materials. Same substitution as AUTO MATERIAL's veto in controls.js.
-  if (render.vizMode !== 'surface') return;
-  if (!_materialCycle) {
-    _materialCycle = Array.from(sel.options).map(o => o.value);
-  }
-  if (!_materialCycle.length) return;
-  const i    = _materialCycle.indexOf(sel.value);
-  const next = _materialCycle[(i + 1) % _materialCycle.length];
-  sel.value = next;
-  sel.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
 window.addEventListener('keydown', e => {
   if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
   // Ignore auto-repeat keydown. Hotkeys here are single-action triggers
@@ -303,12 +235,10 @@ window.addEventListener('keydown', e => {
       break;
     }
 
-    // T — step to next surface material, looping. No-op in WIRE/PTS
-    // (dropdown hidden, material forced to Matte there).
-    case 't': {
-      _cycleMaterial();
-      break;
-    }
+    // T — step to next surface material, looping. No-op outside SURF, where
+    // the finish is forced to Matte. The panel owns the rule; see
+    // ui.cycleMaterial in controls.js.
+    case 't': ui.cycleMaterial(); break;
 
     // F — random math formula from catalog (shuffle-bag, no repeats)
     case 'f': {
@@ -319,7 +249,7 @@ window.addEventListener('keydown', e => {
     // R — randomise everything: color scheme + shape + formula.
     // Each draw comes from a shared shuffle-bag, so values do not repeat
     // until the corresponding pool is exhausted. The shape swap rides in the
-    // formula's morph callback when there is one (see _applyFormulaValue), so
+    // formula's morph callback when there is one (see ui.applyFormulaValue), so
     // both apply at the same flat frame instead of one cancelling the other.
     case 'r': {
       const shape = _shapeBag.next();
@@ -332,7 +262,7 @@ window.addEventListener('keydown', e => {
         render.setShapeAnimated(shape);
         break;
       }
-      _applyFormulaValue(picker.next(), () => render.setShape(shape));
+      ui.applyFormulaValue(picker.next(), () => render.setShape(shape));
       break;
     }
 

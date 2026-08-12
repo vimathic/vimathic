@@ -377,7 +377,13 @@ export const PresetMixin = {
 
       if (s.gpuSelVal.startsWith('m:')) {
         const [, colId, key] = s.gpuSelVal.split(':');
-        onFlatActions.push(() => { if (mv) mv.setFormula(colId, key); });
+        // FIX(r2): same live check as ui.applyMathFormula. The flat frame is up
+        // to 400 ms away, and a shader picked in that window — by hand or by
+        // the next clip step — owns the surface; arming this formula then sets
+        // uMathMode = 1 and the shader draws nothing at all.
+        onFlatActions.push(() => {
+          if (mv && DOM.gpuSel.value === s.gpuSelVal) mv.setFormula(colId, key);
+        });
       } else {
         // GPU shader mode — has its own crossfade (uModeBlend), doesn't need
         // to be inside the morph. Schedule it but NOT inside onFlat.

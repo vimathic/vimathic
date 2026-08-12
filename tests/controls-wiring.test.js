@@ -166,8 +166,11 @@ function makeUi() {
       setGPUModeAnimated: n => calls.push(['setGPUModeAnimated', n]),
       setColorSchemeAnimated: i => calls.push(['setColorSchemeAnimated', i]),
       cancelPendingMorph: () => calls.push(['cancelPendingMorph']),
-      // The morph runs its work immediately, so a test sees the effect.
-      triggerMorphTransition: fn => { calls.push(['morph']); fn?.(); },
+      // Queued, not run: the real engine holds the work until the flat frame,
+      // up to 400 ms later, and that gap is exactly what these tests are about.
+      _queued: [],
+      triggerMorphTransition(fn) { calls.push(['morph']); if (fn) this._queued.push(fn); },
+      flatFrame() { const q = this._queued; this._queued = []; q.forEach(fn => fn()); },
       setShape: s => calls.push(['setShape', s]),
       fadeGrid: on => calls.push(['fadeGrid', on]),
     },
@@ -239,6 +242,7 @@ describe('a scalar formula moves the deform panel with the engine', () => {
     byId('deform-volume').classList.add('active');       // the user is in VOLUME
 
     ui.applyMathFormula('fractals', 'henon');
+    ui.render.flatFrame();
 
     assert.ok(ui.called('setFormula').length, 'the formula is applied either way');
     assert.equal(byId('deform-volume').classList.contains('active'), false,
@@ -253,6 +257,7 @@ describe('a scalar formula moves the deform panel with the engine', () => {
     byId('deform-volume').classList.add('active');
     const order = [];
     ui.applyMathFormula('fractals', 'henon', () => order.push('shape'));
+    ui.render.flatFrame();
 
     assert.deepEqual(ui.calls.filter(c => c[0] === 'morph').length, 1,
       'R changes shape and formula together — two morphs would cancel each other');
@@ -263,6 +268,7 @@ describe('a scalar formula moves the deform panel with the engine', () => {
     byId('deform-surface').classList.add('active');
 
     ui.applyMathFormula('fractals', 'henon');
+    ui.render.flatFrame();
 
     assert.equal(byId('deform-surface').classList.contains('active'), true,
       'nothing asked for a mode change here');
@@ -343,5 +349,187 @@ describe('fullscreen mode cannot trap the operator', () => {
   test('control — Escape outside fullscreen leaves the panel alone', () => {
     fireDoc('keydown', { key: 'Escape' });
     assert.equal(panel().classList.contains('fs-hidden'), false);
+  });
+});
+
+// ── Regression on the fix itself (found by adversarial review of 49c69cd) ─────
+// Commit 49c69cd made a superseded morph hand its queued work to the morph that
+// replaces it — correct — and then had the GPU-shader branches call
+// cancelPendingMorph() to disclaim a formula the shader supersedes. Two things
+// were wrong with that. It dropped the ENTIRE queued closure, and applyState
+// bundles the shape swap and the deform switch into the same one, so picking a
+// shader mid-preset threw away geometry work that used to land. And it was
+// wired to two of the THREE places that switch to a shader: applyState never
+// called it, so the stale formula rode into the preset's own morph and re-armed
+// the CPU path over the shader the preset had just applied — the very defect
+// the commit set out to fix.
+//
+// The queue is no longer cancelled by anyone. Instead the queued formula asks,
+// at the flat frame, whether it is still the selection — #gpu-sel is the single
+// value every path writes — which covers all three shader entry points at once
+// and leaves everything else in the queue alone.
+describe('work queued for a flat frame consults the live selection when it gets there', () => {
+
+  test('a formula superseded by a shader does not re-arm the CPU path', () => {
+    byId('gpu-sel').value = 'm:fractals:henon';
+    ui.applyMathFormula('fractals', 'henon');
+
+    byId('gpu-sel').value = '20';        // any of the three: dropdown, R/F, a preset
+    ui.render.flatFrame();
+
+    assert.equal(ui.called('setFormula').length, 0,
+      'setFormula sets uMathMode = 1 and the shader draws nothing at all');
+  });
+
+  test('but the geometry queued beside it still lands', () => {
+    byId('gpu-sel').value = 'm:fractals:henon';
+    const landed = [];
+    ui.applyMathFormula('fractals', 'henon', () => landed.push('shape'));
+
+    byId('gpu-sel').value = '20';
+    ui.render.flatFrame();
+
+    assert.deepEqual(landed, ['shape'],
+      'the shape dropdown was already written; dropping the swap makes it a lie');
+    assert.equal(ui.called('setFormula').length, 0);
+  });
+
+  test('a formula superseded by ANOTHER formula does not land either', () => {
+    byId('gpu-sel').value = 'm:fractals:henon';
+    ui.applyMathFormula('fractals', 'henon');
+
+    byId('gpu-sel').value = 'm:waves:standing';
+    ui.applyMathFormula('waves', 'standing');
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setFormula').map(c => c[1]), ['waves:standing'],
+      'only the selection the operator is actually looking at gets armed');
+  });
+
+  test('control — nothing superseded it, so it lands', () => {
+    byId('gpu-sel').value = 'm:fractals:henon';
+    ui.applyMathFormula('fractals', 'henon');
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setFormula').map(c => c[1]), ['fractals:henon']);
+  });
+
+  test('the volume deformation queued by DEFORM: VOLUME is guarded the same way', () => {
+    byId('gpu-sel').value = 'm:fractals:henon';
+    fire('deform-volume', 'click');
+
+    byId('gpu-sel').value = '20';        // a shader taken during the morph
+    ui.render.flatFrame();
+
+    assert.equal(ui.called('setVolumeFormula').length, 0,
+      'setVolumeFormula sets uMathMode = 1 too — same consequence, same rule');
+  });
+
+  test('control — DEFORM: VOLUME with nothing superseding it still arms', () => {
+    byId('gpu-sel').value = 'm:fractals:henon';
+    fire('deform-volume', 'click');
+    ui.render.flatFrame();
+
+    assert.equal(ui.called('setVolumeFormula').length, 1);
+  });
+});
+
+// ── What main.js used to own ──────────────────────────────────────────────────
+// Adversarial review of 1f6bb53 showed both of that commit's main.js fixes were
+// pinned by nothing: the whole suite stayed green with them reverted verbatim,
+// because no test can import main.js — its module body boots the app. The
+// behaviour moved into the layer that owns the panel, and these are the tests
+// that were impossible before.
+describe('the finish cycle (T) belongs to the panel', () => {
+  const OPTS = [{ value: 'matte' }, { value: 'glass' }, { value: 'mirror' }];
+
+  test('it steps to the next finish', () => {
+    byId('surface-material-sel').options = OPTS;
+    byId('surface-material-sel').value = 'matte';
+    ui.render.vizMode = 'surface';
+
+    // bindControls applies the finish once while wiring, so count from here.
+    const before = ui.called('setSurfaceMaterial').length;
+    ui.cycleMaterial();
+
+    assert.equal(byId('surface-material-sel').value, 'glass');
+    assert.equal(ui.called('setSurfaceMaterial').length, before + 1);
+    assert.deepEqual(ui.called('setSurfaceMaterial').at(-1).slice(0, 2), ['setSurfaceMaterial', 'glass']);
+  });
+
+  test('a collapsed panel does not make T dead', () => {
+    byId('surface-material-sel').options = OPTS;
+    byId('surface-material-sel').value = 'matte';
+    ui.render.vizMode = 'surface';
+    byId('surface-material-sel').offsetParent = null;      // panel collapsed
+
+    ui.cycleMaterial();
+
+    assert.equal(byId('surface-material-sel').value, 'glass',
+      'the finish is drawable in SURF whether or not its row is on screen');
+  });
+
+  test('control — T is inert where the finish cannot be drawn', () => {
+    byId('surface-material-sel').options = OPTS;
+    byId('surface-material-sel').value = 'matte';
+    ui.render.vizMode = 'points';
+
+    const before = ui.called('setSurfaceMaterial').length;
+    ui.cycleMaterial();
+
+    assert.equal(byId('surface-material-sel').value, 'matte');
+    assert.equal(ui.called('setSurfaceMaterial').length, before, 'nothing was applied');
+  });
+
+  test('and it restarts the AUTO MATERIAL countdown, on purpose now', () => {
+    byId('surface-material-sel').options = OPTS;
+    byId('surface-material-sel').value = 'matte';
+    ui.render.vizMode = 'surface';
+    let deferred = 0;
+    ui.autoMaterial.defer = () => { deferred++; };
+
+    ui.cycleMaterial();
+
+    assert.equal(deferred, 1,
+      'a hand-picked finish earns its full period — the old version got this only ' +
+      'as a side effect of dispatching a change event');
+  });
+});
+
+describe('applyFormulaValue is the one door for the dropdown, R and F', () => {
+
+  test('a shader value hands the surface to the GPU', () => {
+    ui.applyFormulaValue('20');
+
+    assert.equal(byId('gpu-sel').value, '20', 'the selection is what queued work reads');
+    assert.equal(ui.called('deactivate').length, 1);
+    assert.deepEqual(ui.called('setGPUModeAnimated')[0], ['setGPUModeAnimated', 20]);
+  });
+
+  test('a shader gets the shape swap its own morph, since uMode crossfades', () => {
+    const landed = [];
+    ui.applyFormulaValue('20', () => landed.push('shape'));
+    assert.deepEqual(landed, [], 'queued for the flat frame, not run on the way');
+
+    ui.render.flatFrame();
+    assert.deepEqual(landed, ['shape']);
+  });
+
+  test('a formula value goes through the shared CPU path, panel and all', () => {
+    byId('deform-volume').classList.add('active');
+
+    ui.applyFormulaValue('m:fractals:henon');
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setFormula').map(c => c[1]), ['fractals:henon']);
+    assert.equal(byId('deform-collapse').classList.contains('active'), true,
+      'the volume auto-switch is the reason this door exists');
+  });
+
+  test('control — the dropdown itself goes through the same door', () => {
+    byId('gpu-sel').value = '20';
+    fire('gpu-sel', 'change', { target: byId('gpu-sel') });
+
+    assert.deepEqual(ui.called('setGPUModeAnimated')[0], ['setGPUModeAnimated', 20]);
   });
 });

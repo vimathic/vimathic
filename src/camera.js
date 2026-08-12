@@ -188,7 +188,12 @@ export class CameraSystem {
   // budget. Numbers are tuned by eye and any constant change will shift
   // the visible feel — adjust with care.
   updatePhysics(time, bass) {
-    if (!this.autoRot || this.userInt) return;
+    // tweenHold belongs in the same breath as the other two: main.js's frame
+    // loop checks all three before calling, and a guard restated in two places
+    // is only as good as its weaker copy. A caller that checked autoRot and
+    // userInt but forgot the hold would fight a preset's camera tween on every
+    // frame of it.
+    if (!this.autoRot || this.userInt || this.tweenHold) return;
     const r0 = this.CFG.autoRotRadius;
     if (this.camPhysics === 'cosmos') {
       this.rotAngle += 0.000006 + bass * 0.000003;
