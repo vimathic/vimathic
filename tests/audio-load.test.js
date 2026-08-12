@@ -171,3 +171,134 @@ describe('AudioEngine.loadPlay — reporting a failure', () => {
     assert.deepEqual(events.filter(e => e[0] === 'playState'), [['playState', true]]);
   });
 });
+
+// ── The playlist itself ───────────────────────────────────────────────────────
+// Two defects about what ends up in it, both about a check that looks right and
+// compares the wrong things or at the wrong time.
+describe('addFiles — the duplicate guard', () => {
+
+  const mp3 = name => ({ name, type: 'audio/mpeg' });
+
+  test('the same file dropped twice is one row', () => {
+    const { engine } = makeEngine();
+    engine.loadPlay = () => {};                       // the auto-play branch is not the subject
+
+    engine.addFiles([mp3('song.mp3')]);
+    engine.addFiles([mp3('song.mp3')]);
+
+    assert.deepEqual(engine.playlist.map(t => t.name), ['song'],
+      'the guard compares the stored name — which is stripped of its extension — ' +
+      'against the raw filename, so it can never match for any file that has one');
+  });
+
+  test('control — two different files that strip to the same stem stay two rows', () => {
+    const { engine } = makeEngine();
+    engine.loadPlay = () => {};
+
+    engine.addFiles([mp3('song.mp3')]);
+    engine.addFiles([{ name: 'song.wav', type: 'audio/wav' }]);
+
+    assert.equal(engine.playlist.length, 2,
+      'they are genuinely different files; deduping by display name would lose one');
+  });
+
+  test('control — the first drop still starts playing', () => {
+    const { engine } = makeEngine();
+    const played = [];
+    engine.loadPlay = f => played.push(f.name);
+
+    engine.addFiles([mp3('first.mp3')]);
+    engine.addFiles([mp3('first.mp3')]);
+
+    assert.deepEqual(played, ['first.mp3'], 'once, for the first file');
+    assert.equal(engine.trackIdx, 0);
+  });
+
+  test('control — a non-audio file is still refused', () => {
+    const { engine } = makeEngine();
+    engine.loadPlay = () => {};
+
+    engine.addFiles([{ name: 'notes.txt', type: 'text/plain' }]);
+
+    assert.equal(engine.playlist.length, 0);
+  });
+});
+
+// The intro auto-load makes both of its refusals — "the user cleared it once"
+// and "the playlist is not empty" — before awaiting a 3.9 MB fetch, and acts on
+// the answers seconds later without asking again. Its own JSDoc promises both
+// no-ops. A user who drops a track while the fetch is in flight gets the intro
+// mixed into their playlist; a user who presses CLEAR in that window gets the
+// intro back and playing, right after asking for it to go.
+describe('the intro track loses every race it should lose', () => {
+
+  const introFetch = () => {
+    const d = deferred();
+    globalThis.fetch = () => d.promise;
+    return d;
+  };
+  const okResponse = { ok: true, blob: async () => ({ size: 1 }) };
+
+  test('a track dropped during the fetch is not joined by the intro', async () => {
+    const { engine } = makeEngine();
+    engine.loadPlay = () => {};
+    globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+    const gate = introFetch();
+
+    const pending = engine._loadIntroIfNeeded();
+    engine.addFiles([{ name: 'mytrack.mp3', type: 'audio/mpeg' }]);   // user, mid-fetch
+    gate.resolve(okResponse);
+    await pending;
+
+    assert.deepEqual(engine.playlist.map(t => t.name), ['mytrack'],
+      'the playlist was empty when the fetch started and is not now');
+  });
+
+  test('CLEAR during the fetch is not undone by it', async () => {
+    const { engine } = makeEngine();
+    const played = [];
+    engine.loadPlay = f => played.push(f.name);
+    let cleared = null;
+    globalThis.localStorage = {
+      getItem: k => (k === 'vimathic_intro_cleared' ? cleared : null),
+      setItem: (k, v) => { if (k === 'vimathic_intro_cleared') cleared = v; },
+      removeItem() {},
+    };
+    const gate = introFetch();
+
+    const pending = engine._loadIntroIfNeeded();
+    engine.clearPlaylist();                                           // user, mid-fetch
+    gate.resolve(okResponse);
+    await pending;
+
+    assert.deepEqual(engine.playlist, [], 'CLEAR is an explicit instruction, not a suggestion');
+    assert.deepEqual(played, [], 'and the intro must certainly not start playing');
+  });
+
+  test('control — a clean boot still gets the intro, playing', async () => {
+    const { engine } = makeEngine();
+    const played = [];
+    engine.loadPlay = f => played.push(f.name);
+    globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+    const gate = introFetch();
+
+    const pending = engine._loadIntroIfNeeded();
+    gate.resolve(okResponse);
+    await pending;
+
+    assert.equal(engine.playlist.length, 1, 'this is the feature, and it has to survive the fix');
+    assert.equal(played.length, 1);
+  });
+
+  test('control — the cleared flag still bails before fetching at all', async () => {
+    const { engine } = makeEngine();
+    globalThis.localStorage = { getItem: () => 'true', setItem() {}, removeItem() {} };
+    let fetched = false;
+    globalThis.fetch = () => { fetched = true; return Promise.resolve(okResponse); };
+
+    await engine._loadIntroIfNeeded();
+
+    assert.equal(fetched, false, 'an offline build should not pay for a fetch it will discard');
+    assert.deepEqual(engine.playlist, []);
+  });
+});

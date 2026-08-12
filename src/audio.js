@@ -525,7 +525,13 @@ export class AudioEngine {
     Array.from(files)
       .filter(f => f.type.startsWith('audio/'))
       .forEach(f => {
-        if (!this.playlist.find(t => t.name === f.name))
+        // FIX: compare like with like. The stored `name` is the display name,
+        // stripped of its extension, and this compared it against the raw
+        // filename — so for any file that has an extension the guard could
+        // never match and the same track piled up a row per drop. Comparing
+        // the File's own name also keeps song.mp3 and song.wav as two rows,
+        // which deduping by display name would not.
+        if (!this.playlist.find(t => t.file?.name === f.name))
           this.playlist.push({ file: f, name: f.name.replace(/\.[^.]+$/, '') });
       });
     this.cb.onPlaylistChange();
@@ -574,13 +580,18 @@ export class AudioEngine {
    * fire-and-forget — the rest of the app boots in parallel.
    */
   async _loadIntroIfNeeded() {
-    // Don't reload if user explicitly cleared on a previous session.
-    try {
-      if (localStorage.getItem('vimathic_intro_cleared') === 'true') return;
-    } catch {} // localStorage can throw in some sandboxed contexts
+    // Both refusals, asked as one question — because they have to be asked
+    // twice: once before paying for the fetch, and again before acting on it.
+    const declined = () => {
+      // Don't reload if the user explicitly cleared, now or in a past session.
+      try {
+        if (localStorage.getItem('vimathic_intro_cleared') === 'true') return true;
+      } catch {} // localStorage can throw in some sandboxed contexts
+      // Don't override an existing playlist (e.g. from preset restore).
+      return this.playlist.length > 0;
+    };
 
-    // Don't override an existing playlist (e.g. from preset restore).
-    if (this.playlist.length > 0) return;
+    if (declined()) return;
 
     try {
       // The bundled intro track is emitted to dist/vimathic-intro.mp3 by
@@ -597,6 +608,13 @@ export class AudioEngine {
         'S.Melentyev - Vimathic.mp3',
         { type: 'audio/mpeg', lastModified: Date.now() }
       );
+      // FIX: ask again. The two refusals above were answered before an await
+      // of a 3.9 MB fetch, and acted on seconds later — so a track dropped in
+      // that window got the intro mixed into it, and a CLEAR pressed in that
+      // window got the intro back AND playing, through addFiles' auto-play
+      // branch, moments after the operator asked for it to go. The JSDoc above
+      // promises both no-ops.
+      if (declined()) return;
       this.addFiles([file], { silent: true });
     } catch (err) {
       // Silent fail — the user simply won't have the intro track in their
