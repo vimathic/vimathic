@@ -163,7 +163,11 @@ export const PresetMixin = {
       // ── Visual ──────────────────────────────────────────────────────────
       shape:       r.currentShape,
       vizMode:     r.vizMode,
-      material:    r.currentMaterial ?? 'matte',
+      // FIX: ask the panel, which knows the difference between "the finish on
+      // screen" and "the finish chosen". WIRE and PTS force Matte for as long
+      // as they are on screen, so a preset saved in either mode recorded Matte
+      // and handed it back on the way out, losing the operator's pick.
+      material:    this.getPresetMaterial?.() ?? r.currentMaterial ?? 'matte',
       // 'squares' covers both a build without particle styles and a snapshot
       // taken before the field existed — the two are the same look.
       particleStyle: r.currentParticleStyle ?? 'squares',
@@ -854,14 +858,36 @@ export const PresetMixin = {
     // ClipPlayer.buildFromPresets), not inside `state`. Spread the old record
     // first so it survives; entry's own keys win.
     if (idx >= 0) presets[idx] = { ...presets[idx], ...entry }; else presets.push(entry);
-    try { localStorage.setItem('vimathic_presets', JSON.stringify(presets)); } catch (_) {}
+    const ok = this._writePresetList(presets);
     this._renderPresets();
+    return ok;
+  },
+
+  /**
+   * Write the preset list, reporting whether it landed.
+   *
+   * FIX: all three writers swallowed the failure — `catch (_) {}` — and the
+   * SAVE handler cleared the name field regardless, so a refused write (quota
+   * exceeded, private mode, storage blocked for the origin) redrew the list
+   * without the preset AND threw away the typed name, with nothing on screen
+   * to say why.
+   *
+   * @returns {boolean} true when the list was stored
+   */
+  _writePresetList(list) {
+    try {
+      localStorage.setItem('vimathic_presets', JSON.stringify(list));
+      return true;
+    } catch (_) {
+      return false;
+    }
   },
 
   deletePreset(name) {
     const presets = this._loadPresetList().filter(p => p.name !== name);
-    try { localStorage.setItem('vimathic_presets', JSON.stringify(presets)); } catch (_) {}
+    const ok = this._writePresetList(presets);
     this._renderPresets();
+    return ok;
   },
 
   _loadPresetList() {
@@ -918,9 +944,10 @@ export const PresetMixin = {
       holdEl.style.flexShrink = '0';
       holdEl.addEventListener('change', () => {
         p.holdMs = Math.max(500, +holdEl.value * 1000);
-        try { localStorage.setItem('vimathic_presets', JSON.stringify(this._loadPresetList().map(
+        const stored = this._writePresetList(this._loadPresetList().map(
           x => x.name === p.name ? { ...x, holdMs: p.holdMs } : x
-        ))); } catch (_) {}
+        ));
+        if (!stored) this._showToast?.('⚠ Could not save the hold — storage is full or blocked', true);
       });
 
       // Delete button — compact (×8px, no padding around the cross)

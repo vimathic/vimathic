@@ -85,3 +85,70 @@ describe('ClipPlayer._resolveHoldMs', () => {
     assert.equal(clip._resolveHoldMs(clip._steps[0]), 5000);
   });
 });
+
+// ── Catching up after a hidden tab ────────────────────────────────────────────
+// The scheduler's period per step is hold + morph: _runStep pushes _stepStartMs
+// past the morph and arms its timeout at holdMs + morphMs. The catch-up walk
+// subtracted only the hold, so every step it skipped over lost the morph's worth
+// of time — 1.6 s each on desktop. Come back to a backgrounded tab after a
+// couple of minutes and the clip resumes several steps behind where the music
+// is, and the longer the tab was hidden the further behind it lands.
+describe('ClipPlayer._catchUp — a hidden tab lands where the music is', () => {
+
+  test('each skipped step costs its hold AND its morph', () => {
+    const ui = makeUi();
+    ui._loadPresetList = () => ['A', 'B', 'C', 'D', 'E'].map(name => ({ name, state: {} }));
+    const clip = new ClipPlayer(ui);
+    try {
+      clip.buildFromPresets(5000);
+      clip.playing      = true;
+      clip._idx         = 0;
+      clip._stepHoldMs  = 5000;
+      // 20 s behind. A step costs hold + morph = 6.6 s, so the overshoot of
+      // 15 s past the first hold covers two whole steps and lands in the third.
+      clip._stepStartMs = performance.now() - 20000;
+
+      let landed = null;
+      clip._runStep = function () { landed = this._idx; };
+      clip._catchUp();
+
+      assert.equal(landed, 3,
+        'counting the hold alone makes every skipped step look 1.6 s cheaper than it was');
+    } finally { clip.stop(); }
+  });
+
+  test('control — still inside the current step, nothing moves', () => {
+    const clip = new ClipPlayer(makeUi());
+    try {
+      clip.buildFromPresets(5000);
+      clip.playing      = true;
+      clip._idx         = 1;
+      clip._stepHoldMs  = 5000;
+      clip._stepStartMs = performance.now() - 1000;
+
+      let ran = false;
+      clip._runStep = () => { ran = true; };
+      clip._catchUp();
+
+      assert.equal(ran, false, 'a catch-up that fires inside the step would restart it');
+      assert.equal(clip._idx, 1);
+    } finally { clip.stop(); }
+  });
+
+  test('control — one step overdue advances by exactly one', () => {
+    const clip = new ClipPlayer(makeUi());
+    try {
+      clip.buildFromPresets(5000);
+      clip.playing      = true;
+      clip._idx         = 0;
+      clip._stepHoldMs  = 5000;
+      clip._stepStartMs = performance.now() - 6000;   // 1 s past the hold
+
+      let landed = null;
+      clip._runStep = function () { landed = this._idx; };
+      clip._catchUp();
+
+      assert.equal(landed, 1);
+    } finally { clip.stop(); }
+  });
+});

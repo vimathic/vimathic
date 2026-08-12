@@ -212,7 +212,7 @@ export class ClipPlayer {
       preserveMaterial:   !!this._ui.autoMaterial?.enabled,
     });
 
-    const morphMs     = this._ui.render.isMobile ? 800 : 1600;
+    const morphMs     = this._morphMs();
     this._stepHoldMs  = holdMs;
     this._stepStartMs = performance.now() + morphMs;
 
@@ -247,6 +247,14 @@ export class ClipPlayer {
    * already-scheduled setTimeout will fire as expected (browser usually
    * resumes pending timers promptly after focus regain).
    */
+  /**
+   * What a step costs beyond its hold: the morph the next preset animates
+   * through before its hold window opens. _runStep pushes _stepStartMs past it
+   * and arms its timeout at hold + this, so the schedule's real period is the
+   * sum — and the catch-up walk has to spend the same currency.
+   */
+  _morphMs() { return this._ui.render.isMobile ? 800 : 1600; }
+
   _catchUp() {
     if (!this._steps.length) return;
 
@@ -266,8 +274,14 @@ export class ClipPlayer {
     // accidental zero-hold step turning this into an infinite loop.
     for (let guard = 0; guard < this._steps.length * 2; guard++) {
       const h = this._resolveHoldMs(this._steps[idx]);
-      if (overshoot < h || h <= 0) break;
-      overshoot -= h;
+      if (h <= 0) break;
+      // FIX: a skipped step costs its hold AND its morph. Subtracting the hold
+      // alone made every step look 1.6 s cheaper than the scheduler charges
+      // for it, so a tab hidden for a couple of minutes came back several steps
+      // behind the music — and the longer it was hidden, the further behind.
+      const step = h + this._morphMs();
+      if (overshoot < step) break;
+      overshoot -= step;
       idx = (idx + 1) % this._steps.length;
     }
 

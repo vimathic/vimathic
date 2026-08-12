@@ -195,3 +195,27 @@ describe('captureState — the camera-programmer half', () => {
       'blanking applies to an untouched editor, not to a script that is running');
   });
 });
+
+// The finish a snapshot records is not always the one on screen: WIRE and PTS
+// force Matte for as long as they are on screen, so a preset saved in either
+// mode used to record Matte and hand it back on the way out. The panel knows
+// the difference and now answers it; captureState asks.
+describe('captureState — the surface material', () => {
+
+  test('a preset saved in WIRE records the finish, not the forced Matte', () => {
+    const ui = makeUi();
+    ui.render.vizMode = 'wireframe';
+    ui.render.currentMaterial = 'matte';          // what WIRE forces
+    ui.getPresetMaterial = () => 'mirror';        // what the panel would restore
+
+    assert.equal(ui.captureState().material, 'mirror');
+  });
+
+  test('control — with no panel reader it still records the live finish', () => {
+    const ui = makeUi();
+    ui.render.currentMaterial = 'glass';
+    delete ui.getPresetMaterial;                  // a stripped build, or a test host
+
+    assert.equal(ui.captureState().material, 'glass');
+  });
+});

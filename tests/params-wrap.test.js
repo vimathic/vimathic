@@ -162,3 +162,30 @@ describe('MIDI relative mode — the path a user actually turns', () => {
       'a knob spammed at the bottom must not drift negative');
   });
 });
+
+// rotSpeed is MIDI-mappable and has no slider in the main panel — its only
+// control is the camera editor's PARAMS tab, which reads cpParams. Nothing told
+// that tab when a CC moved the value, so the thumb went stale and the next drag
+// wrote from the old position, reverting what the controller had just done.
+describe('rotSpeed keeps its one control in step', () => {
+
+  test('a MIDI write tells the camera panel', () => {
+    const synced = [];
+    const ctx = {
+      audio: {}, render: {},
+      camera: { cpParams: { rotSpeed: 0.0002 }, cb: { onParamsChanged: () => synced.push('sync') } },
+    };
+
+    applyParam(ctx, 'rotSpeed', 0.0009);
+
+    assert.equal(ctx.camera.cpParams.rotSpeed, 0.0009);
+    assert.deepEqual(synced, ['sync'],
+      'the editor slider is the only place this value is shown; a stale thumb reverts it');
+  });
+
+  test('control — a host with no such callback is not a crash', () => {
+    const ctx = { audio: {}, render: {}, camera: { cpParams: { rotSpeed: 0 } } };
+    applyParam(ctx, 'rotSpeed', 0.0005);
+    assert.equal(ctx.camera.cpParams.rotSpeed, 0.0005);
+  });
+});

@@ -117,7 +117,12 @@ export function bindControls(ui) {
       if (_matWrap) _matWrap.style.display = '';
       // Restore the material the user (or the preset) had before switching away.
       _matSel.value = _savedMaterial;
-      _applyMat();
+      // FIX: only when it actually changes. Every clip step calls through here,
+      // and re-applying the finish already in force restarts the fade at its
+      // default duration — cutting short the cadence-scaled crossfade AUTO
+      // MATERIAL asked for, on every step. Clicking the already-active ◄ SURF
+      // button took the same path.
+      if (r.currentMaterial !== _savedMaterial) _applyMat();
     } else {
       // WIRE / PTS — force Matte and hide the dropdown. Instant: the material
       // is being taken away because it cannot be drawn correctly here, and a
@@ -316,6 +321,18 @@ export function bindControls(ui) {
    * @param {function}   [onFlat] — extra work for the same flat frame (R's
    *                                shape swap: two morphs would cancel out)
    */
+  /**
+   * The finish a preset should record.
+   *
+   * FIX: captureState read render.currentMaterial, and WIRE/PTS force Matte for
+   * as long as they are on screen — so a preset saved in either mode recorded
+   * Matte and handed it back on the way out, losing the operator's pick. The
+   * pick itself lived only as a closure variable in this file with no reader.
+   * In SURF the live finish is the answer; anywhere else it is what a return to
+   * SURF would restore.
+   */
+  ui.getPresetMaterial = () => (r.vizMode === 'surface' ? r.currentMaterial : _savedMaterial) ?? 'matte';
+
   ui.applyMathFormula = (colId, key, onFlat) => {
     const want = `m:${colId}:${key}`;
     // Written here rather than assumed: the guard below reads this value back
@@ -922,7 +939,13 @@ export function bindControls(ui) {
   document.getElementById('btn-preset-save').addEventListener('click', () => {
     const name = presetNameInput?.value.trim();
     if (!name) { ui._showToast('⚠ Enter a preset name', true); return; }
-    ui.savePreset(name);
+    // FIX: the write can fail — quota, private mode, storage blocked for the
+    // origin — and this used to clear the field and say nothing, so the list
+    // simply redrew without the preset and the typed name was gone too.
+    if (ui.savePreset(name) === false) {
+      ui._showToast('⚠ Could not save — storage is full or blocked', true);
+      return;
+    }
     if (presetNameInput) presetNameInput.value = '';
   });
   if (presetNameInput) {

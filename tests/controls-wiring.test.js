@@ -533,3 +533,91 @@ describe('applyFormulaValue is the one door for the dropdown, R and F', () => {
     assert.deepEqual(ui.called('setGPUModeAnimated')[0], ['setGPUModeAnimated', 20]);
   });
 });
+
+// ── Three more places where the panel and the engine disagreed ────────────────
+describe('a material refresh that changes nothing leaves the fade alone', () => {
+  const OPTS = ['matte', 'glass', 'mirror', 'metal', 'pearl', 'chrome'].map(value => ({ value }));
+
+  test('naming the finish already in force does not re-apply it', () => {
+    byId('surface-material-sel').options = OPTS;
+    byId('surface-material-sel').value = 'mirror';
+    ui.render.vizMode = 'surface';
+    ui.render.currentMaterial = 'mirror';
+
+    const before = ui.called('setSurfaceMaterial').length;
+    ui.syncVizModeUI('surface', 'mirror', 'squares');
+
+    assert.equal(ui.called('setSurfaceMaterial').length, before,
+      'every clip step calls this; re-applying restarts the fade at its default ' +
+      '700 ms and cuts a cadence-scaled AUTO MATERIAL crossfade short every time');
+  });
+
+  test('control — a refresh that names a different finish still applies it', () => {
+    byId('surface-material-sel').options = OPTS;
+    byId('surface-material-sel').value = 'mirror';
+    ui.render.vizMode = 'surface';
+    ui.render.currentMaterial = 'mirror';
+
+    ui.syncVizModeUI('surface', 'glass', 'squares');
+
+    assert.deepEqual(ui.called('setSurfaceMaterial').at(-1).slice(0, 2), ['setSurfaceMaterial', 'glass']);
+  });
+});
+
+describe('the panel can be asked which finish a preset should record', () => {
+
+  test('in WIRE it names the finish a return to SURF would restore', () => {
+    byId('surface-material-sel').options = OPTS_FOR_MAT;
+    byId('surface-material-sel').value = 'mirror';
+    ui.render.vizMode = 'surface';
+    ui.render.currentMaterial = 'mirror';
+
+    ui.syncVizModeUI('wireframe', null, 'squares');     // WIRE forces Matte
+    ui.render.vizMode = 'wireframe';
+    ui.render.currentMaterial = 'matte';
+
+    assert.equal(ui.getPresetMaterial(), 'mirror',
+      'the pick survives the mode switch as a closure variable and nothing could read it, ' +
+      'so a preset saved in WIRE recorded Matte and handed it back on the way out');
+  });
+
+  test('in SURF it names the live finish', () => {
+    ui.render.vizMode = 'surface';
+    ui.render.currentMaterial = 'glass';
+    assert.equal(ui.getPresetMaterial(), 'glass');
+  });
+});
+const OPTS_FOR_MAT = ['matte', 'glass', 'mirror'].map(value => ({ value }));
+
+describe('SAVE PRESET says so when the write is refused', () => {
+
+  test('the name is kept and the operator is told', () => {
+    ui.savePreset = () => false;                 // storage full, or blocked for the origin
+    byId('preset-name').value = 'MySet';
+
+    fire('btn-preset-save', 'click');
+
+    assert.equal(byId('preset-name').value, 'MySet',
+      'clearing the field throws away what the operator typed for a save that did not happen');
+    assert.equal(ui.called('toast').length, 1, 'and nothing on screen said the save failed');
+  });
+
+  test('control — a successful save still clears the field', () => {
+    ui.savePreset = () => true;
+    byId('preset-name').value = 'MySet';
+
+    fire('btn-preset-save', 'click');
+
+    assert.equal(byId('preset-name').value, '');
+  });
+
+  test('control — an empty name is still refused before anything is written', () => {
+    let called = 0;
+    ui.savePreset = () => { called++; return true; };
+    byId('preset-name').value = '   ';
+
+    fire('btn-preset-save', 'click');
+
+    assert.equal(called, 0);
+  });
+});
