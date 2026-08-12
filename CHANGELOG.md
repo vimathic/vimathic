@@ -15,6 +15,17 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Added
 
+- **AUTO COLOUR / AUTO MATERIAL** — a ⟳ AUTO toggle beside the Color Scheme and
+  Surface Material dropdowns. Each cycles its parameter on its own, drawing
+  without repetition from the whole pool and always crossfading rather than
+  cutting: the palette blends in the fragment shader, and the material now
+  interpolates its four reflection scalars instead of switching them in one
+  frame (that fade is used by the dropdown and the `T` hotkey too). Cadence
+  follows the music — 8 bars for colour, 16 for material, off the detected BPM —
+  and falls back to a wall-clock interval while nothing is playing. While a
+  toggle is on it owns its parameter: clip player steps apply the rest of each
+  preset but stop overwriting it. Loading a preset by hand still applies both;
+  RESET ALL disarms them.
 - **DARK palette group** — 8 new colour schemes at indices 36–43 (Charcoal
   Smoke, Slate Indigo, Moss Stone, Petrol, Ember Black, Burgundy Velvet,
   Midnight Forest, Coal Plum), taking the total from 36 to **44**. (#18)

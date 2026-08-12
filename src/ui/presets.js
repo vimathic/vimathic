@@ -213,6 +213,14 @@ export const PresetMixin = {
    *   camera by hand (ClipPlayer.camOverride); a preset saved with
    *   `autoRot: false` would otherwise switch their running script off at the
    *   very next step.
+   * @param {boolean} [opts.preserveColor]
+   *   Leave the live colour scheme alone — apply everything else the snapshot
+   *   carries. Set by ClipPlayer while AUTO COLOUR is cycling the palette on
+   *   its own, so a clip does not drag it back to each preset's saved colour.
+   * @param {boolean} [opts.preserveMaterial]
+   *   Same for the surface material, driven by AUTO MATERIAL. The viz-mode rule
+   *   still applies underneath it: WIRE/PTS force Matte whatever is preserved,
+   *   because reflections cannot be drawn there at all.
    * @returns {boolean} false when the snapshot was refused — migratePreset()
    *   didn't recognise it (nothing applied), or a field threw mid-apply
    *   (state may be partly applied). True once the state has been pushed.
@@ -256,7 +264,10 @@ export const PresetMixin = {
 
     // ── Param fields (audio sensitivities, amp, wave-int, bloom, colorIdx) ──
     // applyParam keeps the slider + display in sync as a side effect.
+    // colorIdx is skipped while AUTO COLOUR owns the palette (opts.preserveColor
+    // — set per step by ClipPlayer); the other five are unaffected by it.
     for (const id of PARAM_FIELDS) {
+      if (opts.preserveColor && id === 'colorIdx') continue;
       if (s[id] != null) applyParam(ctx, id, s[id]);
     }
 
@@ -274,7 +285,14 @@ export const PresetMixin = {
     // by the user. Passing matKey INTO syncVizModeUI keeps the rule in one
     // place. Both apply outside the morph block (uniform push, no geometry
     // rebuild); 'matte' covers presets saved before the field existed.
-    const matKey = s.material ?? 'matte';
+    // AUTO MATERIAL owns the finish while it runs, so the snapshot's material is
+    // replaced by the live one and the viz-mode rule below still gets the final
+    // say on whether it can be shown at all. Read from r.currentMaterial rather
+    // than the dropdown so it stays right mid-fade — setSurfaceMaterialAnimated
+    // names its destination the moment it starts.
+    const matKey = opts.preserveMaterial
+      ? (r.currentMaterial ?? 'matte')
+      : (s.material ?? 'matte');
     const matSel = document.getElementById('surface-material-sel');
     // The viz mode that will be in effect once this snapshot is applied: the
     // snapshot's own, or — when it carries none — whatever the engine already

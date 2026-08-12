@@ -67,6 +67,7 @@ function makeUi() {
   const calls = [];
   const render = {
     vizMode: 'surface',
+    currentMaterial: 'matte',           // what setSurfaceMaterial* keeps updated
     grid: { visible: true },
     uMathMode: 0,                       // stand-in for U.uMathMode.value
     gpuMat: { vertexShader: BUILTIN_VS, fragmentShader: BUILTIN_FS },
@@ -128,7 +129,11 @@ function makeUi() {
     calls, render, camera, mathViz, shaderEditor,
     audio: { colorIdx: 16, bassSens: 1.2, trebleSens: 1, amp: 0.7, waveInt: 1 },
     _clip: null,
-    syncVizModeUI() {}, syncDeformUI() {}, _showToast() {},
+    // Recorded, not just swallowed: this is where the material half of an apply
+    // ends up (controls.js owns the WIRE/PTS rule), so the material a snapshot
+    // actually pushed is only observable through this argument.
+    syncVizModeUI(mode, mat) { calls.push(['syncVizModeUI', mode, mat]); },
+    syncDeformUI() {}, _showToast() {},
     called(name) { return this.calls.filter(c => c[0] === name); },
   });
 }
@@ -271,5 +276,78 @@ describe('applyState — the camera-programmer script survives every clip camera
     ui.render.finishTween();
     assert.equal(ui.called('loadScript').length, 0);
     assert.equal(ui.called('setCamPhysics').length, 0);
+  });
+});
+
+describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () => {
+  // The other side of tests/auto-cycle.test.js: ClipPlayer decides WHO owns the
+  // parameter, this decides what the apply then does about it. A clip step that
+  // rewrote the palette every few seconds is what made an unattended cycle look
+  // broken; preserveColor / preserveMaterial are how it stops — and they must
+  // stop nothing else.
+  let ui;
+  const SNAP = {
+    _version: 2,
+    colorIdx: 5, material: 'mirror', vizMode: 'surface',
+    // bassSens is the sibling param that rides along: it writes to audio only,
+    // where amp / waveInt / bloom would need render.U and render.bloomPass,
+    // which this fake deliberately does not carry.
+    bassSens: 1.9, shape: 'torus',
+  };
+
+  beforeEach(() => { ui = makeUi(); });
+
+  test('without the flags a step applies both, as before', () => {
+    assert.equal(ui.applyState(SNAP), true);
+    assert.deepEqual(ui.called('setColorSchemeAnimated')[0], ['setColorSchemeAnimated', 5]);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'mirror']);
+  });
+
+  test('preserveColor leaves the live palette — and only the palette', () => {
+    ui.audio.colorIdx = 28;
+    assert.equal(ui.applyState(SNAP, { preserveColor: true }), true);
+
+    assert.equal(ui.called('setColorSchemeAnimated').length, 0, 'the crossfade must not run');
+    assert.equal(ui.audio.colorIdx, 28, 'the engine value must not move');
+    // Everything else in the same snapshot still lands.
+    assert.equal(ui.audio.bassSens, 1.9);
+    assert.deepEqual(ui.called('setShape')[0], ['setShape', 'torus']);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'mirror']);
+  });
+
+  test('preserveMaterial hands the live finish through, not the snapshot\'s', () => {
+    ui.render.currentMaterial = 'velvet';
+    assert.equal(ui.applyState(SNAP, { preserveMaterial: true }), true);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'velvet']);
+    // The colour half is independent: this snapshot's palette still applies.
+    assert.deepEqual(ui.called('setColorSchemeAnimated')[0], ['setColorSchemeAnimated', 5]);
+  });
+
+  test('both flags together still apply the rest of the snapshot', () => {
+    ui.render.currentMaterial = 'glass';
+    ui.audio.colorIdx = 12;
+    assert.equal(ui.applyState(SNAP, { preserveColor: true, preserveMaterial: true }), true);
+    assert.equal(ui.called('setColorSchemeAnimated').length, 0);
+    assert.equal(ui.audio.colorIdx, 12);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'glass']);
+    assert.equal(ui.audio.bassSens, 1.9);
+    assert.equal(ui.render.grid.visible, true);
+  });
+
+  test('the viz-mode rule still outranks a preserved material', () => {
+    // WIRE cannot draw reflections at all — preserving the finish means
+    // "carry it", not "show it here". controls.js enforces that; what this
+    // pins is that the mode reaching it is the snapshot's, unchanged.
+    ui.render.currentMaterial = 'mirror';
+    assert.equal(ui.applyState({ ...SNAP, vizMode: 'wireframe' }, { preserveMaterial: true }), true);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'wireframe', 'mirror']);
+    assert.deepEqual(ui.called('setVizModeGPU')[0], ['setVizModeGPU', 'wireframe']);
+  });
+
+  test('a snapshot with no material at all is unaffected by preserveColor', () => {
+    assert.equal(ui.applyState({ _version: 2, colorIdx: 9 }, { preserveColor: true }), true);
+    assert.equal(ui.called('setColorSchemeAnimated').length, 0);
+    // vizMode absent → the engine's own mode is what the material rule keys off.
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'matte']);
   });
 });

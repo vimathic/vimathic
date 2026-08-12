@@ -7,8 +7,9 @@
 // Called once from UIController.bindAll().
 
 import { DOM } from '../dom.js';
-import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam } from '../params.js';
+import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT } from '../params.js';
 import { bindAboutModal, ABOUT_OVERLAY_ID } from './about-modal.js';
+import { AutoCycler } from './auto-cycle.js';
 
 export function bindControls(ui) {
   const a   = ui.audio;
@@ -68,15 +69,23 @@ export function bindControls(ui) {
   // from WIRE/PTS. Defaults to whatever the dropdown shows at boot.
   let _savedMaterial = _matSel ? _matSel.value : 'matte';
 
-  const _applyMat = () => {
+  // durationMs: undefined → the engine's default material fade; 0 → instant.
+  // Boot and the WIRE/PTS force-to-Matte pass 0 (nothing to fade from, and a
+  // fade in WIRE would show 700 ms of reflections off a degenerate normal);
+  // every human-triggered change takes the fade.
+  const _applyMat = (durationMs) => {
     if (!_matSel) return;
     const key = _matSel.value;
     if (_matDesc) _matDesc.textContent = _matDescriptions[key] ?? '';
-    r.setSurfaceMaterial(key);
+    r.setSurfaceMaterialAnimated(key, { duration: durationMs });
   };
   if (_matSel) {
-    _matSel.addEventListener('change', _applyMat);
-    _applyMat(); // pick up the default (matte) on boot
+    // Wrapped rather than passed straight in: a listener is called with the
+    // Event, which would land in `durationMs`. The AUTO countdown restarts on
+    // the same beat — a hand-picked material earns a full period on screen
+    // instead of being replaced by whatever was already half-counted.
+    _matSel.addEventListener('change', () => { _applyMat(); ui.autoMaterial?.defer(); });
+    _applyMat(0); // pick up the default (matte) on boot
   }
 
   // Called by the viz-mode buttons and by ui.syncVizModeUI (preset load).
@@ -110,12 +119,37 @@ export function bindControls(ui) {
       _matSel.value = _savedMaterial;
       _applyMat();
     } else {
-      // WIRE / PTS — force Matte and hide the dropdown.
+      // WIRE / PTS — force Matte and hide the dropdown. Instant: the material
+      // is being taken away because it cannot be drawn correctly here, and a
+      // fade would spend its whole length showing exactly that.
       _matSel.value = 'matte';
-      _applyMat();
+      _applyMat(0);
       if (_matWrap) _matWrap.style.display = 'none';
     }
   };
+
+  // ── AUTO MATERIAL ─────────────────────────────────────────────────────────
+  // The ⟳ AUTO toggle beside the material dropdown. Lives on `ui` so the two
+  // other systems that need to know about it can ask: ClipPlayer (which stops
+  // applying each preset's material while this is on) and RESET ALL.
+  ui.autoMaterial = new AutoCycler({
+    pool:      _matSel ? Array.from(_matSel.options).map(o => o.value) : [],
+    current:   () => _matSel?.value,
+    isPlaying: () => !!a.isPlaying,
+    bpm:       () => a.estimatedBpm,
+    // Material is forced to Matte and its dropdown hidden in WIRE/PTS, where
+    // the reconstructed normal makes reflections nonsense. offsetParent is null
+    // exactly then (the test the T hotkey already uses), so AUTO holds its
+    // breath there and picks up again on the way back to SURF, rather than
+    // switching itself off behind the user's back.
+    canFire:   () => !!_matSel && _matSel.offsetParent !== null,
+    apply:     (key, ms) => { _matSel.value = key; _applyMat(ms); },
+    // Twice the colour period. A finish change rewrites how the whole surface
+    // reads, and on the colour cadence the two together strobe.
+    bars: 16, idleMs: 20000,
+    onToggle:  on => DOM.surfaceMaterialAuto?.classList.toggle('active', on),
+  });
+  DOM.surfaceMaterialAuto?.addEventListener('click', () => ui.autoMaterial.toggle());
 
   // The viz-mode button row. Declared here so the boot sync just below and
   // _setVizModeBtns further down share one list.
@@ -331,7 +365,28 @@ export function bindControls(ui) {
   DOM.colorSel.addEventListener('change', e => {
     a.colorIdx = +e.target.value;
     r.setColorSchemeAnimated(+e.target.value);
+    ui.autoColor?.defer();
   });
+
+  // ── AUTO COLOUR ───────────────────────────────────────────────────────────
+  // Same shape as AUTO MATERIAL above, over the palette pool. The write path
+  // deliberately mirrors the Q/E/R hotkeys (audio.colorIdx + engine crossfade +
+  // dropdown) rather than going through applyParam: applyParam would re-enter
+  // PARAMS.colorIdx.set, which starts the crossfade again at its own default
+  // duration and would undo the longer, cadence-scaled fade asked for here.
+  ui.autoColor = new AutoCycler({
+    pool:      Array.from({ length: COLOR_SCHEME_COUNT }, (_, i) => i),
+    current:   () => a.colorIdx,
+    isPlaying: () => !!a.isPlaying,
+    bpm:       () => a.estimatedBpm,
+    apply:     (idx, ms) => {
+      a.colorIdx = idx;
+      r.setColorSchemeAnimated(idx, { duration: ms });
+      if (DOM.colorSel) DOM.colorSel.value = String(idx);
+    },
+    onToggle:  on => DOM.colorAuto?.classList.toggle('active', on),
+  });
+  DOM.colorAuto?.addEventListener('click', () => ui.autoColor.toggle());
 
   // ── Camera reset / auto-rot ───────────────────────────────────────────────
   DOM.btnReset.addEventListener('click', () => {
@@ -351,6 +406,13 @@ export function bindControls(ui) {
   // is 16 — resetParamsToDefault() runs last and stomps the explicit write
   // below. Keep params.js, main.js and index.html's `selected` in agreement.
   DOM.btnResetAll.addEventListener('click', () => {
+    // ── AUTO COLOUR / AUTO MATERIAL off ───────────────────────────────────
+    // They are modes, not values, and this button means "back to the startup
+    // state". Left armed, they would undo the reset a few seconds later — from
+    // a control the user had forgotten was on.
+    ui.autoColor?.disable();
+    ui.autoMaterial?.disable();
+
     // ── Visual mode + shape + formula ─────────────────────────────────────
     // FIX(#15, r3): route the viz-mode reset through the same engine call + UI
     // adapter as every other mode switch. A blanket `.mbtn` clear here left the

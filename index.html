@@ -163,6 +163,17 @@
       border-radius:6px;padding:6px 7px;font-size:10px;cursor:pointer;font-family:monospace}
     .cg select option{background:#0a0a1a;color:#ddd}
     .cg select:focus{outline:none;box-shadow:0 0 8px rgba(255,58,122,.4)}
+    /* ── Select + side button (⟳ AUTO) ─────────────────────────────────────
+       min-width:0 is what keeps the control from refusing to shrink: a flex
+       item's default min-width is its content, and the palette names are long
+       enough to push the button out of the panel without it.
+       .srch-wrap is in the selector because makeSearchable() (bottom of this
+       file) replaces #color-sel with a combobox wrapper at load — the flex item
+       in that row is the wrapper, not the select it hides. */
+    .cg-row{display:flex;gap:5px;align-items:stretch}
+    .cg-row > select,.cg-row > .srch-wrap{flex:1;min-width:0}
+    .autobtn{flex:0 0 72px;width:auto;margin-top:0;font-size:9px;padding:5px 4px;letter-spacing:.5px}
+    .autobtn.active{background:rgba(0,255,170,.11);border-color:var(--green);color:var(--green)}
     /* ── Global dark select override — covers all selects incl. modals ── */
     select{background:#0a0a1a!important;color:#ddd!important;border-color:rgba(255,58,122,.35)!important;
       border-radius:6px;font-family:monospace;cursor:pointer;color-scheme:dark}
@@ -285,6 +296,7 @@
       button{padding:10px;font-size:11px}
       .tbtn{padding:10px 8px;font-size:16px}
       .mbtn{padding:9px 4px;font-size:10px}
+      .autobtn{padding:9px 4px;font-size:10px;flex-basis:78px}
       .cg select{padding:9px 8px;font-size:11px}
       input[type=range]{height:8px;margin:12px 0}
     }
@@ -825,6 +837,7 @@
       <button id="mode-points" class="mbtn">◌ PTS</button>
     </div>
     <div class="cg"><label>Color Scheme</label>
+      <div class="cg-row">
       <select id="color-sel">
         <option value="0">Teal Orange</option>
         <option value="1">Blade Runner</option>
@@ -874,8 +887,12 @@
         <option value="42">Midnight Forest</option>
         <option value="43">Coal Plum</option>
         </optgroup>
-      </select></div>
+      </select>
+      <button id="color-auto" class="autobtn"
+        title="AUTO COLOUR — keeps changing the palette on its own, always as a crossfade. On the beat while music plays (8 bars), on a timer while it doesn't. While it is on, clip-player steps stop applying their preset's colour.">⟳ AUTO</button>
+      </div></div>
     <div class="cg"><label>Surface Material</label>
+      <div class="cg-row">
       <select id="surface-material-sel">
         <option value="matte" selected>Matte (flat)</option>
         <option value="glossy">Glossy (lacquer)</option>
@@ -884,6 +901,9 @@
         <option value="velvet">Velvet</option>
         <option value="glass">Glass</option>
       </select>
+      <button id="surface-material-auto" class="autobtn"
+        title="AUTO MATERIAL — keeps changing the finish on its own, fading between them. On the beat while music plays (16 bars), on a timer while it doesn't. While it is on, clip-player steps stop applying their preset's material.">⟳ AUTO</button>
+      </div>
       <div id="surface-material-desc" style="font-size:8px;color:#445;font-family:monospace;padding:3px 2px;min-height:12px"></div>
     </div>
     <div class="cg"><label>Bloom <span id="blmv" class="vd">0.55</span></label>

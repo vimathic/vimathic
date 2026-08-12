@@ -46,6 +46,12 @@ const REQUIRED = {
   shapeSel:          'shape-sel',
   gpuSel:            'gpu-sel',
   colorSel:          'color-sel',
+  // ⟳ AUTO toggles beside the two look dropdowns. Registered here so the smoke
+  // test's id contract covers them; the material *select* itself is still
+  // resolved by getElementById inside controls.js, where its whole block is
+  // written to tolerate a build without it.
+  colorAuto:           'color-auto',
+  surfaceMaterialAuto: 'surface-material-auto',
   modeSurface:       'mode-surface',
   modeWireframe:     'mode-wireframe',
   modePoints:        'mode-points',
