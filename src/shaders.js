@@ -477,7 +477,16 @@ void main(){vec3 pos=position;
   float b=clamp(uBass,0.,1.2),t=clamp(uTreble,0.,1.2),m=clamp(uMid,0.,1.),bt=0./*intentional, see note above*/;
   float r=length(pos.xz),ang=atan(pos.z,pos.x),y=0.,a=uAmp,wi=uWI,T=uTime;
   ${body}
-  if(uMathMode==0){pos.y=y;}
+  // FIX: scale by uMorphProgress, exactly as the built-in VS does in both of
+  // its branches. The template declared the uniform and never read it, so
+  // while an editor program was live a shape swap — D, R, a preset, a clip
+  // step, all of which drive uMorphProgress 1 → 0 → 1 and swap the geometry at
+  // the flat frame — produced no deflate and no inflate, just a cut in the
+  // middle of an animation the rest of the app was still performing. The else
+  // branch reproduces the built-in's CPU path, including its double scaling in
+  // collapse mode (math-visualizer applies morphScale before this): parity
+  // with the reference, not a new behaviour.
+  if(uMathMode==0){pos.y=y*uMorphProgress;}else{pos.y=pos.y*uMorphProgress;}
   vH=pos.y;
   // An editor shader is now installed on the POINTS proxy too, and a vertex
   // program that leaves gl_PointSize unwritten draws points of undefined size.

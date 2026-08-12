@@ -146,3 +146,64 @@ describe('a morph carries its scheduled work', () => {
       'work is disarmed one callback at a time, by the caller that queued it');
   });
 });
+
+// ── The ramp, not just the payload ───────────────────────────────────────────
+// The JSDoc over setShapeAnimated promises "the in-flight tween is cancelled and
+// the geometry is swapped immediately so the new shape starts inflating".
+// triggerMorphTransition did the opposite: it hard-wrote uMorphProgress back to
+// 1.0 and ran a fresh full-length deflate. So a shape pressed mid-morph made the
+// half-collapsed surface jump back to full size and start over — the biggest
+// visible discontinuity available, in the one place whose whole job is to avoid
+// a cut — and pushed the flat frame a full duration further away.
+describe('an interrupted morph continues from where it is', () => {
+
+  test('the surface does not spring back to full size', () => {
+    morph(() => applied.push('first'));
+    advance(DUR * 0.48);
+    const mid = host.U.uMorphProgress.value;
+    assert.ok(mid > 0.1 && mid < 0.9, `precondition: mid-deflate, got ${mid}`);
+
+    morph(() => applied.push('second'));
+
+    assert.ok(host.U.uMorphProgress.value <= mid,
+      `the mesh is half collapsed; jumping it back to ${host.U.uMorphProgress.value} is a cut`);
+    advance(16);
+    assert.ok(host.U.uMorphProgress.value <= mid, 'and it keeps collapsing, not re-inflating');
+  });
+
+  test('and the flat frame does not run away', () => {
+    morph(() => applied.push('first'));
+    advance(DUR * 0.5);
+    morph(() => applied.push('second'));
+
+    // Half the surface is already gone, so the rest of the deflate is half a
+    // duration — not a whole one measured from here.
+    advance(DUR * 0.5 + 32);
+
+    assert.deepEqual(applied, ['first', 'second'],
+      'restarting the ramp also pushes the work a full duration further away');
+  });
+
+  test('control — a morph from rest still takes the full duration', () => {
+    morph(() => applied.push('work'));
+
+    advance(DUR / 2);
+    const mid = host.U.uMorphProgress.value;
+    assert.ok(mid > 0 && mid < 1, `mid-deflate value out of range: ${mid}`);
+    assert.deepEqual(applied, [], 'nothing lands before the flat frame');
+
+    advance(DUR * 2);
+    assert.deepEqual(applied, ['work']);
+    assert.equal(host.U.uMorphProgress.value, 1, 'and it inflates back to full');
+  });
+
+  test('control — a morph triggered from the flat frame itself still works', () => {
+    // uMorphProgress is 0 there, so a deflate scaled by "where we are" has
+    // nothing to travel — it must not divide by zero or stall.
+    morph(() => { applied.push('outer'); morph(() => applied.push('inner')); });
+    advance(DUR * 3);
+
+    assert.deepEqual(applied, ['outer', 'inner']);
+    assert.equal(host.U.uMorphProgress.value, 1);
+  });
+});

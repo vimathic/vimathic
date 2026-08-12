@@ -366,3 +366,41 @@ describe('the error line survives the preamble three.js adds', () => {
       'a line number counted through the other buffer marks text the operator did not write');
   });
 });
+
+// An editor vertex program replaces the built-in one wholesale, so it also
+// inherits the built-in's responsibilities. The template declared
+// uMorphProgress and never read it, so with a custom shader live the shape
+// morph — which drives that uniform 1 → 0 → 1 and swaps the geometry at the
+// flat frame — did nothing visible: no deflate, no inflate, just a hard cut
+// mid-animation. Every path that changes shape goes through it: D, R, a preset,
+// a clip step.
+describe('an editor vertex program still morphs', () => {
+  let render, se;
+
+  beforeEach(() => {
+    render = makeRender();
+    se = new ShaderEditor(render);
+    document._els.clear();
+  });
+
+  const yWrites = src => src.split('\n').filter(l => /pos\.y\s*=/.test(l));
+
+  test('every pos.y it writes is scaled by uMorphProgress', () => {
+    se._tab = 'vert';
+    document.getElementById('se-code').value = 'y = sin(r*3.0)*a;';
+    se.compileAndApply();
+
+    const writes = yWrites(se.customVS);
+    assert.ok(writes.length, 'precondition: the template writes pos.y at all');
+    for (const line of writes) {
+      assert.match(line, /uMorphProgress/,
+        `a shape swap deflates through this uniform; unscaled, the morph is a cut: ${line.trim()}`);
+    }
+  });
+
+  test('control — the built-in VS it mirrors satisfies the same rule', () => {
+    const writes = yWrites(VS);
+    assert.ok(writes.length);
+    for (const line of writes) assert.match(line, /uMorphProgress/);
+  });
+});

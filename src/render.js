@@ -325,9 +325,15 @@ export class TransitionManager {
         const eased  = easeFn(raw);
         onUpdate(eased);
         if (raw >= 1) {
-          onDone?.();
+          // FIX: retire this tween BEFORE its onDone runs. A callback that
+          // starts a new tween in the same slot — a morph triggered from the
+          // flat frame of the morph before it — used to have its replacement
+          // deleted the instant it was installed, by this line and by the loop
+          // in tick(). The work queued for that second morph then never ran at
+          // all, silently.
           this._slots.delete(slot);
-          return false; // remove from active set
+          onDone?.();
+          return false; // already removed from the active set
         }
         return true; // keep running
       },
@@ -343,7 +349,9 @@ export class TransitionManager {
   /** Must be called once per animation frame (from RenderEngine.updateUniforms) */
   tick() {
     for (const [slot, tween] of this._slots) {
-      if (!tween.tick()) this._slots.delete(slot);
+      // Only retire the tween we just ticked: its onDone may have installed a
+      // replacement in the same slot, and deleting that would drop it.
+      if (!tween.tick() && this._slots.get(slot) === tween) this._slots.delete(slot);
     }
   }
 
@@ -724,12 +732,23 @@ export class RenderEngine {
     // Cancel any in-flight morph
     this.transitions.start('morph-deflate', 0, () => {});
     this.transitions.start('morph-inflate', 0, () => {});
-    this.U.uMorphProgress.value = 1.0;
 
     const dur = this._tDurShape;
 
-    this.transitions.start('morph-deflate', dur, p => {
-      this.U.uMorphProgress.value = 1.0 - p;
+    // FIX: keep collapsing from where the surface actually is. This used to
+    // hard-write uMorphProgress back to 1.0 and run a fresh full-length
+    // deflate, so a shape pressed mid-morph sprang the half-collapsed mesh back
+    // to full size and started over — the largest visible discontinuity
+    // available, in the one mechanism whose entire job is to avoid a cut — and
+    // pushed the flat frame a whole duration further away. setShapeAnimated's
+    // own doc block promises the opposite. The remaining travel is
+    // proportional, so the morph still lands at the same speed; the clamp
+    // covers a morph triggered from the flat frame itself, where there is
+    // nothing left to collapse and the duration would otherwise be zero.
+    const from = this.U.uMorphProgress.value;
+
+    this.transitions.start('morph-deflate', Math.max(1, dur * from), p => {
+      this.U.uMorphProgress.value = from * (1.0 - p);
     }, () => {
       this.U.uMorphProgress.value = 0.0;
       // Drained before running: a callback that triggers another morph must
@@ -1596,6 +1615,33 @@ export class RenderEngine {
    * @param {boolean}    enabled  — what the setter was asked to do
    * @param {()=>object} build    — constructs the pass; called at most once
    */
+  /**
+   * Empty an AfterimagePass's two accumulation targets.
+   *
+   * Transparent black rather than the scene's clear colour: the pass's shader
+   * takes a max() against the previous frame, so a black-but-opaque buffer
+   * would pin output alpha near 1 for the whole decay — visible in the
+   * transparent-background output path, which is exactly where an unexpected
+   * opaque frame costs the most.
+   */
+  _clearAfterimage(pass) {
+    const r = this.renderer;
+    if (!r || !pass?.textureOld || !pass?.textureComp) return;
+    const prevTarget = r.getRenderTarget();
+    const prevColor  = new THREE.Color();
+    r.getClearColor(prevColor);
+    const prevAlpha  = r.getClearAlpha();
+
+    r.setClearColor(0x000000, 0);
+    for (const target of [pass.textureOld, pass.textureComp]) {
+      r.setRenderTarget(target);
+      r.clear(true, false, false);
+    }
+
+    r.setRenderTarget(prevTarget);
+    r.setClearColor(prevColor, prevAlpha);
+  }
+
   _fxPass(key, enabled, build) {
     if (!enabled) return this[key];
     if (!this[key]) {
@@ -1666,6 +1712,15 @@ export class RenderEngine {
     const pass = this._fxPass('afterimagePass', enabled, () => new AfterimagePass(0.87));
     if (!pass) return; // never built ⇒ already off
     if (enabled) {
+      // FIX: start from an empty buffer. AfterimagePass accumulates into two
+      // render targets and offers no way to clear them, and the composer skips
+      // a disabled pass outright rather than letting it decay — so switching
+      // the trail off froze whatever frame was in there, and switching it back
+      // on (a style round trip, a preset, a clip step) blended that stale frame
+      // into the live picture for the length of a decay: a ghost of a shape the
+      // operator had already left. Only on a genuine off→on, so a preset
+      // re-applying the same style mid-trail does not blink it.
+      if (!pass.enabled) this._clearAfterimage(pass);
       // AfterimagePass exposes its uniform as 'damp'
       pass.uniforms['damp'].value = Math.min(0.98, Math.max(0.0, amount));
     }
