@@ -345,6 +345,12 @@ export const MIDI_PARAMS = [
       id, label: p.label,
       min: p.min, max: p.max, default: p.default,
       integer: !!p.integer,
+      // FIX: `wrap` has to travel with the rest. The MIDI decoder lower-clamps
+      // a relative delta before handing it on, and applyParam — where the wrap
+      // lives — never saw a value below min. An encoder on the palette was
+      // endless clockwise and dead anticlockwise, which is exactly what the
+      // wrap flag exists to prevent.
+      wrap: !!p.wrap,
     })),
   { id: 'none', label: '— Unassigned —', min: 0, max: 1, default: 0 },
 ];

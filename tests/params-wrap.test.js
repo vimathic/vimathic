@@ -88,25 +88,29 @@ describe('applyParam — enumerated params wrap', () => {
   });
 });
 
+/** A controller attached to one fake input, wired exactly as main.js wires it. */
+async function makeMidi(ctx) {
+  const input  = { onmidimessage: null };
+  const inputs = new Map([['in-1', input]]);
+  const access = { inputs, onstatechange: null };
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { requestMIDIAccess: async () => access },
+    configurable: true,
+  });
+
+  const midi = new MIDIController();
+  midi.cb.onParamSet    = (id, val) => applyParam(ctx, id, val);
+  midi.cb.getParamValue = id => PARAMS[id].get(ctx);
+  // _init() is async — wait for the input to be attached.
+  for (let i = 0; i < 50 && !input.onmidimessage; i++) await new Promise(r => setImmediate(r));
+  assert.ok(input.onmidimessage, 'MIDI input was never attached');
+  return { midi, input };
+}
+
 describe('MIDI relative mode — the path a user actually turns', () => {
   test('an encoder on Color Scheme stays inside the palette range', async () => {
     const ctx = makeCtx();
-
-    const input  = { onmidimessage: null };
-    const inputs = new Map([['in-1', input]]);
-    const access = { inputs, onstatechange: null };
-    Object.defineProperty(globalThis, 'navigator', {
-      value: { requestMIDIAccess: async () => access },
-      configurable: true,
-    });
-
-    const midi = new MIDIController();
-    // Wired exactly as main.js does it.
-    midi.cb.onParamSet    = (id, val) => applyParam(ctx, id, val);
-    midi.cb.getParamValue = id => PARAMS[id].get(ctx);
-    // _init() is async — wait for the input to be attached.
-    for (let i = 0; i < 50 && !input.onmidimessage; i++) await new Promise(r => setImmediate(r));
-    assert.ok(input.onmidimessage, 'MIDI input was never attached');
+    const { midi, input } = await makeMidi(ctx);
 
     midi.setMapping(21, 'colorIdx');          // REL is the default mode
     for (let turn = 0; turn < 60; turn++) {
@@ -118,5 +122,43 @@ describe('MIDI relative mode — the path a user actually turns', () => {
     // And it kept moving rather than sticking at the top.
     assert.ok(ctx.schemes.length > 1);
     assert.ok(new Set(ctx.schemes).size > 1, 'palette froze instead of cycling');
+  });
+
+  // The upward half above passed while the downward half did not: the decoder
+  // lower-clamps at def.min BEFORE handing the value to applyParam, and
+  // applyParam is where the wrap lives — so it never saw a negative colorIdx.
+  // The test one screen up ("wraps downwards too — an encoder is endless in
+  // both directions") calls applyParam(-1) directly and therefore missed it
+  // entirely: the clamp is upstream of everything it exercises.
+  test('an encoder on Color Scheme is endless downwards too', async () => {
+    const ctx = makeCtx();
+    const { midi, input } = await makeMidi(ctx);
+
+    midi.setMapping(21, 'colorIdx');
+    ctx.audio.colorIdx = 1;                   // one click above the bottom
+    const seen = [];
+    for (let turn = 0; turn < 6; turn++) {
+      input.onmidimessage({ data: [0xB0, 21, 0x41] }); // one click anticlockwise
+      seen.push(ctx.audio.colorIdx);
+    }
+
+    assert.deepEqual(seen, [0, 43, 42, 41, 40, 39],
+      'past the bottom the palette must come round from the top, not stick at 0');
+  });
+
+  // Control: the clamp is right for every other param, and the fix must not
+  // take it away. Nothing wraps but the one enumerated param.
+  test('control — a continuous param still cannot be turned below its floor', async () => {
+    const ctx = makeCtx();
+    const { midi, input } = await makeMidi(ctx);
+
+    midi.setMapping(22, 'bassSens');
+    ctx.audio.bassSens = PARAMS.bassSens.min;
+    for (let turn = 0; turn < 5; turn++) {
+      input.onmidimessage({ data: [0xB0, 22, 0x41] });
+    }
+
+    assert.equal(ctx.audio.bassSens, PARAMS.bassSens.min,
+      'a knob spammed at the bottom must not drift negative');
   });
 });
