@@ -129,6 +129,12 @@ export class CameraSystem {
     // scripts as `state`; reset whenever a new script loads.
     this.cpActive     = false;
     this.cpFn         = null;
+    // FIX: source of the script behind cpFn. #ce-code cannot stand in for it —
+    // the preset gallery and selectKeyframe both overwrite the textarea without
+    // loading anything, so a snapshot built from it recorded a script the user
+    // was merely reading. Kept here because loadScript otherwise retains only
+    // the compiled function and the text is unrecoverable from it.
+    this.cpSource     = null;
     this.cpParams     = { rotSpeed:.00002, radius:7.2, height:3.2, gravity:.0004, bassReact:1.0, damping:.996, fov:45, roll:0 };
     this.cpKeyframes  = [];
     this.cpSelectedKf = null;
@@ -241,6 +247,7 @@ export class CameraSystem {
     try {
       this.cpFn = new Function('ctx', `const {time,bass,mid,treble,beat,bpm,R,cam,target,state,p,sin,cos,abs,pow,lerp,clamp,orbit}=ctx; ${code}`);
       this.cpActive  = true;
+      this.cpSource  = code;   // FIX: set with cpFn, so the two never disagree
       this._cpState  = { velY:0, phase:0 };
       // FIX(#13, r2): fresh script → fresh roll. Armed while auto-rotate is off
       // it gets no runScript() tick, so the old bank angle would hang around.
@@ -259,7 +266,7 @@ export class CameraSystem {
    * camera would carry the script's final FOV/roll into physics mode.
    */
   resetScript() {
-    this.cpActive = false; this.cpFn = null; this._cpState = {};
+    this.cpActive = false; this.cpFn = null; this.cpSource = null; this._cpState = {};
     this.cb.onSetCode(CP_DEFAULT);
     this.cb.onScriptStatus('clear', '');
     this.camera.fov = 45; this.camera.updateProjectionMatrix();
@@ -426,9 +433,31 @@ export class CameraSystem {
     this.buildTimeline();
   }
 
-  /** Remove the keyframe at the given index in the sorted display order. */
+  /**
+   * Remove the keyframe at the given index in the sorted display order.
+   *
+   * FIX: the index really is a display-order one — the list is drawn from a
+   * sorted copy and ui/modals.js hands the row number straight back — but this
+   * spliced the raw array, which is in insertion order (addKeyframeAtPlayhead
+   * only pushes; every reader sorts a copy). The two agree only while
+   * keyframes happen to be added in ascending time, so adding one at 80% and
+   * then one at 20% made the ✕ on the "20.0%" row delete the 80% keyframe.
+   * Dragging a marker past its neighbour reaches the same state, since the
+   * drag writes kf.t and leaves the array order alone. No undo, code gone.
+   *
+   * Resolve through the same sorted copy the renderer uses, then remove by
+   * identity. Sorting per call rather than holding a sorted invariant matches
+   * _resolveKeyframe above, for the same reason: the array is small and edits
+   * come from the editor, not from hot-path code.
+   *
+   * An index no row can produce is a no-op. That guard is load-bearing for
+   * negative values: splice(-1, 1) counts from the end and would quietly eat
+   * the last keyframe.
+   */
   deleteKeyframe(idx) {
-    this.cpKeyframes.splice(idx, 1);
+    const target = [...this.cpKeyframes].sort((a,b) => a.t - b.t)[idx];
+    if (!target) return;
+    this.cpKeyframes.splice(this.cpKeyframes.indexOf(target), 1);
     if (!this.cpKeyframes.includes(this.cpSelectedKf)) this.cpSelectedKf = null;
     this.buildTimeline();
   }

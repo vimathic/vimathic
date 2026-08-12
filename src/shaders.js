@@ -575,6 +575,14 @@ export class ShaderEditor {
     this._frag   = SE_DEFAULT_FRAG;
     this.customVS = null;
     this.customFS = null;
+    // FIX: the bodies behind customVS/customFS — i.e. the last source that
+    // actually compiled. _vert/_frag cannot stand in for them: they are draft
+    // buffers the gallery, switchTab and compileAndApply's own pre-compile
+    // write all move without anything having been applied. captureState needs
+    // the source of the program that is LIVE, because applying a snapshot
+    // with hasCustom compiles whatever body it carries.
+    this._appliedVert = null;
+    this._appliedFrag = null;
 
     // ── Callbacks — UI wires these in bindAll() ───────────────────────
     this.cb = {
@@ -645,6 +653,10 @@ export class ShaderEditor {
       cleanup();
       this.customVS = fullVS;
       this.customFS = fullFS;
+      // FIX: remember the bodies, not just the assembled programs — a preset
+      // stores the body and re-wraps it in the template on restore.
+      this._appliedVert = vertBody;
+      this._appliedFrag = fragBody;
       // One call reaches gpuMat, the live POINTS proxy, and any proxy built
       // later — see RenderEngine.applyShaderSource().
       this._render.applyShaderSource(fullVS, fullFS);
@@ -732,6 +744,10 @@ export class ShaderEditor {
    */
   revertToBuiltIn() {
     this.customVS = null; this.customFS = null;
+    // Cleared with the programs they describe: no custom program is live, so
+    // there is no applied body either. The editor text is deliberately left
+    // alone (see the test of the same name).
+    this._appliedVert = null; this._appliedFrag = null;
     this._render.applyShaderSource();
   }
 

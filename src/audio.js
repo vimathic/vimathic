@@ -51,6 +51,12 @@ export class AudioEngine {
     // crossfade cleanup) compare against current id to bail out when a newer
     // source has taken over — prevents zombie tracks restarting playback.
     this.sourceId    = 0;
+    // FIX: the same guard, one level up. loadPlay() awaits a file read and a
+    // decode before it writes anything, so without an id the load that
+    // FINISHED last won instead of the one requested last — a big track could
+    // land on top of the small one the user switched to, and overwrite a live
+    // capture connected in the meantime.
+    this.loadId      = 0;
 
     // Per-frame readouts consumed by render/camera. Initial values are
     // mid-range so the visualizer doesn't snap to zero before first analysis.
@@ -359,6 +365,7 @@ export class AudioEngine {
   // which is auto-loaded on boot from browser cache and has no perceptible
   // load time — flashing the indicator for ~200ms looked like a glitch.
   async loadPlay(file, offset = 0, { silent = false } = {}) {
+    const loadId = ++this.loadId;   // FIX: see this.loadId in the constructor
     this._cancelCrossfade();
     if (!silent) this.cb.onLoading(true, 0, 'LOADING TRACK…');
     this._stopSource();
@@ -368,8 +375,13 @@ export class AudioEngine {
     try {
       await this.ensureCtx();
       const buf = await this._readFile(file, { silent });
+      if (loadId !== this.loadId) return;   // a newer load took over while we read
       if (!silent) this.cb.onLoading(true, 0.7, 'DECODING AUDIO…');
-      this.audioBuffer = await this.audioCtx.decodeAudioData(buf);
+      // Decoded into a local first: assigning straight to this.audioBuffer
+      // would clobber the newer load's buffer before the check below.
+      const decoded = await this.audioCtx.decodeAudioData(buf);
+      if (loadId !== this.loadId) return;   // …or while we decoded
+      this.audioBuffer = decoded;
       if (!silent) this.cb.onLoading(true, 1.0, 'READY');
       this._startSource(offset);
       this.cb.onDuration(fmt(this.audioBuffer.duration));
@@ -377,11 +389,21 @@ export class AudioEngine {
       this.cb.onPlayState(true);
       this.cb.onPlaylistChange();
     } catch (e) {
+      // A superseded load failing says nothing about the one that replaced it:
+      // reporting it would stop a track that is playing perfectly well.
+      if (loadId !== this.loadId) return;
       console.error('Track load error:', e);
       // FIX(#7, r3): same invariant — a failed load must not flip the visuals
       // to idle while a live capture is still feeding the analyser. Nothing
       // here touches the capture, so isPlaying follows whether one is wired.
       this.isPlaying = !!this.liveMode;
+      // FIX: and say so. The success path a few lines up pairs isPlaying with
+      // onPlayState; this one assigned and returned, so a track that failed to
+      // decode left the app silent while #play-btn still read "⏸ STOP" and
+      // every play-state consumer — clip sync included — believed it was
+      // running. loadPlay stops the previous source before the try block, so
+      // by here the old track is already gone.
+      this.cb.onPlayState(this.isPlaying);
       if (!silent) this.cb.onLoading(false);
       return;
     }

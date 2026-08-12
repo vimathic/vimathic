@@ -142,8 +142,18 @@ export const PresetMixin = {
     // autosave. Store '' instead — applyState skips falsy code, so restoring
     // such a preset leaves the editor alone rather than stomping it. Not
     // blanked while cpActive: a running script is state worth saving.
+    // FIX: while a script is RUNNING, its source is cam.cpSource — set by
+    // loadScript alongside cpFn. #ce-code is only the editor buffer, and the
+    // camera preset gallery (modals.js) and selectKeyframe both overwrite it
+    // without loading anything, so a snapshot built from it recorded whatever
+    // script the user happened to be reading. Restoring such a preset runs
+    // that one, because applyState calls loadScript on the carried code.
+    // With no script running the buffer IS the state worth saving, and
+    // FIX(#17) below still applies to it.
     const camCodeRaw = DOM.ceCode?.value ?? '';
-    const camCode    = (!cam.cpActive && camCodeRaw === cam.getDefaultCode?.()) ? '' : camCodeRaw;
+    const camCode    = cam.cpActive
+      ? (cam.cpSource ?? camCodeRaw)
+      : (camCodeRaw === cam.getDefaultCode?.() ? '' : camCodeRaw);
 
     const state = {
       // Version stamp — read by migratePreset() on load. Sourced from
@@ -185,10 +195,19 @@ export const PresetMixin = {
       },
 
       // ── Custom shader ───────────────────────────────────────────────────
+      // FIX: hasCustom describes the LIVE program (se.customVS is set only on a
+      // successful compile), so the bodies beside it have to describe the same
+      // program. se._vert/_frag are draft buffers — the gallery writes them
+      // without compiling, switchTab writes them, and compileAndApply writes
+      // them before its own trial compile, so a failed APPLY leaves broken
+      // source there. Pairing the live flag with the draft text meant a preset
+      // could carry a shader that was only being read, and applying it
+      // compiled that one. _appliedVert/_appliedFrag are the bodies that last
+      // compiled; with nothing custom live the draft is the right thing to keep.
       shader: {
         hasCustom: !!se.customVS,
-        vert:      se._vert,
-        frag:      se._frag,
+        vert:      se.customVS ? (se._appliedVert ?? se._vert) : se._vert,
+        frag:      se.customFS ? (se._appliedFrag ?? se._frag) : se._frag,
       },
     };
 
