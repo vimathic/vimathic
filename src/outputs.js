@@ -26,13 +26,19 @@
 // ── Capability detection ──────────────────────────────────────────────────────
 const IS_WINDOWS = navigator.platform?.toLowerCase().includes('win') ||
                    navigator.userAgent.toLowerCase().includes('windows');
-const IS_CHROME  = /Chrome\/(\d+)/.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent);
 const IN_ELECTRON = typeof window !== 'undefined' && !!window.electronAPI;
 const SUPPORTS_CAPTURE_STREAM = typeof HTMLCanvasElement !== 'undefined' &&
                                  'captureStream' in HTMLCanvasElement.prototype;
 
 export const OUTPUT_CAPABILITIES = {
-  virtualCamera: SUPPORTS_CAPTURE_STREAM && IS_CHROME,
+  // FIX: the capability, not the brand. This used to be
+  // `SUPPORTS_CAPTURE_STREAM && IS_CHROME`, with IS_CHROME excluding Edge by
+  // name — so Edge, which is Chromium and ships captureStream, was told "Not
+  // supported" and refused, as was every other engine that has the API. Every
+  // consumer of this flag needs exactly one thing, and VirtualCamera.start()'s
+  // own guard is that same test. The IS_CHROME constant went with it: nothing
+  // else read it.
+  virtualCamera: SUPPORTS_CAPTURE_STREAM,
   ndi:           false,         // always requires external bridge
   spout:         IN_ELECTRON && IS_WINDOWS,
   spoutBrowser:  false,         // never works in browser
@@ -59,7 +65,7 @@ export class VirtualCameraOutput {
   /** @returns {{ ok:boolean, stream?:MediaStream, error?:string }} */
   start(fps = 60) {
     if (!SUPPORTS_CAPTURE_STREAM) {
-      return { ok: false, error: 'captureStream() not supported in this browser. Use Chrome.' };
+      return { ok: false, error: 'captureStream() is not available in this browser.' };
     }
     try {
       this._fps    = fps;
@@ -349,7 +355,11 @@ export class SecondScreen {
       const features = `width=${w},height=${h},left=0,top=0,toolbar=no,menubar=no,` +
                        `scrollbars=no,resizable=yes,status=no`;
 
-      this._popup = window.open('/second-screen.html', '_vjscreen', features);
+      // FIX: relative, not root-absolute. '/second-screen.html' resolves to
+      // file:///second-screen.html when the build is opened over file:// — the
+      // way README advertises it — and to the domain root on any sub-path
+      // deployment, a 404 in both. The page is emitted next to index.html.
+      this._popup = window.open('./second-screen.html', '_vjscreen', features);
 
       if (!this._popup) {
         this.cb.onError('Popup blocked — allow popups for this site and try again.');

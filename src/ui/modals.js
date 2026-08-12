@@ -67,7 +67,16 @@ function bindOutputModal(ui) {
     // OUTPUT_CAPABILITIES actually says — and survives any future runtime
     // capability re-detection.
     const vcamBadge = document.getElementById('out-vcam-badge');
-    if (vcamBadge) vcamBadge.textContent = out.capabilities.virtualCamera ? 'Chrome ✓' : 'Not supported';
+    // The badge names what was measured — captureStream — not a browser, and
+    // its colour follows the answer: the markup used to ship a green "Chrome ✓"
+    // that only ever changed its text, so an unsupported browser was told so in
+    // the green of a working feature.
+    if (vcamBadge) {
+      const can = out.capabilities.virtualCamera;
+      vcamBadge.textContent = can ? 'Supported ✓' : 'Not supported';
+      vcamBadge.classList.toggle('ok', can);
+      vcamBadge.classList.toggle('na', !can);
+    }
 
     document.getElementById('output-overlay').classList.add('open');
   };
@@ -129,7 +138,7 @@ function bindOutputModal(ui) {
 
   if (vcamStartBtn) vcamStartBtn.addEventListener('click', () => {
     if (!out.capabilities.virtualCamera) {
-      setOutFeedback('⚠ captureStream not supported — use Chrome', '#f77'); return;
+      setOutFeedback('⚠ captureStream is not available in this browser', '#f77'); return;
     }
     const fps = parseInt(document.getElementById('out-vcam-fps')?.value ?? '60', 10);
     const res = out.vcam.start(fps);
