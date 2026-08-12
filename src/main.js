@@ -16,6 +16,7 @@ import { OutputManager, SecondScreen } from './outputs.js';
 import { GifRecorder, WebmRecorder } from './recorder.js';
 import { MathVisualizer } from './math-visualizer.js';
 import { getAllFormulasList } from './math-collections.js';
+import { FormulaPicker, isMathValue } from './formula-picker.js';
 import { DOM } from './dom.js';
 
 // ── App config ──────────────────────────────────────────────────────────────
@@ -111,7 +112,8 @@ ui.bootPersist();
 //   • _shapeBag    — shape pool for 'R'
 //   • _colorBag    — color pool for 'R' and 'Q' (same instance; Q won't reproduce
 //                    a color R just set, and vice versa)
-//   • _formulaBag  — formula pool for 'R' and 'F' (same instance)
+//   • _picker      — formula pool for 'R' and 'F' (same instance), covering
+//                    BOTH families in #gpu-sel: GPU shaders and CPU formulas
 // Each bag deals every value once before reshuffling; the reshuffle guarantees
 // the new top is not equal to the last drawn, so even at deck boundaries the
 // caller never sees the same value twice in a row.
@@ -123,30 +125,61 @@ const _shapeBag = new ShuffleBag(SHAPES);
 // drift if shaders.js gained another palette.
 const _colorBag = new ShuffleBag(Array.from({ length: COLOR_SCHEME_COUNT }, (_, i) => i));
 
-// Formula bag built once on first use. Compared by (collectionId, key)
-// because getAllFormulasList() builds fresh objects each call — reference
-// identity wouldn't survive a re-list, but ids are stable.
-let _formulaBag = null;
-function _getFormulaBag() {
-  if (_formulaBag) return _formulaBag;
-  const list = getAllFormulasList();
-  if (!list.length) return null;
-  _formulaBag = new ShuffleBag(
-    list,
-    (a, b) => a.collectionId === b.collectionId && a.key === b.key,
-  );
-  return _formulaBag;
+// Formula pool, built once on first use and shared by R and F.
+//
+// FIX: the pool used to be getAllFormulasList() alone — the 192 CPU math
+// formulas. #gpu-sel also carries 38 GPU shaders (numeric values), and they
+// were not in the bag at all, so neither hotkey could ever land on one. Both
+// families now go in; FormulaPicker (src/formula-picker.js) owns the split and
+// the reasoning behind it.
+//
+// The GPU half is read from the live <select> rather than from a count in JS —
+// same rule as the D and T hotkeys, so a shader added to index.html is
+// reachable without touching this file. The CPU half stays on
+// getAllFormulasList() because that is what setFormula() resolves against: a
+// stale `m:` option in the HTML would name a formula the engine cannot find.
+let _picker = null;
+function _getPicker() {
+  if (_picker) return _picker;
+  const gpuValues = Array.from(DOM.gpuSel?.options ?? [])
+    .map(o => o.value)
+    .filter(v => v && !isMathValue(v));
+  const p = new FormulaPicker({ gpuValues, cpuFormulas: getAllFormulasList() });
+  if (p.isEmpty) return null;
+  _picker = p;
+  return _picker;
 }
 
-// Pick and apply a random math formula from the full catalog.
+/**
+ * Apply a #gpu-sel value exactly as the dropdown's own change handler would,
+ * so the three entry points (dropdown, R, F) cannot drift apart.
+ *
+ * @param {string}   value    — 'm:collection:key' or a numeric shader index
+ * @param {function} [onFlat] — extra work for the flat frame of the morph. R
+ *   passes its shape swap: for a CPU formula both must land inside ONE morph
+ *   (two would cancel each other), while a GPU shader has no geometry morph of
+ *   its own — uMode crossfades — so the shape gets a morph to itself.
+ */
+function _applyFormulaValue(value, onFlat) {
+  DOM.gpuSel.value = value;
+  if (isMathValue(value)) {
+    const [, colId, key] = value.split(':');
+    render.triggerMorphTransition(() => {
+      if (onFlat) onFlat();
+      mathViz.setFormula(colId, key);
+    });
+  } else {
+    mathViz.deactivate();
+    render.setGPUModeAnimated(+value);
+    if (onFlat) render.triggerMorphTransition(onFlat);
+  }
+}
+
+// Pick and apply a random formula — GPU shader or CPU formula.
 function _randomFormula() {
-  const bag  = _getFormulaBag();
-  if (!bag) return;
-  const pick = bag.next();
-  render.triggerMorphTransition(() => {
-    mathViz.setFormula(pick.collectionId, pick.key);
-  });
-  DOM.gpuSel.value = `m:${pick.collectionId}:${pick.key}`;
+  const picker = _getPicker();
+  if (!picker) return;
+  _applyFormulaValue(picker.next());
 }
 
 // ── D hotkey: sequential shape cycling ──────────────────────────────────
@@ -242,9 +275,9 @@ window.addEventListener('keydown', e => {
 
     // R — randomise everything: color scheme + shape + formula.
     // Each draw comes from a shared shuffle-bag, so values do not repeat
-    // until the corresponding pool is exhausted. Shape swap and formula
-    // change are combined into one morph callback so both apply at the
-    // flat frame, instead of one cancelling the other.
+    // until the corresponding pool is exhausted. The shape swap rides in the
+    // formula's morph callback when there is one (see _applyFormulaValue), so
+    // both apply at the same flat frame instead of one cancelling the other.
     case 'r': {
       const shape    = _shapeBag.next();
       audio.colorIdx = _colorBag.next();
@@ -252,18 +285,13 @@ window.addEventListener('keydown', e => {
       DOM.colorSel.value = audio.colorIdx;
       DOM.shapeSel.value = shape;
 
-      const bag = _getFormulaBag();
-      if (!bag) {
-        // Formula list empty — just morph the shape.
+      const picker = _getPicker();
+      if (!picker) {
+        // No formulas and no shaders — just morph the shape.
         render.setShapeAnimated(shape);
         break;
       }
-      const pick = bag.next();
-      DOM.gpuSel.value = `m:${pick.collectionId}:${pick.key}`;
-      render.triggerMorphTransition(() => {
-        render.setShape(shape);
-        mathViz.setFormula(pick.collectionId, pick.key);
-      });
+      _applyFormulaValue(picker.next(), () => render.setShape(shape));
       break;
     }
 
