@@ -42,6 +42,10 @@ function makeEl() {
     style: {}, dataset: {},
     classList: { add() {}, remove() {}, toggle() {} },
     addEventListener() {}, removeEventListener() {},
+    // The no-helper fallback in _applyStateFields drives the material dropdown
+    // by dispatching a change event; without this the fallback throws and the
+    // apply is refused for a reason that has nothing to do with the test.
+    dispatchEvent() { return true; },
     querySelectorAll: () => [], appendChild() {}, remove() {},
   };
 }
@@ -68,6 +72,8 @@ function makeUi() {
   const render = {
     vizMode: 'surface',
     currentMaterial: 'matte',           // what setSurfaceMaterial* keeps updated
+    currentParticleStyle: 'squares',    // and what setParticleStyle keeps updated
+    setParticleStyle: s => calls.push(['setParticleStyle', s]),
     grid: { visible: true },
     uMathMode: 0,                       // stand-in for U.uMathMode.value
     gpuMat: { vertexShader: BUILTIN_VS, fragmentShader: BUILTIN_FS },
@@ -132,7 +138,7 @@ function makeUi() {
     // Recorded, not just swallowed: this is where the material half of an apply
     // ends up (controls.js owns the WIRE/PTS rule), so the material a snapshot
     // actually pushed is only observable through this argument.
-    syncVizModeUI(mode, mat) { calls.push(['syncVizModeUI', mode, mat]); },
+    syncVizModeUI(mode, mat, pts) { calls.push(['syncVizModeUI', mode, mat, pts]); },
     syncDeformUI() {}, _showToast() {},
     called(name) { return this.calls.filter(c => c[0] === name); },
   });
@@ -279,6 +285,47 @@ describe('applyState — the camera-programmer script survives every clip camera
   });
 });
 
+describe('applyState — the PTS particle style rides with the snapshot', () => {
+  // The style is a look parameter like the material, so it has to survive a
+  // preset the same way. It needs no mode rule of its own: outside POINTS it
+  // simply is not drawn, and the engine files the choice away until it is.
+  let ui;
+  beforeEach(() => { ui = makeUi(); });
+
+  test('a snapshot carrying a style hands it to the viz-mode adapter', () => {
+    assert.equal(ui.applyState({
+      _version: 2, vizMode: 'points', material: 'matte', particleStyle: 'smoke',
+    }), true);
+    assert.deepEqual(ui.called('syncVizModeUI')[0],
+      ['syncVizModeUI', 'points', 'matte', 'smoke']);
+  });
+
+  test('a snapshot from before the field existed reads as squares', () => {
+    // Every preset saved by an earlier build. Silently leaving the live style
+    // in place would make old presets load differently depending on what the
+    // user happened to be looking at.
+    assert.equal(ui.applyState({ _version: 2, vizMode: 'points' }), true);
+    assert.equal(ui.called('syncVizModeUI')[0][3], 'squares');
+  });
+
+  test('without the adapter the style goes straight to the engine', () => {
+    // Stripped build: no syncVizModeUI. The material half has a dropdown-event
+    // fallback; the style has none, so it must be pushed directly or a preset
+    // would silently lose it.
+    delete ui.syncVizModeUI;
+    assert.equal(ui.applyState({
+      _version: 2, vizMode: 'points', particleStyle: 'dots',
+    }), true);
+    assert.deepEqual(ui.called('setParticleStyle')[0], ['setParticleStyle', 'dots']);
+  });
+
+  // The capture half (`particleStyle: r.currentParticleStyle ?? 'squares'`) is
+  // not pinned here: captureState reads the camera, the shader editor and the
+  // math visualizer too, and a fake complete enough for it would be a second
+  // harness testing one property assignment. The save → change → load round
+  // trip in tests/e2e/particle-styles.spec.js covers it against the real thing.
+});
+
 describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () => {
   // The other side of tests/auto-cycle.test.js: ClipPlayer decides WHO owns the
   // parameter, this decides what the apply then does about it. A clip step that
@@ -300,7 +347,7 @@ describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () =>
   test('without the flags a step applies both, as before', () => {
     assert.equal(ui.applyState(SNAP), true);
     assert.deepEqual(ui.called('setColorSchemeAnimated')[0], ['setColorSchemeAnimated', 5]);
-    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'mirror']);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'mirror', 'squares']);
   });
 
   test('preserveColor leaves the live palette — and only the palette', () => {
@@ -312,13 +359,13 @@ describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () =>
     // Everything else in the same snapshot still lands.
     assert.equal(ui.audio.bassSens, 1.9);
     assert.deepEqual(ui.called('setShape')[0], ['setShape', 'torus']);
-    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'mirror']);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'mirror', 'squares']);
   });
 
   test('preserveMaterial hands the live finish through, not the snapshot\'s', () => {
     ui.render.currentMaterial = 'velvet';
     assert.equal(ui.applyState(SNAP, { preserveMaterial: true }), true);
-    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'velvet']);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'velvet', 'squares']);
     // The colour half is independent: this snapshot's palette still applies.
     assert.deepEqual(ui.called('setColorSchemeAnimated')[0], ['setColorSchemeAnimated', 5]);
   });
@@ -329,7 +376,7 @@ describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () =>
     assert.equal(ui.applyState(SNAP, { preserveColor: true, preserveMaterial: true }), true);
     assert.equal(ui.called('setColorSchemeAnimated').length, 0);
     assert.equal(ui.audio.colorIdx, 12);
-    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'glass']);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'glass', 'squares']);
     assert.equal(ui.audio.bassSens, 1.9);
     assert.equal(ui.render.grid.visible, true);
   });
@@ -340,7 +387,7 @@ describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () =>
     // pins is that the mode reaching it is the snapshot's, unchanged.
     ui.render.currentMaterial = 'mirror';
     assert.equal(ui.applyState({ ...SNAP, vizMode: 'wireframe' }, { preserveMaterial: true }), true);
-    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'wireframe', 'mirror']);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'wireframe', 'mirror', 'squares']);
     assert.deepEqual(ui.called('setVizModeGPU')[0], ['setVizModeGPU', 'wireframe']);
   });
 
@@ -348,6 +395,6 @@ describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () =>
     assert.equal(ui.applyState({ _version: 2, colorIdx: 9 }, { preserveColor: true }), true);
     assert.equal(ui.called('setColorSchemeAnimated').length, 0);
     // vizMode absent → the engine's own mode is what the material rule keys off.
-    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'matte']);
+    assert.deepEqual(ui.called('syncVizModeUI')[0], ['syncVizModeUI', 'surface', 'matte', 'squares']);
   });
 });

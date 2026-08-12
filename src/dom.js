@@ -52,6 +52,10 @@ const REQUIRED = {
   // written to tolerate a build without it.
   colorAuto:           'color-auto',
   surfaceMaterialAuto: 'surface-material-auto',
+  // Particle style — the PTS counterpart of the surface material row.
+  particleStyleWrap:   'particle-style-wrap',
+  particleStyleSel:    'particle-style-sel',
+  particleStyleDesc:   'particle-style-desc',
   modeSurface:       'mode-surface',
   modeWireframe:     'mode-wireframe',
   modePoints:        'mode-points',

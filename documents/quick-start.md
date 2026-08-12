@@ -55,6 +55,7 @@ The control panel on the left exposes the main knobs:
 - **Math Formula / GPU Shader** — the equation driving the animation. 192 CPU formulas + 38 GPU shaders.
 - **Color Scheme** — 44 palettes from cinematic to synthwave to scientific to dark.
 - **Surface Material** — six finishes from Matte to Mirror. SURFACE mode only; the row hides itself in Wireframe and Points, where reflections cannot be drawn.
+- **Particle Style** — the same idea for POINTS mode, and it appears with it: **Squares (large)** is the original look, **Dots (small)** turns each point into a small round particle, and **Smoke trail** keeps those small particles but has them glow and drag a decaying wake behind them. The trail is motion-driven, so it shows best with the camera moving or the music hitting.
 - **⟳ AUTO** — the button beside either of those two lets it drive itself: a new palette (or finish) at random, always as a crossfade, never a cut. With music playing the changes land on the beat — every 8 bars for colour, 16 for material, off the detected BPM; with the track stopped they come on a timer instead. While AUTO is on it owns that parameter: **clip player** steps apply everything else their preset holds but stop overwriting the colour / material it is cycling. Loading a preset by hand still applies both, and RESET ALL switches AUTO off.
 - **Audio sliders** — Amplitude, Wave Intensity, Bass/Treble Sensitivity, Bloom.
 - **Camera** — Reset camera position, toggle Auto-Rotate.

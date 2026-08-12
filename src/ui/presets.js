@@ -20,8 +20,8 @@ const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colo
 // list: gpuMode is written but never read back (the mode is restored from
 // gpuSelVal), so a file carrying only gpuMode tells us nothing we can apply.
 const STATE_FIELDS = [
-  'shape', 'vizMode', 'material', 'gpuSelVal', 'deformMode', 'volumeKey',
-  'gridVisible', 'camera', 'camScript', 'shader',
+  'shape', 'vizMode', 'material', 'particleStyle', 'gpuSelVal', 'deformMode',
+  'volumeKey', 'gridVisible', 'camera', 'camScript', 'shader',
 ];
 
 /**
@@ -154,6 +154,9 @@ export const PresetMixin = {
       shape:       r.currentShape,
       vizMode:     r.vizMode,
       material:    r.currentMaterial ?? 'matte',
+      // 'squares' covers both a build without particle styles and a snapshot
+      // taken before the field existed — the two are the same look.
+      particleStyle: r.currentParticleStyle ?? 'squares',
       gpuSelVal:   DOM.gpuSel.value || String(r.U.uMode.value),  // e.g. "3" or "m:waves:standingWave"
       gpuMode:     r.U.uMode.value,                              // GPU integer mode (when not CPU)
       deformMode:  mv?._mode      ?? 'surface',
@@ -294,6 +297,10 @@ export const PresetMixin = {
       ? (r.currentMaterial ?? 'matte')
       : (s.material ?? 'matte');
     const matSel = document.getElementById('surface-material-sel');
+    // Same story one row down, minus the forcing: a particle style is simply
+    // not drawn outside PTS, so it needs no mode rule of its own. 'squares' is
+    // the pre-field default.
+    const ptsKey = s.particleStyle ?? 'squares';
     // The viz mode that will be in effect once this snapshot is applied: the
     // snapshot's own, or — when it carries none — whatever the engine already
     // shows. The material rule keys off the mode the user will be looking at,
@@ -308,9 +315,14 @@ export const PresetMixin = {
     // call: a build without the helper still gets the engine change, and the
     // fallback below still applies the material.
     if (this.syncVizModeUI) {
-      this.syncVizModeUI(vizMode, matKey);
+      this.syncVizModeUI(vizMode, matKey, ptsKey);
       // The helper's material half is a no-op when the dropdown is absent.
       matHandled = !!matSel;
+    } else {
+      // No helper: the particle style has no fallback path through a dropdown
+      // event, so push it straight at the engine. Harmless in any mode — the
+      // engine files it away and applies it when PTS next draws.
+      r.setParticleStyle?.(ptsKey);
     }
 
     if (!matHandled) {

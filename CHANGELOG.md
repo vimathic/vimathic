@@ -15,6 +15,19 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Added
 
+- **Particle styles for POINTS mode** — a Particle Style row that appears with
+  PTS the way Surface Material appears with SURF. POINTS drew one thing, a
+  large square sprite, because that is what a point primitive is; a mask over
+  `gl_PointCoord` in the shared fragment shader turns the same primitive into
+  **Dots (small)** — small round particles — or **Smoke trail**, which keeps
+  those small particles, makes them glow additively and hands them the
+  composer's afterimage pass so each one drags a decaying wake behind it. The
+  wake is screen-space on purpose: it works the same for GPU shaders and for
+  CPU formulas, where a re-render at `t-dt` would show nothing (CPU positions
+  are baked into the attribute buffer, not computed from time). The style is
+  captured in presets, remembered across a trip through another viz mode, and
+  cleared by RESET ALL; outside PTS the mask is provably off, because
+  `gl_PointCoord` is undefined for triangles.
 - **AUTO COLOUR / AUTO MATERIAL** — a ⟳ AUTO toggle beside the Color Scheme and
   Surface Material dropdowns. Each cycles its parameter on its own, drawing
   without repetition from the whole pool and always crossfading rather than
