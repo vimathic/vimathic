@@ -7,24 +7,31 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { AfterimagePass }  from 'three/examples/jsm/postprocessing/AfterimagePass.js';
 import { VS, FS } from './shaders.js';
 
-// ── Planet texture cache — persists across shape switches ─────────────────────
-const _planetTexCache = new Map();
-
+// ═════════════════════════════════════════════════════════════════════════════
+// Solar-system procedural assets — surfaces, clouds and ring profiles
+//
+// Everything a planet is made of is generated here and cached at module scope,
+// so it survives shape switches: a rebuilt solar system must be the SAME solar
+// system.
+//
 // FIX(#27): planets must be reproducible — presets and recordings replay the
 // same solar system, but Math.random() made every session and every re-entry
-// into 'solar' look different. Seeded off the planet's own cache key instead,
-// so the same planet is always the same planet. Local rather than imported from
-// math-collections.js — three lines of arithmetic aren't worth the dependency.
+// into 'solar' look different. Every generator below draws from an LCG seeded
+// by the asset's own cache key instead, which makes each planet a pure function
+// of its name. Local rather than imported from math-collections.js — three
+// lines of arithmetic aren't worth the dependency.
 //
-// FIX(#27, r3): scope — seeded are _makePlanetTexture and the planet material in
-// _buildSolarSystem, nothing else. The starfield (`── Stars ──` block),
-// updateGlitch(), and the '⚡ Reactive' entry of CP_PRESETS in camera.js (jitters
-// ctx.cam.x/z every frame) stay on Math.random() by the owner's choice, so a
-// frame is NOT bit-identical between sessions.
-function _planetKey(baseHex, hasCraters) { return `${baseHex}_${hasCraters}`; }
+// FIX(#27, r3): scope — seeded are the texture generators and the per-planet
+// material numbers in _buildSolarSystem, nothing else. The starfield
+// (`── Stars ──` block), updateGlitch(), and the '⚡ Reactive' entry of
+// CP_PRESETS in camera.js (jitters ctx.cam.x/z every frame) stay on
+// Math.random() by the owner's choice, so a frame is NOT bit-identical
+// between sessions.
+// ═════════════════════════════════════════════════════════════════════════════
+const _solarTexCache = new Map();
 
 // Operands stay below 2^53, so the multiply-mix is exact in a double.
-function _planetSeed(key) {
+function _hashSeed(key) {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < key.length; i++) h = ((h ^ key.charCodeAt(i)) * 1664525 + 1013904223) >>> 0;
   return h;
@@ -35,35 +42,680 @@ function _lcg(seed) {
   return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
 }
 
-function _makePlanetTexture(baseHex, hasCraters) {
-  const key = _planetKey(baseHex, hasCraters);
-  if (_planetTexCache.has(key)) return _planetTexCache.get(key);
-  const rnd = _lcg(_planetSeed(key)); // FIX(#27): deterministic stand-in for Math.random()
-  const size = 256, cv = document.createElement('canvas');
-  cv.width = cv.height = size;
+const _clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+const _lerp    = (a, b, t) => a + (b - a) * t;
+const _smooth  = (e0, e1, x) => { const t = _clamp01((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); };
+const _rgb     = hex => [(hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff];
+function _mix(a, b, t, out) {
+  out[0] = _lerp(a[0], b[0], t); out[1] = _lerp(a[1], b[1], t); out[2] = _lerp(a[2], b[2], t);
+  return out;
+}
+
+// ── Periodic value noise ──────────────────────────────────────────────────────
+// The grid size IS the frequency, and lookups wrap in both axes, so a texture
+// built from it has no seam where longitude 360° meets 0°. Latitude wraps too;
+// the poles are a pinch point in any equirectangular map and no planet here is
+// ever more than a few dozen pixels across on screen.
+function _grid(rnd, n) {
+  const g = new Float32Array(n * n);
+  for (let i = 0; i < g.length; i++) g[i] = rnd();
+  return { g, n };
+}
+
+function _nz({ g, n }, x, y) {
+  const fx = x * n, fy = y * n;
+  let x0 = Math.floor(fx), y0 = Math.floor(fy);
+  const tx = fx - x0, ty = fy - y0;
+  x0 = ((x0 % n) + n) % n; y0 = ((y0 % n) + n) % n;
+  const x1 = (x0 + 1) % n, y1 = (y0 + 1) % n;
+  const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+  return _lerp(_lerp(g[y0 * n + x0], g[y0 * n + x1], sx),
+               _lerp(g[y1 * n + x0], g[y1 * n + x1], sx), sy);
+}
+
+// Fractal sum: `octaves` layers from `base` upward, amplitude halving each time.
+// Returns a sampler over (x, y) ∈ [0,1)², normalised back into [0,1].
+function _fbm(rnd, base, octaves) {
+  const gs = [], amps = []; let amp = 1, wsum = 0;
+  for (let i = 0; i < octaves; i++) { gs.push(_grid(rnd, base << i)); amps.push(amp); wsum += amp; amp *= 0.5; }
+  return (x, y) => {
+    let s = 0;
+    for (let i = 0; i < gs.length; i++) s += _nz(gs[i], x, y) * amps[i];
+    return s / wsum;
+  };
+}
+
+// ── Equirectangular rasteriser ────────────────────────────────────────────────
+// `shade(u, v, out)` writes [r,g,b(,a)] for one texel. u is longitude, v runs
+// from 0 at the north pole to 1 at the south — the same way SphereGeometry
+// lays its UVs out, so no flip is needed anywhere.
+function _paint(w, h, shade) {
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
   const ctx = cv.getContext('2d');
-  const r0=(baseHex>>16)&0xff, g0=(baseHex>>8)&0xff, b0=baseHex&0xff;
-  const rd=Math.round(r0*.7), gd=Math.round(g0*.7), bd=Math.round(b0*.7);
-  ctx.fillStyle = `rgb(${rd},${gd},${bd})`; ctx.fillRect(0,0,size,size);
-  const seed = baseHex % 37;
-  for (let i = 0; i < 280; i++) {
-    const px=(Math.sin(i*seed+1.3)*.5+.5)*size, py=(Math.cos(i*seed*1.7+.9)*.5+.5)*size;
-    const rs=1+Math.abs(Math.sin(i*.41))*6, bright=rnd()>.5; // FIX(#27): seeded
-    const dr=bright?18:-18, dg=bright?14:-14, db=bright?10:-10;
-    ctx.fillStyle=`rgba(${Math.min(255,rd+dr)},${Math.min(255,gd+dg)},${Math.min(255,bd+db)},0.35)`;
-    ctx.beginPath(); ctx.arc(px,py,rs,0,Math.PI*2); ctx.fill();
-  }
-  if (hasCraters) {
-    for (let c=0; c<14; c++) {
-      const cx=rnd()*size, cy=rnd()*size, cr=3+rnd()*14; // FIX(#27): seeded
-      ctx.strokeStyle=`rgba(${Math.max(0,rd-30)},${Math.max(0,gd-30)},${Math.max(0,bd-30)},0.7)`;
-      ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(cx,cy,cr,0,Math.PI*2); ctx.stroke();
-      ctx.fillStyle=`rgba(${Math.max(0,rd-20)},${Math.max(0,gd-20)},${Math.max(0,bd-20)},0.4)`; ctx.fill();
+  const img = ctx.createImageData(w, h), d = img.data, out = [0, 0, 0, 255];
+  for (let y = 0; y < h; y++) {
+    const v = (y + 0.5) / h;
+    for (let x = 0; x < w; x++) {
+      out[3] = 255;
+      shade((x + 0.5) / w, v, out);
+      const i = (y * w + x) * 4;
+      d[i] = out[0]; d[i + 1] = out[1]; d[i + 2] = out[2]; d[i + 3] = out[3];
     }
   }
-  const tex = new THREE.CanvasTexture(cv);
-  _planetTexCache.set(key, tex);
-  return tex;
+  ctx.putImageData(img, 0, 0);
+  return { cv, ctx };
+}
+
+function _tex(cv, { wrapX = true, srgb = true, mips = true } = {}) {
+  const t = new THREE.CanvasTexture(cv);
+  // Colour maps carry sRGB bytes. Leaving them tagged linear — as the first
+  // version of this did — makes every planet wash out, because the renderer
+  // then converts already-encoded values a second time on the way out.
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  if (wrapX) t.wrapS = THREE.RepeatWrapping;
+  if (!mips) { t.generateMipmaps = false; t.minFilter = THREE.LinearFilter; }
+  t.anisotropy = 4; // clamped by the renderer to what the GPU actually has
+  return t;
+}
+
+// ── Craters ───────────────────────────────────────────────────────────────────
+// Drawn over the base coat with the 2D context rather than per texel: a crater
+// is a rim, a floor and a shadow, and three arcs say that in a tenth of the
+// code a distance field would need. Longitude is stretched by 1/cos(lat) so a
+// crater near a pole stays round once the map is wrapped onto a sphere.
+function _craters(ctx, rnd, w, h, n, opt) {
+  for (let i = 0; i < n; i++) {
+    const cx = rnd() * w, cy = (0.06 + rnd() * 0.88) * h;
+    const lat = (0.5 - cy / h) * Math.PI;
+    const rr  = (opt.min + Math.pow(rnd(), 2.2) * (opt.max - opt.min)) * h; // small ones dominate
+    const sx  = rr / Math.max(0.28, Math.cos(lat));
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(sx / rr, 1);
+    // Floor, then a lit rim on one side and a shadowed rim on the other —
+    // the light in these textures nominally comes from the upper left.
+    ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${opt.floor},${0.30 + rnd() * 0.2})`; ctx.fill();
+    ctx.lineWidth = Math.max(0.8, rr * 0.22);
+    ctx.beginPath(); ctx.arc(0, 0, rr * 0.94, Math.PI * 0.85, Math.PI * 1.9);
+    ctx.strokeStyle = `rgba(${opt.rim},0.5)`; ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, rr * 0.94, Math.PI * 1.9, Math.PI * 2.85);
+    ctx.strokeStyle = `rgba(${opt.shade},0.45)`; ctx.stroke();
+    // Wrap: a crater that runs off one edge has to come back on the other.
+    if (cx - sx < 0 || cx + sx > w) {
+      ctx.restore(); ctx.save();
+      ctx.translate(cx + (cx - sx < 0 ? w : -w), cy);
+      ctx.scale(sx / rr, 1);
+      ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${opt.floor},0.35)`; ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, rr * 0.94, Math.PI * 0.85, Math.PI * 1.9);
+      ctx.strokeStyle = `rgba(${opt.rim},0.5)`; ctx.lineWidth = Math.max(0.8, rr * 0.22); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// ── Surface painters, one per class of world ─────────────────────────────────
+// Each returns a shade() for _paint(). `p` is the planet's entry in PLANETS.
+
+const _spotDefaults = { u: 0.62, v: 0.61, ru: 0.075, rv: 0.038, strength: 0.9 };
+
+// Gas and ice giants: zonal flow. Latitude is warped by noise BEFORE it is
+// banded, which is what makes belt edges ragged instead of drawn with a ruler,
+// and the noise is sampled squashed in latitude so its features come out
+// stretched along the flow.
+function _giantShade(rnd, p) {
+  const warp = _fbm(rnd, 3, 4), fine = _fbm(rnd, 8, 5), curl = _fbm(rnd, 5, 3);
+  const belt = _rgb(p.belt), zone = _rgb(p.zone), polar = _rgb(p.polar);
+  const spot = p.spot ? { ..._spotDefaults, ...p.spot, rgb: _rgb(p.spot.color) } : null;
+  return (u, v, out) => {
+    const lat = 1 - 2 * v;
+    const w   = (warp(u, v * 3.2) - 0.5) * p.warp + (curl(u * 1.3, v * 6) - 0.5) * p.warp * 0.4;
+    const t   = lat + w;
+    let b = 0;
+    for (let i = 0; i < p.bands.length; i++) b += Math.sin(t * Math.PI * p.bands[i][0] + p.bands[i][1]) * p.bands[i][2];
+    _mix(belt, zone, _clamp01(b * 0.5 + 0.5), out);
+    // Fine turbulence rides on top as brightness, not hue.
+    const g = 1 + (fine(u * 0.8, v * 3.0) - 0.5) * p.grain;
+    // Poles are colder, greyer and darker on every giant we have pictures of.
+    const pz = _smooth(p.polarFrom, 1.0, Math.abs(lat));
+    out[0] *= g; out[1] *= g; out[2] *= g;
+    if (pz > 0) _mix(out, polar, pz * 0.75, out);
+    if (spot) {
+      // Elliptical, noise-warped, with a bright collar — the collar is what
+      // reads as "storm" rather than "stain" at 30 px across.
+      let du = Math.abs(u - spot.u); if (du > 0.5) du = 1 - du;
+      const dv = v - spot.v;
+      const dd = Math.sqrt((du / spot.ru) ** 2 + (dv / spot.rv) ** 2) + (curl(u * 2, v * 2) - 0.5) * 0.22;
+      if (dd < 1.4) {
+        _mix(out, spot.rgb, (1 - _smooth(0.55, 1.05, dd)) * spot.strength, out);
+        const collar = 1 - Math.abs(dd - 1.12) / 0.22;
+        if (collar > 0) _mix(out, zone, collar * 0.35, out);
+      }
+    }
+    out[0] = _clamp01(out[0] / 255) * 255; out[1] = _clamp01(out[1] / 255) * 255; out[2] = _clamp01(out[2] / 255) * 255;
+  };
+}
+
+// Airless rock: mottled regolith, then craters from _craters(). Mars adds dry
+// albedo features and both caps.
+function _rockShade(rnd, p) {
+  const coarse = _fbm(rnd, 3, 5), fine = _fbm(rnd, 12, 3);
+  const base = _rgb(p.base), dark = _rgb(p.dark), light = _rgb(p.light);
+  const cap = p.cap ? _rgb(p.cap) : null;
+  return (u, v, out) => {
+    const lat = 1 - 2 * v;
+    const c = coarse(u, v), f = fine(u, v * 1.6);
+    _mix(base, c > p.maria ? light : dark, Math.abs(c - p.maria) * 1.8, out);
+    const g = 0.86 + f * 0.28;
+    out[0] *= g; out[1] *= g; out[2] *= g;
+    if (cap) {
+      // Caps are ragged and unequal: Mars' southern one is the bigger of the
+      // two in the local winter, and neither has a clean edge.
+      const north = _smooth(p.capFrom + (c - 0.5) * 0.09, p.capFrom + 0.14,  lat);
+      const south = _smooth(p.capFrom + (f - 0.5) * 0.09, p.capFrom + 0.10, -lat * 1.06);
+      _mix(out, cap, _clamp01(Math.max(north, south)) * 0.92, out);
+    }
+  };
+}
+
+// Venus: no surface, only cloud deck. Sheared noise gives the streaky
+// super-rotating pattern; contrast stays low because in visible light Venus is
+// a nearly featureless cream ball.
+function _venusShade(rnd, p) {
+  const a = _fbm(rnd, 3, 4), b = _fbm(rnd, 7, 4);
+  const base = _rgb(p.base), dark = _rgb(p.dark), light = _rgb(p.light);
+  return (u, v, out) => {
+    const lat = 1 - 2 * v;
+    const shear = u + lat * lat * 0.35;                 // faster at the equator
+    const t = a(shear, v * 2.2) * 0.65 + b(shear * 1.6, v * 3.4) * 0.35;
+    _mix(base, t > 0.5 ? light : dark, Math.abs(t - 0.5) * 1.5, out);
+    const pz = _smooth(0.72, 1.0, Math.abs(lat));       // polar collars
+    _mix(out, dark, pz * 0.35, out);
+  };
+}
+
+// Earth: one fBm decides land or sea, latitude and a second fBm decide which
+// biome the land gets, and the caps are painted last over everything.
+function _earthShade(rnd) {
+  const h = _fbm(rnd, 3, 5), arid = _fbm(rnd, 4, 3), detail = _fbm(rnd, 10, 3);
+  const deep = _rgb(0x082a5c), shelf = _rgb(0x1a6ba4), sand = _rgb(0xbda471),
+        green = _rgb(0x3d6a30), taiga = _rgb(0x2c4f35), ice = _rgb(0xeef4ff), rock = _rgb(0x776851);
+  // Sea level, not guessed: the land field was sampled over the sphere with a
+  // cos(lat) area weight, and 0.618 is the quantile that leaves 29 % of it dry
+  // — Earth's actual figure. At the obvious-looking 0.50 the planet came out
+  // two-thirds continent, which is Pangaea, not Earth.
+  const SEA = 0.618;
+  const t3 = [0, 0, 0];
+  return (u, v, out) => {
+    const lat = 1 - 2 * v;
+    const land = h(u, v) + 0.10 * Math.cos(lat * 2.2) - 0.06;
+    _mix(deep, shelf, _smooth(SEA - 0.17, SEA, land), out);
+    // The coast is a blend across a band, not an `if`: a hard threshold on a
+    // 512-wide map draws the shoreline in visible texel staircases.
+    const shore = _smooth(SEA - 0.015, SEA + 0.02, land);
+    if (shore > 0) {
+      const dry = arid(u, v * 1.4);
+      // Deserts sit under the descending limb of the Hadley cells, near ±25°,
+      // and nowhere else; everything outside that band greens up.
+      const desert = _smooth(0.20, 0.04, Math.abs(Math.abs(lat) - 0.27)) * dry;
+      _mix(green, sand, _clamp01(desert * 1.7), t3);
+      _mix(t3, taiga, _smooth(0.42, 0.72, Math.abs(lat)), t3);
+      _mix(t3, rock, _smooth(SEA + 0.06, SEA + 0.16, land) * 0.55, t3);
+      const g = 0.90 + detail(u, v) * 0.20;
+      t3[0] *= g; t3[1] *= g; t3[2] *= g;
+      _mix(out, t3, shore, out);
+    }
+    const cap = Math.max(_smooth(0.80, 0.90, lat), _smooth(0.76, 0.86, -lat));
+    if (cap > 0) _mix(out, ice, cap * (shore < 0.5 ? 0.82 : 1.0), out);
+  };
+}
+
+// Cloud sheet for Earth — white where the fBm clears a latitude-dependent bar.
+// The bar is low over the ITCZ and the storm tracks, high over the horse
+// latitudes, which is why the deserts underneath stay visible.
+function _cloudShade(rnd) {
+  const c = _fbm(rnd, 4, 5), w = _fbm(rnd, 9, 3);
+  // The bar is measured, like the sea level: the same field crosses 0.506 over
+  // 60 % of the sphere and 0.541 over 45 %, so the ±0.045 swing below runs the
+  // cover from roughly 70 % in the convergence zones down to 30 % over the
+  // horse latitudes. The first draft used 0.68 and produced a cloudless Earth.
+  return (u, v, out) => {
+    const lat = 1 - 2 * v;
+    const bar = 0.520 - 0.045 * Math.cos(lat * Math.PI * 3.0) + 0.03 * _smooth(0.72, 1.0, Math.abs(lat));
+    const t = c(u + lat * 0.12, v * 1.5) * 0.7 + w(u, v) * 0.3;
+    const a = _smooth(bar, bar + 0.10, t);
+    out[0] = 255; out[1] = 255; out[2] = 255;
+    out[3] = Math.round(_clamp01(a) * 225);
+  };
+}
+
+// ── Ring profiles ─────────────────────────────────────────────────────────────
+// A ring is a 1-D radial function, so its texture is one row wide in latitude
+// and 1024 samples across the gap between inner and outer edge. `bands` are
+// [r0, r1, alpha, colour] in planet radii, composited in order into [r,g,b,a]
+// with a in 0..1. Two rules, both of which cost a rewrite to find:
+//
+// A later band REPLACES coverage inside its own span instead of adding to it.
+// Adding was the first version and it inverted every nested gap: Saturn's Encke
+// gap is a low-alpha band lying inside the A ring, and 0.64 + 0.06 is more
+// opaque than the ring it is supposed to cut a lane through. The Cassini
+// division only ever looked right by luck — it abuts its neighbours rather than
+// nesting inside one, so nothing was underneath it to add to.
+//
+// Each edge ramp is CENTRED on the band edge rather than held inside the span.
+// Held inside, two abutting bands both fade to zero at the radius they share:
+// the B ring came out split by a fully transparent line ~37 texels wide, with
+// three more junctions like it. Centred, a pair crossfades across the junction
+// and the total coverage stays continuous.
+//
+// Exported through SOLAR_MODEL so the ring tests can assert against the profile
+// the renderer actually paints, instead of re-deriving a model of it.
+function _ringProfile(bands) {
+  const rgbs = bands.map(b => _rgb(b[3]));
+  return (r, out) => {
+    let a = 0; out[0] = out[1] = out[2] = 0;
+    for (let i = 0; i < bands.length; i++) {
+      const [r0, r1, ba] = bands[i];
+      const e = Math.min(0.02, (r1 - r0) * 0.5);        // ramp width, scaled to the band
+      if (r < r0 - e || r > r1 + e) continue;
+      const cov = _smooth(r0 - e / 2, r0 + e / 2, r) * (1 - _smooth(r1 - e / 2, r1 + e / 2, r));
+      if (cov <= 0) continue;
+      out[0] = _lerp(out[0], rgbs[i][0], cov);
+      out[1] = _lerp(out[1], rgbs[i][1], cov);
+      out[2] = _lerp(out[2], rgbs[i][2], cov);
+      a = _lerp(a, ba, cov);
+    }
+    out[3] = a;
+    return out;
+  };
+}
+
+// Ringlet noise on top keeps the big smooth bands from looking like paint.
+function _makeRingTexture(key, inner, outer, bands) {
+  const cached = _solarTexCache.get(key);
+  if (cached) return cached;
+  const rnd = _lcg(_hashSeed(key));
+  const fine = _fbm(rnd, 24, 4), W = 1024, H = 4;
+  const profile = _ringProfile(bands);
+  const { cv } = _paint(W, H, (u, _v, out) => {
+    profile(inner + u * (outer - inner), out);
+    out[3] = Math.round(_clamp01(out[3] * (0.80 + fine(u, 0.5) * 0.42)) * 255);
+  });
+  const t = _tex(cv, { wrapX: false, mips: false });
+  _solarTexCache.set(key, t);
+  return t;
+}
+
+// Surface + optional cloud sheet for one planet, cached by name.
+function _makeSurface(p, lod) {
+  const key = `surf_${p.name}_${lod}`;
+  const cached = _solarTexCache.get(key);
+  if (cached) return cached;
+  const rnd = _lcg(_hashSeed(p.name));
+  const w = Math.round(p.tex * lod), h = w >> 1;
+  const shade = p.paint === 'giant' ? _giantShade(rnd, p)
+              : p.paint === 'venus' ? _venusShade(rnd, p)
+              : p.paint === 'earth' ? _earthShade(rnd)
+              :                       _rockShade(rnd, p);
+  const { cv, ctx } = _paint(w, h, shade);
+  if (p.craters) _craters(ctx, rnd, w, h, Math.round(p.craters * lod * lod), p.craterInk);
+  const t = _tex(cv);
+  _solarTexCache.set(key, t);
+  return t;
+}
+
+function _makeClouds(name, lod) {
+  const key = `cloud_${name}_${lod}`;
+  const cached = _solarTexCache.get(key);
+  if (cached) return cached;
+  const rnd = _lcg(_hashSeed(name + '_clouds'));
+  const w = Math.round(512 * lod), h = w >> 1;
+  const t = _tex(_paint(w, h, _cloudShade(rnd)).cv);
+  _solarTexCache.set(key, t);
+  return t;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The eight planets — real numbers, honestly compressed
+//
+// Nothing here is invented. `au`, `re`, `ecc`, `incl`, `node`, `peri`, `L0`,
+// `tilt` and `day` are the published orbital and physical elements (J2000,
+// IAU/NASA fact sheets); the ring band radii further down come from the same
+// place, at the widths noted there. `albedo` is fact-sheet too, but it is
+// documentation: no code reads it — it is the input to the exposure argument in
+// _solarLighting(), which was done once, by hand, and is recorded there.
+//
+// What IS a compromise is scale, and it has to be: at true scale Neptune sits
+// 77× farther out than Mercury while being 1/4 of Jupiter's width, so a frame
+// that holds Neptune renders the inner four as four pixels in the corona of
+// the sun. Both axes are therefore run through a power law that keeps the
+// ORDER and the RATIOS' direction while pulling the extremes in:
+//
+//   distance = 3.15 · AU^0.42     Mercury 2.11 → Neptune 13.2 (real ratio 78 → 6.2)
+//   radius   = 0.30 · R⊕^0.35     Mercury 0.21 → Jupiter 0.70 (real ratio 29 → 3.3)
+//
+// The 3.15 is set by the one hard clearance in the scene: the sun here is not a
+// fixed sphere but the user's math surface, on a 1.2 base RADIUS. Mercury's
+// PERIHELION is what has to clear that, not its mean distance — at the first
+// value tried, 2.95, it closed to 1.36 and left 0.16 units of daylight. At 3.15
+// it closes to 1.4653, i.e. 0.2653 of clearance, and Mercury is the tightest row
+// in the table by a wide margin; tests/solar-system.test.js holds the line at
+// 1.45.
+//
+// How much that clearance is really worth depends on the viz mode, and the
+// honest answer is "all of it, except in two modes". Both surface paths displace
+// in Y only (shaders.js writes `pos.y = …` and never touches x/z), so the sun's
+// footprint in the orbital plane is pinned at 1.2 no matter what the formula or
+// the music does — it grows tall, not wide. Collapse mode is the exception:
+// applyCollapseField() moves every vertex along its own normal, which on a
+// sphere is radial, and Volume mode displaces in all three axes. There a loud
+// formula can push the surface past 1.4653 and swallow Mercury for as long as
+// the peak happens to point at it. That is left alone deliberately — clamping
+// the user's surface because of where a planet is would be the stranger
+// behaviour of the two — but it is the reason this paragraph does not claim the
+// clearance is absolute.
+//
+// Orbital speed is then NOT taken from the real periods — it is re-derived
+// from the compressed distances by Kepler's third law (ω ∝ d^-3/2), so the
+// system you see is internally consistent rather than a table of numbers that
+// disagree with the geometry around them. Kepler's second law is applied per
+// frame on top, which is why Mercury visibly hurries through perihelion.
+// ═════════════════════════════════════════════════════════════════════════════
+const SOLAR = {
+  distK: 3.15, distP: 0.42,   // scene units = distK · AU^distP
+  sizeK: 0.30, sizeP: 0.35,   // scene units = sizeK · (R/R⊕)^sizeP
+  speed: 0.0042,              // Earth's mean angular step per frame, ≈25 s/orbit at 60 fps
+};
+const _au2u = au => SOLAR.distK * Math.pow(au, SOLAR.distP);
+const _re2u = re => SOLAR.sizeK * Math.pow(re, SOLAR.sizeP);
+const _rad  = deg => deg * Math.PI / 180;
+
+// Ring band edges in planet radii: [inner, outer, opacity, colour]. Broad
+// components first, gaps and narrow rings last — a later band wins inside its
+// own span (see _ringProfile), which is how the Cassini division becomes a hole
+// rather than a stripe, and it is why the order within each table matters.
+//
+// The RADII are published. The WIDTHS of the narrow rings are not: Uranus's are
+// 1–12 km across, which is a tenth of a texel in a 1024-sample profile, so each
+// is drawn at the ~200 km floor this resolution can actually resolve, centred on
+// its real radius. Everything broad — Saturn's C/B/A, the divisions, Neptune's
+// Lassell — is at its real width.
+const RINGS = {
+  Jupiter: [ // halo, main ring, gossamer — real, and so faint it is a hint at best
+    [1.40, 1.71, 0.05, 0xa08a78], [1.71, 1.81, 0.20, 0xc0a087], [1.81, 2.55, 0.035, 0x9c8878],
+  ],
+  Saturn: [
+    [1.235, 1.525, 0.34, 0xab9878],   // C ring ("crepe")
+    [1.525, 1.760, 0.95, 0xe6d2ad],   // B ring, inner — the bright one
+    [1.760, 1.950, 0.86, 0xd8c39a],   // B ring, outer
+    [1.950, 2.025, 0.10, 0x8a7b62],   // Cassini division
+    [2.025, 2.267, 0.64, 0xd2bd97],   // A ring
+    [2.208, 2.222, 0.06, 0x6b6052],   // Encke gap
+    [2.263, 2.267, 0.20, 0xc0ad88],   // Keeler gap region
+    [2.320, 2.336, 0.30, 0xbfae8c],   // F ring
+  ],
+  // Uranus has thirteen rings; these are the ten classical ones plus the two
+  // broad dust components, all nearly black — the system is charcoal, not ice.
+  // Radii are R/25,559 km. ε is the wide bright one and it was missing from the
+  // first version of this table: the outermost, most opaque band sat at λ's
+  // radius instead, so the ring the comment singled out was not drawn at all.
+  Uranus: [
+    [1.481, 1.618, 0.022, 0x55595f],  // ζ — broad, faint, and really this far in
+    [1.620, 1.980, 0.014, 0x55595f],  // interring dust, the Voyager forward-scatter sheet
+    [1.633, 1.641, 0.28, 0x6d7076],   // 6
+    [1.648, 1.656, 0.26, 0x6d7076],   // 5
+    [1.662, 1.670, 0.28, 0x6d7076],   // 4
+    [1.746, 1.754, 0.32, 0x757880],   // α
+    [1.783, 1.791, 0.32, 0x757880],   // β
+    [1.842, 1.850, 0.22, 0x6d7076],   // η
+    [1.859, 1.867, 0.30, 0x757880],   // γ
+    [1.886, 1.894, 0.30, 0x6d7076],   // δ
+    [1.953, 1.961, 0.30, 0x82858c],   // λ — dust, faint in visible light
+    [1.995, 2.008, 0.55, 0x8f9299],   // ε — 51,149 km, the one you can see
+  ],
+  Neptune: [
+    [1.60, 2.60, 0.015, 0x5b7096],
+    [1.690, 1.700, 0.10, 0x6b80a8],   // Galle
+    [2.150, 2.310, 0.05, 0x5b7096],   // Lassell / Arago — before Le Verrier, which
+    [2.145, 2.160, 0.18, 0x7089b4],   // Le Verrier sits inside its inner edge
+    [2.530, 2.550, 0.22, 0x7089b4],   // Adams, with its arcs
+  ],
+};
+
+const PLANETS = [
+  { name: 'Mercury', au: 0.3871, re: 0.383, ecc: 0.2056, incl: 7.00, node: 48.3,  peri: 77.5,  L0: 252.3, tilt: 0.03,  day: 58.65, albedo: 0.14,
+    paint: 'rock',  tex: 512, base: 0x8c8880, dark: 0x6a665f, light: 0xaaa59c, maria: 0.50, craters: 110,
+    craterInk: { min: 0.006, max: 0.055, floor: '54,50,45', rim: '186,180,170', shade: '38,35,31' } },
+
+  { name: 'Venus',   au: 0.7233, re: 0.949, ecc: 0.0068, incl: 3.39, node: 76.7,  peri: 131.6, L0: 182.0, tilt: 177.36, day: -243.0, albedo: 0.69,
+    paint: 'venus', tex: 512, base: 0xd8c294, dark: 0xb9a179, light: 0xf4e8c8,
+    atmo: { color: 0xf6e3b0, power: 2.4, strength: 0.42, scale: 1.02 } },
+
+  { name: 'Earth',   au: 1.0000, re: 1.000, ecc: 0.0167, incl: 0.00, node: 0.0,   peri: 102.9, L0: 100.5, tilt: 23.44,  day: 0.9973, albedo: 0.31,
+    paint: 'earth', tex: 512, clouds: true, moon: true, ocean: true,
+    atmo: { color: 0x6fa8ff, power: 2.6, strength: 0.50, scale: 1.02 } },
+
+  { name: 'Mars',    au: 1.5237, re: 0.532, ecc: 0.0934, incl: 1.85, node: 49.6,  peri: 336.1, L0: 355.4, tilt: 25.19,  day: 1.026, albedo: 0.25,
+    paint: 'rock',  tex: 512, base: 0xa8552f, dark: 0x74402c, light: 0xc9834f, maria: 0.46, craters: 70,
+    cap: 0xf0f4fa, capFrom: 0.80,
+    craterInk: { min: 0.005, max: 0.04, floor: '86,44,28', rim: '208,150,110', shade: '60,30,20' },
+    atmo: { color: 0xd8926a, power: 3.0, strength: 0.22, scale: 1.02 } },
+
+  { name: 'Jupiter', au: 5.2029, re: 11.209, ecc: 0.0484, incl: 1.30, node: 100.5, peri: 14.8,  L0: 34.4,  tilt: 3.13,  day: 0.4136, albedo: 0.54,
+    paint: 'giant', tex: 512, zone: 0xe9dcc2, belt: 0xa87a53, polar: 0x8d8079,
+    bands: [[9.5, 0, 0.55], [21, 1.7, 0.26], [4.2, 0.6, 0.44], [38, 0.3, 0.10]],
+    warp: 0.055, grain: 0.21, polarFrom: 0.72,
+    spot: { color: 0xbb6444, u: 0.62, v: 0.615, ru: 0.085, rv: 0.040, strength: 0.92 },
+    rings: 'Jupiter' },
+
+  { name: 'Saturn',  au: 9.5367, re: 9.449, ecc: 0.0539, incl: 2.49, node: 113.7, peri: 92.4,  L0: 50.1,  tilt: 26.73, day: 0.4440, albedo: 0.50,
+    paint: 'giant', tex: 512, zone: 0xf2e3bd, belt: 0xc9a870, polar: 0x9d9080,
+    bands: [[7.5, 0.4, 0.44], [15, 2.1, 0.20], [3.4, 1.1, 0.36]],
+    warp: 0.042, grain: 0.14, polarFrom: 0.74,
+    rings: 'Saturn' },
+
+  { name: 'Uranus',  au: 19.189, re: 4.007, ecc: 0.0472, incl: 0.77, node: 74.0,  peri: 170.9, L0: 314.1, tilt: 97.77, day: -0.7183, albedo: 0.49,
+    paint: 'giant', tex: 256, zone: 0xc2e8e6, belt: 0xa9d6db, polar: 0xd2eeec,
+    bands: [[5, 0.7, 0.30], [11, 1.4, 0.12]],
+    warp: 0.028, grain: 0.05, polarFrom: 0.80,
+    rings: 'Uranus', atmo: { color: 0x9fe4e8, power: 2.6, strength: 0.34, scale: 1.02 } },
+
+  { name: 'Neptune', au: 30.070, re: 3.883, ecc: 0.0086, incl: 1.77, node: 131.8, peri: 44.9,  L0: 304.3, tilt: 28.32, day: 0.6713, albedo: 0.44,
+    paint: 'giant', tex: 256, zone: 0x4a7fd8, belt: 0x2d58ad, polar: 0x6d96dc,
+    bands: [[6.5, 0.9, 0.40], [13, 2.2, 0.18], [3, 0.2, 0.30]],
+    warp: 0.038, grain: 0.10, polarFrom: 0.78,
+    spot: { color: 0x1b3a78, u: 0.30, v: 0.63, ru: 0.07, rv: 0.035, strength: 0.75 },
+    rings: 'Neptune', atmo: { color: 0x5b8cff, power: 2.6, strength: 0.36, scale: 1.02 } },
+];
+
+// The Moon rides along with Earth. Same painter as Mercury, plus maria.
+const MOON = {
+  name: 'Moon', paint: 'rock', tex: 256, base: 0x9a958d, dark: 0x555055, light: 0xb8b3aa, maria: 0.44, craters: 60,
+  craterInk: { min: 0.008, max: 0.07, floor: '62,58,54', rim: '198,192,182', shade: '42,39,36' },
+};
+
+// Semi-latus-rectum form of the ellipse: r(ν) = a(1−e²)/(1+e·cos ν).
+const _orbitR = (a, e, nu) => a * (1 - e * e) / (1 + e * Math.cos(nu));
+
+// ── The placement conventions, as functions ───────────────────────────────────
+// These are pulled out of _buildSolarSystem for one reason: the builder needs a
+// canvas and a GPU and cannot be tested here, while every sign that decides
+// WHERE a planet is and WHICH WAY it turns lives in three lines of arithmetic
+// that need nothing. Both of the errors this file shipped with at first were in
+// these signs, and a test that only read the table could not see either.
+
+// Orbit plane, read right to left: tilt about the line of nodes, then swing that
+// line round to the node's published longitude. The + on Ω is the whole point.
+// With Ry(−Ω) each planet lands at L0 − 2Ω instead of L0 — _theta0 below already
+// measures from the node, so the two uses of Ω subtract twice instead of
+// cancelling, and the system quietly stops being J2000 while looking fine.
+const _planeEuler = p => new THREE.Euler(_rad(p.incl), _rad(p.node), 0, 'YXZ');
+
+// Where a planet starts, as an angle from its own ascending node.
+const _theta0 = p => _rad(p.L0 - p.node);
+
+// Spin: real sidereal days, compressed the same way distance is — and UNSIGNED.
+// The direction is already carried by the obliquity: `tilt` is the IAU figure
+// measured from the ORBIT normal, so Venus's 177.36° and Uranus's 97.77° put the
+// positive pole below the plane, and turning positively about it IS retrograde on
+// screen. Multiplying by sign(day) as well — the first version did — cancels
+// exactly those two back to prograde, while the table, the comments and the
+// tests all go on saying they turn backwards.
+const _spinRate = p => 0.012 * Math.pow(1 / Math.abs(p.day), 0.4);
+
+// The Moon's frame hangs off `holder`, whose +X points away from the sun, so
+// what this rate advances is the Moon's angle from the sun — a PHASE cycle, not
+// a revolution against the stars. The synodic month is the constant that belongs
+// in that slot; the sidereal 27.32 was what the first version fed it, which is
+// the right number for a frame that is NOT dragged along, and this one is.
+//
+// Only one of the two months can be right here, and it is worth saying which and
+// why. The scene compresses the year by Kepler's third law on compressed radii
+// (25 s) and the day by a 0.4 power on real rotation periods; those two laws do
+// not agree with each other, so the ratio between month and year cannot come out
+// real whichever constant goes in. Phases are what a viewer actually reads off a
+// moon, so the phase cycle is the one made honest: 29.5 real Earth days become
+// 3.9 apparent ones. Against the stars the Moon then comes round every 1.7
+// apparent days, which is not the real 27.3-to-29.5 relationship and cannot be.
+const _moonRate = 0.012 * Math.pow(1 / 29.53, 0.4);
+
+// Exported for tests only — nothing in the app imports it. The table above is
+// the one factual claim this product makes about anything outside itself, and a
+// later edit can break its ordering, push a planet into the sun, or mirror every
+// orbit without anything on screen looking obviously wrong.
+// tests/solar-system.test.js pins the invariants that the compression is
+// supposed to preserve, and drives the four functions above to pin the
+// conventions the compression is not allowed to touch.
+export const SOLAR_MODEL = {
+  SOLAR, PLANETS, MOON, RINGS,
+  au2u: _au2u, re2u: _re2u, orbitR: _orbitR,
+  planeEuler: _planeEuler, theta0: _theta0, spinRate: _spinRate, moonRate: _moonRate,
+  ringProfile: _ringProfile,
+};
+
+// ── Solar-system scene pieces ─────────────────────────────────────────────────
+
+// Limb glow: a slightly oversized shell with a Fresnel falloff, added over the
+// planet.
+//
+// The obvious build — BackSide, so only the annulus outside the disc survives
+// the depth test — is wrong, and looked it: the Fresnel term peaks at the
+// SHELL's silhouette, which draws a hard bright outline around the planet
+// instead of a glow. FrontSide puts the same falloff over the disc, brightest
+// at the limb and fading inward, which is what an atmosphere actually does to
+// a planet seen from outside.
+function _atmosphere(radius, seg, atmo) {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor:    { value: new THREE.Color(atmo.color) },
+      uPower:    { value: atmo.power },
+      uStrength: { value: atmo.strength },
+    },
+    vertexShader: `
+      varying vec3 vN; varying vec3 vP;
+      void main() {
+        vN = normalize(normalMatrix * normal);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vP = mv.xyz;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor; uniform float uPower; uniform float uStrength;
+      varying vec3 vN; varying vec3 vP;
+      void main() {
+        float f = pow(clamp(1.0 - abs(dot(normalize(vN), normalize(-vP))), 0.0, 1.0), uPower);
+        gl_FragColor = vec4(uColor, f * uStrength);
+      }`,
+    transparent: true, blending: THREE.AdditiveBlending,
+    side: THREE.FrontSide, depthWrite: false,
+  });
+  return new THREE.Mesh(new THREE.SphereGeometry(radius * atmo.scale, seg[0], seg[1]), mat);
+}
+
+// Flat annulus in the planet's equatorial plane. RingGeometry's own UVs are a
+// planar projection, useless for a radial band profile, so they are rewritten
+// to "u = fraction of the way from the inner edge to the outer".
+//
+// Lit as a Lambert surface a ring would go black at equinox, when the sun sits
+// in its plane — real ring particles keep scattering, so a slice of the map is
+// fed back in as emission to hold a floor under the diffuse term.
+function _ringMesh(key, r, bands, seg) {
+  // Half a ramp of margin at each end: _ringProfile centres its edge ramps ON
+  // the band edges, so an annulus that stopped exactly at the outermost edge
+  // would cut the outer fade off square — the one hard edge the profile is
+  // written to avoid.
+  const pad = 0.02;
+  const inner = bands.reduce((m, b) => Math.min(m, b[0]), Infinity) - pad;
+  const outer = bands.reduce((m, b) => Math.max(m, b[1]), 0) + pad;
+  const geo = new THREE.RingGeometry(r * inner, r * outer, seg, 1);
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) {
+    const rr = Math.hypot(pos.getX(i), pos.getY(i));
+    uv.setXY(i, _clamp01((rr - r * inner) / (r * (outer - inner))), 0.5);
+  }
+  uv.needsUpdate = true;
+  const tex = _makeRingTexture(key, inner, outer, bands);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.45,
+    roughness: 1, metalness: 0, side: THREE.DoubleSide,
+    transparent: true, depthWrite: false,
+  }));
+  mesh.rotation.x = -Math.PI / 2;   // RingGeometry lies in XY; the equator is XZ
+  mesh.renderOrder = 2;
+  return mesh;
+}
+
+// A faint line on each orbit. Space has no such lines, but eight of these are
+// what turn "some spheres" into "a system" the moment the camera pulls back.
+function _orbitLine(a, e, periAngle) {
+  const N = 192, pts = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const th = (i / N) * Math.PI * 2;
+    const rr = _orbitR(a, e, th - periAngle);
+    pts[i * 3] = Math.cos(th) * rr; pts[i * 3 + 1] = 0; pts[i * 3 + 2] = -Math.sin(th) * rr;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+  return new THREE.LineLoop(geo, new THREE.LineBasicMaterial({
+    color: 0x6f8fc0, transparent: true, opacity: 0.13, depthWrite: false,
+  }));
+}
+
+// The main asteroid belt, 2.06–3.28 AU. Sampled with the Kirkwood gaps cut
+// out — the four resonances with Jupiter that really are swept clear — and
+// with a vertical spread from the inclination distribution, halved, because at
+// its true thickness the belt reads as fog rather than as a belt.
+function _asteroidBelt(count) {
+  const rnd = _lcg(_hashSeed('main-belt'));
+  const GAPS = [[2.065, 0.022], [2.502, 0.030], [2.825, 0.018], [2.958, 0.020]];
+  const pos = new Float32Array(count * 3), col = new Float32Array(count * 3);
+  const c = new THREE.Color();
+  for (let i = 0; i < count; i++) {
+    let au;
+    do {
+      // Density peaks in the middle of the belt, so two draws instead of one.
+      au = 2.06 + (rnd() * 0.55 + rnd() * 0.67) * 1.0;
+    } while (GAPS.some(([g, w]) => Math.abs(au - g) < w * (0.4 + rnd() * 0.6)));
+    const r  = _au2u(au) * (1 + (rnd() - 0.5) * 0.03);
+    const th = rnd() * Math.PI * 2;
+    const inc = Math.tan((rnd() * rnd() * 14 + 0.4) * Math.PI / 180) * 0.5;
+    pos[i * 3]     = Math.cos(th) * r;
+    pos[i * 3 + 1] = (rnd() - 0.5) * 2 * inc * r;
+    pos[i * 3 + 2] = -Math.sin(th) * r;
+    // C-type (dark, carbonaceous) dominate the outer belt, S-type the inner.
+    const stony = rnd() < _smooth(3.1, 2.1, au);
+    c.setHex(stony ? 0xb9a184 : 0x6b6560).multiplyScalar(0.65 + rnd() * 0.5);
+    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+  return new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 0.035, sizeAttenuation: true, vertexColors: true,
+    transparent: true, opacity: 0.9, depthWrite: false,
+  }));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -533,9 +1185,15 @@ export class RenderEngine {
     this.renderer.domElement.addEventListener('webglcontextrestored', () => { /* re-init handled by Three.js */ });
 
     // ── Lights ────────────────────────────────────────────────────────────────
-    this.scene.add(new THREE.AmbientLight(0x1a1035, 0.8));
-    const ml = new THREE.DirectionalLight(0xffcc88, 1.2); ml.position.set(3,5,2); this.scene.add(ml);
-    const bl = new THREE.DirectionalLight(0x6688ff, 0.5); bl.position.set(-2,1,-3); this.scene.add(bl);
+    // Kept as fields because the solar system borrows the rig: a studio key
+    // light from the upper right is exactly wrong for a scene whose light
+    // source is the object in the middle, so _solarLighting() re-points it and
+    // puts it back on the way out. Nothing else in the scene is affected —
+    // every other material here is a ShaderMaterial, Points or Line, and none
+    // of those read scene lights at all.
+    this.ambient  = new THREE.AmbientLight(0x1a1035, 0.8); this.scene.add(this.ambient);
+    this.keyLight = new THREE.DirectionalLight(0xffcc88, 1.2); this.keyLight.position.set(3,5,2); this.scene.add(this.keyLight);
+    this.rimLight = new THREE.DirectionalLight(0x6688ff, 0.5); this.rimLight.position.set(-2,1,-3); this.scene.add(this.rimLight);
     this.fillLight  = new THREE.PointLight(0xff8844, 0.5); this.fillLight.position.set(0,-1.5,0); this.scene.add(this.fillLight);
     this.magicLight = new THREE.PointLight(0xaa66ff, 0.6); this.magicLight.position.set(1.5,2,2); this.scene.add(this.magicLight);
     this.beatLight  = new THREE.PointLight(0xff3a7a, 0, 5); this.beatLight.position.set(0,2,0); this.scene.add(this.beatLight);
@@ -612,6 +1270,15 @@ export class RenderEngine {
     // Initialize as 'plane' first so setShape() has valid prior state, then swap.
     this.currentShape    = 'plane';
     this.solarPlanets    = [];
+    this.solarGroup      = null;
+    this.solarBelt       = null;
+    this.solarBeltRate   = 0;
+    this.sunLight        = null;
+    // Must exist before the first setShape(): it calls clearSolarSystem()
+    // unconditionally, and _solarLighting(false) has to know there is nothing
+    // to restore yet.
+    this._solarLit       = false;
+    this._lightSave      = null;
     this.isShapeChanging = false;
     this.pendingShape    = null;
 
@@ -1376,48 +2043,210 @@ export class RenderEngine {
   }
 
   // ── Solar system ─────────────────────────────────────────────────────────────
+  /**
+   * Builds all eight planets, their rings, moons and the main asteroid belt
+   * from the PLANETS table, and re-aims the light rig at the middle of the
+   * scene. Everything lands in one group so teardown is one removal and one
+   * traversal.
+   *
+   * Node chain per planet, and every link earns its place:
+   *
+   *   plane   orbital plane — node longitude, then inclination (fixed)
+   *    └ pivot    the orbit itself — this is what advances each frame
+   *       └ holder    sits at r(ν), which changes: the orbits are ellipses
+   *          ├ tilt      counter-rotates the orbit away, then applies obliquity,
+   *          │  │        so the axis stays pointing at one place in the sky
+   *          │  ├ mesh      the planet, spinning on that tilted axis
+   *          │  ├ clouds    Earth only, turning slightly faster than the ground
+   *          │  ├ atmo      limb glow
+   *          │  └ ring      equatorial, therefore under `tilt` and not under `mesh`
+   *          └ moonPivot  orbits the planet, not the tilted planet
+   */
   _buildSolarSystem() {
-    const planets = [
-      { r:.28, dist:2.0, speed:1.8, color:0x888888, craters:true  },
-      { r:.45, dist:3.0, speed:1.2, color:0xddaa66, craters:false },
-      { r:.50, dist:4.2, speed:0.9, color:0x3399ff, craters:false },
-      { r:.30, dist:5.5, speed:0.7, color:0xff4422, craters:true  },
-      { r:.90, dist:7.2, speed:0.4, color:0xffcc88, craters:false },
-      { r:.72, dist:9.0, speed:0.3, color:0xaaddcc, craters:false, rings:true },
-    ];
-    planets.forEach(pd => {
-      const pivot = new THREE.Object3D(); this.scene.add(pivot);
-      const pg  = new THREE.SphereGeometry(pd.r, 32, 32);
-      // FIX(#27): roughness/metalness seeded from the same key as the texture,
-      // so a rebuilt planet keeps its finish. The material stays per-instance —
-      // clearSolarSystem() disposes it; only the numbers are pinned.
-      const prnd = _lcg(_planetSeed(_planetKey(pd.color, pd.craters)));
-      const pm  = new THREE.MeshStandardMaterial({ map: _makePlanetTexture(pd.color, pd.craters),
-        roughness: .65+prnd()*.2, metalness: .05+prnd()*.1 });
-      const mesh = new THREE.Mesh(pg, pm);
-      mesh.position.set(pd.dist, 0, 0); pivot.add(mesh);
-      if (pd.rings) {
-        const rg  = new THREE.TorusGeometry(pd.r*1.85, pd.r*.28, 3, 64);
-        const rm  = new THREE.MeshStandardMaterial({ color:0xc8b080, roughness:.9, metalness:.05, side:THREE.DoubleSide, transparent:true, opacity:.75 });
-        const ring = new THREE.Mesh(rg, rm);
-        ring.rotation.x = Math.PI*.42; mesh.add(ring);
+    const lod  = this.isMobile ? 0.5 : 1;
+    const segA = this.isMobile ? [32, 20] : [56, 36];   // planets
+    const segB = this.isMobile ? [16, 12] : [28, 18];   // moons, atmospheres
+    const ringSeg = this.isMobile ? 96 : 192;
+
+    const group = this.solarGroup = new THREE.Group();
+    group.name = 'solarSystem';
+    this.scene.add(group);
+
+    const dEarth = _au2u(1);
+    for (const p of PLANETS) {
+      const a = _au2u(p.au), r = _re2u(p.re);
+      const peri = _rad(p.peri - p.node);
+
+      const plane = new THREE.Object3D();
+      plane.rotation.copy(_planeEuler(p));
+      group.add(plane);
+      plane.add(_orbitLine(a, p.ecc, peri));
+
+      const pivot = new THREE.Object3D(); plane.add(pivot);
+      const holder = new THREE.Object3D(); pivot.add(holder);
+      const tilt = new THREE.Object3D();
+      tilt.rotation.order = 'YXZ';
+      tilt.rotation.z = _rad(p.tilt);
+      holder.add(tilt);
+
+      // FIX(#27): the material's own numbers are seeded from the planet's name,
+      // the same key its texture is cached under, so a rebuilt planet keeps its
+      // finish. The material stays per-instance — clearSolarSystem() disposes
+      // it; only the numbers are pinned.
+      const prnd = _lcg(_hashSeed(p.name + '_mat'));
+      const tex  = _makeSurface(p, lod);
+      const mat  = new THREE.MeshStandardMaterial({
+        map: tex,
+        roughness: (p.paint === 'giant' ? 0.92 : 0.96) - prnd() * 0.06,
+        metalness: 0.0,
+      });
+      // A rocky world's own albedo map doubles as its relief: craters get real
+      // depth for the price of a uniform, since the texture is already bound.
+      if (p.paint === 'rock') { mat.bumpMap = tex; mat.bumpScale = 0.45 * lod; }
+      // Earth's green channel is high over land and low over ocean, which is
+      // exactly the roughness split water and rock want — so the sea catches a
+      // highlight and the continents do not.
+      // Earth had its albedo map wired in as a roughness map too — the green
+      // channel does split land from sea the right way round, but a point-source
+      // sun through it puts a blown white highlight in the middle of a continent.
+      // A flat, slightly damp finish reads better than a specular that is right
+      // in principle and wrong on screen.
+      if (p.ocean) mat.roughness = 0.82;
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, segA[0], segA[1]), mat);
+      tilt.add(mesh);
+
+      let clouds = null;
+      if (p.clouds) {
+        clouds = new THREE.Mesh(new THREE.SphereGeometry(r * 1.015, segA[0], segA[1]),
+          new THREE.MeshStandardMaterial({ map: _makeClouds(p.name, lod), transparent: true, roughness: 1, metalness: 0, depthWrite: false }));
+        tilt.add(clouds);
       }
-      this.solarPlanets.push({ pivot, mesh, speed: pd.speed });
-    });
+      if (p.atmo) tilt.add(_atmosphere(r, segB, p.atmo));
+      if (p.rings) tilt.add(_ringMesh(`ring_${p.name}`, r, RINGS[p.rings], ringSeg));
+
+      let moonPivot = null;
+      if (p.moon) {
+        moonPivot = new THREE.Object3D();
+        // The Moon's orbit is inclined ~5° to the ecliptic, not to Earth's
+        // equator — so it hangs off `holder`, above the obliquity node.
+        moonPivot.rotation.x = _rad(5.14);
+        holder.add(moonPivot);
+        const mr = r * 0.273;
+        const mm = new THREE.Mesh(new THREE.SphereGeometry(mr, segB[0], segB[1]),
+          new THREE.MeshStandardMaterial({ map: _makeSurface(MOON, lod), roughness: 0.96, metalness: 0 }));
+        // 60 Earth radii is the true distance and is unusable here — it would
+        // put the Moon a third of the way to Venus. Pulled in to 3.4 radii,
+        // the one number in this file that is chosen by eye.
+        mm.position.x = r * 3.4;
+        moonPivot.add(mm);
+      }
+
+      this.solarPlanets.push({
+        pivot, holder, tilt, mesh, clouds, moon: moonPivot,
+        a, ecc: p.ecc, peri,
+        theta: _theta0(p),
+        // Kepler III on the compressed radii, and the √(1−e²) that makes the
+        // per-frame 1/r² sweep average out to exactly this rate.
+        n: SOLAR.speed * Math.pow(dEarth / a, 1.5) * Math.sqrt(1 - p.ecc * p.ecc),
+        spin: _spinRate(p),
+        moonRate: _moonRate,
+      });
+    }
+
+    this.solarBelt = _asteroidBelt(this.isMobile ? 700 : 1600);
+    this.solarBeltRate = SOLAR.speed * Math.pow(dEarth / _au2u(2.7), 1.5);
+    group.add(this.solarBelt);
+
+    this._solarLighting(true);
+  }
+
+  /**
+   * Swaps the studio rig for a star at the origin, and back. Not for a star
+   * ALONE: ambient goes up to 2.2 and a cold rim stays at 0.35, because a single
+   * point source leaves night sides at pure black, where a planet stops reading
+   * as a sphere and becomes a lit crescent on nothing.
+   *
+   * Two numbers here are set from arithmetic, not taste.
+   *
+   * Decay is 0.75, not the physical 2. At inverse-square, an exposure that
+   * suits Earth leaves Neptune at 1.4 % of it — true, and unwatchable. At
+   * d^-0.75 the sun still visibly falls off (Mercury lands 3.9× Neptune) with
+   * the outer half of the system still lit. It is the same order of compression
+   * already applied to distance and radius, applied to light.
+   *
+   * Intensity is then the largest value that clips nothing. Peak diffuse for a
+   * surface facing the sun is (I / d^0.75)·albedo/π — three's punctual lights
+   * carry no 4π, and Lambert divides by π — so the binding case is Earth's cloud
+   * tops, whose near-white albedo hits 1.0 first: 6.4 puts them at 0.86, with
+   * Neptune's brightest channel near 0.2. Ambient and the rim add on top of
+   * that, which takes Earth's blue channel to ~1.0 — at the edge, not over it,
+   * and the reason 6.4 is not 7. The first draft used 22, which blew Mars,
+   * Saturn and Venus to flat white; the planets looked untextured, and the
+   * textures were fine.
+   */
+  _solarLighting(on) {
+    if (on === this._solarLit) return;
+    this._solarLit = on;
+    if (on) {
+      this._lightSave = { amb: this.ambient.intensity, key: this.keyLight.intensity, rim: this.rimLight.intensity };
+      this.ambient.intensity  = 2.2;
+      this.keyLight.intensity = 0;      // the sun is the key light now
+      this.rimLight.intensity = 0.35;   // cold fill, so night sides read as round
+      // updateLights() writes the intensity of these THREE every frame, so they
+      // have to be switched off by visibility or they come straight back. Two of
+      // them are studio fills; the third is beatLight, a magenta point 2 units
+      // above the sun with a 5-unit cutoff, which reached Mercury through Mars
+      // and left the inner four throbbing pink on every onset while the outer
+      // four did not. The bass still drives this scene — it drives the orbits.
+      this.fillLight.visible  = false;
+      this.magicLight.visible = false;
+      this.beatLight.visible  = false;
+      this.sunLight = new THREE.PointLight(0xfff1dd, 6.4, 0, 0.75);
+      this.scene.add(this.sunLight);
+    } else {
+      this.ambient.intensity  = this._lightSave.amb;
+      this.keyLight.intensity = this._lightSave.key;
+      this.rimLight.intensity = this._lightSave.rim;
+      this.fillLight.visible  = true;
+      this.magicLight.visible = true;
+      this.beatLight.visible  = true;
+      if (this.sunLight) { this.scene.remove(this.sunLight); this.sunLight.dispose(); this.sunLight = null; }
+    }
   }
 
   clearSolarSystem() {
-    this.solarPlanets.forEach(p => {
-      p.mesh.children.forEach(c => { c.geometry?.dispose(); c.material?.dispose(); });
-      this.scene.remove(p.pivot);
-      p.mesh.geometry.dispose(); p.mesh.material.dispose();
-    });
+    if (this.solarGroup) {
+      this.solarGroup.traverse(o => {
+        // Textures are deliberately NOT disposed: they live in the module-level
+        // cache so the next entry into 'solar' rebuilds the same worlds without
+        // repainting them. Material.dispose() frees the program, not the maps.
+        o.geometry?.dispose();
+        o.material?.dispose();
+      });
+      this.scene.remove(this.solarGroup);
+      this.solarGroup = null;
+    }
+    this.solarBelt = null;
     this.solarPlanets = [];
+    this._solarLighting(false);
   }
 
   updateSolarSystem(bass) {
-    if (this.currentShape !== 'solar') return;
-    this.solarPlanets.forEach(p => { p.pivot.rotation.y += .005 * p.speed * (1 + bass * 1.5); });
+    if (this.currentShape !== 'solar' || !this.solarGroup) return;
+    const k = 1 + bass * 1.5;
+    for (const p of this.solarPlanets) {
+      const r = _orbitR(p.a, p.ecc, p.theta - p.peri);
+      // Kepler's second law: equal areas in equal times, so the angular rate
+      // goes as 1/r². Mercury gains half again its mean rate at perihelion.
+      p.theta += p.n * (p.a / r) * (p.a / r) * k;
+      p.pivot.rotation.y  = p.theta;
+      p.holder.position.x = r;
+      p.tilt.rotation.y   = -p.theta;   // hold the axis still in world space
+      p.mesh.rotation.y  += p.spin * k;
+      if (p.clouds) p.clouds.rotation.y += p.spin * 1.09 * k;
+      if (p.moon)   p.moon.rotation.y   += p.moonRate * k;
+    }
+    if (this.solarBelt) this.solarBelt.rotation.y += this.solarBeltRate * k;
   }
 
   // ── Misc ──────────────────────────────────────────────────────────────────────
