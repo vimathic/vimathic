@@ -48,7 +48,16 @@ import { registerHooks } from 'node:module';
 registerHooks({
   resolve(specifier, context, next) {
     if (specifier === 'virtual:vimathic-docs') {
-      return { url: 'data:text/javascript,export default []', shortCircuit: true };
+      // One standalone doc and one inside a group: the grouped item is the
+      // case that goes into document.body rather than the tab strip.
+      const DOCS = JSON.stringify([
+        { slug: 'quick-start', title: 'Quick Start', group: null,         html: '<p>a</p>' },
+        { slug: 'recording',   title: 'Recording',   group: 'production', html: '<p>b</p>' },
+      ]);
+      return {
+        url: 'data:text/javascript,export default ' + encodeURIComponent(DOCS),
+        shortCircuit: true,
+      };
     }
     if (specifier === 'virtual:vimathic-build-info') {
       return {
@@ -95,7 +104,34 @@ function makeEl(id = '') {
     requestFullscreen: () => Promise.resolve(),
   };
 }
-function newEl(id) { const el = makeEl(id); el.classList._o = el; return el; }
+function newEl(id) {
+  const el = makeEl(id);
+  el.classList._o = el;
+  // about-modal.js builds its tabs with `el.className = '...'`, and the tests
+  // below find them by class — so the two have to be the same set.
+  Object.defineProperty(el, 'className', {
+    get: () => [...el._classes].join(' '),
+    set: v => { el._classes.clear(); String(v).split(/\s+/).filter(Boolean).forEach(c => el._classes.add(c)); },
+  });
+  created.push(el);
+  return el;
+}
+
+// Everything the app has built, so a document-wide query can answer. A real
+// document would only return attached nodes; nothing here detaches, and the
+// alternative is a DOM implementation.
+const created = [];
+
+/** Matches '.cls' and '.cls[data-x="y"]' — all these tests need. */
+function matches(el, sel) {
+  const m = sel.match(/^\.([\w-]+)(?:\[data-([\w-]+)="([^"]*)"\])?$/);
+  if (!m) return false;
+  const [, cls, attr, val] = m;
+  if (!el._classes.has(cls)) return false;
+  if (!attr) return true;
+  const key = attr.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  return String(el.dataset?.[key]) === val;
+}
 
 const els     = new Map();
 const selEls  = new Map();
@@ -115,8 +151,8 @@ globalThis.document = {
   documentElement: newEl('html'),
   getElementById: byId,
   createElement: () => newEl(),
-  querySelectorAll: () => [],
-  querySelector:    bySel,
+  querySelectorAll: sel => created.filter(el => matches(el, sel)),
+  querySelector:    sel => (sel.startsWith('.about-') ? created.find(el => matches(el, sel)) ?? null : bySel(sel)),
   addEventListener(type, fn) {
     if (!docLtnr.has(type)) docLtnr.set(type, []);
     docLtnr.get(type).push(fn);
@@ -619,5 +655,42 @@ describe('SAVE PRESET says so when the write is refused', () => {
     fire('btn-preset-save', 'click');
 
     assert.equal(called, 0);
+  });
+});
+
+// Two owners of one piece of state: this module kept a boolean and the inline
+// script in index.html toggled the class directly, on the same element and the
+// same header. A mobile swipe writes the class without the boolean knowing, so
+// the next header tap toggled the boolean to a value the class already had —
+// and the panel either stayed collapsed or collapsed again. The class is the
+// only state that can be observed by CSS, so the class is the state.
+describe('the panel has one owner of "collapsed"', () => {
+
+  test('a header click after a swipe still expands it', () => {
+    const panel = document.querySelector('.controls-panel');
+    panel.classList.add('collapsed');            // what the swipe leaves behind
+
+    fire('ctrl-header', 'click');
+
+    assert.equal(panel.classList.contains('collapsed'), false,
+      'the module boolean started at false, so the click set it to true — matching ' +
+      'the class the swipe had already written, and nothing moved');
+  });
+
+  test('control — clicking twice from expanded still collapses and expands', () => {
+    const panel = document.querySelector('.controls-panel');
+    assert.equal(panel.classList.contains('collapsed'), false, 'precondition');
+
+    fire('ctrl-header', 'click');
+    assert.equal(panel.classList.contains('collapsed'), true);
+    fire('ctrl-header', 'click');
+    assert.equal(panel.classList.contains('collapsed'), false);
+  });
+
+  test('control — the floating expand button follows the state', () => {
+    fire('ctrl-header', 'click');
+    assert.equal(byId('ctrl-collapse').style.display, 'none', 'hidden while collapsed');
+    fire('ctrl-header', 'click');
+    assert.equal(byId('ctrl-collapse').style.display, '');
   });
 });

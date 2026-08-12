@@ -8,7 +8,7 @@
 
 import { DOM } from '../dom.js';
 import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT, DRAG_FLOOR } from '../params.js';
-import { bindAboutModal, ABOUT_OVERLAY_ID } from './about-modal.js';
+import { bindAboutModal, closeAbout } from './about-modal.js';
 import { AutoCycler } from './auto-cycle.js';
 
 export function bindControls(ui) {
@@ -701,12 +701,17 @@ export function bindControls(ui) {
   const panel       = document.querySelector('.controls-panel');
   const collapseBtn = document.getElementById('ctrl-collapse');
 
-  let ctrlCollapsed = false;
-
+  // FIX: the class is the state. This kept a module-local boolean while the
+  // inline script in index.html toggled the class directly — two owners of one
+  // fact, on the same element and the same header. A mobile swipe writes the
+  // class without the boolean knowing, so the next header tap set the boolean
+  // to a value the class already had and the panel did not move. The duplicate
+  // listener in index.html went with this change; the swipe handlers there stay,
+  // because they already write the same class.
   DOM.ctrlHeader.addEventListener('click', () => {
-    ctrlCollapsed = !ctrlCollapsed;
-    panel.classList.toggle('collapsed', ctrlCollapsed);
-    collapseBtn.style.display = ctrlCollapsed ? 'none' : '';
+    const collapsed = panel.classList.toggle('collapsed');
+    collapseBtn.style.display = collapsed ? 'none' : '';
+    if (collapseBtn) collapseBtn.textContent = collapsed ? '▲' : '▼';
   });
 
   // ── Enhanced fullscreen mode ──────────────────────────────────────────────
@@ -979,9 +984,11 @@ export function bindControls(ui) {
   // ── Close any open modal on Escape ────────────────────────────────────────
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
-    ['shader-editor-overlay','cam-editor-overlay','audio-src-overlay','output-overlay', ABOUT_OVERLAY_ID].forEach(id => {
+    ['shader-editor-overlay','cam-editor-overlay','audio-src-overlay','output-overlay'].forEach(id => {
       document.getElementById(id)?.classList.remove('open');
     });
+    // About has more to put away than the .open class — see closeAbout.
+    closeAbout();
     // FIX: and out of fullscreen mode. The button that says "✕ EXIT
     // FULLSCREEN" is inside the panel fullscreen hides, so it can neither be
     // seen nor clicked — leaving the browser's own Escape as the only way back,

@@ -96,6 +96,21 @@ function close(overlay) {
   }
 }
 
+/**
+ * Close the About modal the way its own × button does.
+ *
+ * FIX: the Escape handler in controls.js stripped `.open` off the overlay by id
+ * and never came through here, so a group dropdown — which lives in
+ * document.body at z-index 2147483647, precisely so it can escape the modal's
+ * clipping — stayed on screen over the visualisation with nothing left to
+ * dismiss it. One close path for both ways out, which is what the comment above
+ * already claims.
+ */
+export function closeAbout() {
+  const overlay = document.getElementById(ABOUT_OVERLAY_ID);
+  if (overlay) close(overlay);
+}
+
 // ── Tab rendering with optional grouping ────────────────────────────────
 // Docs without a `group` field render as standalone top-level tabs.
 // Docs sharing a `group` field collapse into a dropdown menu.
@@ -277,10 +292,18 @@ function showDoc(slug, tabsEl, contentEl) {
 
   // Highlight active tab — works for both standalone tabs and group items.
   // Also highlight the group trigger if active doc is inside a group.
-  for (const t of tabsEl.querySelectorAll('.about-tab')) {
+  //
+  // FIX: searched from the document, not from tabsEl. A group's items are
+  // appended to document.body (so the menu can overflow the modal), so scoping
+  // the query to the tab strip meant it could match none of them — the comment
+  // right above was false in both directions: an item never lit up, and one
+  // that somehow had the class would never be un-lit either. Both class names
+  // belong to this modal alone, and a doc is either standalone or a group item,
+  // so there is nothing else for them to match.
+  for (const t of document.querySelectorAll('.about-tab')) {
     t.classList.remove('active');
   }
-  const activeTab = tabsEl.querySelector(`.about-tab[data-slug="${slug}"]`);
+  const activeTab = document.querySelector(`.about-tab[data-slug="${slug}"]`);
   if (activeTab) activeTab.classList.add('active');
   if (doc.group) {
     const trigger = tabsEl.querySelector(`.about-tab-group-trigger[data-group="${doc.group}"]`);

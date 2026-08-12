@@ -1742,11 +1742,10 @@
   const arrow  = document.getElementById('ctrl-collapse');
   const isMob  = () => window.innerWidth <= 768;
 
-  // ── Desktop: click header to collapse/expand ────────────────────────
-  header.addEventListener('click', () => {
-    const collapsed = panel.classList.toggle('collapsed');
-    if (arrow) arrow.textContent = collapsed ? '▲' : '▼';
-  });
+  // Desktop click-to-collapse lives in controls.js, which owns the floating
+  // expand button beside it. Two listeners on this header — one here keeping
+  // the state in the class, one there keeping it in a boolean — is what let a
+  // swipe desynchronise them.
 
   // ── Mobile: swipe-down on handle to collapse, swipe-up to expand ────
   let startY = 0, startExpanded = true;
