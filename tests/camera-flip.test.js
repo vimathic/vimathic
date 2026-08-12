@@ -79,7 +79,7 @@ describe('W flips the camera around the point it is looking at', () => {
   });
 
   test('two flips return to where the camera started', () => {
-    const { cam, camera, orbit } = makeCam({ x: 2.5, y: 1.25, z: -9 }, { x: 0.5, y: 0, z: 0.5 });
+    const { cam, camera } = makeCam({ x: 2.5, y: 1.25, z: -9 }, { x: 0.5, y: 0, z: 0.5 });
 
     cam.flipAzimuth();
     cam.flipAzimuth();

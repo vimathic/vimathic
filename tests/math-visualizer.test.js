@@ -31,7 +31,7 @@
 // all. Geometry is a real THREE.BufferGeometry — the code under test walks its
 // position attribute, and a hand-rolled stand-in would pin the stand-in.
 
-import { test, describe, before, beforeEach } from 'node:test';
+import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 globalThis.document = {
