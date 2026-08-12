@@ -265,20 +265,59 @@ ${entries}
 `;
 }
 
-function renderRobots(siteUrl) {
+// The AI-crawler policy has two halves, and they are not the same answer:
+//
+//   training  (GPTBot, ClaudeBot, CCBot, Google-Extended, …) — NO
+//   reading   (Claude-User, OAI-SearchBot, PerplexityBot, …) — YES
+//
+// The second half is the whole reason llms.txt exists: a summary written for
+// LLMs is pointless if the agents that would read it are turned away. It also
+// matches the content signal Cloudflare's managed block already publishes on
+// `User-agent: *` — `search=yes, ai-train=no, use=reference`. "use=reference"
+// IS the invitation; these groups just say the same thing to the named agents
+// so it cannot be lost when the managed list grows.
+//
+// Cloudflare auto-prepends that managed block above this file and lists the
+// training crawlers there with `Disallow: /` — we trust that default rather
+// than restate it (https://blog.cloudflare.com/ai-bots-content-controls/).
+//
+// CAVEAT, measured 2026-08-12: robots.txt is the stated policy, the WAF is the
+// enforced one, and they disagree. Every agent below currently gets HTTP 403 at
+// the edge — OAI-SearchBot, PerplexityBot and Claude-User included — because
+// Cloudflare's AI bot blocking does not split training from reading the way
+// this file does. Fixing that is a dashboard toggle (AI Crawl Control → allow
+// user-initiated / search agents), not a code change. Until it is flipped,
+// these groups state the intent; they do not deliver it.
+export const READ_TIME_AI_AGENTS = [
+  'Claude-User',
+  'Claude-SearchBot',
+  'OAI-SearchBot',
+  'ChatGPT-User',
+  'PerplexityBot',
+  'Perplexity-User',
+];
+
+export function renderRobots(siteUrl) {
+  const readTime = READ_TIME_AI_AGENTS
+    .map(ua => `User-agent: ${ua}\nAllow: /`)
+    .join('\n\n');
+
   return `# VIMATHIC — vimathic.com
 #
-# Cloudflare auto-prepends a managed content block above this file
-# that handles AI crawler controls (training bots disallowed,
-# search bots allowed). We trust that default rather than override
-# it — see https://blog.cloudflare.com/ai-bots-content-controls/.
+# Cloudflare auto-prepends a managed content block above this file that
+# disallows the AI *training* crawlers. We trust that default rather than
+# override it — see https://blog.cloudflare.com/ai-bots-content-controls/.
 #
-# This file only contributes:
+# This file contributes:
+#   - an explicit Allow for AI agents that READ on a user's behalf or for
+#     search indexing, as opposed to training (see llms.txt, written for them)
 #   - the default Allow for any unlisted user-agent
 #   - the sitemap pointer for search engines
 #
-# To change AI crawler policy: toggle in the Cloudflare dashboard,
+# To change the AI *training* policy: toggle in the Cloudflare dashboard,
 # not here.
+
+${readTime}
 
 User-agent: *
 Allow: /
@@ -313,7 +352,7 @@ function renderLlmsTxt(siteUrl, docs) {
 
 > VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 44 colour schemes.
 
-VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 in 2031). The entire application is bundled into a single HTML file (~1.1 MB) plus four companion files. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
+VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 four years after each version's release — 2030-05-18 for 1.0.0-beta). The entire application is bundled into a single HTML file (~1.1 MB) plus four companion files. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
 
 The math accuracy is documented per-formula with tier classification: 122 formulas at IEEE 754 double precision (~10⁻¹⁴), 42 with bounded numerical approximations (10⁻³ to 10⁻⁷), and 28 at visualisation-grade. Reference values cross-checked against mpmath, scipy.special, and NIST DLMF.
 

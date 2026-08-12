@@ -65,7 +65,7 @@ This documentation covers every part of VIMATHIC in detail. Pick the topic that 
 
 ## Technical details
 
-VIMATHIC is built with Three.js for WebGL rendering, the Web Audio API for spectral analysis and beat detection, and the Web MIDI API for controller integration. The source code is on [GitHub](https://github.com/vimathic/vimathic) under Business Source License 1.1, automatically converting to GPL v3 on 2031-05-09. After conversion, VIMATHIC and any derivative work that gets distributed must remain open-source under GPL v3. Accredited educational institutions can use VIMATHIC immediately under either Apache 2.0 or GPL v3 terms — recipient's choice, free of charge.
+VIMATHIC is built with Three.js for WebGL rendering, the Web Audio API for spectral analysis and beat detection, and the Web MIDI API for controller integration. The source code is on [GitHub](https://github.com/vimathic/vimathic) under Business Source License 1.1, automatically converting to GPL v3 four years after each version's release — 2030-05-18 for the current 1.0.0-beta. After conversion, VIMATHIC and any derivative work that gets distributed must remain open-source under GPL v3. Accredited educational institutions can use VIMATHIC immediately under either Apache 2.0 or GPL v3 terms — recipient's choice, free of charge.
 
 ## Browser support
 

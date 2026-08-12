@@ -87,8 +87,29 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   BUSL-1.1 across README, CONTRIBUTING, MATHEMATICAL_ACCURACY, and the docs
   site. (#26)
 - Hotkeys documentation now covers the `T` surface-material cycle. (#24)
+- **robots.txt now says which half of "AI crawler" it means.** The site
+  publishes llms.txt — a summary addressed to language models — while sitting
+  behind Cloudflare's managed block, which disallows the AI crawlers; read
+  together the two artefacts contradicted each other. They do not, because the
+  managed block turns away crawlers that collect for *training* while llms.txt
+  is written for agents that read a page because a person asked. The generated
+  file now states that split outright: an explicit `Allow` for the read-time
+  agents, the training policy still left to the Cloudflare default it belongs
+  to, and a comment saying which is which. `tests/robots-ai-policy.test.js`
+  holds the two lists apart so an agent can never end up in both.
 
 ### Fixed
+
+- **Every document promised GPL v3 a year later than the license grants it.**
+  LICENSE.txt sets the Change Date as a rule with two halves — four years after
+  a version is published, or 2031-05-09, whichever comes first — and seven
+  documents quoted the second half as the answer. It never binds: 1.0.0-beta
+  was published 2026-05-18, four years later is 2030-05-18, and that comes
+  first. README, CHANGELOG, the license, overview and roadmap pages, the PR
+  template and the llms.txt body now state the rule and the date it produces.
+  LICENSE.txt is unchanged — it was right. `tests/license-date-consistency.test.js`
+  computes the date from the clause rather than repeating it, so the documents
+  cannot drift from the license again in silence.
 
 - **`R` and `F` can land on a GPU shader.** The FORMULA dropdown holds two
   families — 38 GPU shaders (numeric values) and 192 CPU math formulas
@@ -237,8 +258,8 @@ full creative-control toolchain — packaged as a single-file deployment.
 
 ### Licensing
 
-Code: **Business Source License 1.1**, auto-converting to **GPL v3** on
-2031-05-09. Educational exception: accredited educational institutions
+Code: **Business Source License 1.1**, auto-converting to **GPL v3** four
+years after this release — 2030-05-18. Educational exception: accredited educational institutions
 may use VIMATHIC immediately under either Apache 2.0 or GPL v3 (recipient's
 choice).
 

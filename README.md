@@ -249,7 +249,7 @@ Where the author's role was strongest: deciding what the instrument should *be*,
 
 ## Support
 
-VIMATHIC 1.0 is free, ad-free, telemetry-free, and source-available — and becomes fully open-source (GPL v3) in 2031.
+VIMATHIC 1.0 is free, ad-free, telemetry-free, and source-available — and becomes fully open-source (GPL v3) in 2030.
 For the roadmap of what comes next and ways to support development,
 see the [Roadmap](./documents/roadmap.md).
 
@@ -268,7 +268,7 @@ The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, the plann
 - [SCIENCE.md](./SCIENCE.md) — research behind the neuroscience and why it works
 - [DISCLAIMER.md](./DISCLAIMER.md) — photosensitivity warning, AI-assisted authorship, hardware notes
 - [SECURITY.md](./SECURITY.md) — vulnerability disclosure policy
-- [LICENSE.txt](./LICENSE.txt) — BUSL-1.1 → GPL v3 (2031-05-09); educational exception (Apache 2.0 or GPL v3 at recipient's option)
+- [LICENSE.txt](./LICENSE.txt) — BUSL-1.1 → GPL v3 four years after each version's release (2030-05-18 for 1.0.0-beta); educational exception (Apache 2.0 or GPL v3 at recipient's option)
 
 ---
 
@@ -280,7 +280,8 @@ The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, the plann
 organizations may use VIMATHIC immediately under either **Apache 2.0** or **GPL v3** terms
 — recipient's choice, free of charge.
 
-**After 2031-05-09:** the codebase converts to **GPL v3** — a copyleft open-source license.
+**After the Change Date** — four years after a version's release, **2030-05-18** for 1.0.0-beta —
+the codebase converts to **GPL v3**, a copyleft open-source license.
 Any derivative work that gets distributed must remain open-source under GPL v3.
 No company can take this code and lock it behind a paywall.
 
