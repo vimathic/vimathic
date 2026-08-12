@@ -53,6 +53,9 @@ function makeRender() {
   return {
     U, gpuMat, gpuMesh, scene,
     gpuPtsProxy: null,
+    // No imported model on the stage — see tests/model-import-stage.test.js for
+    // what changes when there is one. The real constructor sets this too.
+    modelMeshes: [],
     activeVS: VS, activeFS: FS,
     vizMode: 'surface',
     currentParticleStyle: 'squares',

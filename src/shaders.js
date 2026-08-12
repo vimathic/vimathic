@@ -800,8 +800,6 @@ export class ModelLoader {
     onLoading(true, 0, 'LOADING MODEL…');
     this.clear();
     const r = this._render;
-    r.gpuMesh.visible = false;
-    if (r.gpuPtsProxy) r.gpuPtsProxy.visible = false;
     const ext = file.name.split('.').pop().toLowerCase();
     const url = URL.createObjectURL(file);
     try {
@@ -821,19 +819,32 @@ export class ModelLoader {
       this._applyShader(group, vs || VS, fs || FS);
       this._model = group;
       r.scene.add(group);
+      // FIX: the engine takes the stage over, instead of this method reaching
+      // in to hide gpuMesh. Hiding it here was undone by the next viz-mode
+      // change, and left the particle mask up over the model's triangles.
+      r.setExternalModel(this._meshes);
       document.getElementById('model-info').textContent = `✔ ${file.name} — ${this._meshes.length} mesh(es)`;
       document.getElementById('btn-clear-model').style.display = '';
       onLoading(true, 1, 'DONE');
     } catch (e) {
       console.error('Model load error:', e);
       document.getElementById('model-info').textContent = '⚠ ' + e.message;
-      r.gpuMesh.visible = true;
-      if (r.gpuPtsProxy) r.gpuPtsProxy.visible = true;
+      // Nothing took the stage, so give it back — clear() above may have
+      // removed a model that was working perfectly well before this attempt.
+      r.setExternalModel(null);
     }
     URL.revokeObjectURL(url);
     setTimeout(() => onLoading(false), 300);
   }
 
+  /**
+   * Remove the imported model and give the stage back to the engine.
+   *
+   * FIX: the release was missing, so this left an empty scene — the built-in
+   * mesh was hidden by load() and nothing turned it back on. That is also why
+   * wiring up ✕ CLEAR MODEL needed this half first: the button would have
+   * removed the model and shown nothing at all.
+   */
   clear() {
     if (!this._model) return;
     this._render.scene.remove(this._model);
@@ -842,6 +853,7 @@ export class ModelLoader {
       (Array.isArray(m.material) ? m.material : [m.material]).forEach(mt => mt.dispose());
     });
     this._model = null; this._meshes = [];
+    this._render.setExternalModel(null);
   }
 
   _centerAndScale(group) {

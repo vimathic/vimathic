@@ -825,6 +825,18 @@ export function bindControls(ui) {
   const mfi = document.getElementById('model-file');
   mdz.addEventListener('click',  () => mfi.click());
   mfi.addEventListener('change', e => { if (e.target.files[0]) ml.load(e.target.files[0], (v,p,m)=>ui.setLoading(v,p,m), ()=>({ vs:se.customVS, fs:se.customFS })); });
+  // FIX: ✕ CLEAR MODEL was revealed by every import and bound by nobody — an
+  // imported model could not be removed for the rest of the session (clear()
+  // was reached only from beforeunload). Clearing the file input too: without
+  // it, picking the same file again fires no 'change' event, so the one way
+  // back to the model would be dead as well.
+  const bcm = document.getElementById('btn-clear-model');
+  bcm.addEventListener('click', () => {
+    ml.clear();
+    document.getElementById('model-info').textContent = '';
+    mfi.value = '';
+    bcm.style.display = 'none';
+  });
   mdz.addEventListener('dragover',  e => { e.preventDefault(); e.stopPropagation(); mdz.classList.add('drag-over'); });
   mdz.addEventListener('dragleave', () => mdz.classList.remove('drag-over'));
   mdz.addEventListener('drop',      e => { e.preventDefault(); e.stopPropagation(); mdz.classList.remove('drag-over'); if(e.dataTransfer.files[0]) ml.load(e.dataTransfer.files[0], (v,p,m)=>ui.setLoading(v,p,m), ()=>({ vs:se.customVS, fs:se.customFS })); });

@@ -283,14 +283,14 @@ function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
-// Exported for tests/camera-tween-damping.test.js: the cancel path below is
-// half of a fix, and a hand-rolled stand-in would not pin it.
 // The ground grid's resting opacity. Every path that shows the grid sets only
 // `visible`, so the material must be back at this value whenever it is hidden —
 // see fadeGrid(), which is the only thing allowed to move it.
 export const GRID_OPACITY = 0.1;
 const GRID_FADE_MS = 400;
 
+// Exported for tests/camera-tween-damping.test.js: the cancel path below is
+// half of a fix, and a hand-rolled stand-in would not pin it.
 export class TransitionManager {
   constructor() {
     // Map<slot, tween> — at most one active tween per slot
@@ -585,6 +585,12 @@ export class RenderEngine {
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
 
+    // The meshes of an imported model, while one is on the stage. Empty means
+    // the procedural mesh is what draws. ModelLoader hands them over through
+    // setExternalModel() — see it for why the engine has to know, rather than
+    // the loader flipping gpuMesh.visible behind its back.
+    this.modelMeshes = [];
+
     // Which program source is live. The shader editor may replace it, and the
     // points proxy is rebuilt on every entry into POINTS mode — without a
     // single owner the proxy was always constructed from the built-ins, so an
@@ -644,6 +650,12 @@ export class RenderEngine {
     this.U.uCM.value = 16;          // Amber color scheme (matches color-sel default)
     this.setVizModeGPU('wireframe'); // wireframe (matches mode-wireframe.active in HTML)
     if (this.grid) this.grid.visible = false;
+
+    // No frame has been drawn, so no GPU mode has been seen. updateUniforms()
+    // maintains this; setGPUModeAnimated() reads it to know whether it has
+    // anything to fade FROM. The page boots on the CPU formula path
+    // (main.js selects one), so `false` is also the honest starting value.
+    this._gpuModeWasShown = false;
   }
 
   // ── Uniforms ─────────────────────────────────────────────────────────────────
@@ -660,6 +672,12 @@ export class RenderEngine {
     this.U.uWI.value     = audio.waveInt;
     // uCM is NOT updated here during a color crossfade — setColorSchemeAnimated()
     // manages uCM/uCMNext/uCMBlend directly.
+
+    // Who owns the surface in the frame about to be drawn. The vertex shader
+    // applies a GPU mode only under `if (uMathMode == 0)`, so while the CPU
+    // formula path is active no mode is on screen no matter what uMode says —
+    // and a crossfade may only fade from something that was actually seen.
+    this._gpuModeWasShown = this.U.uMathMode.value === 0;
 
     // Advance grain noise time
     if (this.filmGrainVigPass.enabled) {
@@ -750,19 +768,39 @@ export class RenderEngine {
    * On completion uMode is updated and uModeBlend resets to 0 so the shader
    * evaluates only one branch in steady state (no performance penalty).
    *
-   * Interrupt-safe: if called mid-fade, the current blend value is inherited
-   * so the visual stays continuous.
+   * Interrupt-safe: the shader can only mix two modes, so an interrupted fade
+   * has to collapse to one of its ends — it collapses to whichever end is
+   * nearer, which is the most continuity two slots can give.
    *
    * @param {number} mode — integer mode index
    */
   setGPUModeAnimated(mode) {
-    // Inherit current blend position so interrupts look continuous
-    const startBlend = this.U.uModeBlend.value;
-    // Mid-fade: the "from" is now wherever the blend currently sits
-    if (startBlend > 0) {
-      this.U.uMode.value     = this.U.uModeNext.value;
+    // FIX: only fade from a mode that was actually on screen. Leaving the CPU
+    // formula path there is none — uMathMode gated the shader's displacement
+    // off, so uMode still held the boot default or a mode from an earlier GPU
+    // session, and the fade spent its first third drawing that at full
+    // strength. bootPersist restores a saved shader through the same pair of
+    // calls, so every reload opened on mode 0 before arriving where it was
+    // asked to be. With nothing to fade from, the chosen mode is simply on.
+    if (!this._gpuModeWasShown) {
+      this.transitions.cancel('mode');
+      this.U.uMode.value      = mode;
+      this.U.uModeNext.value  = mode;
       this.U.uModeBlend.value = 0.0;
+      return;
     }
+
+    const startBlend = this.U.uModeBlend.value;
+    // FIX: mid-fade, collapse to the NEARER end. Taking uModeNext whenever the
+    // blend was above zero picked the far end for exactly the common case —
+    // interrupting a fade shortly after it began — and cut the frame to a mode
+    // the user had barely glimpsed, only to fade away from it. Now the jump is
+    // at most half a step, and below the halfway point the "from" end simply
+    // stays where the eye already is.
+    if (startBlend > 0.5) {
+      this.U.uMode.value = this.U.uModeNext.value;
+    }
+    this.U.uModeBlend.value = 0.0;
     this.U.uModeNext.value  = mode;
 
     this.transitions.start('mode', this._tDurMode, p => {
@@ -792,10 +830,15 @@ export class RenderEngine {
   setColorSchemeAnimated(cm, opts = {}) {
     const dur = opts.duration ?? this._tDurColor;
     const startBlend = this.U.uCMBlend.value;
-    if (startBlend > 0) {
-      this.U.uCM.value      = this.U.uCMNext.value;
-      this.U.uCMBlend.value = 0.0;
+    // Same near-end rule as setGPUModeAnimated, and it bites hardest here:
+    // AUTO COLOUR scales its fade off the track's period, up to 3 s, so
+    // picking a palette by hand half a second into an automatic drift used to
+    // cut the screen to the palette the cycler had chosen — full strength, one
+    // frame — before fading to the one actually asked for.
+    if (startBlend > 0.5) {
+      this.U.uCM.value = this.U.uCMNext.value;
     }
+    this.U.uCMBlend.value = 0.0;
     this.U.uCMNext.value  = cm;
 
     this.transitions.start('color', dur, p => {
@@ -972,16 +1015,47 @@ export class RenderEngine {
    * proxy's own construction). Every combination of "one writer missed one
    * material" was a visible bug: a custom shader that disappeared in PTS, and
    * a RESET that reported success while the points kept the old program.
+   *
+   * FIX: an imported model is a third family of materials, and it was missed
+   * the same way — with a model up, gpuMat and the proxy are both hidden, so
+   * APPLY and RESET printed "✔ Compiled & applied" while the only thing on
+   * screen kept the program it was built with. Only a re-import picked a
+   * change up.
    */
   applyShaderSource(vs = VS, fs = FS) {
     this.activeVS = vs;
     this.activeFS = fs;
-    for (const m of [this.gpuMat, this.gpuPtsProxy?.material]) {
+    for (const m of [this.gpuMat, this.gpuPtsProxy?.material, ...this.modelMeshes.map(x => x.material)]) {
       if (!m) continue;
       m.vertexShader   = vs;
       m.fragmentShader = fs;
       m.needsUpdate    = true;
     }
+  }
+
+  /**
+   * Hand the stage to an imported model, or take it back.
+   *
+   * FIX: ModelLoader used to write `r.gpuMesh.visible = false` once and hope.
+   * Nothing else in the engine knew a second drawer existed, so every path
+   * that touches the procedural mesh — viz-mode buttons, preset apply, RESET
+   * ALL — undid it, and the shader editor's single owner never reached the
+   * model at all. Making the model an engine-level fact is what closes all of
+   * those at once, rather than teaching each caller about model imports.
+   *
+   * Taking the stage back replays the recorded viz mode, so a mode chosen
+   * while the model was up (the panel accepted the click and highlighted the
+   * button) is what the user gets when the model leaves.
+   *
+   * @param {THREE.Mesh[]|null} meshes — the model's meshes, or null to release
+   */
+  setExternalModel(meshes) {
+    this.modelMeshes = meshes ?? [];
+    // Re-running the current mode is the whole implementation: it hides or
+    // shows the procedural mesh, drops or rebuilds the points proxy, and puts
+    // the particle mask where it belongs — all in one place that already knows
+    // the rules.
+    this.setVizModeGPU(this.vizMode);
   }
 
   // ── Viz modes ────────────────────────────────────────────────────────────────
@@ -999,7 +1073,7 @@ export class RenderEngine {
       this.gpuPtsProxy.material?.dispose();
       this.gpuPtsProxy = null;
     }
-    this.gpuMesh.visible  = true;
+    this.gpuMesh.visible  = this.modelMeshes.length === 0;
     this.gpuMat.wireframe = false;
     this.U.uPointSize.value = 1.0;
     if (mode !== 'points') {
@@ -1014,6 +1088,22 @@ export class RenderEngine {
     // surface area for derivatives to sample; points are single-pixel quads
     // where dFdx/dFdy of vWorldPos is degenerate. Turn lighting off for both.
     this.U.uLighting.value = (mode === 'surface') ? 1 : 0;
+
+    // FIX: while an imported model is on the stage, the mode is recorded and
+    // nothing else happens — the procedural mesh stays hidden and no points
+    // proxy is built. Before this, every mode button (and every preset apply,
+    // and RESET ALL) popped the built-in pyramid back inside the model, with
+    // nothing in the UI able to hide it again. PTS was worse than that: the
+    // proxy raises uPtStyle, the model's meshes share this very uniform block,
+    // and gl_PointCoord is undefined for triangles — the mask then discards
+    // the model entirely. setExternalModel(null) replays the mode recorded
+    // here, so the choice made meanwhile is not lost.
+    if (this.modelMeshes.length) {
+      this.U.uPtStyle.value = 0;
+      this.setAfterglow(false);
+      return;
+    }
+
     if (mode === 'wireframe') {
       this.gpuMat.wireframe = true;
     } else if (mode === 'points') {
@@ -1047,7 +1137,9 @@ export class RenderEngine {
    *
    * Outside PTS the style is only remembered. Nothing to apply: the proxy does
    * not exist, and uPtStyle must stay 0 because gl_PointCoord is undefined for
-   * the triangles the mesh draws.
+   * the triangles the mesh draws. An imported model is the same situation for
+   * the same reason — it draws triangles through this uniform block — so it
+   * gets the same treatment.
    *
    * ── About the trail ──────────────────────────────────────────────────────
    * The smoke style borrows the composer's AfterimagePass: every frame blends
@@ -1066,7 +1158,7 @@ export class RenderEngine {
     this.currentParticleStyle = s ? name : 'squares';
     const style = s ?? RenderEngine.PARTICLE_STYLES.squares;
 
-    if (this.vizMode !== 'points') return;
+    if (this.vizMode !== 'points' || this.modelMeshes.length) return;
 
     this.U.uPointSize.value = style.size;
     this.U.uPtStyle.value   = style.mask;

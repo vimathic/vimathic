@@ -65,6 +65,9 @@ function makeRender() {
   return {
     U, gpuMat, gpuMesh, scene,
     gpuPtsProxy: null,
+    // No imported model on the stage. The single owner reaches a model's
+    // materials too — that half is pinned in tests/model-import-stage.test.js.
+    modelMeshes: [],
     activeVS: VS, activeFS: FS,
     vizMode: 'surface',
     // A renderer that always links cleanly: no onShaderError call, so
