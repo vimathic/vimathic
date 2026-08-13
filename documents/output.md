@@ -87,7 +87,7 @@ Use [SpoutToNDI](https://github.com/leadedge/SpoutToNDI) to bridge from Spout to
 
 If you're packaging VIMATHIC as a desktop app via Electron, install `spout-node` in the main process and implement `window.electronAPI.spoutSendFrame(dataUrl)`. The renderer process in `outputs.js` calls this every frame when Spout output is enabled.
 
-In a pure browser build, the Spout button shows an explanatory error: "Spout requires Electron wrapper — cannot access DirectX from a browser sandbox."
+The browser build ships **no Spout control** — there is nothing to click in the Output modal, which has exactly three sections: Transparent Background, Virtual Camera and Record Clip. Like `NDIOutput` above, `SpoutOutput` exists in `outputs.js` as a documented integration surface for an Electron host; started without one it answers "Spout requires Electron wrapper — cannot access DirectX from a browser sandbox."
 
 ## Comparison
 

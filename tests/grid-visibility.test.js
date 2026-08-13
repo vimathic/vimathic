@@ -202,3 +202,69 @@ describe('leaving transparent background gives the grid back, but does not take 
     assert.equal(host.stars.visible, true, 'nothing else writes stars.visible');
   });
 });
+
+// ── The same question asked of the fade ───────────────────────────────────────
+// setTransparentBackground's restore asks "did anything claim the grid while I
+// was away" before writing `visible`. The fade is the ONE writer that lands up
+// to 400 ms after the fact, and it wrote `visible = on` unconditionally — so a
+// ⊞ GRID click or a TRANSPARENT BG enable inside the fade window was undone by
+// a tween the operator had already changed their mind about, leaving the grid
+// on screen with its button reading OFF, or a grid in an alpha capture that was
+// deliberately cleared of one.
+//
+// ⊞ GRID lives in main.js (`render.grid.visible = !render.grid.visible` plus the
+// button's opacity), which cannot be imported without booting the app; the bare
+// write below is that handler's whole effect on the engine.
+describe('the G fade does not overrule what happened while it ran', () => {
+
+  test('⊞ GRID pressed inside the fade window has the last word', () => {
+    host.grid.visible = false;
+
+    fadeGrid(true);                      // G: raises visible up front, fades in
+    advance(100);
+    host.grid.visible = false;           // ⊞ GRID, 100 ms later: OFF
+    advance(600);
+
+    assert.equal(host.grid.visible, false,
+      'the button says OFF; a tween landing 300 ms later must not put the grid back on');
+  });
+
+  test('a grid forced off for transparent output is not handed back by the fade', () => {
+    host.grid.visible = false;
+
+    fadeGrid(true);
+    advance(100);
+    transparent(true);                   // forces visible = false for a clean alpha frame
+    advance(600);
+
+    assert.equal(host.grid.visible, false,
+      'the fade would otherwise push the grid into captureStream, the second screen ' +
+      'and the recorder, which is exactly what transparent mode took it out of');
+    assert.equal(host.transparentBg, true, 'precondition: still in transparent mode');
+  });
+
+  test('control — a fade nobody interrupts still writes what it was asked for', () => {
+    host.grid.visible = true;
+
+    fadeGrid(false);
+    advance(600);
+    assert.equal(host.grid.visible, false, 'G off still switches the grid off');
+    assert.equal(host.grid.material.opacity, GRID_OPACITY, 'and still parks the opacity');
+
+    fadeGrid(true);
+    advance(600);
+    assert.equal(host.grid.visible, true, 'and G on still switches it on');
+  });
+
+  test('control — the opacity still comes back even when the write is dropped', () => {
+    host.grid.visible = true;
+
+    fadeGrid(false);
+    advance(100);
+    host.grid.visible = false;           // ⊞ GRID got there first
+    advance(600);
+
+    assert.equal(host.grid.material.opacity, GRID_OPACITY,
+      'a grid left at 0 opacity comes back invisible for the next path that shows it');
+  });
+});

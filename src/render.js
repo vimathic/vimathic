@@ -1371,9 +1371,11 @@ export class RenderEngine {
    *   Geometry swap: call the synchronous setShape() at the flat frame.
    *   Phase 2 (inflate): animate uMorphProgress 0→1 as the new shape rises up.
    *
-   * If called while a morph is already running, the in-flight tween is
-   * cancelled and the geometry is swapped immediately so the new shape starts
-   * inflating without waiting for the old deflate to finish.
+   * If called while a morph is already running, the surface keeps collapsing
+   * from the height it is at, over the remaining fraction of the duration —
+   * never springing back to full size — and the geometry is swapped at THAT
+   * flat frame. Work queued for the flat frame of every superseded morph runs
+   * there too, together: see triggerMorphTransition.
    *
    * @param {string} shape — same values accepted by setShape()
    */
@@ -1411,10 +1413,9 @@ export class RenderEngine {
     // deflate, so a shape pressed mid-morph sprang the half-collapsed mesh back
     // to full size and started over — the largest visible discontinuity
     // available, in the one mechanism whose entire job is to avoid a cut — and
-    // pushed the flat frame a whole duration further away. setShapeAnimated's
-    // own doc block promises the opposite. The remaining travel is
-    // proportional, so the morph still lands at the same speed; the clamp
-    // covers a morph triggered from the flat frame itself, where there is
+    // pushed the flat frame a whole duration further away. The remaining
+    // travel is proportional, so the morph still lands at the same speed; the
+    // clamp covers a morph triggered from the flat frame itself, where there is
     // nothing left to collapse and the duration would otherwise be zero.
     const from = this.U.uMorphProgress.value;
 
@@ -2350,10 +2351,18 @@ export class RenderEngine {
     if (on) { g.material.opacity = 0; g.visible = true; }
     const from   = g.material.opacity;
     const target = on ? GRID_OPACITY : 0;
+    // FIX(r4): what this fade left `visible` at. onDone lands GRID_FADE_MS
+    // later, and ⊞ GRID, a preset or setTransparentBackground may have written
+    // grid.visible in between — writing `on` regardless put the grid back on
+    // over a button reading OFF, or back into a transparent-background capture.
+    // Same "only if nothing claimed it meanwhile" test the restore branch of
+    // setTransparentBackground already makes; this is the one writer that lands
+    // long after the fact.
+    const claimed = g.visible;
     this.transitions.start('grid-fade', GRID_FADE_MS, p => {
       g.material.opacity = from + (target - from) * p;
     }, () => {
-      g.visible = on;
+      if (g.visible === claimed) g.visible = on;
       // Hidden grids rest at full opacity, never at the 0 the fade ended on.
       // That is what keeps every other path honest: the ⊞ GRID button, a
       // preset and setTransparentBackground all write only `visible`, and a
@@ -2469,23 +2478,6 @@ export class RenderEngine {
   }
 
   /**
-   * Resolve the pass a setter is about to touch, building it if this is the
-   * call that turns it on. Returns null when the caller is disabling a pass
-   * that was never built — nothing to do, and constructing one just to set
-   * enabled=false would defeat the whole point.
-   *
-   * The pass is inserted DISABLED — ShaderPass defaults to enabled, and the
-   * setters flip the flag only after pushing their uniforms, so the effect can
-   * never render one frame with stock settings. insertPass() sizes the new
-   * pass from the composer's current dimensions, so one built after a resize
-   * is born at the right resolution — that is why onResize() needs no
-   * lazy-pass special case.
-   *
-   * @param {string}     key      — property name, must appear in FX_PASS_ORDER
-   * @param {boolean}    enabled  — what the setter was asked to do
-   * @param {()=>object} build    — constructs the pass; called at most once
-   */
-  /**
    * Empty an AfterimagePass's two accumulation targets.
    *
    * Transparent black rather than the scene's clear colour: the pass's shader
@@ -2512,6 +2504,23 @@ export class RenderEngine {
     r.setClearColor(prevColor, prevAlpha);
   }
 
+  /**
+   * Resolve the pass a setter is about to touch, building it if this is the
+   * call that turns it on. Returns null when the caller is disabling a pass
+   * that was never built — nothing to do, and constructing one just to set
+   * enabled=false would defeat the whole point.
+   *
+   * The pass is inserted DISABLED — ShaderPass defaults to enabled, and the
+   * setters flip the flag only after pushing their uniforms, so the effect can
+   * never render one frame with stock settings. insertPass() sizes the new
+   * pass from the composer's current dimensions, so one built after a resize
+   * is born at the right resolution — that is why onResize() needs no
+   * lazy-pass special case.
+   *
+   * @param {string}     key      — property name, must appear in FX_PASS_ORDER
+   * @param {boolean}    enabled  — what the setter was asked to do
+   * @param {()=>object} build    — constructs the pass; called at most once
+   */
   _fxPass(key, enabled, build) {
     if (!enabled) return this[key];
     if (!this[key]) {

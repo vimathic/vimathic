@@ -458,8 +458,19 @@ export const PresetMixin = {
     const cpuPath = s.gpuSelVal == null || s.gpuSelVal.startsWith('m:');
     const deformTarget = (!cpuPath && s.deformMode === 'volume') ? 'surface' : s.deformMode;
 
+    // What #gpu-sel holds now that this snapshot has written its own value into
+    // it (or, for a snapshot carrying none, whatever was already selected).
+    // FIX(r4): the volume branch below got no live check while the setFormula
+    // branch above it did, and both land in the SAME onFlatActions array — so
+    // for any snapshot pairing a CPU formula with deformMode:'volume' the guard
+    // above was cancelled out by the line beside it: setVolumeFormula sets
+    // uMathMode = 1 and the shader picked inside the 400 ms window drew nothing.
+    const selAtApply = DOM.gpuSel.value;
+
     if (deformTarget === 'volume' && s.volumeKey) {
-      onFlatActions.push(() => { if (mv) mv.setVolumeFormula(s.volumeKey); });
+      onFlatActions.push(() => {
+        if (mv && DOM.gpuSel.value === selAtApply) mv.setVolumeFormula(s.volumeKey);
+      });
     } else if (deformTarget && deformTarget !== 'surface') {
       onFlatActions.push(() => { if (mv) mv.setMode(deformTarget); });
     } else if (deformTarget === 'surface') {
@@ -1062,7 +1073,15 @@ export const PresetMixin = {
       delBtn.textContent = '✕';
       delBtn.onmouseenter = () => { delBtn.style.opacity = '1'; delBtn.style.color = '#f44'; };
       delBtn.onmouseleave = () => { delBtn.style.opacity = '0.6'; delBtn.style.color = '#777'; };
-      delBtn.onclick = () => this.deletePreset(p.name);
+      // FIX(r4): read the answer. deletePreset returns false when the write was
+      // refused (quota, private mode, storage blocked) — the list is then
+      // redrawn from storage, so the row simply reappears. The two other
+      // writers say so; this one dropped the value and stayed silent.
+      delBtn.onclick = () => {
+        if (this.deletePreset(p.name) === false) {
+          this._showToast?.('⚠ Could not delete — storage is full or blocked', true);
+        }
+      };
 
       row.append(num, loadBtn, holdEl, delBtn);
       wrap.appendChild(row);

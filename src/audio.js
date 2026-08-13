@@ -57,6 +57,10 @@ export class AudioEngine {
     // land on top of the small one the user switched to, and overwrite a live
     // capture connected in the meantime.
     this.loadId      = 0;
+    // Which load raised the loading indicator. Only its owner may take it
+    // down, so a load abandoned mid-flight cannot clear the bar of the one
+    // that replaced it — see superseded() in loadPlay.
+    this._loadingOwner = 0;
 
     // Per-frame readouts consumed by render/camera. Initial values are
     // mid-range so the visualizer doesn't snap to zero before first analysis.
@@ -168,6 +172,14 @@ export class AudioEngine {
    * button on every source switch.
    */
   _stopFilePlayback() {
+    // FIX(r4): a load still in flight has just lost the analyser. loadPlay's
+    // two generation checks only ever fired against a NEWER LOAD, because
+    // ++this.loadId lived in loadPlay alone — so the capture case named in
+    // this.loadId's own comment went unguarded: the abandoned track's decode
+    // landed a second later, assigned audioBuffer and called _startSource(),
+    // playing the file over the live capture with liveMode still reading 'mic'.
+    // Both capture paths come through here, which is why the bump belongs here.
+    ++this.loadId;
     this._stopSource();
     this.audioBuffer = null;
     this.trackStart  = 0;
@@ -366,8 +378,29 @@ export class AudioEngine {
   // load time — flashing the indicator for ~200ms looked like a glitch.
   async loadPlay(file, offset = 0, { silent = false } = {}) {
     const loadId = ++this.loadId;   // FIX: see this.loadId in the constructor
+    // Has this load lost its claim? Two ways: a newer load, or a live capture
+    // that took the analyser (_stopFilePlayback bumps the same token). A newer
+    // load owns the loading indicator from here on and clears it when it lands;
+    // a capture never touches it, so this load has to take it down on its way
+    // out or the bar slides for the rest of the session. Called only after the
+    // read has resolved, so no progress event can put it back up.
+    const superseded = () => {
+      if (loadId === this.loadId) return false;
+      // Take the bar down only if it is still OURS. Keying this on liveMode
+      // read as "a capture superseded us", and was wrong both ways: after a
+      // capture the operator can pick a new file, and then this stale load
+      // cleared the bar of a load still decoding; and when captureMicrophone
+      // threw before liveMode was set, nobody took the bar down at all. The
+      // owner token says exactly what the comment above claims — a newer load
+      // stamps its own id when it raises the bar and clears it when it lands.
+      if (!silent && this._loadingOwner === loadId) {
+        this._loadingOwner = 0;
+        this.cb.onLoading(false);
+      }
+      return true;
+    };
     this._cancelCrossfade();
-    if (!silent) this.cb.onLoading(true, 0, 'LOADING TRACK…');
+    if (!silent) { this._loadingOwner = loadId; this.cb.onLoading(true, 0, 'LOADING TRACK…'); }
     this._stopSource();
     this.trackStart = 0; this.trackOfs = 0;
     this.cb.onSeek(0, '0:00');
@@ -375,12 +408,12 @@ export class AudioEngine {
     try {
       await this.ensureCtx();
       const buf = await this._readFile(file, { silent });
-      if (loadId !== this.loadId) return;   // a newer load took over while we read
+      if (superseded()) return;             // a newer load, or a live capture, took over
       if (!silent) this.cb.onLoading(true, 0.7, 'DECODING AUDIO…');
       // Decoded into a local first: assigning straight to this.audioBuffer
       // would clobber the newer load's buffer before the check below.
       const decoded = await this.audioCtx.decodeAudioData(buf);
-      if (loadId !== this.loadId) return;   // …or while we decoded
+      if (superseded()) return;             // …or while we decoded
       this.audioBuffer = decoded;
       if (!silent) this.cb.onLoading(true, 1.0, 'READY');
       this._startSource(offset);
@@ -391,7 +424,7 @@ export class AudioEngine {
     } catch (e) {
       // A superseded load failing says nothing about the one that replaced it:
       // reporting it would stop a track that is playing perfectly well.
-      if (loadId !== this.loadId) return;
+      if (superseded()) return;
       console.error('Track load error:', e);
       // FIX(#7, r3): same invariant — a failed load must not flip the visuals
       // to idle while a live capture is still feeding the analyser. Nothing
@@ -404,10 +437,16 @@ export class AudioEngine {
       // running. loadPlay stops the previous source before the try block, so
       // by here the old track is already gone.
       this.cb.onPlayState(this.isPlaying);
-      if (!silent) this.cb.onLoading(false);
+      if (!silent) { this._loadingOwner = 0; this.cb.onLoading(false); }
       return;
     }
-    if (!silent) setTimeout(() => this.cb.onLoading(false), 200);
+    // Same ownership rule on the way out: this clear lands 200 ms late, and a
+    // load started inside that gap has already raised its own bar.
+    if (!silent) setTimeout(() => {
+      if (this._loadingOwner !== loadId) return;
+      this._loadingOwner = 0;
+      this.cb.onLoading(false);
+    }, 200);
   }
 
   _readFile(file, { silent = false } = {}) {

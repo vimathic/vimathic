@@ -11,12 +11,12 @@ VIMATHIC has two built-in recorders: **GIF** for sharable loops and **WebM** for
 
 ## Opening the recorder
 
-Click **OUTPUT** in the control panel. The output modal includes a **RECORDING** section near the bottom. From there:
+Click **OUTPUT** in the control panel. The output modal includes a **🎞️ RECORD CLIP** section near the bottom. From there:
 
 - Choose format — **GIF** or **WebM**
 - Set resolution, FPS, quality
 - Choose duration mode — **seconds** or **beats**
-- Click **● REC** to start, **■ STOP** to finish early
+- Click **⏺ START RECORDING** to start, **⏹ STOP** to finish early
 
 A progress bar shows the capture state. When recording completes, the file downloads automatically.
 
@@ -31,7 +31,15 @@ Animated GIFs are great for messaging apps, Twitter/X, Discord, Slack. Limitatio
 | Duration | up to 60 seconds | Cap to prevent runaway memory use |
 | Quality | 1–30, default 10 (lower = better, slower) | Tradeoff against file size and encode time |
 
-Encoding happens in a Web Worker (`gif.js`) so your live visualization isn't blocked. Peak memory at maximum settings (720p × 30fps × 60s) can reach **~1.5 GB** — the UI warns if estimated usage exceeds that and suggests reducing parameters.
+Encoding happens in a Web Worker (`gif.js`) so your live visualization isn't blocked. GIF holds every captured frame as uncompressed RGBA until the encoder reaches it, so the recorder prices the whole clip *before* it starts and **refuses to record** when the estimate exceeds **1500 MB**. That is a refusal, not a dismissible warning: you get `⚠ Estimated …MB of frames (limit 1500MB) — reduce duration/size/fps`, no capture and no file.
+
+| Settings | Frame size | Estimated frame memory | Result |
+|---|---|---|---|
+| 480p × 15 fps × 60 s | 853 × 480 | 1340 MB | records |
+| 720p × 15 fps × 30 s | 1280 × 720 | 1508 MB | refused |
+| 720p × 30 fps × 60 s | 1280 × 720 | 5273 MB | refused |
+
+So 1500 MB is a ceiling, not a peak the top settings reach. At 60 seconds only 480p fits, and only at 15 fps or below; at 30 fps every size the SIZE selector offers is refused. The ceiling buys short clips instead: 720p × 30 fps × 10 s is 879 MB and records fine. WebM has no such limit — it encodes as it goes.
 
 ### Beat-sync mode
 
@@ -39,7 +47,7 @@ A GIF that loops cleanly is much more satisfying than one that snaps. Beat-sync 
 
 1. Switch duration mode to **beats**
 2. Pick how many beats (4, 8, 16 are common)
-3. Press **● REC** — capture starts on the next downbeat
+3. Press **⏺ START RECORDING** — capture starts on the next downbeat
 4. Capture auto-stops after the requested beat count
 
 Works best with steady-tempo music. If beat detection drifts mid-capture, the loop boundary may be off by a frame or two.
@@ -120,13 +128,13 @@ The recorder captures the **canvas only** — not the panel UI, not the modals, 
 
 ## Stopping early
 
-The **■ STOP** button cancels a recording mid-flight. For GIF, this aborts the worker and discards partial frames — no file is saved. For WebM, the partial recording downloads with whatever frames were captured up to that point.
+The **⏹ STOP** button cancels a recording mid-flight. For GIF, this aborts the worker and discards partial frames — no file is saved. For WebM, the partial recording downloads with whatever frames were captured up to that point.
 
 ## Performance impact
 
 The GIF and WebM recorders add load during capture:
 
-- **GIF recorder:** uses a separate Web Worker (`gif.js`) for LZW encoding. At 720p × 15fps, capture runs at full speed while encoding happens in the background. Peak memory usage can reach ~1.5 GB for a 60-second capture at maximum settings — the UI warns if estimated usage exceeds that and suggests reducing resolution or duration.
+- **GIF recorder:** uses a separate Web Worker (`gif.js`) for LZW encoding. At 720p × 15fps, capture runs at full speed while encoding happens in the background. Queued frames are the cost: the recorder refuses to start any clip it prices above 1500 MB of uncompressed RGBA (see the table above), and a capture that outlasts its estimate — beat-sync at a slower tempo than predicted — is stopped early at the same ceiling, with a shorter file and a reason.
 - **WebM recorder:** uses the browser's native `MediaRecorder` API. Much lower memory (~50–100 MB for a 60-second 1080p capture) but requires Chrome/Edge for VP9 codec support. The composite pipeline (WebGL → 2D overlay with watermark → MediaStream) adds negligible CPU overhead.
 
 Both recorders are designed not to affect the live visual output — capture runs on its own frame schedule independent of the render loop.

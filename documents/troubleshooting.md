@@ -99,7 +99,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 ### **Knob moves but parameter doesn't**
 
 - Controller sending NRPN or Note events instead of CC. Check your controller's mode — should be "Control Change" or "CC".
-- The CC isn't mapped. Open the **MIDI** section, use **LEARN** mode, move the knob, pick a parameter.
+- The CC isn't mapped. Open the **MIDI MAPPING** section, pick the parameter in the empty bottom row *first*, click **⊙ LEARN** on that row, then move the knob — clicking ⊙ LEARN with no parameter selected is rejected with "⚠ Select a parameter first". See [MIDI](./midi.md) for the full flow.
 - Mapping was lost. Mappings are in `localStorage`. If you cleared site data, you lost them — remap.
 
 ### **Wrong parameter responds to my knob**
@@ -111,7 +111,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 ### **GIF recording fails immediately**
 
-- Insufficient memory. Reduce resolution or duration. 720p × 30fps × 60s needs ~1.5 GB.
+- The clip is priced above the recorder's 1500 MB frame budget, so it refuses to start — the message names the estimate and the limit. Reduce duration, size or fps: 720p × 30fps × 60s is priced at 5273 MB, while 480p × 15fps × 60s (1340 MB) and 720p × 30fps × 10s (879 MB) both record. See [Recording](./recording.md) for the table.
 - Browser tab limited. Close other tabs, retry.
 
 ### **GIF capture hangs at "ENCODING"**

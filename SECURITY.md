@@ -50,8 +50,10 @@ considered acceptable trade-offs for a local-only VJ tool:
   presets from untrusted sources with the same caution as any executable code.
 - **GLSL shader editor compiles user code directly on the GPU.** Malformed
   shaders can cause GPU driver crashes or hangs. This is a browser/GPU driver
-  concern, not a VIMATHIC vulnerability. The shader editor provides error
-  feedback via Three.js `compileAsync()`.
+  concern, not a VIMATHIC vulnerability. The shader editor compiles each
+  program on a throwaway probe mesh and reports link failures through
+  `renderer.debug.onShaderError`, so a shader that fails to link is reported
+  as failed rather than as applied.
 - **Imported `.json` state files can override any application parameter.**
   State import is designed as a full system restore mechanism — it
   intentionally writes to every control. Malicious state files could set

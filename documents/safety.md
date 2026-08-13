@@ -21,13 +21,14 @@ To avoid even that anonymous level of analytics, download the offline build from
 
 ### What VIMATHIC stores on your device
 
-The app uses your browser's `localStorage` to remember:
+The app uses your browser's `localStorage` to remember six things, and nothing else:
 
-- Saved presets you've named
-- MIDI controller mappings
-- Whether you've cleared the bundled intro track
-- Which tab of this documentation you read last
-- A flag that the first-launch tour has been seen
+- `vimathic_presets` — saved presets you've named
+- `vimathic_persisted_state` — the look of your current session (shape, colours, formula, sliders, camera, and any Camera Programmer script or custom shader source you applied), so it is still there when you come back
+- `vimathic_midi_map` — MIDI controller mappings
+- `vimathic_intro_cleared` — whether you've cleared the bundled intro track
+- `vimathic_about_last_tab` — which tab of this documentation you read last
+- `vimathic_about_seen` — a flag that the first-launch tour has been seen
 
 Nothing here is sent anywhere — it's all local. To wipe it, open your browser's DevTools (F12), go to **Application → Local Storage**, find the keys starting with `vimathic_`, and delete them.
 

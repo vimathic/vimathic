@@ -923,6 +923,19 @@ function bindCameraParams(ui) {
    * sliders still showed the previous values. The damage is not just a stale
    * label: the thumb is where the old value was, so the first drag writes from
    * THERE and jumps the camera to a number nobody chose.
+   *
+   * FIX(2): the rail has to grow, the way params.js `_flushUI` grows the panel
+   * sliders — see its "Slider-grow rationale" header. `<input type="range">`
+   * silently clamps any .value outside [min,max], so writing a value the rail
+   * cannot hold reproduced the exact failure above rather than curing it: the
+   * label printed the true number while the thumb sat pinned at the rail, and
+   * the row's own `input` listener then stored `+el.value` — the RAIL value —
+   * on the first touch. Measured in Chromium against the real markup: rotSpeed
+   * 0.0015 read back 0.001, radius 30 read back 20, fov 150 read back 120.
+   * Nothing constrains cpParams to the rails: applyParam clamps only at the
+   * bottom (params.js: "There is NO upper clamp here"), relative-mode MIDI has
+   * no ceiling at all, and presets.js Object.assigns a preset's whole cpParams
+   * block. Grow in both directions, since a preset can also come in under min.
    */
   const syncParamsUI = () => {
     for (const [id, key, fmtFn] of ROWS) {
@@ -930,6 +943,10 @@ function bindCameraParams(ui) {
       const vEl = document.getElementById(id+'-v');
       const v   = cam.cpParams[key];
       if (!el || v == null) continue;
+      if (Number.isFinite(+v)) {
+        if (+v > +el.max) el.max = String(+v);
+        if (+v < +el.min) el.min = String(+v);
+      }
       el.value = v;
       if (vEl) vEl.textContent = fmtFn(v);
     }

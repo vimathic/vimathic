@@ -595,6 +595,130 @@ describe('applyFormulaValue is the one door for the dropdown, R and F', () => {
   });
 });
 
+// ✕ CLEAR MODEL was revealed by every import and bound by nobody, so an
+// imported model could not be removed for the rest of the session — clear() was
+// reached only from beforeunload. The listener that fixed it had no test of its
+// own, and the file input is half of it: without clearing #model-file, picking
+// the same file again fires no 'change' event and the way back is dead too.
+describe('an imported model can be removed again', () => {
+
+  test('✕ CLEAR MODEL gives the stage back and re-arms the file picker', () => {
+    byId('model-file').value = 'C:\\fakepath\\bunny.obj';
+    byId('model-info').textContent = 'bunny.obj — 4968 verts';
+    byId('btn-clear-model').style.display = '';
+
+    fire('btn-clear-model', 'click');
+
+    assert.equal(ui.called('ml.clear').length, 1, 'the model itself has to go');
+    assert.equal(byId('model-info').textContent, '');
+    assert.equal(byId('model-file').value, '',
+      're-picking the same file fires no change event unless the input is cleared');
+    assert.equal(byId('btn-clear-model').style.display, 'none',
+      'nothing left to clear, so the button goes away with it');
+  });
+});
+
+// ── ⬡ VOLUME and the selection it was pressed against ────────────────────────
+// setVolumeFormula sets uMathMode = 1, and the GPU displacement is gated on
+// uMathMode == 0 — so a shader that claims #gpu-sel inside the 400 ms morph
+// window must not have volume armed under it when the flat frame arrives. The
+// guard for that asked "is an m: formula selected NOW", which is a different
+// question: applyMathFormula can ask it because it WRITES #gpu-sel itself and
+// only re-reads it to catch a later writer, while this button writes nothing.
+// So it also refused the state it was pressed from — with a shader selected the
+// click lit VOLUME and opened its formula row while the engine never moved,
+// and #volume-formula-sel (which had no check at all) reached volume mode
+// anyway one nudge later. The two doors have to agree, and the question both
+// can answer is "is this still the selection the click was made against".
+describe('the deform buttons refuse a mode the engine cannot enter, and say why', () => {
+
+  test('⬡ VOLUME with a GPU shader on screen refuses instead of lighting up', () => {
+    byId('gpu-sel').value = '7';                    // a GPU shader, picked by hand
+    byId('volume-formula-sel').value = 'twist';
+    byId('deform-volume').classList.toggle('active', false);
+    byId('volume-formula-wrap').style.display = 'none';
+
+    fire('deform-volume', 'click');
+    ui.render.flatFrame();
+
+    assert.equal(ui.called('setVolumeFormula').length, 0,
+      'setVolumeFormula sets uMathMode = 1 and shaders.js gates the shader\'s WHOLE ' +
+      'displacement on uMathMode == 0: honouring this click would switch off the ' +
+      'shader #gpu-sel still names, and produce a view applyState refuses to restore');
+    assert.equal(byId('deform-volume').classList.contains('active'), false,
+      'and the button must not paint a mode the engine did not enter — the lie was the defect');
+    assert.equal(byId('volume-formula-wrap').style.display, 'none',
+      'nor open a formula row for a mode that is not on');
+    assert.ok(ui.called('toast').length,
+      'a dead button is a different lie: the operator is told which selection is in the way');
+  });
+
+  test('control — with a CPU formula selected ⬡ VOLUME still works in full', () => {
+    byId('gpu-sel').value = 'm:waves:standingWave';
+    byId('volume-formula-sel').value = 'twist';
+
+    fire('deform-volume', 'click');
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setVolumeFormula'), [['setVolumeFormula', 'twist']],
+      'the refusal must be narrow — this is the case the button exists for');
+    assert.equal(byId('deform-volume').classList.contains('active'), true);
+    assert.equal(byId('volume-formula-wrap').style.display, '');
+  });
+
+  test('a shader claiming the selection inside the morph window still stops it', () => {
+    byId('gpu-sel').value = 'm:waves:standingWave';
+    byId('volume-formula-sel').value = 'twist';
+
+    fire('deform-volume', 'click');
+    ui.applyFormulaValue('7');                      // F, or the dropdown, mid-morph
+    ui.render.flatFrame();
+
+    assert.equal(ui.called('setVolumeFormula').length, 0,
+      'uMathMode = 1 gates the shader\'s whole displacement off — it would draw nothing');
+  });
+
+  test('#volume-formula-sel refuses in the same voice — one door of two is not a rule', () => {
+    // This row stays on screen if the shader was picked AFTER volume mode was
+    // entered, so it is a live way back into uMathMode = 1 behind the shader.
+    byId('gpu-sel').value = '7';
+    byId('volume-formula-sel').value = 'fluidVortex';
+
+    fire('volume-formula-sel', 'change');
+    ui.render.flatFrame();
+
+    assert.equal(ui.called('setVolumeFormula').length, 0,
+      'a rule enforced on one of two adjacent doors is not a rule');
+    assert.ok(ui.called('toast').length, 'and it refuses out loud, like the button does');
+  });
+
+  test('control — the row still works over a CPU formula, and still stands down when superseded', () => {
+    byId('gpu-sel').value = 'm:waves:standingWave';
+    byId('volume-formula-sel').value = 'fluidVortex';
+
+    fire('volume-formula-sel', 'change');
+    ui.render.flatFrame();
+    assert.deepEqual(ui.called('setVolumeFormula'), [['setVolumeFormula', 'fluidVortex']]);
+
+    ui.calls.length = 0;
+    fire('volume-formula-sel', 'change');
+    ui.applyFormulaValue('9');                      // superseded before the flat frame
+    ui.render.flatFrame();
+    assert.equal(ui.called('setVolumeFormula').length, 0,
+      'the morph-window race is still guarded on this door too');
+  });
+
+  test('control — ⬡ SURF and ⬡ COLLAPSE still switch the engine mode', () => {
+    byId('gpu-sel').value = '7';
+
+    fire('deform-collapse', 'click');
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setMode'), [['setMode', 'collapse']],
+      'collapse never touches uMathMode, so it has nothing to ask about');
+  });
+});
+
 // ── Three more places where the panel and the engine disagreed ────────────────
 describe('a material refresh that changes nothing leaves the fade alone', () => {
   const OPTS = ['matte', 'glass', 'mirror', 'metal', 'pearl', 'chrome'].map(value => ({ value }));
@@ -646,6 +770,143 @@ describe('the panel can be asked which finish a preset should record', () => {
     ui.render.vizMode = 'surface';
     ui.render.currentMaterial = 'glass';
     assert.equal(ui.getPresetMaterial(), 'glass');
+  });
+
+  // The stash on the way out to WIRE/PTS refuses Matte on purpose — WIRE → PTS
+  // would otherwise overwrite the pick with the Matte those modes force. It
+  // cannot tell that Matte from one the operator chose, so a deliberate Matte
+  // was never remembered, and this getter handed the finish from BEFORE it to
+  // every preset saved outside SURF. Fixed by stashing where the pick is made.
+  test('a Matte chosen in SURF is what a preset saved in PTS records', () => {
+    byId('surface-material-sel').options = OPTS_FOR_MAT;
+    ui.render.vizMode = 'surface';
+
+    byId('surface-material-sel').value = 'mirror';        // an earlier pick…
+    fire('surface-material-sel', 'change');
+    ui.syncVizModeUI('points', null, 'squares');          // …round-tripped through PTS
+    ui.render.vizMode = 'points';
+    ui.syncVizModeUI('surface', null, 'squares');
+    ui.render.vizMode = 'surface';
+
+    byId('surface-material-sel').value = 'matte';         // now the plain look, deliberately
+    fire('surface-material-sel', 'change');
+    ui.syncVizModeUI('points', null, 'squares');          // and a preset is saved out here
+    ui.render.vizMode = 'points';
+    ui.render.currentMaterial = 'matte';                  // forced by PTS
+
+    assert.equal(ui.getPresetMaterial(), 'matte',
+      'the snapshot recorded the finish from before the operator chose Matte, and ' +
+      'applying it later put that finish back over a surface set to Matte on purpose');
+  });
+
+  test('control — a non-Matte pick is still what the same round trip records', () => {
+    byId('surface-material-sel').options = OPTS_FOR_MAT;
+    ui.render.vizMode = 'surface';
+
+    byId('surface-material-sel').value = 'mirror';
+    fire('surface-material-sel', 'change');
+    ui.syncVizModeUI('points', null, 'squares');
+    ui.render.vizMode = 'points';
+    ui.syncVizModeUI('surface', null, 'squares');
+    ui.render.vizMode = 'surface';
+
+    byId('surface-material-sel').value = 'glass';
+    fire('surface-material-sel', 'change');
+    ui.syncVizModeUI('points', null, 'squares');
+    ui.render.vizMode = 'points';
+    ui.render.currentMaterial = 'matte';
+
+    assert.equal(ui.getPresetMaterial(), 'glass');
+  });
+
+  test('control — a snapshot\'s own material still wins over the remembered pick', () => {
+    byId('surface-material-sel').options = OPTS_FOR_MAT;
+    ui.render.vizMode = 'surface';
+    byId('surface-material-sel').value = 'matte';
+    fire('surface-material-sel', 'change');
+
+    ui.syncVizModeUI('wireframe', 'mirror', 'squares');   // a preset applied in WIRE
+    ui.render.vizMode = 'wireframe';
+
+    assert.equal(ui.getPresetMaterial(), 'mirror',
+      'presetMaterial becomes the remembered pick — the pick-time stash must not shadow it');
+  });
+
+  // The dropdown is one of THREE places a finish is picked, and the argument
+  // above is about the pick, not about the widget: the T hotkey and AUTO
+  // MATERIAL put a finish on screen without the dropdown's change event ever
+  // firing. For every finish but Matte the stash on the way out to WIRE/PTS
+  // covers for them by accident, which is why both cases below have to land on
+  // Matte — that is the one the exit stash refuses, and the one that was lost.
+  test('a Matte reached with the T hotkey is what a preset saved in PTS records', () => {
+    byId('surface-material-sel').options = OPTS_FOR_MAT;
+    ui.render.vizMode = 'surface';
+
+    byId('surface-material-sel').value = 'mirror';        // an earlier pick…
+    fire('surface-material-sel', 'change');
+
+    ui.cycleMaterial();                                   // …and T steps it round to Matte
+    assert.equal(byId('surface-material-sel').value, 'matte', 'precondition: the list wraps');
+
+    ui.syncVizModeUI('points', null, 'squares');          // a preset is saved out in PTS
+    ui.render.vizMode = 'points';
+    ui.render.currentMaterial = 'matte';                  // forced by PTS
+
+    assert.equal(ui.getPresetMaterial(), 'matte',
+      'T is a pick like any other — recording the finish from before it puts Mirror ' +
+      'back over a surface the operator had cycled to the plain look');
+  });
+
+  test('a Matte that AUTO MATERIAL drew is recorded the same way', () => {
+    // AutoCycler calls the `apply` callback this file hands it with the drawn
+    // value and the cadence-scaled fade; it is invoked here directly because
+    // the draw itself is a shuffle-bag lottery on a live timer, and what is
+    // under test is what the callback does with the value, not which one it got.
+    byId('surface-material-sel').options = OPTS_FOR_MAT;
+    ui.render.vizMode = 'surface';
+
+    byId('surface-material-sel').value = 'mirror';
+    fire('surface-material-sel', 'change');
+
+    ui.autoMaterial._apply('matte', 900);                 // AUTO's draw lands on Matte
+    assert.equal(byId('surface-material-sel').value, 'matte', 'precondition: AUTO drew it');
+
+    ui.syncVizModeUI('points', null, 'squares');
+    ui.render.vizMode = 'points';
+    ui.render.currentMaterial = 'matte';
+
+    assert.equal(ui.getPresetMaterial(), 'matte',
+      'what AUTO put on screen is what a return from WIRE/PTS restores, so it is also ' +
+      'what a preset saved out there has to record');
+  });
+
+  test('control — a non-Matte finish from either path is still the one recorded', () => {
+    byId('surface-material-sel').options = OPTS_FOR_MAT;
+    ui.render.vizMode = 'surface';
+
+    byId('surface-material-sel').value = 'matte';
+    fire('surface-material-sel', 'change');
+    ui.cycleMaterial();                                   // matte → glass
+    assert.equal(byId('surface-material-sel').value, 'glass', 'precondition');
+
+    ui.syncVizModeUI('points', null, 'squares');
+    ui.render.vizMode = 'points';
+    ui.render.currentMaterial = 'matte';
+    assert.equal(ui.getPresetMaterial(), 'glass');
+
+    ui.syncVizModeUI('surface', null, 'squares');         // back to SURF, and AUTO fires
+    ui.render.vizMode = 'surface';
+    ui.autoMaterial._apply('mirror', 900);
+
+    assert.deepEqual(ui.called('setSurfaceMaterial').at(-1).slice(0, 2),
+      ['setSurfaceMaterial', 'mirror'],
+      'remembering the value must not cost the apply that puts it on screen');
+    assert.equal(ui.called('setSurfaceMaterial').at(-1)[2]?.duration, 900,
+      'nor the cadence-scaled fade AUTO asked for');
+
+    ui.syncVizModeUI('points', null, 'squares');
+    ui.render.vizMode = 'points';
+    assert.equal(ui.getPresetMaterial(), 'mirror');
   });
 });
 const OPTS_FOR_MAT = ['matte', 'glass', 'mirror'].map(value => ({ value }));

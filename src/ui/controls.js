@@ -84,7 +84,18 @@ export function bindControls(ui) {
     // Event, which would land in `durationMs`. The AUTO countdown restarts on
     // the same beat — a hand-picked material earns a full period on screen
     // instead of being replaced by whatever was already half-counted.
-    _matSel.addEventListener('change', () => { _applyMat(); ui.autoMaterial?.defer(); });
+    // FIX(r4): remember the pick HERE, not only on the way out to WIRE/PTS.
+    // The stash below refuses Matte, because a WIRE→PTS switch would otherwise
+    // overwrite the real pick with the Matte those modes force — so a Matte the
+    // operator chose deliberately in SURF was never recorded, and
+    // ui.getPresetMaterial (which hands _savedMaterial to every preset saved
+    // outside SURF) named the finish from before it. The dropdown is only
+    // reachable in SURF, so anything arriving here is a genuine pick.
+    _matSel.addEventListener('change', () => {
+      _savedMaterial = _matSel.value;
+      _applyMat();
+      ui.autoMaterial?.defer();
+    });
     _applyMat(0); // pick up the default (matte) on boot
   }
 
@@ -110,6 +121,10 @@ export function bindControls(ui) {
     } else if (vizMode !== 'surface' && _matSel.value !== 'matte') {
       // Entering WIRE / PTS by hand — stash the current pick (unless it's
       // already Matte from a previous WIRE/PTS visit).
+      //
+      // This clause cannot tell a forced Matte from a chosen one, which is why
+      // a deliberate Matte is stashed where it is PICKED instead — see the
+      // change listener and cycleMaterial above.
       _savedMaterial = _matSel.value;
     }
 
@@ -155,7 +170,9 @@ export function bindControls(ui) {
     // mid-set is ordinary. The question is about the viz mode, so it is asked
     // of the engine.
     canFire:   () => !!_matSel && r.vizMode === 'surface',
-    apply:     (key, ms) => { _matSel.value = key; _applyMat(ms); },
+    // Same rule as a hand pick (canFire keeps this to SURF): what AUTO put on
+    // screen is what a return from WIRE/PTS should restore, Matte included.
+    apply:     (key, ms) => { _matSel.value = key; _savedMaterial = key; _applyMat(ms); },
     // Twice the colour period. A finish change rewrites how the whole surface
     // reads, and on the colour cadence the two together strobe.
     bars: 16, idleMs: 20000,
@@ -179,6 +196,7 @@ export function bindControls(ui) {
     const opts = Array.from(_matSel.options).map(o => o.value);
     if (!opts.length) return;
     _matSel.value = opts[(opts.indexOf(_matSel.value) + 1) % opts.length];
+    _savedMaterial = _matSel.value;   // a pick, like any other — see the change listener
     _applyMat();
     ui.autoMaterial?.defer();
   };
@@ -252,7 +270,21 @@ export function bindControls(ui) {
   // definition, the R/F hotkeys through main.js, and applyState — so it is what
   // work queued for a flat frame asks when it finally runs.
   const _gpuSel        = () => document.getElementById('gpu-sel');
-  const _isMathSel     = () => !!_gpuSel()?.value?.startsWith('m:');
+
+  /**
+   * Can the CPU deformation own pos.y right now?
+   *
+   * A GPU shader owns it unless the selection is a CPU formula (`m:…`) or
+   * there is no selection at all — the same rule presets.js:445 states in
+   * writing and enforces when it decides whether a snapshot's volume mode can
+   * be restored. setVolumeFormula sets uMathMode = 1 and shaders.js:109 gates
+   * the shader's ENTIRE displacement on uMathMode == 0, so the two cannot both
+   * be on: one of them draws nothing.
+   */
+  const _cpuOwnsSurface = () => {
+    const v = _gpuSel()?.value;
+    return !v || v.startsWith('m:');
+  };
 
   const _deformBtns    = ['surface','volume','collapse'];
   const _volWrap       = document.getElementById('volume-formula-wrap');
@@ -274,6 +306,21 @@ export function bindControls(ui) {
   // two competing ones. Without this, the gpu-sel handler doing setMode and
   // setFormula in separate morphs would fire deflate→inflate twice.
   const _setDeformMode = (mode, runFormula) => {
+    // FIX(r4): refuse out loud instead of lighting up and doing nothing.
+    // The defect was that this button LIED: with a GPU shader selected it went
+    // active and opened the formula row while the engine never entered volume
+    // mode. Making the engine follow instead would be worse — it would switch
+    // off the displacement of a shader #gpu-sel still names, and produce a
+    // state applyState explicitly refuses to restore (presets.js:445), so the
+    // operator could reach a view they cannot save. The shader wins, and the
+    // panel says so, in the same voice as the volume→collapse refusal below.
+    // No caller pairs 'volume' with runFormula today; if one ever does, its
+    // work still happens — a refused mode is not a reason to drop it.
+    if (mode === 'volume' && !_cpuOwnsSurface()) {
+      ui._showToast?.('⬡ VOLUME needs a CPU formula · a GPU shader owns the surface');
+      if (runFormula) r.triggerMorphTransition(runFormula);
+      return;
+    }
     _deformBtns.forEach(m => {
       const btn = document.getElementById('deform-'+m);
       if (btn) btn.classList.toggle('active', m === mode);
@@ -282,14 +329,18 @@ export function bindControls(ui) {
       _volWrap.style.display = '';
       const key = _volSel.value;
       _volDesc.textContent = _volDescriptions[key] ?? '';
+      // The selection this click was made against. Read back at the flat frame
+      // for the same reason applyMathFormula reads its own back:
+      // setVolumeFormula sets uMathMode = 1, and a shader picked inside the
+      // morph window would then draw nothing.
+      //
+      // The refusal at the top of this function has already established that a
+      // CPU formula owns the surface; this guard is the other half — a shader
+      // claiming #gpu-sel INSIDE the morph window, after the click was allowed.
+      const want = _gpuSel()?.value;
       // Morph transition into volume mode
       r.triggerMorphTransition(() => {
-        // Same live check as applyMathFormula, for the same reason:
-        // setVolumeFormula sets uMathMode = 1, and a GPU shader picked inside
-        // the morph window would then draw nothing. The panel keeps showing
-        // VOLUME, which is the state applyState already documents for a
-        // shader-carrying snapshot — a stale highlight beats a blank screen.
-        if (_isMathSel() && ui.mathViz) ui.mathViz.setVolumeFormula(key);
+        if (_gpuSel()?.value === want && ui.mathViz) ui.mathViz.setVolumeFormula(key);
         if (runFormula) runFormula();
       });
     } else {
@@ -301,6 +352,18 @@ export function bindControls(ui) {
       });
     }
   };
+
+  /**
+   * The finish a preset should record.
+   *
+   * FIX: captureState read render.currentMaterial, and WIRE/PTS force Matte for
+   * as long as they are on screen — so a preset saved in either mode recorded
+   * Matte and handed it back on the way out, losing the operator's pick. The
+   * pick itself lived only as a closure variable in this file with no reader.
+   * In SURF the live finish is the answer; anywhere else it is what a return to
+   * SURF would restore.
+   */
+  ui.getPresetMaterial = () => (r.vizMode === 'surface' ? r.currentMaterial : _savedMaterial) ?? 'matte';
 
   /**
    * Apply a CPU (`m:`) formula, moving the deform panel with the engine.
@@ -321,18 +384,6 @@ export function bindControls(ui) {
    * @param {function}   [onFlat] — extra work for the same flat frame (R's
    *                                shape swap: two morphs would cancel out)
    */
-  /**
-   * The finish a preset should record.
-   *
-   * FIX: captureState read render.currentMaterial, and WIRE/PTS force Matte for
-   * as long as they are on screen — so a preset saved in either mode recorded
-   * Matte and handed it back on the way out, losing the operator's pick. The
-   * pick itself lived only as a closure variable in this file with no reader.
-   * In SURF the live finish is the answer; anywhere else it is what a return to
-   * SURF would restore.
-   */
-  ui.getPresetMaterial = () => (r.vizMode === 'surface' ? r.currentMaterial : _savedMaterial) ?? 'matte';
-
   ui.applyMathFormula = (colId, key, onFlat) => {
     const want = `m:${colId}:${key}`;
     // Written here rather than assumed: the guard below reads this value back
@@ -510,9 +561,20 @@ export function bindControls(ui) {
     _volSel.addEventListener('change', () => {
       const key = _volSel.value;
       _volDesc.textContent = _volDescriptions[key] ?? '';
+      // The other door into volume mode, and a rule enforced on one of two
+      // adjacent doors is not a rule — this row stays visible if a shader is
+      // picked after volume mode was entered, and a nudge here would then set
+      // uMathMode = 1 behind the shader's back.
+      if (!_cpuOwnsSurface()) {
+        ui._showToast?.('⬡ VOLUME needs a CPU formula · a GPU shader owns the surface');
+        return;
+      }
+      // And the same declare-and-re-read for a shader that claims #gpu-sel
+      // inside the morph window, after this change was allowed.
+      const want = _gpuSel()?.value;
       // Morph on volume formula change too
       r.triggerMorphTransition(() => {
-        if (ui.mathViz) ui.mathViz.setVolumeFormula(key);
+        if (_gpuSel()?.value === want && ui.mathViz) ui.mathViz.setVolumeFormula(key);
       });
     });
   }

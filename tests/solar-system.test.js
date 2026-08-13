@@ -46,9 +46,12 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
 let SOLAR, PLANETS, MOON, RINGS, au2u, re2u, orbitR, planeEuler, theta0, spinRate, moonRate, ringProfile;
+let RenderEngine;
 before(async () => {
+  const mod = await import('../src/render.js');
   ({ SOLAR_MODEL: { SOLAR, PLANETS, MOON, RINGS, au2u, re2u, orbitR,
-                    planeEuler, theta0, spinRate, moonRate, ringProfile } } = await import('../src/render.js'));
+                    planeEuler, theta0, spinRate, moonRate, ringProfile } } = mod);
+  ({ RenderEngine } = mod);
 });
 
 const NAMES = ['Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];
@@ -338,5 +341,218 @@ describe('the rings', () => {
       const outer = Math.max(...bands.map(b => b[1]));
       assert.ok(outer - inner <= 1.3, `${name}: ring spans ${(outer - inner).toFixed(2)} radii`);
     }
+  });
+});
+
+// ── The animator ─────────────────────────────────────────────────────────────
+// Everything above drives the exported placement functions, which is what the
+// header's rationale asks for: "the first version of render.js got both wrong by
+// a sign … so the placement conventions are now functions and this file drives
+// them". But two of those conventions are NOT among the exported functions —
+// `pivot.rotation.y = +theta` and `tilt.rotation.y = -theta` exist in three
+// hand-written copies: the builder, the animator, and the chain() helper above.
+// The tests above pin their own copy; updateSolarSystem's copy was driven by
+// nothing, so the exact sign error the header is named after was still reachable
+// there with the whole suite green, along with a zeroed orbit radius (all eight
+// planets inside the sun), a dropped Kepler-II sweep, and `if (true) return`.
+//
+// updateSolarSystem needs no canvas — it touches only this.solarPlanets and
+// this.solarBelt — so it is called here for real, on a host whose planets are
+// plain node chains. What is asserted is what only the animator can answer.
+describe('the animator — updateSolarSystem', () => {
+
+  const node = () => ({ rotation: { x: 0, y: 0, z: 0 }, position: { x: 0, y: 0, z: 0 } });
+
+  /** One solarPlanets entry, built with the same numbers _buildSolarSystem uses. */
+  function entry(p, { moon = true, clouds = true } = {}) {
+    const dEarth = au2u(1);
+    const a = au2u(p.au);
+    return {
+      pivot: node(), holder: node(), tilt: node(), mesh: node(),
+      clouds: clouds ? node() : null,
+      moon:   moon   ? node() : null,
+      a, ecc: p.ecc, peri: rad(p.peri - p.node),
+      theta: theta0(p),
+      n: SOLAR.speed * Math.pow(dEarth / a, 1.5) * Math.sqrt(1 - p.ecc * p.ecc),
+      spin: spinRate(p),
+      moonRate,
+    };
+  }
+
+  /** A RenderEngine-shaped host carrying the given planets and a belt. */
+  function host(planets, over = {}) {
+    return {
+      currentShape: 'solar',
+      solarGroup: {},
+      solarPlanets: planets,
+      solarBelt: node(),
+      solarBeltRate: 0.003,
+      ...over,
+    };
+  }
+
+  const tick = (h, bass = 0) => RenderEngine.prototype.updateSolarSystem.call(h, bass);
+  const byName = name => PLANETS.find(p => p.name === name);
+
+  test('every planet stays on its own orbit ellipse, frame after frame', () => {
+    // holder.position.x IS the orbital radius and it is written from the angle
+    // the frame started at — the two have to keep agreeing, or the planet leaves
+    // the ellipse the orbit line draws, and is parked at the sun in the limit
+    // where the radius stops being written at all.
+    const planets = PLANETS.map(p => entry(p));
+    const h = host(planets);
+    for (let f = 0; f < 39; f++) tick(h, 0);
+    const angleThisFrame = planets.map(e => e.theta);
+    tick(h, 0);
+
+    for (let i = 0; i < PLANETS.length; i++) {
+      const e = planets[i], name = PLANETS[i].name;
+      const expected = orbitR(e.a, e.ecc, angleThisFrame[i] - e.peri);
+      assert.ok(Math.abs(e.holder.position.x - expected) < 1e-12,
+        `${name} sits at r=${e.holder.position.x} while its angle says ${expected}`);
+      // And the radius really is on the ellipse, not merely self-consistent.
+      assert.ok(e.holder.position.x >= e.a * (1 - e.ecc) - 1e-12
+             && e.holder.position.x <= e.a * (1 + e.ecc) + 1e-12,
+        `${name} is at r=${e.holder.position.x}, off an ellipse spanning ` +
+        `${e.a * (1 - e.ecc)}…${e.a * (1 + e.ecc)}`);
+    }
+  });
+
+  test('the animator holds the spin axis still too, not just the placement chain', () => {
+    // tilt.rotation.y = −theta is what cancels the pivot's rotation, so the
+    // obliquity keeps pointing the same way in world space all year. Flip the
+    // sign and every axis swings round with its orbit — the defect the
+    // placement tests above are named for, in the copy they do not read.
+    const planets = PLANETS.map(p => entry(p));
+    const h = host(planets);
+    for (let f = 0; f < 25; f++) tick(h, 0.3);
+
+    for (let i = 0; i < PLANETS.length; i++) {
+      const e = planets[i];
+      assert.equal(e.tilt.rotation.y, -e.pivot.rotation.y,
+        `${PLANETS[i].name}'s axis is not cancelling its orbit`);
+      assert.notEqual(e.pivot.rotation.y, 0, 'precondition: the planet actually moved');
+    }
+  });
+
+  test('every orbit runs the same way round, and forwards', () => {
+    // A mirrored orbit is a sign flip on the pivot alone, which leaves the
+    // radius and the period untouched. Compared frame to frame, not against the
+    // node's zero: theta0 is negative for half the table.
+    const planets = PLANETS.map(p => entry(p));
+    const h = host(planets);
+    tick(h, 0);
+    const before = planets.map(e => e.pivot.rotation.y);
+    tick(h, 0);
+    for (let i = 0; i < planets.length; i++) {
+      assert.ok(planets[i].pivot.rotation.y > before[i],
+        `${PLANETS[i].name} is orbiting backwards`);
+      assert.equal(planets[i].pivot.rotation.y, planets[i].theta,
+        `${PLANETS[i].name}'s pivot does not carry its own true anomaly`);
+    }
+  });
+
+  test("Kepler's second law: the sweep is faster at perihelion than at aphelion", () => {
+    // The rate goes as 1/r², so the ratio between the two apses is
+    // ((1+e)/(1−e))². Mercury's e = 0.2056 makes that a factor of 2.3 — a
+    // dropped sweep makes it exactly 1.
+    const p = byName('Mercury');
+    const at = trueAnomaly => {
+      const e = entry(p);
+      e.theta = e.peri + trueAnomaly;      // ν measured from perihelion
+      const h = host([e]);
+      const before = e.theta;
+      tick(h, 0);
+      return e.theta - before;
+    };
+    const peri = at(0), aph = at(Math.PI);
+    const expected = Math.pow((1 + p.ecc) / (1 - p.ecc), 2);
+    assert.ok(Math.abs(peri / aph - expected) < 1e-9,
+      `perihelion/aphelion sweep ratio is ${(peri / aph).toFixed(4)}, Kepler II says ${expected.toFixed(4)}`);
+  });
+
+  test('control — the sweep still averages out to about the published mean motion', () => {
+    // The √(1−e²) in `n` exists so the 1/r² sweep integrates to one mean motion
+    // per frame over a full orbit. The tolerance is 5% rather than exact because
+    // the sweep is stepped by Euler integration, which on Mercury's e = 0.2056
+    // runs the year ~2% short; anything looser than a few percent would stop
+    // being a statement about the year at all.
+    const p = byName('Mercury');
+    const e = entry(p);
+    const h = host([e]);
+    let frames = 0;
+    const start = e.theta;
+    while (e.theta - start < 2 * Math.PI && frames < 100000) { tick(h, 0); frames++; }
+    const expected = 2 * Math.PI / e.n;
+    assert.ok(Math.abs(frames - expected) / expected < 0.05,
+      `one orbit took ${frames} frames, mean motion says ${expected.toFixed(1)}`);
+  });
+
+  test('bass drives everything on the same clock', () => {
+    // k = 1 + bass·1.5 multiplies the orbit, the spin, the moon and the belt
+    // alike; a partial application makes the scene come apart under a loud
+    // track rather than speed up.
+    const p = byName('Earth');
+    const step = bass => {
+      const e = entry(p);
+      const h = host([e]);
+      const t0 = e.theta;
+      tick(h, bass);
+      return {
+        orbit: e.theta - t0,
+        spin:  e.mesh.rotation.y,
+        moon:  e.moon.rotation.y,
+        cloud: e.clouds.rotation.y,
+        belt:  h.solarBelt.rotation.y,
+      };
+    };
+    const quiet = step(0), loud = step(1);
+    const k = 1 + 1 * 1.5;
+
+    for (const key of ['orbit', 'spin', 'moon', 'cloud', 'belt']) {
+      assert.ok(Math.abs(loud[key] / quiet[key] - k) < 1e-9,
+        `${key} sped up ×${(loud[key] / quiet[key]).toFixed(4)} on a beat, not ×${k}`);
+    }
+  });
+
+  test('a planet turns on its own axis, its clouds slip ahead, its moon goes round', () => {
+    const p = byName('Earth');
+    const e = entry(p);
+    const h = host([e]);
+    tick(h, 0);
+
+    assert.ok(Math.abs(e.mesh.rotation.y - e.spin) < 1e-15, 'the planet is not turning');
+    assert.ok(Math.abs(e.clouds.rotation.y - e.spin * 1.09) < 1e-15,
+      'the weather is welded to the ground');
+    assert.ok(Math.abs(e.moon.rotation.y - moonRate) < 1e-15, 'the Moon is parked');
+    assert.ok(e.clouds.rotation.y > e.mesh.rotation.y, 'the clouds must lead, not lag');
+  });
+
+  test('control — a planet with no moon and no clouds is not a crash', () => {
+    const e = entry(byName('Mars'), { moon: false, clouds: false });
+    const h = host([e]);
+    tick(h, 0.5);
+    assert.ok(e.mesh.rotation.y > 0);
+  });
+
+  test('nothing moves while another shape is on screen', () => {
+    // The animation loop calls this every frame regardless of shape; the guard
+    // is what stops a torn-down system from being stepped.
+    const e = entry(byName('Earth'));
+    const before = { ...e.pivot.rotation };
+    const h = host([e], { currentShape: 'torus' });
+    tick(h, 1);
+    assert.deepEqual({ ...e.pivot.rotation }, before);
+
+    const h2 = host([e], { solarGroup: null });
+    tick(h2, 1);
+    assert.deepEqual({ ...e.pivot.rotation }, before);
+  });
+
+  test('control — a system with no belt still animates its planets', () => {
+    const e = entry(byName('Earth'));
+    const h = host([e], { solarBelt: null });
+    tick(h, 0);
+    assert.ok(e.pivot.rotation.y !== 0);
   });
 });

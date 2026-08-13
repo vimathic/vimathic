@@ -33,7 +33,7 @@
 // fake with recording methods, and the morph transition runs its onFlat
 // callback synchronously instead of after 400 ms.
 
-import { test, describe, before, beforeEach } from 'node:test';
+import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 function makeEl() {
@@ -684,6 +684,80 @@ describe('applyState — a queued formula asks whether it is still the selection
   });
 });
 
+// ── The branch beside it (R4-80) ─────────────────────────────────────────────
+// The check above guards the formula branch. The deform branch three statements
+// down pushes setVolumeFormula into the SAME onFlatActions array, and had no
+// check at all — so for the ordinary snapshot that pairs a CPU formula with
+// DEFORM: VOLUME the guarded neighbour was cancelled out by its unguarded
+// sibling: setVolumeFormula sets uMathMode = 1, and a shader picked inside the
+// 400 ms window has its whole displacement gated on uMathMode == 0. Both doors
+// in controls.js (⬡ VOLUME and #volume-formula-sel) already ask this question;
+// this is the third writer of the same engine call.
+//
+// The question is "is this still the selection this apply was made against", so
+// the value is captured AFTER the snapshot has written its own gpuSelVal into
+// #gpu-sel — capturing it earlier would make a snapshot that carries a formula
+// disarm its own volume mode. The first control below is what says so.
+describe('applyState — the queued volume deformation asks the same question', () => {
+  const SNAP = { _version: 2, gpuSelVal: 'm:fractals:henon', deformMode: 'volume', volumeKey: 'twist' };
+  let ui;
+  beforeEach(() => {
+    ui = makeUi();
+    ui.render.deferMorph = true;
+    document.getElementById('gpu-sel').value = '';   // the stub outlives the test
+  });
+
+  test('a shader taken during the morph window disarms it', () => {
+    assert.equal(ui.applyState(SNAP), true);
+    assert.equal(ui.called('setVolumeFormula').length, 0, 'precondition: queued, not run');
+
+    document.getElementById('gpu-sel').value = '20';   // a shader, from anywhere
+    ui.render.flatFrame();
+
+    assert.equal(ui.called('setVolumeFormula').length, 0,
+      'the formula beside it stands down and this one armed anyway — uMathMode goes ' +
+      'to 1 and the shader the operator just picked draws nothing at all');
+    assert.equal(ui.render.uMathMode, 0,
+      'the GPU displacement is gated on uMathMode == 0');
+  });
+
+  test('control — nothing supersedes it, so it arms at the flat frame', () => {
+    // #gpu-sel starts on a shader and the snapshot writes its own formula over
+    // it: the question is asked against the value THIS apply left behind, not
+    // against whatever was selected before it ran.
+    document.getElementById('gpu-sel').value = '20';
+    assert.equal(ui.applyState(SNAP), true);
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setVolumeFormula')[0], ['setVolumeFormula', 'twist']);
+    assert.equal(ui.render.uMathMode, 1, 'this is what DEFORM: VOLUME is for');
+  });
+
+  test('control — a snapshot carrying no gpuSelVal still arms its volume mode', () => {
+    // A preset saved before the field existed, or one taken with the built-in
+    // surface selected. There is no snapshot value to compare against, so the
+    // comparison is against the live selection — which nothing here moves.
+    document.getElementById('gpu-sel').value = 'm:waves:standing';
+    assert.equal(ui.applyState({ _version: 2, deformMode: 'volume', volumeKey: 'twist' }), true);
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setVolumeFormula')[0], ['setVolumeFormula', 'twist']);
+  });
+
+  test('the check is one callback standing down, not a cancelled queue', () => {
+    // The shape dropdown is written synchronously, so dropping its swap makes it
+    // a lie — the historical wrong fix (cancelPendingMorph) dropped the whole
+    // closure. This one asserts both halves of the same flat frame, so it is a
+    // second pin as well as the guard against that over-correction.
+    assert.equal(ui.applyState({ ...SNAP, shape: 'torus' }), true);
+    document.getElementById('gpu-sel').value = '20';
+    ui.render.flatFrame();
+
+    assert.deepEqual(ui.called('setShape')[0], ['setShape', 'torus']);
+    assert.equal(ui.called('setVolumeFormula').length, 0);
+  });
+});
+
 // The camera editor's eight sliders read cpParams and nothing told them when a
 // snapshot rewrote it wholesale — so after applying a preset the thumbs still
 // sat at the previous values, and the next drag wrote from there.
@@ -705,5 +779,112 @@ describe('applyState — a snapshot that carries camera params says so', () => {
     const ui = makeUi();
     assert.equal(ui.applyState({ _version: 2, colorIdx: 9 }), true);
     assert.equal(ui.called('paramsChanged').length, 0);
+  });
+});
+
+// ── A delete that storage refused (R4-87) ────────────────────────────────────
+// deletePreset writes the shortened list through _writePresetList, which returns
+// false when the write was refused — quota exceeded, private mode, storage
+// blocked for the origin — and then redraws the list from storage, so the row
+// the operator just clicked ✕ on simply reappears. The other two writers in this
+// file report that (SAVE keeps the typed name and toasts; the hold editor
+// toasts); the delete button dropped the value on the floor, so the only signal
+// was a row that would not go away.
+//
+// The button's handler is built inside _renderPresets and is not reachable any
+// other way, so the list is rendered against a recording createElement and the
+// ✕ button's onclick is called the way a click calls it.
+describe('_renderPresets — a delete the storage refuses is reported', () => {
+  const plainCreate = document.createElement;
+  let store;
+
+  /** localStorage the way the browser hands it over: setItem may throw. */
+  const installStorage = (presets, { refuseWrites = false } = {}) => {
+    store = { raw: JSON.stringify(presets) };
+    globalThis.localStorage = {
+      getItem: k => (k === 'vimathic_presets' ? store.raw : null),
+      setItem: (k, v) => {
+        // DOMException: QuotaExceededError — what a full or blocked origin does.
+        if (refuseWrites) throw new Error('QuotaExceededError');
+        if (k === 'vimathic_presets') store.raw = v;
+      },
+      removeItem() {},
+    };
+  };
+  const storedNames = () => JSON.parse(store.raw).map(p => p.name);
+
+  // Everything _renderPresets builds, in creation order. row.append is the one
+  // method the real list needs that the shared stub does not carry.
+  let made = [];
+  const recordingCreate = tag => {
+    const el = makeEl();
+    el.tagName = tag;
+    el.children = [];
+    el.append = (...kids) => el.children.push(...kids);
+    made.push(el);
+    return el;
+  };
+  const delButtons = () => made.filter(el => el.tagName === 'button' && el.textContent === '✕');
+  const rowNames   = () => made.filter(el => el.tagName === 'button' && el.textContent !== '✕')
+    .map(el => el.textContent);
+
+  const uiWithToasts = () => {
+    const ui = makeUi();
+    ui._showToast = (msg, isError) => ui.calls.push(['toast', msg, isError]);
+    return ui;
+  };
+
+  beforeEach(() => { document.createElement = recordingCreate; made = []; });
+  after(() => { document.createElement = plainCreate; delete globalThis.localStorage; });
+
+  test('the ✕ that could not delete says why', () => {
+    installStorage([{ name: 'Alpha', state: { _version: 2 } }], { refuseWrites: true });
+    const ui = uiWithToasts();
+
+    ui._renderPresets();
+    const del = delButtons()[0];
+    assert.ok(del, 'precondition: the row and its ✕ were built');
+
+    made = [];                       // the click redraws the list; watch that too
+    del.onclick();
+
+    const toasts = ui.called('toast');
+    assert.equal(toasts.length, 1,
+      'the write was refused and the row comes straight back — silence reads as a broken button');
+    assert.equal(toasts[0][2], true, 'reported as a failure, not as a success');
+    assert.match(toasts[0][1], /delete/i, 'and it has to say which action failed');
+    assert.deepEqual(rowNames(), ['Alpha'],
+      'precondition for the toast being the only signal: the row was redrawn from storage');
+  });
+
+  test('control — a delete that lands stays quiet', () => {
+    installStorage([{ name: 'Alpha', state: { _version: 2 } },
+                    { name: 'Beta',  state: { _version: 2 } }]);
+    const ui = uiWithToasts();
+
+    ui._renderPresets();
+    const del = delButtons()[0];     // Alpha's
+    made = [];
+    del.onclick();
+
+    assert.equal(ui.called('toast').length, 0,
+      'a warning on every successful delete would be worse than the silence it replaced');
+    assert.deepEqual(storedNames(), ['Beta'], 'and the delete still happened');
+    assert.deepEqual(rowNames(), ['Beta']);
+  });
+
+  test('control — the other rows keep their own names on the handler', () => {
+    // The handler closes over `p`, so a report bolted onto the wrong closure
+    // would delete the right preset and name the wrong one — or delete row 0
+    // whichever ✕ was pressed.
+    installStorage([{ name: 'Alpha', state: { _version: 2 } },
+                    { name: 'Beta',  state: { _version: 2 } }]);
+    const ui = uiWithToasts();
+
+    ui._renderPresets();
+    delButtons()[1].onclick();       // Beta's
+
+    assert.deepEqual(storedNames(), ['Alpha']);
+    assert.equal(ui.called('toast').length, 0);
   });
 });

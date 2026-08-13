@@ -62,9 +62,8 @@ const SILENCE = { bass: 0, bassSens: 1, mid: 0, treble: 0, trebleSens: 1, beatIn
 
 let host;
 
-beforeEach(() => {
-  clock = 0;
-  host = {
+function makeHost() {
+  return {
     transitions: new TransitionManager(),
     U: {
       uMode:     { value: 0 }, uModeNext: { value: 0 }, uModeBlend: { value: 0 },
@@ -77,6 +76,11 @@ beforeEach(() => {
     _tDurMode:  MODE_MS,
     _tDurColor: COLOR_MS,
   };
+}
+
+beforeEach(() => {
+  clock = 0;
+  host = makeHost();
 });
 
 const setMode  = m        => RenderEngine.prototype.setGPUModeAnimated.call(host, m);
@@ -108,6 +112,33 @@ describe('a GPU mode crossfade fades from what is actually on screen', () => {
     setMode(20);
 
     assert.equal(host.U.uMode.value, 20);
+    assert.equal(host.U.uModeBlend.value, 0);
+  });
+
+  // Both tests above read the uniforms in the same tick as the call and never
+  // advance another frame, so they see the write and not the tween that outlives
+  // it. `transitions.cancel('mode')` is the line that makes the write stick: an
+  // in-flight fade in that slot keeps writing uModeBlend every frame and commits
+  // its own target in onDone, about a second later. Deleting the cancel left the
+  // whole suite green.
+  test('a fade abandoned in the CPU path does not come back and take the screen', () => {
+    advance(32);
+    setMode(5);                    // a 1.2 s crossfade towards shader 5 begins
+    cpuOwns();                     // ...and the operator picks a CPU formula instead
+    advance(100);
+    cpuLeave();
+    setMode(20);                   // then picks shader 20 from the dropdown
+
+    assert.equal(host.U.uMode.value, 20, 'precondition: the chosen shader is on');
+
+    advance(16);
+    assert.equal(host.U.uModeBlend.value, 0,
+      'the abandoned tween is still mixing into the frame the operator is watching');
+
+    advance(MODE_MS * 2);
+    assert.equal(host.U.uMode.value, 20,
+      'shader 20 was replaced, unasked, by the one from the fade that was left behind');
+    assert.equal(host.U.uModeNext.value, 20);
     assert.equal(host.U.uModeBlend.value, 0);
   });
 
@@ -165,6 +196,23 @@ describe('an interrupted crossfade collapses to the nearer end', () => {
     assert.equal(host.U.uModeBlend.value, 0);
   });
 
+  // The colour half had no late-interrupt twin, so its collapse branch was
+  // bounded from below only — `if (false)` on it survived the whole suite while
+  // the same mutation on the mode branch was caught, and coverage listed the
+  // branch body as never executed.
+  test('control — a palette fade interrupted near the end takes the palette it arrived at', () => {
+    advance(32);
+    setColor(3, { duration: 3000 });
+    advance(2700);                     // 90% through: the screen is essentially palette 3
+    assert.ok(host.U.uCMBlend.value > 0.5, 'precondition: nearly arrived');
+
+    setColor(7);
+    assert.equal(host.U.uCM.value, 3,
+      'palette 3 is what the eye is on by now; starting the new fade from 16 is the cut');
+    assert.equal(host.U.uCMNext.value, 7);
+    assert.equal(host.U.uCMBlend.value, 0);
+  });
+
   test('control — an uninterrupted palette fade lands on its target', () => {
     advance(32);
     setColor(7);
@@ -173,5 +221,64 @@ describe('an interrupted crossfade collapses to the nearer end', () => {
     assert.equal(host.U.uCM.value, 7);
     assert.equal(host.U.uCMNext.value, 7);
     assert.equal(host.U.uCMBlend.value, 0);
+  });
+});
+
+// The two interrupt tests above sample the rule at 10% and 90% of the duration,
+// which easeInOutCubic maps to blends of 0.005 and 0.997 — so every threshold
+// between those two satisfies both, and the middle of the fade, where an
+// operator actually interrupts, is never probed. These sweep the fraction and
+// assert the RULE rather than two samples of it: whichever end is nearer the
+// blend on screen is the end that must be kept.
+describe('the near-end rule holds across the whole fade, not just at its ends', () => {
+
+  const FRACTIONS = [0.1, 0.2, 0.3, 0.4, 0.45, 0.5, 0.55, 0.6, 0.7, 0.8, 0.9];
+
+  test('a shader fade keeps the nearer mode wherever it is interrupted', () => {
+    const blends = [];
+    for (const frac of FRACTIONS) {
+      clock = 0;
+      host = makeHost();
+      advance(32);
+      setMode(5);
+      advance(MODE_MS * frac);
+
+      const blend = host.U.uModeBlend.value;
+      blends.push(blend);
+      const nearer = blend > 0.5 ? 5 : 0;   // 5 is the "to" end, 0 the "from" end
+
+      setMode(9);
+      assert.equal(host.U.uMode.value, nearer,
+        `interrupted ${frac * 100}% in the mix reads ${blend.toFixed(4)}, so the nearer ` +
+        `end is mode ${nearer} — kept mode ${host.U.uMode.value} instead`);
+      assert.equal(host.U.uModeNext.value, 9);
+    }
+    // The sweep is only a rule test if it actually crossed the halfway point.
+    assert.ok(blends.some(b => b < 0.5) && blends.some(b => b > 0.5),
+      `the sweep never straddled the halfway blend: ${blends.map(b => b.toFixed(3))}`);
+  });
+
+  test('a palette fade keeps the nearer palette wherever it is interrupted', () => {
+    const DUR = 3000;                       // what AUTO COLOUR asks for on a slow track
+    const blends = [];
+    for (const frac of FRACTIONS) {
+      clock = 0;
+      host = makeHost();
+      advance(32);
+      setColor(3, { duration: DUR });
+      advance(DUR * frac);
+
+      const blend = host.U.uCMBlend.value;
+      blends.push(blend);
+      const nearer = blend > 0.5 ? 3 : 16;
+
+      setColor(7);
+      assert.equal(host.U.uCM.value, nearer,
+        `interrupted ${frac * 100}% in the mix reads ${blend.toFixed(4)}, so the nearer ` +
+        `palette is ${nearer} — kept ${host.U.uCM.value} instead`);
+      assert.equal(host.U.uCMNext.value, 7);
+    }
+    assert.ok(blends.some(b => b < 0.5) && blends.some(b => b > 0.5),
+      `the sweep never straddled the halfway blend: ${blends.map(b => b.toFixed(3))}`);
   });
 });

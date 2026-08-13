@@ -98,6 +98,109 @@ describe('the Virtual Camera is offered on capability, not on brand', () => {
   });
 });
 
+// ── The output the capability flag gates ─────────────────────────────────────
+// The flag above decides whether the panel offers the Virtual Camera; nothing
+// drove the thing it offers. VirtualCameraOutput's constructor, start() and
+// stop() were all uncovered, so `captureStream(30)` in place of
+// `captureStream(fps)` passed the whole suite — and the mismatch is invisible
+// from inside the app, because modals.js prints "📷 Virtual Camera active @
+// ${fps}fps" from the value it REQUESTED, not from the stream it got.
+describe('the Virtual Camera streams at the rate the panel asked for', () => {
+
+  /** A renderer whose canvas records the fps captureStream was called with. */
+  const makeRenderer = () => {
+    const track = { kind: 'video', stopped: false, stop() { this.stopped = true; } };
+    const calls = [];
+    return {
+      calls, track,
+      domElement: {
+        captureStream(fps) { calls.push(fps); return { getTracks: () => [track] }; },
+      },
+    };
+  };
+
+  const freshVcam = async () => {
+    setUA(CHROME_UA);
+    globalThis.HTMLCanvasElement = canvasWith(true);
+    const { VirtualCameraOutput } = await freshOutputs();
+    const renderer = makeRenderer();
+    return { vcam: new VirtualCameraOutput(renderer), renderer };
+  };
+
+  test('the fps the OUTPUT panel sends is the fps the canvas is captured at', async () => {
+    const { vcam, renderer } = await freshVcam();
+
+    const res = vcam.start(24);
+
+    assert.deepEqual(renderer.calls, [24],
+      'the stream runs at a rate the panel never chose, while the panel says otherwise');
+    assert.equal(res.ok, true);
+    assert.equal(res.stream, vcam.getStream());
+    assert.equal(vcam.active, true);
+    assert.equal(vcam._fps, 24);
+  });
+
+  test('control — the documented default is 60, not whatever was last used', async () => {
+    const { vcam, renderer } = await freshVcam();
+    vcam.start();
+    assert.deepEqual(renderer.calls, [60]);
+    assert.equal(vcam._fps, 60);
+  });
+
+  test('stop gives the tracks back and forgets the stream', async () => {
+    // A stream left running holds the canvas capture alive after the operator
+    // pressed STOP, and the panel would show a live camera that is not offered.
+    const { vcam, renderer } = await freshVcam();
+    vcam.start(30);
+    assert.equal(renderer.track.stopped, false, 'precondition: the track is live');
+
+    vcam.stop();
+
+    assert.equal(renderer.track.stopped, true);
+    assert.equal(vcam.active, false);
+    assert.equal(vcam.getStream(), null);
+  });
+
+  test('control — stopping twice is not a crash', async () => {
+    const { vcam } = await freshVcam();
+    vcam.start(30);
+    vcam.stop();
+    vcam.stop();
+    assert.equal(vcam.active, false);
+  });
+
+  test('control — without the API, start refuses and says why', async () => {
+    // The same question the capability flag answers, asked at the point of use.
+    setUA(CHROME_UA);
+    globalThis.HTMLCanvasElement = canvasWith(false);
+    const { VirtualCameraOutput } = await freshOutputs();
+    const renderer = makeRenderer();
+    const vcam = new VirtualCameraOutput(renderer);
+
+    const res = vcam.start(24);
+
+    assert.equal(res.ok, false);
+    assert.match(res.error, /captureStream/);
+    assert.equal(vcam.active, false, 'a refused start must not leave the panel showing "active"');
+    assert.deepEqual(renderer.calls, [], 'the canvas was never asked');
+  });
+
+  test('control — a canvas that refuses reports the reason instead of throwing', async () => {
+    setUA(CHROME_UA);
+    globalThis.HTMLCanvasElement = canvasWith(true);
+    const { VirtualCameraOutput } = await freshOutputs();
+    const vcam = new VirtualCameraOutput({
+      domElement: { captureStream() { throw new Error('NotAllowedError'); } },
+    });
+
+    const res = vcam.start(30);
+
+    assert.equal(res.ok, false);
+    assert.equal(res.error, 'NotAllowedError');
+    assert.equal(vcam.active, false);
+  });
+});
+
 describe('the second screen opens relative to the page', () => {
   let opened, ss;
 

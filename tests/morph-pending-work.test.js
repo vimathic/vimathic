@@ -148,8 +148,10 @@ describe('a morph carries its scheduled work', () => {
 });
 
 // ── The ramp, not just the payload ───────────────────────────────────────────
-// The JSDoc over setShapeAnimated promises "the in-flight tween is cancelled and
-// the geometry is swapped immediately so the new shape starts inflating".
+// The JSDoc over setShapeAnimated used to promise "the in-flight tween is
+// cancelled and the geometry is swapped immediately so the new shape starts
+// inflating" — it now describes what these tests pin instead, which is that a
+// superseded morph keeps collapsing from where it is.
 // triggerMorphTransition did the opposite: it hard-wrote uMorphProgress back to
 // 1.0 and ran a fresh full-length deflate. So a shape pressed mid-morph made the
 // half-collapsed surface jump back to full size and start over — the biggest
@@ -205,5 +207,80 @@ describe('an interrupted morph continues from where it is', () => {
 
     assert.deepEqual(applied, ['outer', 'inner']);
     assert.equal(host.U.uMorphProgress.value, 1);
+  });
+});
+
+// ── The two named promises the payload tests walk past ───────────────────────
+// Everything above reads `applied` — WHAT ran and in what order. Both halves of
+// the animation the mechanism exists for were asserted only at their endpoints:
+// "runs at the flat frame, not on the way there" never reads uMorphProgress
+// inside the callback, and every inflate assertion is `=== 1` after the fact.
+// So the height the swap happens at, and whether the new shape rises at all,
+// were both unpinned — an inflate replaced by a bare `uMorphProgress = 1.0`
+// made every shape change, formula change and preset apply pop the new surface
+// into existence at full size, with the suite green.
+describe('the ramp the morph exists to draw', () => {
+
+  test('the queued work sees a surface that is actually flat', () => {
+    // triggerMorphTransition's JSDoc: "@param onFlat — called at the flat frame
+    // (uMorphProgress === 0)". The mesh is invisible only at 0; a swap at any
+    // other height is the cut the whole two-phase dance exists to avoid.
+    let seen = null;
+    morph(() => { seen = host.U.uMorphProgress.value; });
+    advance(DUR * 2);
+
+    assert.ok(seen !== null, 'precondition: the queued work ran at all');
+    assert.equal(seen, 0,
+      `the geometry was swapped with the mesh ${(seen * 100).toFixed(1)}% tall`);
+  });
+
+  test('work carried over from a superseded morph also sees a flat surface', () => {
+    // The carry-forward path reaches the flat frame through a different tween,
+    // so it needs its own reading.
+    const heights = [];
+    morph(() => heights.push(host.U.uMorphProgress.value));
+    advance(100);
+    morph(() => heights.push(host.U.uMorphProgress.value));
+    advance(DUR * 2);
+
+    assert.equal(heights.length, 2, 'precondition: both callbacks ran');
+    assert.deepEqual(heights, [0, 0]);
+  });
+
+  test('the new shape rises over the duration instead of popping into place', () => {
+    // setShapeAnimated's JSDoc: "Phase 2 (inflate): animate uMorphProgress 0→1
+    // as the new shape rises up."
+    morph(() => applied.push('geometry'));
+    advance(DUR + 16);                       // just past the flat frame
+    assert.deepEqual(applied, ['geometry'], 'precondition: the swap has happened');
+    assert.ok(host.U.uMorphProgress.value < 1,
+      'the surface is already at full size one frame after the swap — that is a pop, not a rise');
+
+    advance(DUR / 2);
+    const mid = host.U.uMorphProgress.value;
+    assert.ok(mid > 0 && mid < 1,
+      `mid-inflate the surface is part-grown; got ${mid}`);
+
+    advance(DUR);
+    assert.equal(host.U.uMorphProgress.value, 1, 'and it does arrive at full size');
+  });
+
+  test('the inflate is monotonic — the surface only ever grows back', () => {
+    // A rise that dips or overshoots reads as a wobble on every shape change.
+    morph(() => {});
+    advance(DUR + 16);
+    let prev = host.U.uMorphProgress.value;
+    const trace = [prev];
+    for (let i = 0; i < Math.ceil(DUR / 16) + 2; i++) {
+      advance(16);
+      const now = host.U.uMorphProgress.value;
+      assert.ok(now >= prev,
+        `the surface shrank mid-inflate: ${prev} → ${now} (trace ${trace.join(' ')})`);
+      trace.push(now);
+      prev = now;
+    }
+    assert.equal(prev, 1);
+    assert.ok(trace.filter(v => v > 0 && v < 1).length >= 4,
+      `the inflate was over in ${trace.filter(v => v > 0 && v < 1).length} frames — it is a cut`);
   });
 });

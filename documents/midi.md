@@ -33,7 +33,7 @@ Learn mode binds the next incoming CC message to a parameter of your choice.
 
 That's it. Move the same control now and the parameter moves with it. The mapping list shows every active binding, sorted by CC number, and each row has its own **⊙** to re-learn it onto a different control.
 
-The panel's **🎛 LEARN MODE** button is a reminder rather than a step: pressed on its own it just tells you to use the row's ⊙, and pressed while a row is listening it cancels.
+The panel's **🎛 LEARN** button is a reminder rather than a step: pressed on its own it just tells you to use the row's ⊙, and pressed while a row is listening it cancels. (Its label changes to **🎛 LEARN MODE** after the first learn or cancel and stays that way for the session — same button either way.)
 
 ## REL and ABS
 
