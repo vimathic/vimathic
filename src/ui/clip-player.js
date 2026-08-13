@@ -253,7 +253,22 @@ export class ClipPlayer {
    * and arms its timeout at hold + this, so the schedule's real period is the
    * sum — and the catch-up walk has to spend the same currency.
    */
-  _morphMs() { return this._ui.render.isMobile ? 800 : 1600; }
+  // FIX(#26, r4): read the morph off the engine instead of naming a figure of
+  // our own. This charged 1600 ms on desktop for a morph that runs in 800:
+  // triggerMorphTransition deflates for at most render._tDurShape and inflates
+  // for the same again, and _tDurShape's own comment calls it "half the morph".
+  // Everything downstream ran long by the difference — the step period (a step
+  // advertised as "5.0s" occupied 6.6 s), and the countdown bar, which
+  // controller.js draws as remain/holdMs and which therefore sat above 100% —
+  // visually frozen full — for the first 1.6 s of every step, while the picture
+  // had settled after 0.8. The class header of this file already stated the
+  // right number ("≈800ms after step start"); now the code cannot drift from
+  // the engine that decides it. The fallback is the shipped _tDurShape pair, so
+  // a build that does not expose it still gets a number rather than NaN.
+  _morphMs() {
+    const half = this._ui.render._tDurShape ?? (this._ui.render.isMobile ? 300 : 400);
+    return half * 2;
+  }
 
   _catchUp() {
     if (!this._steps.length) return;

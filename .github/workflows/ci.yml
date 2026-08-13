@@ -33,8 +33,17 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        # 208 tests: 133 validating math-collections.js against canonical references
-        # (scipy.special, mpmath, NIST DLMF). See tests/math-validation.test.js.
+        # Runs every tests/*.test.js — the whole unit suite, not only the maths.
+        # FIX(#44, r4): this comment used to state a fixed total, and it was
+        # hundreds short by the time anyone read it. It is the only statement in
+        # the workflow of what this required check covers, and the job's name
+        # understates it too — but the name is what the branch-protection rule
+        # matches on, so it cannot be corrected here alone. That left a reader
+        # with a name and a number that both said "narrower than it is". The
+        # scope is the glob; the count is whatever the run prints.
+        # The largest single file is tests/math-validation.test.js, which
+        # validates math-collections.js against canonical references
+        # (scipy.special, mpmath, NIST DLMF).
         run: npm test
 
   e2e:
@@ -130,6 +139,21 @@ jobs:
         # Anything in dist/ root that's NOT on this whitelist means
         # something leaked from the inlining step — that's the regression
         # we want CI to catch.
+        #
+        # FIX(#37, r4): that was only half a spec, and the half that cannot
+        # catch a broken deploy. The list forbade extra files and never asked
+        # for the ones a deploy needs, so a build with no second screen, no
+        # worker chunk, no docs site, no sitemap, no robots.txt and no llms.txt
+        # went green — every producer of those files fails quietly by design
+        # (copySecondScreen is wrapped in `if (fs.existsSync(src))`,
+        # vimathicDocs.closeBundle() returns early with a console.warn), and the
+        # other two steps cannot see it: the script grep only reads index.html,
+        # and the size gate only bounds index.html, which stays over 1 MB with
+        # every document dropped. So the spec is two-way now: the whitelist
+        # above says what may be in dist/, and the loop below says what must be.
+        # It asks for the files enumerated in this comment; the icons, the
+        # manifest and og-image.png are allowed but not demanded, because
+        # whether the favicon package ships at all is a separate open question.
         run: |
           set -e
           echo "=== dist/ root contents ==="
@@ -147,6 +171,38 @@ jobs:
             exit 1
           fi
           echo "✅ All dist/ root entries are on the whitelist."
+          echo ""
+          echo "=== Required-files verification ==="
+          MISSING=""
+          for f in index.html second-screen.html vimathic-intro.mp3 \
+                   support-hero.png support-hero.webp \
+                   sitemap.xml robots.txt llms.txt docs/index.html; do
+            [ -f "dist/$f" ] || MISSING="$MISSING $f"
+          done
+          # The worker chunk is content-hashed, so it is matched by shape — and
+          # index.html has to name the chunk that was actually emitted. A build
+          # that emits one hash while the bundle asks for another is a 404 at
+          # runtime and looks identical to a healthy dist/ from a file listing.
+          WORKERS=$(find dist -maxdepth 1 -name 'math-worker-*.js' -printf '%f\n')
+          if [ -z "$WORKERS" ]; then
+            MISSING="$MISSING math-worker-*.js"
+          else
+            REFERENCED=0
+            for w in $WORKERS; do
+              if grep -qF "$w" dist/index.html; then REFERENCED=1; fi
+            done
+            if [ "$REFERENCED" -eq 0 ]; then
+              MISSING="$MISSING (index.html references no emitted math-worker chunk)"
+            fi
+          fi
+          if [ -n "$MISSING" ]; then
+            echo "❌ Missing from dist/:$MISSING"
+            echo ""
+            echo "The build succeeded without them, so nothing else will tell you."
+            echo "Remove an entry from the list above only if the deploy genuinely no longer needs it."
+            exit 1
+          fi
+          echo "✅ Every file the deploy needs is in dist/."
 
       - name: Verify index.html has no external script references
         # The whole point of single-file deploy is that index.html runs

@@ -7,8 +7,8 @@ description: What VIMATHIC is today, and what comes next.
 # Roadmap
 
 <picture>
-  <source srcset="/support-hero.webp" type="image/webp">
-  <img src="/support-hero.png" alt="VIMATHIC hero image" style="max-width:100%;height:auto;display:block;margin:1.5em auto;border-radius:6px;">
+  <source srcset="./support-hero.webp" type="image/webp">
+  <img src="./support-hero.png" alt="VIMATHIC hero image" style="max-width:100%;height:auto;display:block;margin:1.5em auto;border-radius:6px;">
 </picture>
 
 VIMATHIC 1.0 is here — free, source-available, and complete on its own.

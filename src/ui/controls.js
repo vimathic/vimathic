@@ -634,8 +634,16 @@ export function bindControls(ui) {
     cam.cb.onAutoRotChanged(false);
 
     // Reset camera programmer.
-    cam.cpActive = false;
-    cam.cpFn     = null;
+    // FIX(#24, r4): through resetScript(), which also puts the default template
+    // back in the editor and drops cpSource. Clearing only cpActive/cpFn left
+    // the script text sitting in #ce-code, and this button's own autosave —
+    // it is inside .controls-panel, and it moves the camera — wrote that text
+    // straight back to the persisted snapshot ~1.5 s later. That used to be
+    // laundered by the boot-time blanking; now that a reload restores the
+    // script (as it should), RESET ALL has to actually reset it.
+    // resetScript() re-does fov=45 and setCamPhysics('dark_matter'), both
+    // already set above with the same values, and does not touch autoRot.
+    cam.resetScript();
     cam.cpKeyframes = [];
     cam.cpSelectedKf = null;
     cam.buildTimeline();

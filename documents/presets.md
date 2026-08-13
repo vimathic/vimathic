@@ -124,6 +124,8 @@ If the imported file contains Camera Programmer code, VIMATHIC shows a **preview
 
 If you click KEEP, the code is loaded into the Camera Programmer editor but **not auto-executed**. You still need to open the editor and click APPLY manually before it runs. This is two-layer defense.
 
+A preset can also carry code on its **keyframes**, and the modal shows that too — each block labelled with the time it fires at. Keep that in mind when you accept: keyframe code lands on the timeline rather than in the editor, and it runs as soon as *any* script is applied, including the default template. For keyframe code, the modal is the only layer.
+
 ## Preset versioning
 
 Preset JSON files carry a `_version` field. As VIMATHIC evolves, the snapshot format may change. The loader has a **migration function** that walks old presets forward through any structural changes that happen between versions — so a preset saved in one release still loads in a later one.
@@ -142,7 +144,7 @@ Current preset format version: **2**.
 ## Where the data lives
 
 - **Named presets** — `localStorage` under key `vimathic_presets`
-- **Auto-persisted live state** — `localStorage` under key `vimathic_persisted_state` (everything the current session looks like, written debounced; restored on next page load)
+- **Auto-persisted live state** — `localStorage` under key `vimathic_persisted_state` (everything the current session looks like, written debounced; restored on next page load). A Camera Programmer script comes back with it, in the editor and not running — open Camera Programmer and press APPLY to start it again.
 - **MIDI mappings** — `localStorage` under key `vimathic_midi_map`
 - **Last About-modal tab** — `localStorage` under key `vimathic_about_last_tab`
 - **First-launch tour flag** — `localStorage` under key `vimathic_about_seen` (set to `'1'` after the About modal has been opened once; stops the tour from appearing again)

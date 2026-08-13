@@ -16,6 +16,44 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp  = (a, b, t)   => a + (b - a) * t;
 
 /**
+ * FIX(#5, #6, r4): fold the session clock back into [0, period) so a solution
+ * that evolves with `t` replays instead of running out.
+ *
+ * The `time` these formulas receive is not a physical time. main.js starts it
+ * at 0 and adds 0.008 on every animation frame for as long as the tab is open;
+ * STOP MOTION pauses it, nothing rewinds it, and no formula is ever handed a
+ * zero of its own. Eight entries read it as the age of a decaying or
+ * translating solution and were measured going out over the length of a set —
+ * dampedOscillator fell from a 0.39 peak to 2·10⁻⁵ after two minutes of uptime
+ * and never came back, wavePacket and schrodingerSoliton translated their
+ * packets off the domain to exactly zero, and helicoid ramped its whole mesh
+ * to y ≈ 24 after half an hour against a framed volume about 3 units high.
+ * Only a page reload recovered any of them.
+ *
+ * The period is chosen per entry so the interesting part of the evolution is
+ * what plays, and so the quietest instant of a cycle stays within an order of
+ * magnitude of the entry's own t = 0 peak. The cost is one seam per cycle,
+ * paid against a surface that was otherwise a flat plate; t = 0 is left
+ * bit-identical, so every baseline assertion in the suite is unmoved.
+ */
+const replayTime = (t, period) => { const p = t % period; return p < 0 ? p + period : p; };
+
+/**
+ * FIX(#6, r4): the angular companion to replayTime — fold an azimuth back into
+ * (−π, π], the half-open interval Math.atan2 itself returns, so a rotated
+ * azimuth lands exactly where atan2 left it when the rotation is zero.
+ *
+ * Written as a residue plus one correction rather than the tidier
+ * `π − replayTime(π − a, TAU)`: for an `a` one ulp above −π that subtraction
+ * rounds to exactly TAU, the residue comes back 0, and the seam flips by the
+ * full height of the surface at a single vertex.
+ */
+const wrapAzimuth = a => {
+  const m = a % TAU;
+  return m > Math.PI ? m - TAU : (m <= -Math.PI ? m + TAU : m);
+};
+
+/**
  * Gamma function via Lanczos approximation (g=7, ~10⁻¹⁵ accuracy).
  * Fully iterative — uses the reflection formula gamma(n) = π / (sin(πn) · gamma(1-n))
  * for n < 0.5 to keep the Lanczos input in its accurate range without recursion.
@@ -577,8 +615,16 @@ const SPECIAL_FUNCTIONS = {
       }
     },
     legendre2: {
-      name: 'Legendre P₂ Surface',
-      formula: 'P₂(x) = ½(3x²−1)',
+      // FIX(#8, r4): the label said P₂ and the entry cannot draw P₂. The degree
+      // is n = round(1 + comp·4) and comp is `0.5 + mid·0.4` at every site that
+      // builds it, so comp ∈ [0.5, 0.9] and n ∈ {3, 4, 5}; P₂ would need
+      // comp < 0.375, which no audio, slider or MIDI path produces. The
+      // arithmetic is right — the name was naming a surface nobody could reach.
+      // MATHEMATICAL_ACCURACY.md had already been corrected to "Legendre P_n
+      // Surface"; this brings the code along. (The <option> text in index.html
+      // still reads "Legendre P₂ Surface" and needs the same edit.)
+      name: 'Legendre Pₙ Surface',
+      formula: 'Pₙ(x), n = 3…5',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const n=Math.round(1+comp*4), xn=clamp(x*freq*0.28,-1,1);
         return legendreP(n, xn) * amp * 0.5 * Math.exp(-z*z*0.3);
@@ -617,11 +663,38 @@ const SPECIAL_FUNCTIONS = {
       name: 'Airy Function Ai(x)',
       formula: 'Ai\'\'(x) = x·Ai(x)',
       f(x, z, t, {amp=1, freq=1}) {
-        // Numerical integration, simple forward Euler from known values
+        // FIX(#3, r4): the march used to start at xx = −3.0 while seeding the
+        // state with Ai(0) = 0.3550280539 and Ai′(0) = −0.2588194038. The right
+        // initial condition imposed at the wrong point selects a different
+        // combination of Ai and Bi, so the result was not Ai anywhere: at x = 0
+        // it came out −0.365 against Ai(0) = +0.355, sign included. Worse,
+        // `while (xx < xi)` never ran at all for xi < −3, so the left quarter
+        // of the domain answered with the untouched seed — a constant shelf
+        // where Ai should be oscillating. The seed is now used at the point it
+        // actually describes, and the integration runs outward from there in
+        // whichever direction the sample lies.
+        //
+        // Forward Euler goes with it. Any march of y″ = x·y toward +x amplifies
+        // the growing Bi solution, and Euler at dx = 0.05 lost the decaying
+        // tail completely — it hit the −0.8 clamp by x ≈ 4, where Ai(4) is
+        // 0.00095. RK4 at dx = 0.15 holds 8·10⁻⁴ over |x| ≤ 5.6, the domain the
+        // app displays at the wave-intensity default, for about a quarter more
+        // arithmetic than the Euler march it replaces (measured on a 161×161
+        // mesh: 3.9 ms → 4.8 ms). Past |x| ≈ 6 nothing forward-marched survives
+        // at any step size, and the clamp below is what keeps that off the mesh.
         const xi=x*freq*1.5;
-        const dx=0.05; let ai=0.3550280539, dai=-0.2588194038;
-        let xx=-3.0;
-        while (xx < xi) { const tmp=dai; dai+=ai*xx*dx; ai+=tmp*dx; xx+=dx; }
+        const dx=0.15; let ai=0.3550280539, dai=-0.2588194038;
+        let xx=0;
+        while (Math.abs(xi-xx) > 1e-12) {
+          const h=(xi > xx ? 1 : -1)*Math.min(dx, Math.abs(xi-xx));
+          const k1a=dai,         k1d=xx*ai;
+          const k2a=dai+h/2*k1d, k2d=(xx+h/2)*(ai+h/2*k1a);
+          const k3a=dai+h/2*k2d, k3d=(xx+h/2)*(ai+h/2*k2a);
+          const k4a=dai+h*k3d,   k4d=(xx+h)*(ai+h*k3a);
+          ai +=h/6*(k1a+2*k2a+2*k3a+k4a);
+          dai+=h/6*(k1d+2*k2d+2*k3d+k4d);
+          xx+=h;
+        }
         return clamp(ai * amp * 0.7 * Math.exp(-z*z*0.3), -0.8, 0.8);
       }
     },
@@ -921,8 +994,19 @@ const PROBABILITY_STATISTICS = {
           const proposal=v+((seed&0xffff)/65535-0.5)*0.8*(1+comp);
           // Deterministic pseudo-random acceptance test — keeps the surface
           // reproducible frame to frame instead of flickering as Math.random()
-          // would. Hash combines proposal position with global time.
-          if (((Math.sin(v*127.1+t*311.7)*43758.5453)%1+1)%1 < target(proposal)/Math.max(1e-8,target(v))) v=proposal;
+          // would. Hash combines proposal position with the step index.
+          //
+          // FIX(#4, r4): the hash used to read `v` and the global clock, which
+          // produced exactly the flicker the sentence above says it prevents:
+          // `t` advances 0.008 per rendered frame, moving the sine argument
+          // 2.49 rad, so the accept/reject decision for all 40 steps was
+          // uncorrelated between consecutive frames and the height field
+          // changed by 95% of its own peak every 16 ms. The step index carries
+          // the decorrelation the clock was being used for, and the proposal —
+          // which the comment always claimed was hashed — is what the coin
+          // should depend on anyway. Audio still reaches the chain through
+          // comp, which sets the proposal width.
+          if (((Math.sin(proposal*127.1+i*311.7)*43758.5453)%1+1)%1 < target(proposal)/Math.max(1e-8,target(v))) v=proposal;
         }
         return Math.exp(-3*(v-x*freq)**2) * amp * 0.5 * Math.exp(-z*z*0.4);
       }
@@ -1284,7 +1368,14 @@ const COMPLEX_NUMBERS = {
         const r=Math.sqrt(x*x+z*z)*freq+1e-9;
         const theta=Math.atan2(z*freq,x*freq);
         const logMod=Math.log(r), arg=theta;
-        const realExp=r*logMod-z*freq*arg;
+        // FIX(#2, r4): |z^z| = exp(Re(z·Log z)) = exp(x·ln|z| − y·arg z). The
+        // first term used to be `r*logMod` — the modulus in place of the real
+        // part. The two are the same number only on the positive real axis,
+        // where every existing assertion for this entry happened to sit; over
+        // the whole x < 0 half the result was exponentially too large (at
+        // z = −2 it returned 0.4 against a true 0.025) and a fifth of the mesh
+        // sat pinned at the +0.7 clamp instead of collapsing toward zero.
+        const realExp=x*freq*logMod-z*freq*arg;
         return clamp(Math.exp(realExp)*0.1*amp,-0.7,0.7);
       }
     },
@@ -1415,7 +1506,11 @@ const COMPLEX_NUMBERS = {
       name: 'Heat Kernel in ℂ',
       formula: 'K(z,t) = 1/(4πt)·e^{−|z|²/4t}',
       f(x, z, t, {amp=1, freq=1}) {
-        const T=0.3+t*0.05, r2=(x*freq)**2+(z*freq)**2;
+        // FIX(#5, r4): the kernel spreads and fades as 1/t, so on the session
+        // clock it just kept fading — 8.2·10⁻² at boot down to 5.6·10⁻⁴ half an
+        // hour in. 24 replays the spread from 0.3 out to 1.5, where the peak is
+        // a fifth of the boot value; see replayTime.
+        const T=0.3+replayTime(t, 24)*0.05, r2=(x*freq)**2+(z*freq)**2;
         return Math.exp(-r2/(4*T))/(4*Math.PI*T) * amp * 0.4;
       }
     },
@@ -1508,7 +1603,11 @@ const FOURIER_SERIES = {
       name: 'Fourier Heat Equation',
       formula: 'u = Σ bₙsin(nπx)e^{−n²π²t}',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
-        const N=5+Math.round(comp*6), tau=0.01+t*0.005; let v=0;
+        // FIX(#5, r4): τ is diffusion time and t is the session clock, so every
+        // mode decayed for good — the surface was down to 2·10⁻⁴ of its boot
+        // peak five minutes in. 30 replays the diffusion from τ = 0.01 to 0.16,
+        // by which point the fundamental has faded to a quarter; see replayTime.
+        const N=5+Math.round(comp*6), tau=0.01+replayTime(t, 30)*0.005; let v=0;
         for (let n=1; n<=N; n++) {
           const bn=(n%2===0)?0:4/(n*Math.PI);
           v+=bn*Math.sin(n*Math.PI*(x*freq+0.5))*Math.exp(-n*n*Math.PI**2*tau);
@@ -1543,10 +1642,26 @@ const FOURIER_SERIES = {
       formula: 'DCT-II: X[k] = Σ x[n]cos(π(n+½)k/N)',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const N=8, k=clamp(Math.round((x+3.5)/7*N), 0, N-1);
-        // Reconstruct from k-th basis vector
+        // FIX(#1, r4): the sum used to run the k-th basis vector over n with no
+        // x[n] in it at all — Σₙ cos(π(n+½)k/N), which is the DCT-II of the
+        // constant 1 and therefore exactly 0 for every k ≥ 1 by orthogonality.
+        // Seven of the eight bands were identically zero, so 94% of the mesh
+        // was a flat plate that nothing could move, while the entry's own
+        // displayed formula string promises a transform of some x[n].
+        //
+        // There is now a signal to transform: a two-harmonic test tone whose
+        // fundamental f₀ = 1 + comp·3 rides the mid band, chosen over a single
+        // sinusoid because a lone harmonic leaves half the bins empty at
+        // comp = 0.5. X[k] is the full DCT-II of it, normalised by N/2 — the
+        // coefficient a unit sinusoid on a bin produces — so the surface keeps
+        // the height range it had.
+        const f0=1+comp*3;
         let v=0;
-        for (let n=0; n<N; n++) v+=Math.cos(Math.PI*(n+0.5)*k/N);
-        return (v/N) * amp * 0.5 * Math.exp(-z*z*0.3);
+        for (let n=0; n<N; n++) {
+          const xn=Math.sin(TAU*f0*(n+0.5)/N)+0.5*Math.sin(TAU*2*f0*(n+0.5)/N);
+          v+=xn*Math.cos(Math.PI*(n+0.5)*k/N);
+        }
+        return (v*2/N) * amp * 0.5 * Math.exp(-z*z*0.3);
       }
     },
     convolution: {
@@ -1640,7 +1755,12 @@ const DIFFERENTIAL_EQUATIONS = {
       formula: 'ẍ + 2γẋ + ω₀²x = 0',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const gamma=0.1+comp*0.4, omega=1+comp;
-        const T=x*freq+t*0.5+3.5;
+        // FIX(#5, r4): T is the oscillator's own time and the ring dies inside
+        // exp(−γT), so on the session clock the surface was flat within two
+        // minutes (peak 2·10⁻⁵ against 0.39 at boot). 6 is the shortest period
+        // in the catalogue because γ reaches 0.46: it replays a full ring-down
+        // and starts the next one; see replayTime.
+        const T=x*freq+replayTime(t, 6)*0.5+3.5;
         return Math.exp(-gamma*T)*Math.cos(omega*T) * amp * 0.5 * Math.exp(-z*z*0.25);
       }
     },
@@ -1688,10 +1808,15 @@ const DIFFERENTIAL_EQUATIONS = {
       name: 'Heat Equation (1D)',
       formula: '∂u/∂t = α ∂²u/∂x²',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
-        const alpha=0.5+comp*0.5, N=6; let u=0;
+        // FIX(#5, r4): same defect as heat2D one collection over — the
+        // exponential is in the session clock, so the bar cooled to 10⁻⁵ of its
+        // boot peak within five minutes and stayed there. 20 replays the
+        // cooling to the point where the fundamental is a quarter of its
+        // starting height; see replayTime.
+        const alpha=0.5+comp*0.5, N=6, tp=replayTime(t, 20); let u=0;
         for (let n=1; n<=N; n++) {
           const bn=(n%2===0)?0:4/(n*Math.PI);
-          u+=bn*Math.sin(n*Math.PI*(x*freq+0.5))*Math.exp(-alpha*n*n*Math.PI**2*Math.max(0,t*0.01));
+          u+=bn*Math.sin(n*Math.PI*(x*freq+0.5))*Math.exp(-alpha*n*n*Math.PI**2*Math.max(0,tp*0.01));
         }
         return u * amp * 0.45 * Math.exp(-z*z*0.25);
       }
@@ -1780,7 +1905,12 @@ const DIFFERENTIAL_EQUATIONS = {
       formula: '∂u/∂t = D∂²u/∂x² + ru(1−u)',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const D=0.5, r=1+comp, c_wave=Math.sqrt(4*D*r);
-        const xi=x*freq-c_wave*t*0.08;
+        // FIX(#5, r4): the front travels at c_wave·0.08 per unit of clock and
+        // the clock never stops, so it walked off the right edge for good —
+        // 5·10⁻⁵ of the boot peak after two minutes. 24 is one crossing of the
+        // domain: the front sweeps through and the next one starts from the
+        // left, which is what a travelling wave looks like; see replayTime.
+        const xi=x*freq-c_wave*replayTime(t, 24)*0.08;
         return 1/(1+Math.exp(-xi*2)) * amp * 0.5 * Math.exp(-z*z*0.25);
       }
     },
@@ -2091,8 +2221,18 @@ const TOPOLOGY_GEOMETRY = {
       name: 'Helicoid',
       formula: 'x=r cos θ, y=cθ, z=r sin θ',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
+        // FIX(#6, r4): the height used to be c·(theta + t·0.3). theta is bounded
+        // to (−π, π] but the session clock is not, so the term was a pure
+        // unbounded translation of the whole mesh: y ≈ 8 after ten minutes and
+        // 24 after thirty, against a framed volume about 3 units high, with
+        // nothing downstream clamping it. Rotating the azimuth instead — fold
+        // theta + t·0.3 back into (−π, π] — makes the helicoid spin about its
+        // axis, which is what the surface actually does, and keeps the height
+        // inside the c·(−π, π] it is supposed to span. The fold keeps atan2's
+        // own half-open convention, so the seam stays exactly where atan2
+        // already puts it and t = 0 is bit-identical to the old code.
         const theta=Math.atan2(z*freq,x*freq), c=0.3+comp*0.3;
-        return c*(theta+t*0.3) * amp * 0.25;
+        return c*wrapAzimuth(theta+t*0.3) * amp * 0.25;
       }
     },
     hyperbolicParaboloid: {
@@ -2239,7 +2379,23 @@ const CELLULAR_AUTOMATA = {
         const W = res, H = res;
         const gen = Math.round(t * comp * 2) % 20;
         let grid = new Uint8Array(W * H);
-        for (let i = 0; i < W * H; i++) grid[i] = ((i * 1664525 + 1013904223) >>> 0) % 3;
+        // FIX(#0, r4): the seed used to be ((i·1664525 + 1013904223) >>> 0) % 3
+        // over the row-major index, which lays the repeating stripe 1,0,2,1,0,2…
+        // along every row. The grid is 48 wide and 48 is a multiple of 3, so the
+        // stripe lines up column for column between neighbouring rows and every
+        // OFF cell ends up with exactly 3 ON neighbours — 4 on the rows where
+        // the 32-bit wrap shifts the phase — and never the 2 the birth rule
+        // needs. Generation 1 therefore produced zero births, generation 2 was
+        // an empty board, and the mesh was a dead-flat plate for 18 of its 20
+        // phases: the only entry in the catalogue that ignored AMPLITUDE.
+        // Mixing the row and the column through different large odd multipliers
+        // breaks that alignment, and the census then behaves like the soup
+        // Brian's Brain is meant to be run from — 1506 live cells at generation
+        // 0 settling to ~130 gliders by generation 19.
+        for (let i = 0; i < W * H; i++) {
+          const r = (i / W) | 0, c = i % W;
+          grid[i] = (((r * 73856093) ^ (c * 19349663)) >>> 0) % 3;
+        }
         for (let g = 0; g < gen; g++) {
           const next = new Uint8Array(W * H);
           for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
@@ -2676,9 +2832,15 @@ const QUANTUM_MECHANICS = {
       formula: 'ψ(x,t)=e^{−(x−vt)²/4σ²}e^{i(kx−ωt)}',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const k=3+comp*3, v=0.5+comp*0.3, sigma=0.5;
-        const xt=x*freq-v*t*0.3;
+        // FIX(#5, r4): the packet centre is at v·t·0.3, so on the session clock
+        // it left the domain about twenty seconds in and the mesh was exactly
+        // zero from there on — the worst of the seven. 16 carries the packet
+        // from the middle to the right edge and starts it over; the carrier
+        // phase replays with it so the wave stays continuous. See replayTime.
+        const tp=replayTime(t, 16);
+        const xt=x*freq-v*tp*0.3;
         const envelope=Math.exp(-xt*xt/(4*sigma*sigma));
-        const psi=envelope*Math.cos(k*x*freq-k*k*t*0.05);
+        const psi=envelope*Math.cos(k*x*freq-k*k*tp*0.05);
         return psi*psi * amp * 0.5 * Math.exp(-z*z*0.25);
       }
     },
@@ -2733,7 +2895,11 @@ const QUANTUM_MECHANICS = {
       formula: '|ψ| = A·sech(A(x−vt))',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const A=1+comp, v=0.5;
-        const xi=x*freq-v*t*0.3;
+        // FIX(#5, r4): the soliton translates at v·0.3 per unit of clock and
+        // never returned — 3·10⁻⁷ of the boot peak two minutes in, exactly zero
+        // by five. 24 is one pass of the domain, after which the next soliton
+        // enters from the left; see replayTime.
+        const xi=x*freq-v*replayTime(t, 24)*0.3;
         const sech=1/Math.cosh(A*xi);
         return sech*sech * amp * 0.5 * Math.exp(-z*z*0.25);
       }

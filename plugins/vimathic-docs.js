@@ -15,8 +15,16 @@
 //
 // Consuming code (modal side):
 //   import DOCS from 'virtual:vimathic-docs';
-//   // DOCS is an array of { slug, title, html, order, raw, description },
+//   // DOCS is an array of { slug, title, order, group, description, html },
 //   // sorted by `order` then `title`, ready to drive a tabs UI.
+//
+// FIX(#45, r4): that line used to promise `raw` and to omit `group`, and it
+// was wrong in both directions. load() strips `raw` on the way out — the
+// markdown source would roughly double the docs payload inside the single-file
+// bundle — so a consumer written against the old contract read `undefined`
+// with nothing to warn it, while `group`, the field about-modal.js branches on
+// to decide standalone tab versus dropdown, was the one nobody had written
+// down. Keep this list and the object parseDoc returns in step.
 //
 // Markdown features enabled:
 //   • CommonMark (via micromark core)
@@ -36,6 +44,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { micromark } from 'micromark';
 import { gfmTable, gfmTableHtml } from 'micromark-extension-gfm-table';
 
@@ -74,11 +83,19 @@ function parseDoc(filepath, source) {
   const meta = { title: null, order: 1000, description: null, group: null };
   let body = source;
 
-  const fmMatch = source.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  // FIX(#39, r4): the fences and the lines between them used to require a bare
+  // LF. Git's Windows default (core.autocrlf=true) normalises CRLF away on
+  // commit but converts LF back to CRLF *on checkout*, so a Windows clone has a
+  // CRLF working tree — and this plugin reads the working tree. Nothing matched
+  // there: every document fell back to a title-cased slug and order 1000, lost
+  // its group, and printed its own YAML block as body text, which is exactly
+  // the About-modal failure the `order: 0` fix above was written to prevent.
+  const fmMatch = source.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   if (fmMatch) {
     const [, fmBlock, rest] = fmMatch;
     body = rest;
-    for (const line of fmBlock.split('\n')) {
+    for (const rawLine of fmBlock.split('\n')) {
+      const line = rawLine.replace(/\r$/, '');
       const m = line.match(/^([a-zA-Z_][\w-]*)\s*:\s*(.+)$/);
       if (!m) continue;
       const [, key, value] = m;
@@ -88,7 +105,16 @@ function parseDoc(filepath, source) {
         // documents/index.md (the Overview tab) declares exactly that — so it
         // sorted last and the About modal, which opens DOCS[0] on first run,
         // opened Quick Start instead of the overview it was written to show.
-        const n = parseInt(trimmed, 10);
+        // FIX(#40, r4): parseInt stops at the first character it cannot use and
+        // hands back what it read so far, so `order: 4.5` arrived as 4 — a
+        // silent tie with whatever already holds 4, broken by an unrelated
+        // document's title — and `order: 6 spaces` arrived as 6. The guard
+        // above cannot see either, because it only ever meets the truncated
+        // number. Number() reads the whole value or nothing, which is what the
+        // test pinning this parse says it does ("the docs plugin reads
+        // frontmatter numbers as numbers"). The empty string is spelled out
+        // because Number('') is 0, and an order left blank is not order zero.
+        const n = trimmed === '' ? NaN : Number(trimmed);
         meta.order = Number.isFinite(n) ? n : 1000;
       }
       else if (key === 'title') meta.title = trimmed;
@@ -113,7 +139,27 @@ function parseDoc(filepath, source) {
   if (!description) {
     const pMatch = html.match(/<p>([\s\S]*?)<\/p>/);
     if (pMatch) {
-      description = pMatch[1].replace(/<[^>]+>/g, '').trim();
+      // FIX(#38, r4): a paragraph of rendered HTML is not plain text, and
+      // stripping its tags does not make it so. micromark has already written
+      // `&` as `&amp;` and `"` as `&quot;`, and it keeps the author's line
+      // break. Both consumers of this string want text: renderStaticPage runs
+      // it through escapeHtml, which turned `&amp;` into `&amp;amp;` so the
+      // crawler read the entity code itself, and renderLlmsTxt drops it into a
+      // markdown list item, where the codes showed up verbatim in a plain-text
+      // file and the newline split one link entry across two lines — breaking
+      // the one-entry-per-line shape llms.txt exists to provide. Decoded in the
+      // reverse of escapeHtml's order, ampersand LAST, so that an escaped
+      // `&amp;lt;` unwinds to `&lt;` and not all the way to `<`. The whitespace
+      // collapse also stops slice(157) landing in the middle of an entity.
+      description = pMatch[1]
+        .replace(/<[^>]+>/g, '')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, '&')
+        .replace(/\s+/g, ' ')
+        .trim();
       if (description.length > 160) description = description.slice(0, 157) + '...';
     }
   }
@@ -175,7 +221,19 @@ function renderStaticPage(doc, siteUrl, allDocs) {
   const canonical = `${siteUrl}/docs/${doc.slug === 'index' ? '' : doc.slug + '.html'}`;
   // Convert relative .md links to .html for static pages. The modal version
   // keeps .md because about-modal.js has a cross-doc handler that accepts both.
-  const html = doc.html.replace(/href="(\.\/[a-z0-9-]+)\.md"/g, 'href="$1.html"');
+  //
+  // FIX(#41, r4): a document addresses its images relative to the page that
+  // embeds them, and in the app that page is dist/index.html — so `./x.webp`
+  // means "the file next to the bundle", which resolves under a sub-path deploy
+  // and over the file:// deploy README.md documents. (The Roadmap hero used to
+  // be written `/support-hero.png`, which from file:// points at the filesystem
+  // root and showed the alt text instead.) These static pages live one level
+  // down in dist/docs/, so the same reference has to climb back out. Only
+  // src/srcset move: the .md→.html links above are docs-internal and already
+  // point at siblings in this directory.
+  const html = doc.html
+    .replace(/href="(\.\/[a-z0-9-]+)\.md"/g, 'href="$1.html"')
+    .replace(/\b(src|srcset)="\.\/([^"]*)"/g, '$1="../$2"');
   const navLinks = allDocs
     .filter(d => d.slug !== doc.slug)
     .map(d => `<li><a href="./${d.slug === 'index' ? '' : d.slug + '.html'}">${escapeHtml(d.title)}</a></li>`)
@@ -237,15 +295,50 @@ function renderStaticPage(doc, siteUrl, allDocs) {
 `;
 }
 
-function renderSitemap(siteUrl, docs) {
+// FIX(#47, r4): when a document last changed, as a date. <lastmod> used to be
+// one `new Date()` stamped onto every URL, i.e. the BUILD date — and Cloudflare
+// Pages rebuilds on every push to main, so a commit touching only the CHANGELOG
+// republished a sitemap swearing that all fifteen pages had changed that day.
+// The sitemaps.org 0.9 schema this file declares defines <lastmod> as "the date
+// of last modification of the file", and a value that is always today is the
+// one value that carries no information at all — crawlers discount it.
+// The commit date is asked for first because it survives a fresh clone, where
+// every mtime is the moment of checkout and therefore says nothing. mtime is
+// the answer for a document git does not know — one not yet committed, or a
+// copy of the tree with no git in it at all.
+function lastModified(filepath, fallback) {
+  try {
+    const out = execFileSync('git', ['log', '-1', '--format=%cs', '--', path.basename(filepath)], {
+      cwd: path.dirname(filepath), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(out)) return out;
+  } catch {
+    // Not a git checkout, or git is not installed. mtime below.
+  }
+  try {
+    return fs.statSync(filepath).mtime.toISOString().slice(0, 10);
+  } catch {
+    return fallback;
+  }
+}
+
+function renderSitemap(siteUrl, docs, docsDir) {
   const today = new Date().toISOString().slice(0, 10);
+  const dates = new Map(docs.map(d =>
+    [d.slug, lastModified(path.join(docsDir, `${d.slug}.md`), today)]));
+  // ISO dates sort as strings, so the newest is simply the last one.
+  const newestDoc = [...dates.values()].sort().at(-1) ?? today;
   const urls = [
-    { loc: `${siteUrl}/`,        priority: '1.0', changefreq: 'weekly' },
-    { loc: `${siteUrl}/docs/`,   priority: '0.9', changefreq: 'monthly' },
+    // The bundle really is rebuilt on every deploy, so the root keeps the build
+    // date. The docs landing page lists every document, so it changes whenever
+    // the newest of them does.
+    { loc: `${siteUrl}/`,        lastmod: today,      priority: '1.0', changefreq: 'weekly' },
+    { loc: `${siteUrl}/docs/`,   lastmod: newestDoc,  priority: '0.9', changefreq: 'monthly' },
     ...docs
       .filter(d => d.slug !== 'index')
       .map(d => ({
         loc: `${siteUrl}/docs/${d.slug}.html`,
+        lastmod: dates.get(d.slug),
         priority: '0.7',
         changefreq: 'monthly',
       })),
@@ -253,7 +346,7 @@ function renderSitemap(siteUrl, docs) {
   const entries = urls.map(u =>
     `  <url>\n` +
     `    <loc>${u.loc}</loc>\n` +
-    `    <lastmod>${today}</lastmod>\n` +
+    `    <lastmod>${u.lastmod}</lastmod>\n` +
     `    <changefreq>${u.changefreq}</changefreq>\n` +
     `    <priority>${u.priority}</priority>\n` +
     `  </url>`
@@ -339,6 +432,16 @@ Sitemap: ${siteUrl}/sitemap.xml
 // quoted to one decimal so the few KB every commit adds do not make it stale
 // again. documents/index.md quotes the same file the same way; keep the two in
 // step and re-check both against dist/index.html after a release build.
+// FIX(#46, r4): the companion-file count was the one number in that paragraph
+// nobody re-checked. It said "plus four companion files" — five files in all —
+// while the two texts a reader would compare it against, SECURITY.md and
+// documents/index.md, both describe a deploy of four files INCLUDING
+// index.html. llms.txt is the machine-readable one of the three, so an LLM
+// answering "what does a VIMATHIC deploy consist of" was the reader most
+// likely to be told the wrong thing. Named rather than counted now, in the
+// same words documents/index.md uses: an enumeration cannot drift by one in
+// silence, and tests/build-docs-plugin.test.js checks the count against
+// SECURITY.md's list on every run.
 function renderLlmsTxt(siteUrl, docs) {
   const docLinks = docs
     .filter(d => d.slug !== 'index')
@@ -352,7 +455,7 @@ function renderLlmsTxt(siteUrl, docs) {
 
 > VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 44 colour schemes.
 
-VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 four years after each version's release — 2030-05-18 for 1.0.0-beta). The entire application is bundled into a single HTML file (~1.1 MB) plus four companion files. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
+VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 four years after each version's release — 2030-05-18 for 1.0.0-beta). The entire application is bundled into a single HTML file (~1.1 MB) plus three companion files: a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
 
 The math accuracy is documented per-formula with tier classification: 122 formulas at IEEE 754 double precision (~10⁻¹⁴), 42 with bounded numerical approximations (10⁻³ to 10⁻⁷), and 28 at visualisation-grade. Reference values cross-checked against mpmath, scipy.special, and NIST DLMF.
 
@@ -381,8 +484,22 @@ export function vimathicDocs(opts = {}) {
   const docsDir = path.resolve(process.cwd(), opts.dir ?? DEFAULT_DOCS_DIR);
   const siteUrl = (opts.siteUrl ?? DEFAULT_SITE_URL).replace(/\/$/, '');
 
+  // FIX(#49, r4): where the emitted files go is Vite's answer to give, not
+  // ours. closeBundle() used to re-derive it as <cwd>/dist, so with any other
+  // build.outDir — the one place vite.config.js configures the output — Vite
+  // wrote the bundle to one directory while this plugin created a second one
+  // beside it and put the docs site, sitemap, robots.txt and llms.txt in
+  // there. The build reported success and the deploy silently lost half of
+  // itself. Left null until Vite says otherwise so that calling closeBundle()
+  // outside a build (the tests do) keeps the documented <cwd>/dist behaviour.
+  let outDir = null;
+
   return {
     name: 'vimathic-docs',
+
+    configResolved(config) {
+      outDir = path.resolve(config.root ?? process.cwd(), config.build?.outDir ?? 'dist');
+    },
 
     resolveId(id) {
       if (id === VIRTUAL_ID) return RESOLVED_ID;
@@ -416,8 +533,13 @@ export function vimathicDocs(opts = {}) {
         return;
       }
 
-      const distDir = path.resolve(process.cwd(), 'dist');
+      const distDir = outDir ?? path.resolve(process.cwd(), 'dist');
       const docsDistDir = path.join(distDir, 'docs');
+      // The log lines below name the real destination rather than the literal
+      // "dist", for the same reason the destination itself is no longer a
+      // literal: a build log that says dist/ while writing somewhere else is
+      // how the split in FIX(#49) stayed invisible.
+      const out = path.basename(distDir);
 
       if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true });
       if (!fs.existsSync(docsDistDir)) fs.mkdirSync(docsDistDir, { recursive: true });
@@ -429,16 +551,16 @@ export function vimathicDocs(opts = {}) {
         fs.writeFileSync(outPath, renderStaticPage(doc, siteUrl, docs), 'utf8');
         staticCount++;
       }
-      console.log(`[vimathic-docs] Emitted ${staticCount} static HTML pages → dist/docs/`);
+      console.log(`[vimathic-docs] Emitted ${staticCount} static HTML pages → ${out}/docs/`);
 
-      fs.writeFileSync(path.join(distDir, 'sitemap.xml'), renderSitemap(siteUrl, docs), 'utf8');
-      console.log('[vimathic-docs] Emitted dist/sitemap.xml');
+      fs.writeFileSync(path.join(distDir, 'sitemap.xml'), renderSitemap(siteUrl, docs, docsDir), 'utf8');
+      console.log(`[vimathic-docs] Emitted ${out}/sitemap.xml`);
 
       fs.writeFileSync(path.join(distDir, 'robots.txt'), renderRobots(siteUrl), 'utf8');
-      console.log('[vimathic-docs] Emitted dist/robots.txt');
+      console.log(`[vimathic-docs] Emitted ${out}/robots.txt`);
 
       fs.writeFileSync(path.join(distDir, 'llms.txt'), renderLlmsTxt(siteUrl, docs), 'utf8');
-      console.log('[vimathic-docs] Emitted dist/llms.txt');
+      console.log(`[vimathic-docs] Emitted ${out}/llms.txt`);
     },
   };
 }

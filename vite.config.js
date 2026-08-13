@@ -39,7 +39,14 @@ export default defineConfig({
     viteSingleFile(),
     copySecondScreen(),
   ],
-  server: { port: 3000, open: true },
+  // FIX(#43, r4): strictPort. Without it, Vite treats 3000 as a preference and
+  // quietly binds the next free port when it is taken — while playwright.config.js
+  // hardcodes http://localhost:3000 twice as an absolute, and reuses whatever
+  // already answers there when not on CI. With two checkouts of this repo open,
+  // the e2e suite then runs against the other one: the right app at the wrong
+  // revision, whose failures read as product bugs. Failing to start is the
+  // honest outcome, and it says which port is busy.
+  server: { port: 3000, strictPort: true, open: true },
   build: {
     target: 'esnext',
     outDir: 'dist',

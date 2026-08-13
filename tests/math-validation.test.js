@@ -854,10 +854,18 @@ describe('Regression — heavy sampler: params in the cache key + rebuild-rate c
   const T = 2.5;
 
   // Formulas whose output provably swings with amp / comp at this t. Chosen by
-  // measurement, not by reading the sources: `wiredFire` and `briansBrain` are
-  // flat over parts of the t domain and would make a hard assertion flaky.
-  const AMP_SENSITIVE  = ['reactionDiffusion', 'conway3D', 'excitableMedia', 'cyclicCA'];
-  const COMP_SENSITIVE = ['gameOfLifeDensity', 'conway3D', 'cyclicCA'];
+  // measurement, not by reading the sources: `wiredFire` is flat over parts of
+  // the t domain and would make a hard assertion flaky.
+  //
+  // FIX(#0, r4): `briansBrain` used to be exempt here for the same stated
+  // reason, and the measurement was right — but the flatness was a defect, not
+  // a property. Its seed was a 1,0,2 stripe on which the birth rule could never
+  // fire, so the board was empty from generation 2 onward and no parameter
+  // could move a field of zeros. With the seed decorrelated it belongs in both
+  // lists like any other simulator; the regression for the emptiness itself is
+  // further down this file.
+  const AMP_SENSITIVE  = ['reactionDiffusion', 'conway3D', 'excitableMedia', 'cyclicCA', 'briansBrain'];
+  const COMP_SENSITIVE = ['gameOfLifeDensity', 'conway3D', 'cyclicCA', 'briansBrain'];
 
   test('changing amp at a fixed t recomputes the simulation', () => {
     for (const key of AMP_SENSITIVE) {
@@ -1279,6 +1287,356 @@ describe('Collapse mode — applyCollapseField', () => {
     for (let i = 0; i < basePos.length; i++) {
       near(geo.attributes.position._data[i], basePos[i], 1e-15);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REGRESSION — round-4 catalogue defects
+//
+// Entries whose arithmetic contradicted the entry's own name, its displayed
+// `formula` string, or its MATHEMATICAL_ACCURACY.md row. Two habits let all of
+// them past the suite above. Every assertion in this file was evaluated at
+// t = 0 — MATHEMATICAL_ACCURACY.md pins validation to `time: 0` — and t = 0 is
+// the one instant at which a solution that decays with the session clock is
+// still alive. And the catalogue-wide guards only ever ask for `isFinite` and
+// `|y| ≤ 100`, both of which a field of exact zeros passes. So the tests below
+// deliberately evaluate at a realistic session age, and assert that something
+// is on screen rather than merely that nothing is NaN.
+//
+// Everything goes through the shipped entry point — getFormula(...).f and
+// generateSurfaceFromFormula — never a re-implementation of a formula body.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// What the app renders with before a track is loaded: amp is the slider
+// default, freq the wave-intensity default, comp = 0.5 + mid·0.4 with the idle
+// LFO driving mid. Several of these defects are invisible at BASELINE and
+// obvious here, so the drift tests use these rather than the unmodulated pair.
+const BOOT = { amp: 0.77, freq: 1.069, comp: 0.58 };
+
+// main.js advances `time` by 0.008 per animation frame and never resets it, so
+// at 60 fps one second of uptime is 0.48 in formula-time. Ten minutes into a
+// set is t ≈ 288 — a value no test in this file had ever used.
+const uptime = seconds => seconds * 0.48;
+
+/** The real height field, as generateSurfaceFromFormula hands it to the mesh. */
+function fieldOf(colId, key, params, t, gridSize = 49) {
+  const f = getFormula(colId, key);
+  assert.ok(f, `Formula not found: ${colId}/${key}`);
+  return generateSurfaceFromFormula(f.f, params, gridSize, 3.5, t);
+}
+
+/** Peak |y| of that field — the height a viewer actually sees. */
+function peakOf(colId, key, params, t, gridSize = 49) {
+  const hf = fieldOf(colId, key, params, t, gridSize);
+  let peak = 0;
+  for (let i = 0; i < hf.length; i++) peak = Math.max(peak, Math.abs(hf[i]));
+  return peak;
+}
+
+describe('Regression — the session clock is not a physical time (#5, #6)', () => {
+  // main.js `time += 0.008` is the only mutation of the clock in the whole
+  // app: STOP MOTION pauses it, nothing rewinds it, and no formula is handed a
+  // per-entry zero. Seven entries read that number as the age of a decaying or
+  // translating solution, so they went out one or two minutes into a set and
+  // never came back — dampedOscillator fell from a 0.39 peak to 2·10⁻⁵ after
+  // two minutes of uptime, wavePacket and schrodingerSoliton to exactly zero
+  // as their packets translated off the domain. Recovery needed a page reload.
+  const DRIFTERS = [
+    ['fourierSeries',    'heat2D'],
+    ['differentialEqs',  'dampedOscillator'],
+    ['differentialEqs',  'heatEquation'],
+    ['differentialEqs',  'fishersEquation'],
+    ['quantumMechanics', 'wavePacket'],
+    ['quantumMechanics', 'schrodingerSoliton'],
+    ['complexNumbers',   'complexHeat'],
+  ];
+
+  test('every time-evolving entry is still drawing after 30 minutes of uptime', () => {
+    // An order of magnitude below the boot peak is the line: these solutions
+    // are meant to decay visibly, they are not meant to reach the floor and
+    // stay there.
+    const dead = [];
+    for (const [colId, key] of DRIFTERS) {
+      const born = peakOf(colId, key, BOOT, 0);
+      for (const secs of [30, 60, 120, 300, 600, 1800]) {
+        // Four instants a fraction of a second apart, so an oscillator caught
+        // at a zero crossing is not mistaken for a dead surface.
+        let alive = 0;
+        for (const d of [0, 0.13, 0.29, 0.47]) {
+          alive = Math.max(alive, peakOf(colId, key, BOOT, uptime(secs) + d));
+        }
+        if (alive < born * 0.1) {
+          dead.push(`${colId}/${key} @${secs}s uptime: peak ${alive.toExponential(2)}`
+            + ` against ${born.toExponential(2)} at boot`);
+        }
+      }
+    }
+    assert.equal(dead.length, 0, `Collapsed over the length of a set:\n  ${dead.join('\n  ')}`);
+  });
+
+  test('control — t = 0 renders exactly what it rendered before the wrap', () => {
+    // Replaying the solution must not move it. These are the values the
+    // pre-fix code produced at t = 0, so an over-eager wrap — one that shifted
+    // the phase, rescaled the clock or clamped the argument — shows up here
+    // even though the test above would still be happy.
+    const at0 = [
+      ['fourierSeries',    'heat2D',             0,   0, 0.399655647258448],
+      ['differentialEqs',  'dampedOscillator',   0,   0, 0.0895990196292607],
+      ['differentialEqs',  'heatEquation',       0,   0, 0.496563422446714],
+      ['differentialEqs',  'fishersEquation',    0.5, 0, 0.365529289315002],
+      ['quantumMechanics', 'wavePacket',         0.7, 0, 0.187642285592130],
+      ['quantumMechanics', 'schrodingerSoliton', 0.5, 0, 0.298292904140666],
+      ['complexNumbers',   'complexHeat',        0.5, 0, 0.0861491219772305],
+      ['topology',         'helicoid',           1,   0, 0],
+    ];
+    for (const [colId, key, x, z, expected] of at0) {
+      near(evalAt(colId, key, x, z, 0), expected, 1e-12, `${colId}/${key} at t=0`);
+    }
+  });
+
+  test('control — the wrap replays the solution, it does not freeze it', () => {
+    // The cheap way to pass the drift test would be to drop the clock from
+    // these bodies altogether. Each must still evolve within its own cycle.
+    for (const [colId, key] of [...DRIFTERS, ['topology', 'helicoid']]) {
+      const a = fieldOf(colId, key, BOOT, 0);
+      const b = fieldOf(colId, key, BOOT, 1.5);
+      let moved = 0;
+      for (let i = 0; i < a.length; i++) moved = Math.max(moved, Math.abs(a[i] - b[i]));
+      assert.ok(moved > 1e-6, `${colId}/${key} does not move between t=0 and t=1.5`);
+    }
+  });
+
+  test('helicoid stays inside the framed volume for the whole session (#6)', () => {
+    // `c·(theta + t·0.3)` translated the entire mesh upward without limit —
+    // theta is bounded to (−π, π] but the clock is not, so the surface sat at
+    // y ≈ 8 after ten minutes and 24 after thirty, against a framed volume
+    // about 3 units high. Rotating the azimuth instead keeps the height inside
+    // the c·(−π, π] the helicoid actually spans.
+    const born = peakOf('topology', 'helicoid', BOOT, 0);
+    for (const secs of [60, 600, 1800]) {
+      const later = peakOf('topology', 'helicoid', BOOT, uptime(secs));
+      assert.ok(later <= born * 1.5,
+        `helicoid peak ${later.toFixed(3)} after ${secs}s against ${born.toFixed(3)} at boot`);
+      assert.ok(later >= born * 0.5,
+        `helicoid peak ${later.toFixed(3)} after ${secs}s — the surface flattened instead`);
+    }
+  });
+
+  test('control — helicoid is still c·θ at t = 0, seam included', () => {
+    // c = 0.3 + comp·0.3 = 0.45 at BASELINE; height is c·θ·amp·0.25.
+    //   x= 1, z=0 → θ = atan2(0,  1) = 0    → 0
+    //   x=-1, z=0 → θ = atan2(0, -1) = π    → 0.45·π·0.25
+    //   x= 0, z=1 → θ = atan2(1,  0) = π/2  → 0.45·(π/2)·0.25
+    // The θ = π row is the seam atan2 already puts in the mesh; folding the
+    // spun azimuth back into (−π, π] must leave it exactly where it was.
+    near(evalAt('topology', 'helicoid',  1, 0, 0), 0, 1e-15);
+    near(evalAt('topology', 'helicoid', -1, 0, 0), 0.45 * Math.PI * 0.25, 1e-15);
+    near(evalAt('topology', 'helicoid',  0, 1, 0), 0.45 * (Math.PI / 2) * 0.25, 1e-15);
+  });
+});
+
+describe('Regression — catalogue arithmetic against the entry’s own promise (#0-#4, #8)', () => {
+  test("Brian's Brain has a live population in all 20 of its generations (#0)", () => {
+    // gen = round(t·comp·2) % 20, so at comp = 0.5 the integer t IS the
+    // generation number. The seed was grid[i] = (i·1664525 + 1013904223) % 3,
+    // which lays a repeating 1,0,2 stripe along every row; the grid is 48 wide
+    // and 48 is a multiple of 3, so the stripe lines up between rows and every
+    // OFF cell sees 3 ON neighbours (4 where the 32-bit wrap shifts the phase),
+    // never the 2 the birth rule needs. The board was therefore empty from
+    // generation 2 onward — a dead-flat plate for 18 of the 20 phases, and the
+    // only entry in the catalogue that ignored AMPLITUDE.
+    const params = { amp: 1, freq: 1, comp: 0.5 };
+    const empty = [];
+    for (let gen = 0; gen < 20; gen++) {
+      if (peakOf('cellularAutomata', 'briansBrain', params, gen) <= 0) empty.push(gen);
+    }
+    assert.equal(empty.length, 0, `empty board at generation(s): ${empty.join(', ')}`);
+  });
+
+  test('AMPLITUDE moves the surface at a generation that used to be empty (#0)', () => {
+    const quiet = peakOf('cellularAutomata', 'briansBrain', { amp: 1, freq: 1, comp: 0.5 }, 5);
+    const loud  = peakOf('cellularAutomata', 'briansBrain', { amp: 2, freq: 1, comp: 0.5 }, 5);
+    assert.ok(quiet > 0, 'generation 5 is an empty board');
+    near(loud, quiet * 2, 1e-9, 'heights are linear in amp');
+  });
+
+  test('control — the seed is still a dense three-state soup (#0)', () => {
+    // Decorrelating the seed must not thin it out: generation 0 is a board
+    // with roughly a third of its cells in each state, and after bilinear
+    // interpolation nearly every vertex of the mesh is off the floor. Bounded
+    // by amp·0.45, which is the DYING level.
+    const hf = fieldOf('cellularAutomata', 'briansBrain', { amp: 1, freq: 1, comp: 0.5 }, 0);
+    let nonZero = 0, peak = 0;
+    for (let i = 0; i < hf.length; i++) {
+      if (Math.abs(hf[i]) > 1e-12) nonZero++;
+      peak = Math.max(peak, Math.abs(hf[i]));
+    }
+    assert.ok(nonZero > hf.length * 0.5, `generation 0 is sparse: ${nonZero}/${hf.length} vertices`);
+    assert.ok(peak <= 0.45 + 1e-9, `generation 0 exceeds the DYING level: ${peak}`);
+    // …and a live population is not the same thing as a live board: a seed
+    // that saturated every cell would satisfy every assertion above while
+    // rendering a plate at the DYING level rather than a cellular automaton.
+    const late = fieldOf('cellularAutomata', 'briansBrain', { amp: 1, freq: 1, comp: 0.5 }, 5);
+    assert.ok(new Set(late).size > 2, `generation 5 is uniform: ${new Set(late).size} distinct heights`);
+  });
+
+  test('dct really is the DCT-II of a signal — the inverse round-trips (#1)', () => {
+    // The body summed the k-th basis vector over n with no x[n] anywhere in
+    // it: Σₙ cos(π(n+½)k/N) is the DCT-II of the constant 1, which is exactly
+    // 0 for every k ≥ 1 by orthogonality. Seven of the eight bands were
+    // identically zero — 94% of the mesh a flat plate, invariant under t, amp,
+    // freq and comp — while the entry's displayed formula string reads
+    // 'DCT-II: X[k] = Σ x[n]cos(π(n+½)k/N)'.
+    //
+    // Checked without re-implementing the transform: read the eight band
+    // heights off the shipped surface, undo the display scaling, and run the
+    // inverse (DCT-III) over them. If X[] is the DCT-II of x[], the inverse
+    // returns x[] — here the two-harmonic test signal the body documents.
+    const N = 8, comp = 0.5, f0 = 1 + comp * 3;
+    const p = { amp: 1, freq: 1, comp };
+    // Band k is the x-column with round((x+3.5)/7·N) = k, i.e. x = 7k/8 − 3.5.
+    // Display scaling at z = 0, amp = 1 is X[k]·(2/N)·0.5, so X[k] = y·N.
+    const X = [];
+    for (let k = 0; k < N; k++) X.push(evalAt('fourierSeries', 'dct', 7 * k / 8 - 3.5, 0, 0, p) * N);
+    for (let k = 0; k < N; k++) {
+      assert.ok(Math.abs(X[k]) > 1e-9, `band k=${k} is identically zero — no signal is being transformed`);
+    }
+    for (let n = 0; n < N; n++) {
+      let inv = X[0] / N;
+      for (let k = 1; k < N; k++) inv += (2 / N) * X[k] * Math.cos(Math.PI * (n + 0.5) * k / N);
+      const signal = Math.sin(2 * Math.PI * f0 * (n + 0.5) / N)
+                   + 0.5 * Math.sin(2 * Math.PI * 2 * f0 * (n + 0.5) / N);
+      near(inv, signal, 1e-12, `inverse DCT at n=${n}`);
+    }
+  });
+
+  test('control — dct still bands in x and still decays in z (#1)', () => {
+    // Both hold on the old code too: k is quantised from x, so the surface is
+    // piecewise constant inside a band, and the z profile is the same
+    // exp(−z²·0.3) envelope the neighbouring entries use.
+    const p = { amp: 1, freq: 1, comp: 0.5 };
+    const a = evalAt('fourierSeries', 'dct', -3.5, 0, 0, p);
+    const b = evalAt('fourierSeries', 'dct', -3.3, 0, 0, p);
+    near(b, a, 1e-15, 'x=-3.5 and x=-3.3 are both band k=0');
+    near(evalAt('fourierSeries', 'dct', -3.5, 1, 0, p), a * Math.exp(-0.3), 1e-12);
+  });
+
+  test('complexPower is |z^z| on the negative real axis too (#2)', () => {
+    // |z^z| = exp(Re(z·Log z)) = exp(x·ln|z| − y·arg z). The body used the
+    // modulus where the real part belongs, so it agreed with |z^z| only where
+    // x = |z| — the positive real axis — and the whole x < 0 half came out
+    // exponentially too large.
+    // At (x, z) = (−2, 0): |z| = 2, arg = π, y = 0
+    //   exp(−2·ln2 − 0·π) = 2⁻² = 0.25;  · 0.1 · amp = 0.025
+    near(evalAt('complexNumbers', 'complexPower', -2, 0, 0, { amp: 1, freq: 1 }), 0.025, 1e-9);
+    // At (x, z) = (−1, −1): |z| = √2, arg = atan2(−1, −1) = −3π/4
+    //   exp(−1·½ln2 − (−1)(−3π/4)) = exp(−0.3465736 − 2.3561945) = 0.06701949
+    near(evalAt('complexNumbers', 'complexPower', -1, -1, 0, { amp: 1, freq: 1 }),
+      Math.exp(-0.5 * Math.LN2 - 3 * Math.PI / 4) * 0.1, 1e-9);
+  });
+
+  test('control — complexPower is unchanged on the positive real axis (#2)', () => {
+    // Where x = |z| the modulus and the real part are the same number, so
+    // these two values are what the old code returned as well: they pin the
+    // fix to the substitution and nothing else.
+    near(evalAt('complexNumbers', 'complexPower', 2,   0, 0, { amp: 1, freq: 1 }), 0.4, 1e-8);
+    near(evalAt('complexNumbers', 'complexPower', 0.5, 0, 0, { amp: 1, freq: 1 }),
+      Math.exp(0.5 * Math.log(0.5)) * 0.1, 1e-9);
+  });
+
+  test('airy integrates Ai, not some other solution of the same ODE (#3)', () => {
+    // The integrator marched from xx = −3 but seeded ai, dai with Ai(0) and
+    // Ai′(0), so it followed a different combination of Ai and Bi: at x = 0 it
+    // returned −0.365 where Ai(0) = +0.355, sign and all. And `while (xx < xi)`
+    // never ran for xi < −3, so a quarter of the domain was a constant shelf
+    // at the seed value.
+    //
+    // xi = x·freq·1.5, and the rendered value at z = 0, amp = 1 is 0.7·Ai(xi)
+    // (inside the ±0.8 clamp). Reference values from NIST DLMF.
+    const raw = xi => evalAt('specialFunctions', 'airy', xi / 1.5, 0, 0, { amp: 1, freq: 1 }) / 0.7;
+    near(raw( 0),  0.3550280539, 1e-9, 'Ai(0)');
+    near(raw( 1),  0.1352924163, 1e-3, 'Ai(1)');
+    near(raw( 3),  0.0065911393, 1e-3, 'Ai(3)');
+    near(raw(-1),  0.5355608833, 1e-3, 'Ai(-1)');
+    near(raw(-3), -0.3788142936, 1e-3, 'Ai(-3)');
+    near(raw(-5),  0.3507610090, 1e-3, 'Ai(-5)');
+  });
+
+  test('airy has no constant shelf left of xi = −3, and decays on the right (#3)', () => {
+    // Tier C for this entry is "sign, monotonicity, asymptotic limit": the
+    // left tail must oscillate rather than sit still, and the right tail must
+    // decay to zero rather than run into the −0.8 clamp.
+    const raw = xi => evalAt('specialFunctions', 'airy', xi / 1.5, 0, 0, { amp: 1, freq: 1 }) / 0.7;
+    const shelf = [raw(-3.2), raw(-4), raw(-5), raw(-6)];
+    for (let i = 1; i < shelf.length; i++) {
+      assert.ok(Math.abs(shelf[i] - shelf[0]) > 1e-3,
+        `Ai is constant at xi=${[-3.2, -4, -5, -6][i]} — the integrator never ran`);
+    }
+    assert.ok(raw(0) > 0, 'Ai(0) must be positive');
+    assert.ok(Math.abs(raw(5.25)) < 0.05, `right tail does not decay: ${raw(5.25)}`);
+  });
+
+  test('control — airy keeps its z envelope and its clamp (#3)', () => {
+    // Both true of the old code: the height is Ai·0.7·exp(−z²·0.3), clamped to
+    // ±0.8 so a diverging march cannot tear the mesh.
+    const at00 = evalAt('specialFunctions', 'airy', 0, 0, 0, { amp: 1, freq: 1 });
+    near(evalAt('specialFunctions', 'airy', 0, 1, 0, { amp: 1, freq: 1 }),
+      at00 * Math.exp(-0.3), 1e-12);
+    const far = evalAt('specialFunctions', 'airy', 3.5, 0, 0, { amp: 1.5, freq: 3.5, comp: 0.9 });
+    assert.ok(Number.isFinite(far) && Math.abs(far) <= 0.8 + 1e-12, `clamp lost: ${far}`);
+  });
+
+  test('metropolisWalk does not re-roll its acceptance coin every frame (#4)', () => {
+    // The comment above the acceptance test promises a surface "reproducible
+    // frame to frame instead of flickering as Math.random() would" — and then
+    // hashed the global clock, which advances 0.008 per frame and moves the
+    // sine argument 2.49 rad in that step. One 60 fps frame changed the height
+    // field by 95% of its own peak.
+    const a = fieldOf('probability', 'metropolisWalk', BOOT, 12.0);
+    const b = fieldOf('probability', 'metropolisWalk', BOOT, 12.008);
+    let moved = 0;
+    for (let i = 0; i < a.length; i++) moved = Math.max(moved, Math.abs(a[i] - b[i]));
+    assert.equal(moved, 0, `one 60 fps frame moved the surface by ${moved.toFixed(4)}`);
+  });
+
+  test('control — metropolisWalk still has a chain and still answers the mid band (#4)', () => {
+    // An acceptance test that always rejects (or always accepts) would also
+    // stop flickering, and would be a worse entry than the one we started
+    // with. The walk must still put a structured ridge on the mesh, and comp —
+    // which sets the proposal width — must still change where it lands.
+    const hf = fieldOf('probability', 'metropolisWalk', BOOT, 12.0);
+    const distinct = new Set();
+    let peak = 0;
+    for (let i = 0; i < hf.length; i++) { distinct.add(hf[i].toFixed(6)); peak = Math.max(peak, Math.abs(hf[i])); }
+    assert.ok(peak > 0.05, `the walk produced no ridge at all: peak ${peak}`);
+    assert.ok(distinct.size > 10, `the surface is constant: ${distinct.size} distinct heights`);
+    const low  = fieldOf('probability', 'metropolisWalk', { amp: 1, freq: 1, comp: 0.5 }, 12.0);
+    const high = fieldOf('probability', 'metropolisWalk', { amp: 1, freq: 1, comp: 0.9 }, 12.0);
+    let spread = 0;
+    for (let i = 0; i < low.length; i++) spread = Math.max(spread, Math.abs(low[i] - high[i]));
+    assert.ok(spread > 1e-3, `comp 0.5 → 0.9 changed nothing: ${spread}`);
+  });
+
+  test('legendre2 is not labelled with a degree the audio path cannot select (#8)', () => {
+    // n = round(1 + comp·4), and comp is `0.5 + mid·0.4` at all three sites
+    // that build it, so comp ∈ [0.5, 0.9] and n ∈ {3, 4, 5}. P₂ would need
+    // comp < 0.375, which nothing in the app produces — the label named a
+    // surface the entry never draws. MATHEMATICAL_ACCURACY.md had already been
+    // corrected to "Legendre P_n Surface"; the code label was left behind.
+    for (const comp of [0.5, 0.58, 0.7, 0.9]) {
+      assert.ok([3, 4, 5].includes(Math.round(1 + comp * 4)), `comp=${comp} selects P₂`);
+    }
+    const entry = getFormula('specialFunctions', 'legendre2');
+    assert.ok(!/₂/.test(entry.name), `name still promises a fixed degree: ${entry.name}`);
+    assert.ok(!/₂/.test(entry.formula), `formula string still promises P₂: ${entry.formula}`);
+  });
+
+  test('control — legendre2 still renders P₃ at the bottom of the comp range (#8)', () => {
+    // Renaming must not touch the arithmetic. u = clamp(x·freq·0.28, −1, 1) =
+    // 0.28 at x = 1; P₃(u) = (5u³ − 3u)/2 = (5·0.021952 − 0.84)/2 = −0.36512;
+    // · amp · 0.5 · exp(−z²·0.3) = −0.18256 at z = 0.
+    near(evalAt('specialFunctions', 'legendre2', 1, 0, 0, { amp: 1, freq: 1, comp: 0.5 }),
+      -0.18256, 1e-12);
   });
 });
 

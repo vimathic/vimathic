@@ -113,11 +113,11 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 |-----|------|:----:|-----------|
 | `bessel0` | Bessel J₀ | 🔵 B | Numerical Recipes polynomial fit, max error ~10⁻⁷. |
 | `bessel1` | Bessel J₁ | 🔵 B | Numerical Recipes J₁ polynomial fit, max error ~10⁻⁷. Replaced finite-difference approximation. |
-| `legendre2` | Legendre P_n Surface | 🟢 A | Closed-form polynomials P₀–P₆. |
+| `legendre2` | Legendre Pₙ Surface | 🟢 A | Closed-form polynomials P₀–P₆. n = round(1 + comp·4), so the reachable comp range renders P₃–P₅. |
 | `gamma_fn` | Gamma Function | 🟢 A | Lanczos g=7 approximation, ~10⁻¹⁴ accuracy. |
 | `erf` | Error Function | 🟢 A | Abramowitz & Stegun §7.1.26 Horner approximation, max error 1.5×10⁻⁷. |
 | `zeta` | Riemann Zeta (real axis) | 🟡 C | Truncated 4–24 term Σ 1/n^s. Slow convergence near s=1. Domain shifted to [1.05, 5.05] which avoids the issue but the result no longer represents ζ across full real axis. |
-| `airy` | Airy Function Ai(x) | 🟡 C | Forward Euler integration of Airy ODE with dx=0.05. ~10⁻² accuracy at best. |
+| `airy` | Airy Function Ai(x) | 🟡 C | RK4 integration of Ai″ = x·Ai, dx=0.15, marched outward in both directions from the exact (Ai(0), Ai′(0)) seed. ~10⁻³ over the displayed domain. Stays on C because past \|x\| ≈ 6 — reachable at high wave intensity — the growing Bi solution dominates any forward march and the output is clamped. Replaced a forward Euler march that imposed the x=0 seed at x=−3, integrating a different solution entirely (wrong sign at x=0) and returning a constant for x < −3. |
 | `hypergeometric` | ₂F₁(a,b;c;z) | 🔵 B | Truncated 12-term Pochhammer series with early-exit at 10⁻⁸. Convergent for \|z\|<0.95. |
 | `laguerre` | Laguerre L_n | 🟢 A | Closed-form three-term recurrence. |
 | `chebyshev` | Chebyshev T_n | 🟢 A | Direct cos(n·acos(x)) within \|x\|≤1. |
@@ -227,7 +227,7 @@ This is the cleanest collection — every wave is a real truncated Fourier serie
 | `heat2D` | Heat equation Fourier | 🟢 A | Σ bₙ·sin(nπx)·exp(-n²π²t). |
 | `parseval` | Parseval spectrum | 🟢 A | \|cₙ\|² for square wave. |
 | `wavelets` | Haar wavelet | 🟢 A | ±1 indicator on dyadic intervals. |
-| `dct` | DCT-II basis | 🔵 B | Sum of cos((n+½)kπ/N) — basis vector reconstruction, not full transform. |
+| `dct` | DCT-II | 🔵 B | Full DCT-II, X[k] = Σₙ x[n]cos(π(n+½)k/N) over N=8 samples of a two-harmonic test signal with f₀ = 1 + comp·3. Exact to float64; kept at B because the signal is synthetic rather than a canonical function. Replaced a sum of the basis vector alone, which is the transform of the constant 1 and therefore exactly 0 for every k ≥ 1. |
 | `convolution` | (f*g) | 🔵 B | Trapezoidal-ish integration N=20. |
 | `spectralLeakage` | Hann + DFT | 🟢 A | Real Hann window + DFT magnitude. |
 | `harmonics` | Σ aₙ sin(nx) | 🟢 A | Standard harmonic sum. |
@@ -289,7 +289,7 @@ This is the cleanest collection — every wave is a real truncated Fourier serie
 | `enneperSurface` | Enneper | 🔵 B | u²-v² is the z-coordinate, exact projection. |
 | `scherkSurface` | Scherk minimal | 🟢 A | log\|cos x/cos z\| exact parametrization. |
 | `catenoid` | Catenoid | 🟢 A | a·cosh(z/a) exact. |
-| `helicoid` | Helicoid | 🟢 A | c·θ exact height. |
+| `helicoid` | Helicoid | 🟢 A | c·θ exact height. The animation rotates the azimuth and folds it back into (−π, π], so the surface spins about its axis; it used to add an unwrapped t·0.3 to θ, which translated the whole mesh out of the framed volume over the length of a set. |
 | `hyperbolicParaboloid` | x²/a-z²/b | 🟢 A | Exact saddle. |
 | `torusSection` | Torus implicit | 🟢 A | (√(x²+z²)-R)²+y²=r² implicit equation. |
 | `breatherSurface` | Breather pseudosphere | 🔵 B | Real Sine-Gordon breather formula. |
@@ -419,6 +419,9 @@ All 133 tests currently passing against the live `math-collections.js`.
 
 **Audio modulation handling**:
 For all formulas, validation uses `{amp: 1, freq: 1, comp: 0.5, time: 0}` — the unmodulated baseline. Audio-modulated outputs are correctly viewed as **scaled visualizations** of the underlying baseline, not separate mathematical objects. This is documented in the user-facing UI as "audio-reactive parameters modulate canonical formulas — set defaults for unmodulated reference."
+
+**The `time` argument is a session clock, not a physical time**:
+`time` starts at 0 when the page loads and advances 0.008 per animation frame for as long as the tab is open; nothing in the UI rewinds it. Validating at `time: 0` is therefore validating at the only instant a decaying solution is guaranteed to be alive, and eight entries were found rendering a flat plate — or, for `helicoid`, a mesh translated clean out of the framed volume — one or two minutes into a set. Those eight (`heat2D`, `dampedOscillator`, `heatEquation`, `fishersEquation`, `wavePacket`, `schrodingerSoliton`, `complexHeat`, `helicoid`) now fold the clock back into a per-entry period before using it, so the solution replays instead of running out. The mathematics of each is unchanged and `time: 0` still evaluates exactly as this document describes; what changed is which physical time a given session age maps to. `tests/math-validation.test.js` asserts each of them is still drawing after thirty minutes of uptime.
 
 **Grid resolution note**:
 Internal simulation grids for heavy formulas (cellular automata, PDEs) use fixed sizes of 40×40 to 64×64. These are bilinearly interpolated onto the adaptive display mesh (60–200 segments depending on GPU capability). Validation tests use the internal grid resolution, not the display resolution. Accuracy figures for Tier B formulas (e.g. "~10⁻³ accuracy") are measured at the internal grid level; interpolation to higher display resolutions does not improve numerical accuracy but produces visually smoother output.

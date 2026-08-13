@@ -29,9 +29,18 @@
 //
 //   OUT { type: 'result', hf: Float32Array }   — buffer transferred, not copied
 //   OUT { type: 'error',  message: string }    — diagnostic; never thrown.
-//         FIX(#4): every failure this module can name travels here. Nothing
-//         escapes to worker.onerror, which carries no formula name and which
-//         MathVisualizer._disableWorker reads as a dead Worker instance.
+//         FIX(#4): every failure this module can name travels here, because
+//         this message carries the formula name and worker.onerror does not.
+//         FIX(#7, r4): what it does NOT buy is a cheaper failure, and the
+//         wording here used to say it did. Since FIX(#4, r3) the message
+//         channel is the harsher of the two: one error message retires the
+//         worker for the session (math-visualizer.js routes `data.type ===
+//         'error'` straight into _disableWorker, and _workerReady is never set
+//         back), while a post-startup worker.onerror is forgiven up to
+//         WORKER_ERROR_TOLERANCE hits. That asymmetry is deliberate on the
+//         peer's side — this module only reports once it has disarmed and has
+//         nothing left to serve — so read this channel as "say exactly what
+//         died", never as "die more cheaply".
 
 import { getFormula, generateSurfaceFromFormula } from './math-collections.js';
 
@@ -43,9 +52,15 @@ let formulaKey  = null;
 // FIX(#4, r3): the whole handler runs under try/catch — that is what makes the
 // "never thrown" promise above true. Any of the 192 catalogue formulas can
 // throw on a hostile audio param, and an exception that reaches worker.onerror
-// arrives on the main thread indistinguishable from "this Worker never loaded",
-// costing the off-thread channel for the rest of the session. The catch also
-// disarms: a formula that threw once throws again on every following tick.
+// arrives on the main thread indistinguishable from "this Worker never loaded":
+// a diagnostic with no formula name anywhere in it.
+//
+// FIX(#7, r4): the sentence used to end "costing the off-thread channel for the
+// rest of the session", which stopped being the reason the moment the peer
+// learned to tolerate WORKER_ERROR_TOLERANCE onerror hits — reporting costs the
+// channel immediately, throwing no longer does. The catch stays because a named
+// cause beats an anonymous one, and because it also disarms: a formula that
+// threw once throws again on every following tick.
 self.onmessage = ({ data }) => {
   try {
     switch (data.type) {

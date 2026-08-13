@@ -8,6 +8,7 @@
 
 import { DOM } from '../dom.js';
 import { PARAMS, applyParam } from '../params.js';
+import { clampFov } from '../camera.js';
 
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
@@ -44,6 +45,46 @@ export function sanitizeKeyframes(list) {
     out.push({ t: Math.max(0, Math.min(1, kf.t)), code: kf.code });
   }
   return out;
+}
+
+/**
+ * Reduce a snapshot's camera block to what tweenCameraTo can actually move to.
+ *
+ * FIX(#18, r3): the block is JSON we didn't write — hand-edited, truncated, or
+ * stringly typed by whatever produced it — and applyState handed x/y/z, tx/ty/tz
+ * and fov straight to the tween. tweenCameraTo lerps `from + (to - from) * p`,
+ * so an undefined or 'far' coordinate is NaN from the first frame and _commit
+ * writes it through to camera.position / orbit.target: the scene disappears and
+ * no preset gets it back, because every later tween reads the poisoned position
+ * as its own `from`. An fov of 99999 locks the projection matrix the same way.
+ *
+ * Dropped, not repaired, and per FIELD GROUP rather than per field:
+ *   • a coordinate triple is all-or-nothing — substituting the live camera's y
+ *     for a missing one invents a position the snapshot never described, and
+ *     lands the camera somewhere neither the file nor the user asked for;
+ *   • an omitted `pos` / `target` / `fov` is already the tween's own word for
+ *     "leave this alone" (render.js reads them with `??`), so dropping is a
+ *     move to nowhere rather than a move to nothing.
+ * fov is clamped rather than dropped with camera.js's clampFov — the same
+ * bounds the programmer-script commit applies, for the same reason.
+ *
+ * Only the tween's three fields are filtered. physics and autoRot are not
+ * coordinates, carry no NaN hazard, and are restored by the caller.
+ *
+ * @param {object} c  snapshot camera block
+ * @returns {{pos?:{x,y,z}, target?:{x,y,z}, fov?:number}}
+ */
+function cameraTweenTarget(c) {
+  // Number.isFinite and not `typeof === 'number'`: it is camera.js's own test
+  // for "usable coordinate" (see keep() in runScript's commit), and it turns
+  // away NaN and Infinity as well as the string '0'.
+  const triple = (x, y, z) =>
+    (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) ? { x, y, z } : undefined;
+  return {
+    pos:    triple(c.x,  c.y,  c.z),
+    target: triple(c.tx, c.ty, c.tz),
+    fov:    Number.isFinite(c.fov) ? clampFov(c.fov) : undefined,
+  };
 }
 
 // ── Preset format version ─────────────────────────────────────────────────
@@ -127,6 +168,11 @@ export function migratePreset(s) {
 }
 
 export const PresetMixin = {
+
+  // The settle callback of the camera apply whose tween is still in flight —
+  // null whenever no apply is waiting on one. See FIX(#29, r4) below: it is how
+  // an apply that gets pre-empted still hands the camera back.
+  _camTweenHandover: null,
 
   // ── State snapshot / restore ────────────────────────────────────────────
   /** Capture the complete visual + audio state as a plain serialisable object */
@@ -461,6 +507,19 @@ export const PresetMixin = {
 
     if (s.camera && camOwned) {
       const c = s.camera;
+      // FIX(#29, r4): settle the previous camera apply before taking the camera
+      // off it. Everything an apply defers lives in the tween's onDone, and a
+      // tween that is pre-empted never reaches it: TransitionManager.start
+      // cancels the slot and runs onCancel, which in tweenCameraTo only hands
+      // OrbitControls' damping back. A clip whose camera transition outlives
+      // its step — "Cinematic (3s)" against a 1 s hold — pre-empts every step
+      // with the next one, so no step's physics mode, auto-rotate wish or
+      // camera script was ever applied and cam.tweenHold stayed held for the
+      // whole run: exactly the standing hold the release below is named for.
+      // Running the outgoing apply's own callback (rather than a second, looser
+      // copy of it) is what keeps the ownership re-check inside it honest.
+      this._camTweenHandover?.();
+
       // Hold the camera for the tween's duration so the physics loop and any
       // live programmer script don't fight our position writes.
       //
@@ -497,30 +556,34 @@ export const PresetMixin = {
       // "Snap (instant, old)" clip mode drained a queue that did not yet hold
       // the preset's camera script. The script was then never loaded and the
       // clip replayed with the generic auto-orbit instead.
+      // What this apply owes the camera once its tween is over — by completing
+      // or by being pre-empted, which for a borrower amounts to the same thing.
+      const settleCameraApply = () => {
+        // Cleared first: this apply has now settled, so the next one must not
+        // settle it a second time (and a re-entrant call would loop).
+        this._camTweenHandover = null;
+        // Released first, and before the re-check below can return: a hold
+        // left standing would keep the physics loop and the programmer
+        // script switched off for the rest of the session.
+        cam.tweenHold = false;
+        // Ownership can flip DURING the tween: the user hits AUTO-ROTATE
+        // or applies a script in the first few hundred ms of a clip step.
+        // The actions below were queued while the player still owned the
+        // camera, so firing them now would switch the user's own rotation
+        // straight back off. Re-check at fire time, and only for the clip
+        // player's applies (it is the one that passes preserveCamera) —
+        // clicking a preset by hand is an explicit request for ITS camera.
+        if (opts.preserveCamera === false && this._clip?.camOverride) return;
+        // Physics first, then autoRot toggles, then programmer script.
+        for (const fn of postTweenCameraActions) fn();
+      };
+      this._camTweenHandover = settleCameraApply;
+
       startCameraTween = () => r.tweenCameraTo(
-        {
-          pos:    { x: c.x,  y: c.y,  z: c.z  },
-          target: { x: c.tx, y: c.ty, z: c.tz },
-          fov:    c.fov,
-        },
+        cameraTweenTarget(c),
         {
           duration: opts.cameraTransitionMs,
-          onDone: () => {
-            // Released first, and before the re-check below can return: a hold
-            // left standing would keep the physics loop and the programmer
-            // script switched off for the rest of the session.
-            cam.tweenHold = false;
-            // Ownership can flip DURING the tween: the user hits AUTO-ROTATE
-            // or applies a script in the first few hundred ms of a clip step.
-            // The actions below were queued while the player still owned the
-            // camera, so firing them now would switch the user's own rotation
-            // straight back off. Re-check at fire time, and only for the clip
-            // player's applies (it is the one that passes preserveCamera) —
-            // clicking a preset by hand is an explicit request for ITS camera.
-            if (opts.preserveCamera === false && this._clip?.camOverride) return;
-            // Physics first, then autoRot toggles, then programmer script.
-            for (const fn of postTweenCameraActions) fn();
-          },
+          onDone: settleCameraApply,
         }
       );
     }
@@ -649,9 +712,17 @@ export const PresetMixin = {
       try {
         const parsed = JSON.parse(raw);
         const scrubbed = this._scrubImportedState(parsed);
-        // Auto-restore: never prompt, never keep JS code. If the user wants
-        // their camera script back they re-enable it via the editor.
-        if (scrubbed.state.camScript) scrubbed.state.camScript.code = '';
+        // FIX(#24, r4): auto-restore keeps the script and never prompts. It
+        // used to blank camScript.code here, and the next autosave — the 1 s
+        // fingerprint tick always schedules on its first run — wrote that
+        // blank back over the snapshot ~2.5 s later, with the tab merely open.
+        // One reload destroyed the only copy. The comment that stood here
+        // offered "re-enable it via the editor" as the way back, and there was
+        // none: applyState skips a falsy code, so the editor kept the boot
+        // template. Nothing is gained by the blanking either — _scrubImportedState
+        // has already forced active=false, and that is what stops execution.
+        // The security note above says why keeping is right: this is state the
+        // user produced and saved in this browser, not foreign JSON.
         // FIX(#18, r3): the one call-site that ignored applyState's result.
         // Boot has no user gesture to answer and no reason to interrupt with a
         // toast, so a refused snapshot means "start from defaults" — but drop
@@ -730,6 +801,9 @@ export const PresetMixin = {
   //   2. If JS code is present, _confirmScriptImport() shows a modal preview
   //      and asks the user before keeping the code at all. If they decline,
   //      the code is dropped from the state — only non-script settings apply.
+  // "JS code" means camScript.code AND every camScript.keyframes[i].code:
+  // camera.js compiles both with the same `new Function`, so both are gated,
+  // both are shown in the preview, and a decline drops both.
   // GLSL shader strings (s.shader.vert/frag) are NOT prompted because GLSL
   // executes in WebGL sandbox and has no JS API access.
   importSettings(file) {
@@ -753,8 +827,14 @@ export const PresetMixin = {
         // Ask user before retaining JS code
         this._confirmScriptImport(scrubbed.scriptCode, (allow) => {
           if (!allow && scrubbed.state.camScript) {
-            // User declined — strip the code entirely
+            // User declined — strip the code entirely.
+            // FIX(#25, r4): both halves. Dropping only cs.code left the
+            // keyframe bodies in place, so DISCARD CODE installed executable
+            // JS under a toast that read "script discarded". A keyframe is a
+            // time and a body and nothing else, so discarding the body is
+            // discarding the keyframe.
             scrubbed.state.camScript.code = '';
+            scrubbed.state.camScript.keyframes = [];
           }
           const ok = this.applyState(scrubbed.state);
           if (!ok) { this._showToast(REJECTED, true); return; }
@@ -773,6 +853,13 @@ export const PresetMixin = {
    * Defang an imported state object before applyState consumes it.
    * Sets camScript.active=false unconditionally so loadScript() is never
    * auto-invoked on apply. Returns { state, _hasScript, scriptCode }.
+   *
+   * FIX(#25, r4): a keyframe body is script. camScript.keyframes[i].code is
+   * handed to the same `new Function('ctx', ...)` preamble as the main script
+   * (camera.js:428, which calls it the keyframe pre-script), so a gate that
+   * reads only cs.code lets a preset carry its payload one field over and
+   * raise nothing. scriptCode now carries both halves because it is what the
+   * modal shows: consent to code the user was never shown is not consent.
    */
   _scrubImportedState(state) {
     if (!state || typeof state !== 'object') return { state: state || {}, _hasScript: false, scriptCode: '' };
@@ -780,12 +867,28 @@ export const PresetMixin = {
     let hasScript = false;
     let scriptCode = '';
     if (cs && typeof cs === 'object') {
-      if (typeof cs.code === 'string' && cs.code.trim().length > 0) {
-        hasScript = true;
-        scriptCode = cs.code;
+      const parts = [];
+      if (typeof cs.code === 'string' && cs.code.trim().length > 0) parts.push(cs.code);
+      if (Array.isArray(cs.keyframes)) {
+        for (const kf of cs.keyframes) {
+          if (kf && typeof kf.code === 'string' && kf.code.trim().length > 0) {
+            parts.push(`// keyframe @ t=${Number.isFinite(kf.t) ? kf.t : '?'}\n${kf.code}`);
+          }
+        }
       }
+      hasScript  = parts.length > 0;
+      // The preview pane scrolls (max-height:280px), so a padded main script
+      // could push a keyframe body below the fold and buy consent for code the
+      // user never saw. The count goes first, where it cannot be scrolled off.
+      if (parts.length > 1) {
+        parts.unshift(`// this preset carries ${parts.length} scripts — scroll to read all of them`);
+      }
+      scriptCode = parts.join('\n\n');
       // Always disable auto-run — user must manually open Camera Programmer
       // and click Apply to actually execute. This prevents drive-by execution.
+      // Note this flag has no keyframe equivalent: a resolved keyframe runs
+      // whenever any main script is driving, so consent is the only layer
+      // that covers the keyframe half.
       cs.active = false;
     }
     return { state, _hasScript: hasScript, scriptCode };
