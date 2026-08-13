@@ -17,7 +17,7 @@
 //
 // 2. The import gate read camScript.code only. camScript.keyframes[].code is
 //    the same JS, compiled by the same `new Function(...)` preamble in
-//    camera.js:415, so a preset carrying its payload there tripped no gate:
+//    camera.js:428, so a preset carrying its payload there tripped no gate:
 //    no modal, toast "✔ State loaded". Worse, a preset carrying BOTH an
 //    innocuous script and a keyframe payload showed the modal and then
 //    installed the keyframe code even when the user pressed DISCARD CODE,

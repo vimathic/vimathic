@@ -222,7 +222,7 @@ function makeUi() {
     },
     // resetScript, setCamPhysics and buildTimeline are what the RESET ALL
     // handler calls; the mirror below is deliberately thin — it copies only the
-    // part of camera.js:309 that a reset is judged by, which is that the editor
+    // part of camera.js:322 (resetScript) that a reset is judged by, which is that the editor
     // buffer stops holding the user's script (real one: cb.onSetCode(CP_DEFAULT)).
     camera: {
       autoRot: false, cpActive: false, cpSource: null, cpParams: {}, cpKeyframes: [],
@@ -771,7 +771,7 @@ describe('RESET ALL — the camera programmer goes back to defaults for real', (
     assert.equal(ui.camera.cpSource, null);
     assert.equal(ui.camera.cpActive, false);
     assert.equal(ui.called('resetScript').length, 1,
-      'camera.js:309 owns what a script reset means — the handler must route through it');
+      'camera.js:322 (resetScript) owns what a script reset means — the handler must route through it');
   });
 
   test('the keyframe timeline is cleared with it', () => {

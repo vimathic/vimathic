@@ -88,6 +88,19 @@ const CP_PRESETS = [
   { name:'🌙 Moon',       code:`state.phase=(state.phase||0)+.018+bass*.008;\nconst hop=Math.pow(Math.abs(sin(state.phase*.38)),.6)*2.6;\nconst sway=cos(state.phase*.76)*.12;\norbit(p.radius*1.1+sway,p.rotSpeed*.6,1.1+hop);\nctx.target.x=sway*.5;\nctx.target.y=.05+hop*.04;` },
 ];
 
+// ── Field of view: the one set of bounds ──────────────────────────────────
+// A runaway fov locks the projection matrix into a state the user cannot get
+// out of by fixing what caused it (see runScript's commit below). Every path
+// that writes camera.fov from a value we did not compute ourselves — a
+// programmer script, a preset snapshot — narrows it through here, so there is
+// one rule rather than two that can drift apart.
+//
+// NOT a guard: clampFov(NaN) is NaN. Callers must establish Number.isFinite
+// first, exactly as the commit below does with keep().
+const FOV_MIN = 10;
+const FOV_MAX = 160;
+export const clampFov = fov => Math.max(FOV_MIN, Math.min(FOV_MAX, fov));
+
 // ── CameraSystem ──────────────────────────────────────────────────────────────
 export class CameraSystem {
   constructor(camera, orbitControls, CFG) {
@@ -447,7 +460,7 @@ export class CameraSystem {
       keep(ctx.target.z, this.orbit.target.z),
     );
     const fov = keep(ctx.fov, this.camera.fov);
-    if (fov !== this.camera.fov) { this.camera.fov = Math.max(10, Math.min(160, fov)); this.camera.updateProjectionMatrix(); }
+    if (fov !== this.camera.fov) { this.camera.fov = clampFov(fov); this.camera.updateProjectionMatrix(); }
     this.orbit.update();
     // FIX(#13, r2): only record the roll — applyRoll() puts it on after main.js's
     // last orbit.update(), which would otherwise wipe a tilt applied here (see

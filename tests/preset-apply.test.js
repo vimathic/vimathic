@@ -97,8 +97,11 @@ function makeUi() {
     },
     flatFrame() { const q = this._queuedFlat; this._queuedFlat = []; q.forEach(fn => fn()); },
     tweenCameraTo(target, opts = {}) {
-      calls.push(['tweenCameraTo', opts.duration]);
-      // Same contract as the real one: duration <= 0 commits synchronously.
+      calls.push(['tweenCameraTo', opts.duration, target]);
+      // Same contract as the real one: duration <= 0 commits synchronously,
+      // and a second tween pre-empts the first — transitions.js cancels the
+      // slot, which runs onCancel and never onDone, so the outgoing tween's
+      // onDone is dropped here exactly as the engine drops it.
       if ((opts.duration ?? 800) <= 0) opts.onDone?.();
       else this._pendingOnDone = opts.onDone;
     },
@@ -469,6 +472,174 @@ describe('applyState — a camera tween must not touch the auto-rotate setting',
     ui.camera.autoRot = true;
     assert.equal(ui.applyState(CAM, { cameraTransitionMs: 0, preserveCamera: false }), true);
     assert.equal(ui.camera.tweenHold, false, '"Snap (instant, old)" commits synchronously');
+  });
+});
+
+// ── A camera block from JSON we didn't write ─────────────────────────────────
+// Since hand-written presets became a supported input (#18), s.camera reaches
+// the tween unread: every coordinate went into `pos`/`target` as it stood, so a
+// block with a missing or stringly-typed coordinate interpolated to NaN and the
+// tween's commit wrote that into camera.position and orbit.target — a dead
+// viewport under a toast that read "✔ State loaded". A present but non-numeric
+// fov is worse still: `target.fov ?? fromFov` does not catch it, so it reaches
+// camera.fov and updateProjectionMatrix(), where ⟲ RESET CAMERA cannot undo it.
+// The rule is sanitizeKeyframes' rule, three statements away in the same file:
+// unusable entries are dropped rather than repaired.
+describe('applyState — an unusable camera coordinate is dropped, not tweened to', () => {
+  let ui;
+  beforeEach(() => { ui = makeUi(); });
+  const tweenTarget = () => ui.called('tweenCameraTo')[0][2];
+
+  test('a camera block with nothing in it moves the camera nowhere', () => {
+    assert.equal(ui.applyState({ _version: 2, camera: {} },
+      { cameraTransitionMs: 800, preserveCamera: false }), true);
+
+    const to = tweenTarget();
+    assert.equal(to.pos, undefined,
+      'undefined coordinates lerp to NaN and the commit writes them through');
+    assert.equal(to.target, undefined);
+    assert.equal(to.fov, undefined);
+  });
+
+  test('a stringly-typed block is refused the same way — fov included', () => {
+    assert.equal(ui.applyState({
+      _version: 2, camera: { x: 'far', y: 'up', z: 'back', tx: '0', ty: '0', tz: '0', fov: 'wide' },
+    }, { cameraTransitionMs: 800, preserveCamera: false }), true);
+
+    const to = tweenTarget();
+    assert.equal(to.pos, undefined);
+    assert.equal(to.target, undefined);
+    assert.equal(to.fov, undefined,
+      "'wide' is not nullish, so nothing downstream stops it reaching camera.fov");
+  });
+
+  test('a half-written block loses the half that is unusable, not the other', () => {
+    // The easy hand-editing mistake: name two of the three axes.
+    assert.equal(ui.applyState({
+      _version: 2, camera: { x: 5, z: 8, tx: 1, ty: 2, tz: 3, fov: 50 },
+    }, { cameraTransitionMs: 800, preserveCamera: false }), true);
+
+    const to = tweenTarget();
+    assert.equal(to.pos, undefined, 'y is missing, so the position is not a position');
+    assert.deepEqual(to.target, { x: 1, y: 2, z: 3 }, 'the target is complete and survives');
+    assert.equal(to.fov, 50);
+  });
+
+  test('an out-of-range fov is clamped, as the camera script commit clamps it', () => {
+    assert.equal(ui.applyState({ _version: 2, camera: { fov: 99999 } },
+      { cameraTransitionMs: 800, preserveCamera: false }), true);
+    assert.equal(tweenTarget().fov, 160,
+      'camera.js clamps a runaway fov for the same reason: the projection matrix');
+  });
+
+  test('control — a well-formed camera block reaches the tween untouched', () => {
+    assert.equal(ui.applyState({
+      _version: 2, camera: { x: 1, y: 2, z: 3, tx: 4, ty: 5, tz: 6, fov: 55 },
+    }, { cameraTransitionMs: 800, preserveCamera: false }), true);
+
+    const to = tweenTarget();
+    assert.deepEqual(to.pos,    { x: 1, y: 2, z: 3 });
+    assert.deepEqual(to.target, { x: 4, y: 5, z: 6 });
+    assert.equal(to.fov, 55, 'an ordinary fov must not be rounded, clamped or dropped');
+  });
+
+  test('control — the rest of a junk camera block still applies', () => {
+    // The drop is of the unusable FIELDS. physics and the auto-rotate wish are
+    // not coordinates and carry no hazard, so a fix that skipped the whole
+    // block would take away state the snapshot is entitled to restore.
+    assert.equal(ui.applyState({
+      _version: 2, camera: { x: 'far', physics: 'dark_matter', autoRot: true },
+    }, { cameraTransitionMs: 800, preserveCamera: false }), true);
+    ui.render.finishTween();
+
+    assert.deepEqual(ui.called('setCamPhysics')[0], ['setCamPhysics', 'dark_matter']);
+    assert.equal(ui.camera.autoRot, true);
+  });
+});
+
+// ── A pre-empted tween is a tween that ended ─────────────────────────────────
+// Everything a camera apply defers — the physics mode, the auto-rotate wish,
+// the preset's Camera Programmer script — lives in tweenCameraTo's onDone, and
+// so does the release of cam.tweenHold. A tween that is pre-empted by the next
+// one never reaches that callback: TransitionManager.start cancels the slot and
+// runs onCancel instead, and tweenCameraTo's onCancel only hands OrbitControls'
+// damping back. Set the clip's camera transition to "Cinematic (3s)" against a
+// hold shorter than that and every step pre-empts the one before it, so no
+// step's physics, auto-rotate wish or script was ever applied and the hold
+// stayed standing for the whole run — which main.js reads as "stand down" for
+// both the physics loop and the programmer script.
+describe('applyState — a camera apply hands back what it borrowed, even pre-empted', () => {
+  const stepSnap = (n, script) => ({
+    _version: 2,
+    camera: { x: n, y: n, z: n, tx: 0, ty: 0, tz: 0, fov: 50, physics: 'dark_matter', autoRot: true },
+    camScript: { active: true, code: script, params: {}, keyframes: [] },
+  });
+  let ui;
+  beforeEach(() => { ui = makeUi(); });
+
+  test('the queue of a step cut short by the next one still runs', () => {
+    assert.equal(ui.applyState(stepSnap(1, 'ctx.cam.y = 1;'),
+      { cameraTransitionMs: 3000, preserveCamera: false }), true);
+    assert.equal(ui.called('setCamPhysics').length, 0, 'precondition: deferred, not run');
+
+    // The next clip step arrives 2.6 s later — before the 3 s tween finished.
+    assert.equal(ui.applyState(stepSnap(2, 'ctx.cam.y = 2;'),
+      { cameraTransitionMs: 3000, preserveCamera: false }), true);
+
+    assert.deepEqual(ui.called('setCamPhysics').map(c => c[1]), ['dark_matter'],
+      'the pre-empted step\'s physics mode was dropped on the floor');
+    assert.deepEqual(ui.called('loadScript').map(c => c[1]), ['ctx.cam.y = 1;'],
+      'and so was its camera script — for every step of the clip');
+  });
+
+  test('the hold is handed back before the next tween takes it', () => {
+    // cam.tweenHold gates main.js's physics branch and isScriptDriving(). The
+    // release must happen on the handover, not only when a tween is lucky
+    // enough to finish: with each step pre-empting the last, no tween ever is.
+    let holdSeenAtHandover = null;
+    ui.camera.setCamPhysics = () => { holdSeenAtHandover = ui.camera.tweenHold; };
+
+    assert.equal(ui.applyState(stepSnap(1, 'a'), { cameraTransitionMs: 3000, preserveCamera: false }), true);
+    assert.equal(ui.applyState(stepSnap(2, 'b'), { cameraTransitionMs: 3000, preserveCamera: false }), true);
+
+    assert.equal(holdSeenAtHandover, false,
+      'the pre-empted apply must release the hold before the replacement re-takes it');
+    assert.equal(ui.camera.tweenHold, true, 'and the replacement tween holds it in turn');
+    ui.render.finishTween();
+    assert.equal(ui.camera.tweenHold, false);
+  });
+
+  test('control — an uninterrupted apply still defers its queue to the tween', () => {
+    // The anti-overcorrection guard: "run the queue when a new apply arrives"
+    // must not become "run the queue immediately", which would put the physics
+    // loop and the script back on top of the tween the queue exists to protect.
+    assert.equal(ui.applyState(stepSnap(1, 'ctx.cam.y = 1;'),
+      { cameraTransitionMs: 3000, preserveCamera: false }), true);
+    assert.equal(ui.called('setCamPhysics').length, 0);
+    assert.equal(ui.called('loadScript').length, 0);
+    ui.render.finishTween();
+    assert.deepEqual(ui.called('loadScript').map(c => c[1]), ['ctx.cam.y = 1;']);
+  });
+
+  test('control — a camera taken mid-tween still cancels the pre-empted queue', () => {
+    // The ownership re-check inside the settle callback has to hold on the
+    // handover path too, or the moment the next apply arrives the clip would
+    // switch the user's own rotation back off. Passes before and after: it is
+    // what stops the fix from becoming "spend every queue unconditionally".
+    assert.equal(ui.applyState(stepSnap(1, 'ctx.cam.y = 1;'),
+      { cameraTransitionMs: 3000, preserveCamera: false }), true);
+    ui._clip = { camOverride: true };                 // AUTO-ROTATE pressed mid-step
+
+    // A preset clicked by hand carries no opts — an explicit request for ITS
+    // camera — and pre-empts the clip step's tween. This one has no script of
+    // its own, so any loadScript below could only be the abandoned step's.
+    const byHand = { _version: 2, camera: { x: 9, y: 9, z: 9, tx: 0, ty: 0, tz: 0, fov: 50 } };
+    assert.equal(ui.applyState(byHand), true);
+
+    assert.equal(ui.called('loadScript').length, 0,
+      'the user owns the camera now — the abandoned queue must stay unspent');
+    ui.render.finishTween();
+    assert.equal(ui.camera.tweenHold, false);
   });
 });
 

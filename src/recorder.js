@@ -494,7 +494,18 @@ export class GifRecorder {
         // UI needs the flag to avoid implying a clean full take.
         truncated: this._memStopped,
       };
-      this.cb.onDone(blob, meta);
+      // FIX(#10): the UI gets its file FIRST — releasing before onDone (or by
+      // aborting the encoder to do it) would hand the user an empty download,
+      // which is why the control test exists — and only then does the run give
+      // the encoder back. abort() was taught this; the 'finished' path, which
+      // every completed recording takes, was not, so a finished take kept every
+      // frame's RGBA (≈500 MB at the panel default) plus its worker threads
+      // reachable from the module-level recorder for the rest of the session.
+      try {
+        this.cb.onDone(blob, meta);
+      } finally {
+        this._releaseRun();
+      }
     });
     this._gif.on('abort', () => {
       // FIX(#10): bookkeeping only — gif.js emits 'abort' from inside our own
@@ -538,9 +549,12 @@ export class GifRecorder {
     }
 
     // ── Time-based mode ───────────────────────────────────────────────────
+    // The safety stop is armed BEFORE the loop: the loop takes its first frame
+    // synchronously, and a one-frame run would otherwise stop() before this
+    // line and leave the timer behind it, live and unclearable.
     this.cb.onStart();
-    this._startCaptureLoop();
     this._stopTimer = setTimeout(() => this.stop(), capMs);   // FIX(#9): == o.duration here
+    this._startCaptureLoop();
   }
 
   /** Stop capturing and kick off encoding. Idempotent; safe to call twice. */
@@ -574,6 +588,44 @@ export class GifRecorder {
 
   /** Cancel mid-record or mid-encode without producing a file. */
   abort() {
+    this._teardown();
+    this.cb.onAbort();
+  }
+
+  // ── Internals ─────────────────────────────────────────────────────────────
+
+  /**
+   * FIX(#10): hand back what the run borrowed — the encoder, its idle worker
+   * threads and the scratch canvas. Called on BOTH endings, once the file (if
+   * any) has been delivered.
+   *
+   * gif.js keeps its pool alive after it finishes rendering and after its own
+   * abort(): freeWorkers are never terminated, and this.frames still holds one
+   * Uint8ClampedArray per captured frame. Dropping _gif alone is not enough —
+   * a Worker is a GC root, so the threads accumulate two per run until the tab
+   * closes.
+   *
+   * Deliberately NOT calling gif.abort() here: on the finished path that would
+   * kill an encoder that has already produced the blob for no reason.
+   */
+  _releaseRun() {
+    if (this._gif) {
+      try { this._gif.freeWorkers.forEach(w => w.terminate()); } catch (_) {}
+      try { this._gif.frames.length = 0; } catch (_) {}
+      this._gif = null;
+    }
+    this._scratch = null;
+  }
+
+  /**
+   * Stop everything this run owns without saying anything to the UI.
+   *
+   * FIX(#14): the caller owns the announcement. abort() adds cb.onAbort; the
+   * capture loop's error path does NOT, because it has already reported the
+   * real fault through cb.onError and both messages land on the same two lines
+   * of the panel within one task — the diagnostic never survived to a repaint.
+   */
+  _teardown() {
     this.recording = false;
     clearTimeout(this._stopTimer);
     clearInterval(this._captureTimer);
@@ -586,23 +638,13 @@ export class GifRecorder {
       this._audioEngine = null;
     }
 
-    if (this._gif) {
-      // gif.js's abort() kills the mid-frame workers and emits 'abort' — our
-      // handler for that is bookkeeping-only (FIX #10), so the cancellation
-      // reaches the UI exactly once, from here.
-      try { this._gif.abort(); } catch (_) {}
-      // FIX(#10): idle workers and the captured frames' RGBA buffers survive
-      // that abort(). Without these two lines each cancelled run strands
-      // hundreds of MB and a couple of live Workers.
-      try { this._gif.freeWorkers.forEach(w => w.terminate()); } catch (_) {}
-      try { this._gif.frames.length = 0; } catch (_) {}
-      this._gif = null;
-    }
+    // gif.js's abort() kills the mid-frame workers and emits 'abort' — our
+    // handler for that is bookkeeping-only (FIX #10), so the cancellation
+    // reaches the UI exactly once, from abort().
+    if (this._gif) { try { this._gif.abort(); } catch (_) {} }
+    this._releaseRun();
     this.encoding = false;
-    this.cb.onAbort();
   }
-
-  // ── Internals ─────────────────────────────────────────────────────────────
 
   /** Beat counter for stopOnBeats mode. Stops capture when target hit. */
   _onBeatTick() {
@@ -623,6 +665,7 @@ export class GifRecorder {
 
   /**
    * Frame-capture loop. Each tick:
+   *   0. Clear the scratch canvas — see FIX(#12) below.
    *   1. drawImage the WebGL canvas into the smaller scratch 2D canvas
    *      (downscales in one step using high-quality bilinear).
    *   2. Paint the watermark on top of the scaled frame.
@@ -642,16 +685,26 @@ export class GifRecorder {
     sctx.imageSmoothingQuality = 'high';
     const w = this._scratch.width;
     const h = this._scratch.height;
-    // Cover-crop source rect: sample the central region of the (usually
-    // landscape) WebGL canvas matching the output aspect, so portrait /
-    // square exports aren't stretched. Computed once — canvas size is
-    // stable for the duration of a capture (resize during record is rare
-    // and the next frame's drawImage tolerates a stale rect harmlessly).
-    const src = coverRect(this._canvas.width, this._canvas.height, w, h);
 
-    this._captureTimer = setInterval(() => {
+    const capture = () => {
       if (!this.recording) return;
       try {
+        // FIX(#20): cover-crop source rect: sample the central region of the
+        // (usually landscape) WebGL canvas matching the output aspect, so
+        // portrait / square exports aren't stretched. Recomputed EVERY frame,
+        // like the WebM loop below: main.js binds window resize to
+        // render.onResize() → setSize, so this._canvas changes size mid-take,
+        // and a source rect that then overruns the source is clipped by
+        // drawImage — which clips the destination in the same proportion, so
+        // part of the scratch canvas keeps showing the last pre-resize frame.
+        const src = coverRect(this._canvas.width, this._canvas.height, w, h);
+        // FIX(#12): replace, don't composite. The default source-over is only
+        // equivalent to a replace while the source is opaque, and TRANSPARENT
+        // BG keeps the canvas alpha through to the output — without this every
+        // frame is painted on top of the last one and the clip thickens into a
+        // smear of the whole take. Before the frame, never between the frame
+        // and its watermark.
+        sctx.clearRect(0, 0, w, h);
         // drawImage from a WebGL canvas only works because the canvas was
         // created with preserveDrawingBuffer:true in render.js. Without
         // that flag the GPU back-buffer is destroyed at composite time
@@ -692,10 +745,28 @@ export class GifRecorder {
           return;
         }
       } catch (e) {
+        // FIX(#14): report the real fault and tear the run down SILENTLY.
+        // abort() ends in cb.onAbort, which the panel writes to the same two
+        // lines as cb.onError, in grey, as "Recording cancelled" — and both
+        // fired inside this one task, so the red "⚠ Capture error: …" never
+        // reached a repaint. A lost context looked exactly like the user
+        // pressing STOP. Only this internal ending stays quiet; an abort() the
+        // user asks for still announces itself.
         this.cb.onError('Capture error: ' + e.message);
-        this.abort();
+        this._teardown();
       }
-    }, this._frameDelay);
+    };
+
+    this._captureTimer = setInterval(capture, this._frameDelay);
+    // First frame NOW, not one period from now. setInterval alone puts the
+    // first frame at t = frameDelay and the last one at t = frames×frameDelay,
+    // i.e. exactly when the wall-clock stop timer above is due — so the timer
+    // won the race and every timed capture came out one frame short of the
+    // plan gifFramePlan() sized (and the file one period shorter than asked
+    // for). Capturing at t = 0 makes the run span [0, frames×frameDelay) and
+    // also honours what beat mode already promises: the first frame lands ON
+    // the downbeat that started the loop, not a frame after it.
+    capture();
   }
 }
 
@@ -819,8 +890,11 @@ export class WebmRecorder {
         this.cb.onDone(blob, meta);
       };
       this._mr.onerror = e => {
+        // FIX(#14): same as the GIF capture loop — abort() ends in cb.onAbort,
+        // which overwrites this diagnostic with "Recording cancelled" inside
+        // the same task. Tear down without announcing it a second time.
         this.cb.onError(`MediaRecorder error: ${e.error?.name || 'unknown'}`);
-        this.abort();
+        this._teardown();
       };
 
       this.recording = true;
@@ -843,10 +917,14 @@ export class WebmRecorder {
         if (!this.recording) return;
         try {
           // Cover-crop the (usually landscape) WebGL canvas into the output
-          // aspect. Recomputed each frame: unlike the GIF path, a WebM
-          // record can run minutes and the window may resize mid-capture,
-          // changing this._canvas dimensions. A per-frame rect stays correct.
+          // aspect. Recomputed each frame: a WebM record can run minutes and
+          // the window may resize mid-capture, changing this._canvas
+          // dimensions. A per-frame rect stays correct.
           const src = coverRect(this._canvas.width, this._canvas.height, w, h);
+          // FIX(#12): the composite canvas persists across frames, so with
+          // TRANSPARENT BG source-over accumulates every earlier frame into
+          // the one being captured. Replace it.
+          this._compCtx.clearRect(0, 0, w, h);
           this._compCtx.drawImage(this._canvas, src.sx, src.sy, src.sw, src.sh, 0, 0, w, h);
           drawWatermark(this._compCtx, w, h);
         } catch (_) {
@@ -885,9 +963,31 @@ export class WebmRecorder {
 
   /** Abandon the recording without producing a file. */
   abort() {
+    this._teardown();
+    this.cb.onAbort();
+  }
+
+  /**
+   * Stop the encoder and release the run WITHOUT delivering a file and without
+   * saying anything — the caller owns the announcement (abort() adds
+   * cb.onAbort; the onerror path has already reported the real fault).
+   */
+  _teardown() {
     this.recording = false;
     clearTimeout(this._stopTimer); this._stopTimer = null;
-    try { this._mr?.stop(); } catch (_) {}
+    if (this._mr) {
+      // FIX(#11): detach the handlers BEFORE stopping. MediaRecorder.stop()
+      // queues a task that fires ondataavailable and then onstop, and onstop is
+      // what builds the Blob and calls cb.onDone — so an abort, which promises
+      // "bail out without producing a file", still handed the UI a Blob built
+      // from the chunk list this method had just emptied: a headerless .webm,
+      // downloaded and reported in green right under "Recording cancelled".
+      this._mr.ondataavailable = null;
+      this._mr.onstop          = null;
+      this._mr.onerror         = null;
+      try { this._mr.stop(); } catch (_) {}
+      this._mr = null;
+    }
     if (this._stream) {
       this._stream.getTracks().forEach(t => t.stop());
       this._stream = null;
@@ -895,7 +995,6 @@ export class WebmRecorder {
     this._compCanvas = null;
     this._compCtx    = null;
     this._chunks = [];
-    this.cb.onAbort();
   }
 }
 

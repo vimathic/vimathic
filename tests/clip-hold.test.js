@@ -86,6 +86,89 @@ describe('ClipPlayer._resolveHoldMs', () => {
   });
 });
 
+// ── What a step costs beyond its hold ─────────────────────────────────────────
+// _morphMs() is the one place the player charges for the morph a step animates
+// through before its hold window opens, and it charged 1600 ms on desktop for a
+// morph the engine runs in 800: triggerMorphTransition deflates for at most
+// render._tDurShape and inflates for the same again, and _tDurShape is 400
+// (300 on mobile) — its own comment calls it "half the morph". The class header
+// of clip-player.js states the right figure, "≈800ms after step start", so the
+// constant contradicted the file it lives in. Two things ran long: the step
+// period (holdMs + this, so a "5 s" step occupied 6.6 s) and the countdown bar,
+// which controller.js draws as remain/holdMs — above 100%, i.e. visually frozen
+// full, for as long as the overcharge lasts.
+describe('ClipPlayer._morphMs — the charge is the morph the engine runs', () => {
+
+  test('desktop: two halves of _tDurShape, not four', () => {
+    const ui = makeUi();
+    ui.render._tDurShape = 400;          // render.js: "half the morph (deflate or inflate)"
+    const clip = new ClipPlayer(ui);
+    try {
+      assert.equal(clip._morphMs(), 800);
+    } finally { clip.stop(); }
+  });
+
+  test('mobile is charged its own, shorter morph', () => {
+    const ui = makeUi();
+    ui.render.isMobile = true;
+    ui.render._tDurShape = 300;
+    const clip = new ClipPlayer(ui);
+    try {
+      assert.equal(clip._morphMs(), 600);
+    } finally { clip.stop(); }
+  });
+
+  test('the schedule and the countdown are charged the same 800 ms', () => {
+    const ui = makeUi();
+    ui.render._tDurShape = 400;
+    const clip = new ClipPlayer(ui);
+    const realSetTimeout = globalThis.setTimeout;
+    const armed = [];
+    globalThis.setTimeout = (fn, ms) => { armed.push(ms); return realSetTimeout(() => {}, 0); };
+    const t0 = performance.now();
+    try {
+      clip.buildFromPresets(5000);
+      clip.play();
+      assert.deepEqual(armed, [5800],
+        'a step advertised as 5.0s must not occupy 6.6s');
+      const countdownOpensIn = clip._stepStartMs - t0;
+      assert.ok(countdownOpensIn <= 900,
+        `the countdown bar reads remain/holdMs, so it sits pinned above 100% for `
+        + `this long: ${Math.round(countdownOpensIn)}ms`);
+    } finally { globalThis.setTimeout = realSetTimeout; clip.stop(); }
+  });
+
+  // Control: the step period is still LONGER than the hold. The header's design
+  // is that hold counts from the end of the morph, so a fix that stopped
+  // charging for the morph at all — _morphMs() → 0 — would make every step
+  // start its countdown while the mesh is still inflating, and would silently
+  // change what _catchUp spends per skipped step.
+  test('control — the morph is still charged, and mobile still charges less', () => {
+    const ui = makeUi();
+    ui.render._tDurShape = 400;
+    const clip = new ClipPlayer(ui);
+    const mobileUi = makeUi();
+    mobileUi.render.isMobile = true; mobileUi.render._tDurShape = 300;
+    const mobileClip = new ClipPlayer(mobileUi);
+    try {
+      assert.ok(clip._morphMs() > 0, 'hold counts from the END of the morph');
+      assert.ok(mobileClip._morphMs() < clip._morphMs(),
+        'the mobile morph is the shorter one, before and after');
+    } finally { clip.stop(); mobileClip.stop(); }
+  });
+
+  // Control: a build whose engine does not expose the duration still gets a
+  // usable number rather than NaN — every arithmetic user of this method (the
+  // timeout, _stepStartMs, the catch-up walk) would otherwise go junk.
+  test('control — no engine figure to read still yields a usable charge', () => {
+    const ui = makeUi();                 // makeUi's render carries no _tDurShape
+    const clip = new ClipPlayer(ui);
+    try {
+      assert.ok(Number.isFinite(clip._morphMs()) && clip._morphMs() > 0);
+    } finally { clip.stop(); }
+  });
+});
+
 // ── Catching up after a hidden tab ────────────────────────────────────────────
 // The scheduler's period per step is hold + morph: _runStep pushes _stepStartMs
 // past the morph and arms its timeout at holdMs + morphMs. The catch-up walk
