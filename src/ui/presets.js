@@ -649,9 +649,17 @@ export const PresetMixin = {
       try {
         const parsed = JSON.parse(raw);
         const scrubbed = this._scrubImportedState(parsed);
-        // Auto-restore: never prompt, never keep JS code. If the user wants
-        // their camera script back they re-enable it via the editor.
-        if (scrubbed.state.camScript) scrubbed.state.camScript.code = '';
+        // FIX(#24, r4): auto-restore keeps the script and never prompts. It
+        // used to blank camScript.code here, and the next autosave — the 1 s
+        // fingerprint tick always schedules on its first run — wrote that
+        // blank back over the snapshot ~2.5 s later, with the tab merely open.
+        // One reload destroyed the only copy. The comment that stood here
+        // offered "re-enable it via the editor" as the way back, and there was
+        // none: applyState skips a falsy code, so the editor kept the boot
+        // template. Nothing is gained by the blanking either — _scrubImportedState
+        // has already forced active=false, and that is what stops execution.
+        // The security note above says why keeping is right: this is state the
+        // user produced and saved in this browser, not foreign JSON.
         // FIX(#18, r3): the one call-site that ignored applyState's result.
         // Boot has no user gesture to answer and no reason to interrupt with a
         // toast, so a refused snapshot means "start from defaults" — but drop
@@ -730,6 +738,9 @@ export const PresetMixin = {
   //   2. If JS code is present, _confirmScriptImport() shows a modal preview
   //      and asks the user before keeping the code at all. If they decline,
   //      the code is dropped from the state — only non-script settings apply.
+  // "JS code" means camScript.code AND every camScript.keyframes[i].code:
+  // camera.js compiles both with the same `new Function`, so both are gated,
+  // both are shown in the preview, and a decline drops both.
   // GLSL shader strings (s.shader.vert/frag) are NOT prompted because GLSL
   // executes in WebGL sandbox and has no JS API access.
   importSettings(file) {
@@ -753,8 +764,14 @@ export const PresetMixin = {
         // Ask user before retaining JS code
         this._confirmScriptImport(scrubbed.scriptCode, (allow) => {
           if (!allow && scrubbed.state.camScript) {
-            // User declined — strip the code entirely
+            // User declined — strip the code entirely.
+            // FIX(#25, r4): both halves. Dropping only cs.code left the
+            // keyframe bodies in place, so DISCARD CODE installed executable
+            // JS under a toast that read "script discarded". A keyframe is a
+            // time and a body and nothing else, so discarding the body is
+            // discarding the keyframe.
             scrubbed.state.camScript.code = '';
+            scrubbed.state.camScript.keyframes = [];
           }
           const ok = this.applyState(scrubbed.state);
           if (!ok) { this._showToast(REJECTED, true); return; }
@@ -773,6 +790,13 @@ export const PresetMixin = {
    * Defang an imported state object before applyState consumes it.
    * Sets camScript.active=false unconditionally so loadScript() is never
    * auto-invoked on apply. Returns { state, _hasScript, scriptCode }.
+   *
+   * FIX(#25, r4): a keyframe body is script. camScript.keyframes[i].code is
+   * handed to the same `new Function('ctx', ...)` preamble as the main script
+   * (camera.js:415, which calls it the keyframe pre-script), so a gate that
+   * reads only cs.code lets a preset carry its payload one field over and
+   * raise nothing. scriptCode now carries both halves because it is what the
+   * modal shows: consent to code the user was never shown is not consent.
    */
   _scrubImportedState(state) {
     if (!state || typeof state !== 'object') return { state: state || {}, _hasScript: false, scriptCode: '' };
@@ -780,12 +804,28 @@ export const PresetMixin = {
     let hasScript = false;
     let scriptCode = '';
     if (cs && typeof cs === 'object') {
-      if (typeof cs.code === 'string' && cs.code.trim().length > 0) {
-        hasScript = true;
-        scriptCode = cs.code;
+      const parts = [];
+      if (typeof cs.code === 'string' && cs.code.trim().length > 0) parts.push(cs.code);
+      if (Array.isArray(cs.keyframes)) {
+        for (const kf of cs.keyframes) {
+          if (kf && typeof kf.code === 'string' && kf.code.trim().length > 0) {
+            parts.push(`// keyframe @ t=${Number.isFinite(kf.t) ? kf.t : '?'}\n${kf.code}`);
+          }
+        }
       }
+      hasScript  = parts.length > 0;
+      // The preview pane scrolls (max-height:280px), so a padded main script
+      // could push a keyframe body below the fold and buy consent for code the
+      // user never saw. The count goes first, where it cannot be scrolled off.
+      if (parts.length > 1) {
+        parts.unshift(`// this preset carries ${parts.length} scripts — scroll to read all of them`);
+      }
+      scriptCode = parts.join('\n\n');
       // Always disable auto-run — user must manually open Camera Programmer
       // and click Apply to actually execute. This prevents drive-by execution.
+      // Note this flag has no keyframe equivalent: a resolved keyframe runs
+      // whenever any main script is driving, so consent is the only layer
+      // that covers the keyframe half.
       cs.active = false;
     }
     return { state, _hasScript: hasScript, scriptCode };

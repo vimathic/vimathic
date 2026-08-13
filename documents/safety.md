@@ -63,7 +63,7 @@ There are no hidden processes, no cryptominers, no analytics beacons, and no net
 
 ## Importing Presets
 
-Presets can contain custom JavaScript for the Camera Programmer. **Only import presets from trusted sources.** VIMATHIC will show you the code and ask before running anything imported. Even after you accept, the code is loaded into the editor — you still have to click APPLY explicitly to run it.
+Presets can contain custom JavaScript for the Camera Programmer. **Only import presets from trusted sources.** VIMATHIC will show you the code and ask before running anything imported. Even after you accept, the main script is loaded into the editor — you still have to click APPLY explicitly to run it. Code attached to keyframes is shown in the same prompt, but it goes to the timeline rather than the editor and runs as soon as any script is applied, so accepting it is the whole decision.
 
 ## Your Recordings
 

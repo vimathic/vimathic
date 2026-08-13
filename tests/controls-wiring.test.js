@@ -180,6 +180,8 @@ const fireDoc = (type, extra = {}) =>
 /** Let an awaited fullscreen request settle. */
 const settle = () => new Promise(r => setImmediate(r));
 
+const CP_DEFAULT_TEMPLATE = '// the camera-programmer starting template';
+
 function makeUi() {
   const calls = [];
   const ui = {
@@ -194,7 +196,15 @@ function makeUi() {
       vizMode: 'surface',
       currentMaterial: 'matte', currentParticleStyle: 'squares',
       grid: { visible: false, material: { opacity: 0.1 } },
-      orbit: { addEventListener() {}, target: { set() {} } },
+      orbit: { addEventListener() {}, target: { set() {} }, update() {} },
+      // RESET ALL drives the real camera and the real resetParamsToDefault
+      // through these; every other test in this file leaves them untouched.
+      camera: {
+        fov: 60, position: { set() {} }, up: { set() {} }, updateProjectionMatrix() {},
+      },
+      U: { uAmp: { value: 0.7 }, uWI: { value: 1 } },
+      bloomPass: { strength: 0.6, radius: 0.4, threshold: 0.85 },
+      setShapeAnimated: s => calls.push(['setShapeAnimated', s]),
       setSurfaceMaterial: (m, ms) => calls.push(['setSurfaceMaterial', m, ms]),
       setSurfaceMaterialAnimated: (m, ms) => calls.push(['setSurfaceMaterial', m, ms]),
       setParticleStyle:   s => calls.push(['setParticleStyle', s]),
@@ -210,7 +220,22 @@ function makeUi() {
       setShape: s => calls.push(['setShape', s]),
       fadeGrid: on => calls.push(['fadeGrid', on]),
     },
-    camera: { autoRot: false, cb: {}, cpParams: {}, cpKeyframes: [] },
+    // resetScript, setCamPhysics and buildTimeline are what the RESET ALL
+    // handler calls; the mirror below is deliberately thin — it copies only the
+    // part of camera.js:309 that a reset is judged by, which is that the editor
+    // buffer stops holding the user's script (real one: cb.onSetCode(CP_DEFAULT)).
+    camera: {
+      autoRot: false, cpActive: false, cpSource: null, cpParams: {}, cpKeyframes: [],
+      cb: { onAutoRotChanged() {}, onSetCode(code) { byId('ce-code').value = code; } },
+      getDefaultCode: () => CP_DEFAULT_TEMPLATE,
+      setCamPhysics: p => calls.push(['setCamPhysics', p]),
+      buildTimeline: () => calls.push(['buildTimeline']),
+      resetScript() {
+        this.cpActive = false; this.cpFn = null; this.cpSource = null;
+        this.cb.onSetCode(this.getDefaultCode());
+        calls.push(['resetScript']);
+      },
+    },
     shaderEditor: { customVS: null, customFS: null },
     modelLoader: { clear: () => calls.push(['ml.clear']) },
     mathViz: {
@@ -721,5 +746,40 @@ describe('hold-and-drag does not reach through the About dialog', () => {
     fireDoc('mousemove', { movementX: 200 });
 
     assert.notEqual(ui.audio.bassSens, 1.2, 'this is the feature, and it has to survive the guard');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX(#24, r4) made a reload restore the persisted camera script instead of
+// blanking it. That blanking was also, by accident, the only thing that ever
+// cleared a script out of RESET ALL: the handler nulled cpActive/cpFn and left
+// the source sitting in #ce-code, and the autosave this very button schedules
+// wrote it back a second later. So "reset to defaults" survived exactly until
+// the boot code stopped laundering it.
+describe('RESET ALL — the camera programmer goes back to defaults for real', () => {
+  const A_SCRIPT = 'ctx.cam.y = 4 + sin(time)*2;';
+
+  test('the script source is cleared out of the editor, not just disarmed', () => {
+    ui.camera.cpActive = true;
+    ui.camera.cpSource = A_SCRIPT;
+    byId('ce-code').value = A_SCRIPT;
+
+    fire('btn-reset-all', 'click');
+
+    assert.equal(byId('ce-code').value, CP_DEFAULT_TEMPLATE,
+      'the reset left the script in the editor, where the next autosave picks it up again');
+    assert.equal(ui.camera.cpSource, null);
+    assert.equal(ui.camera.cpActive, false);
+    assert.equal(ui.called('resetScript').length, 1,
+      'camera.js:309 owns what a script reset means — the handler must route through it');
+  });
+
+  test('the keyframe timeline is cleared with it', () => {
+    ui.camera.cpKeyframes = [{ t: 0.25, code: 'p.radius = 9;' }];
+
+    fire('btn-reset-all', 'click');
+
+    assert.deepEqual(ui.camera.cpKeyframes, []);
+    assert.equal(ui.called('buildTimeline').length, 1);
   });
 });
