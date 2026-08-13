@@ -17,8 +17,8 @@ SCIENCE.md came to name four modular forms of which one was implemented.
 
 | Tier | Count | Definition | Marketing-defensible? |
 |------|------:|------------|:---------------------:|
-| **A** — machine precision | **124** | Closed-form analytic expressions evaluated at IEEE 754 double precision (~10⁻¹⁰ to 10⁻¹⁴ accuracy). | ✓ Yes |
-| **B** — bounded approximation | **42** | Polynomial fits, finite-converged series, well-behaved iterative methods, real PDE/ODE simulations on adaptive grids. Documented error ≤ 10⁻³ to 10⁻⁷. | ✓ Yes |
+| **A** — machine precision | **123** | Closed-form analytic expressions evaluated at IEEE 754 double precision (~10⁻¹⁰ to 10⁻¹⁴ accuracy). | ✓ Yes |
+| **B** — bounded approximation | **43** | Polynomial fits, finite-converged series, well-behaved iterative methods, real PDE/ODE simulations on adaptive grids. Documented error ≤ 10⁻³ to 10⁻⁷. | ✓ Yes |
 | **C** — visualization-grade | **26** | Truncated chaotic iterations, decorative modulations, simplified models. Qualitatively faithful but not numerically exact. | Conditional |
 | **D** — defects | **0** | All previously identified defects fixed and verified by automated tests. | n/a |
 
@@ -61,8 +61,20 @@ second algorithm, or a canonical constant), not against the implementation.
   growing Bi solution takes over. Measured, Ai came back **negative** from
   ξ ≈ 4.88, inside the ξ ≤ 5.25 the default wave intensity reaches, where the
   true Ai is positive everywhere. Marching replaced by the Maclaurin series on
-  |x| ≤ 8 and the standard asymptotics beyond. Exact to 10⁻¹⁴ on the visible
-  range, and cheaper than the RK4 loop it replaces. C → **A**.
+  |x| ≤ 8 and the standard asymptotics beyond (u₀…u₅), and cheaper than the RK4
+  loop it replaces. C → **B**, absolute error ≤10⁻¹³ over the default window
+  |x| ≤ 5.25 and ≤10⁻⁸ over the whole reachable |x| ≤ 24.
+
+  *Second pass.* This entry was first written up here as C → A on a claimed
+  10⁻¹⁴. An adversarial re-derivation — Decimal series at 130+ digits, a contour
+  integral through the saddle, and the Bessel identity
+  Ai(−y) = √(y/3)·(J_{1/3}+J_{−1/3}), all three agreeing — showed that is not
+  what the series delivers: it alternates, so it loses digits exactly where |Ai|
+  is smallest. At x = 8 the largest partial is 1.34·10⁶ against |Ai| = 4.7·10⁻⁸,
+  leaving about 2.5 significant digits, and the measured worst absolute error is
+  1.1·10⁻¹⁰ at the positive seam and 1.2·10⁻⁸ at the negative one. Invisible on
+  a mesh (10⁻⁸ against a frame ~3 units high) — but the tier and the number in
+  this document have to be the ones that were measured, so both are corrected.
 - `zeta` — 14–22 terms of Σn^{−s} is 85 % below ζ(1.05); shifting the window to
   start at 1.05 removes the divergence and nothing else. Euler–Maclaurin closes
   it in the same budget, ~10⁻¹⁰ across the window. C → **B**.
@@ -183,7 +195,7 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `gamma_fn` | Gamma Function | 🟢 A | Lanczos g=7, ~10⁻¹⁴. Plots Γ(n) itself over n ∈ [0.2, 3.8], including the minimum 0.8856 at n = 1.4616 — it used to plot 0.12·ln\|Γ(n)\| under this caption. |
 | `erf` | Error Function | 🟢 A | All-positive series 2/√π·e^{−x²}·Σ2ⁿx^{2n+1}/(2n+1)!!, measured 7.7×10⁻¹⁵. Replaced an Abramowitz & Stegun Horner fit whose own bound is 1.5×10⁻⁷ — a tier-B number under a tier-A rating. |
 | `zeta` | Riemann Zeta (real axis) | 🔵 B | Euler–Maclaurin: 15 direct terms, integral tail, two Bernoulli corrections. ~10⁻¹⁰ across the window. Replaced a 14–22 term Σ 1/n^s that was 85 % below ζ(1.05) — the domain shift to [1.05, 5.05] removed the divergence and left the convergence rate untouched. `comp` now stretches the s-window instead of setting the term count. |
-| `airy` | Airy Function Ai(x) | 🟢 A | Maclaurin series on \|x\| ≤ 8 from the exact (Ai(0), Ai′(0)) seed, standard asymptotics beyond, ~10⁻¹⁴ on the visible range. Replaced an RK4 march: no forward march of y″ = x·y survives, and that one returned Ai **negative** from ξ ≈ 4.88 — inside the ξ ≤ 5.25 the default wave intensity reaches — where Ai is positive everywhere. |
+| `airy` | Airy Function Ai(x) | 🔵 B | Maclaurin series on \|x\| ≤ 8 from the exact (Ai(0), Ai′(0)) seed, six-term asymptotics beyond. Absolute error ≤10⁻¹³ on \|x\| ≤ 5.25 (the default window) and ≤10⁻⁸ over the reachable \|x\| ≤ 24 — the series is alternating and loses digits where \|Ai\| is smallest. Replaced an RK4 march: no forward march of y″ = x·y survives, and that one returned Ai **negative** from ξ ≈ 4.88, where Ai is positive everywhere. |
 | `hypergeometric` | ₂F₁(a,b;c;z) | 🔵 B | Euler transformation (1−z)^{c−a−b}·₂F₁(c−a,c−b;c;z), 120-term cap, relative early exit at 10⁻¹². Worst reachable point 6.5×10⁻⁵. The previous 12-term cut never reached its 10⁻⁸ exit: the twelfth term at z = 0.875 is 2.5×10⁻². |
 | `laguerre` | Laguerre L_n | 🟢 A | Closed-form three-term recurrence. |
 | `chebyshev` | Chebyshev T_n | 🟢 A | Direct cos(n·acos(x)), \|x\| ≤ 1. Exact on the rim now: the ±(1−10⁻⁹) guard inside acos cost 2.5×10⁻⁸ across the whole saturated edge, and the argument was already clamped. |
@@ -454,6 +466,23 @@ theta), mode 9 (θ₃(q)), mode 37 (spectral centroid, which really is
 (treble+ε)/(treble+bass+2ε)), and mode 10 now joins them.
 
 Presets store the numeric `uMode`, not the label, so no saved preset moved.
+
+**Second pass — two of the round-5 repairs needed repairing.** Both were found
+by re-deriving the fixes independently rather than by reading their rationales.
+
+- Mode 11's floor was written as `sin(fn*(0.35+t*2.))`, with the offset *inside*
+  the harmonic index. That phases all seven harmonics together and they add
+  constructively: span went 2.046 → 3.290 under loud audio and 3.070 → 4.935
+  with the sliders up, against a camera half-frame of about 3.26. The branch was
+  in frame everywhere before the repair and was not after it. Written as
+  `sin(fn*t*2.+0.6)` the offset shifts every harmonic by the same amount:
+  silence 0.680, loud 1.998, sliders up 2.997 — a floor, and a ceiling slightly
+  below what the branch had before either repair.
+- `gamma`'s overflow fix was applied to the n ≥ 0.5 branch only. The reflection
+  branch computes Γ(1−n) with the same `Math.pow` and π/Infinity is 0, so
+  `gamma(n)` returned **exactly zero** for every n ≲ −141.5 — Γ(−141.5) is
+  1.39·10⁻²⁴⁴ and even Γ(−170.5) ≈ −3.3·10⁻³⁰⁸ still fits a double. Half a fix
+  under a comment claiming a whole one. Both branches now fall back to logs.
 
 ---
 

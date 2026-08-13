@@ -22,7 +22,7 @@ The visualizer takes any audio source and decomposes it into bass and treble ban
 
 ## Mathematical accuracy
 
-Every formula is documented with its accuracy tier. 124 formulas use closed-form mathematical expressions at IEEE 754 double precision (~10⁻¹⁴). 42 use bounded numerical approximations with documented error margins (10⁻³ to 10⁻⁷). 26 are visualisation-grade — qualitatively faithful but not numerically verified for production scientific use. Reference values are cross-checked against mpmath, scipy.special, and NIST DLMF. Full per-formula breakdown and test methodology is available in the project's [Mathematical Accuracy](https://github.com/vimathic/vimathic/blob/main/MATHEMATICAL_ACCURACY.md) document on GitHub.
+Every formula is documented with its accuracy tier. 123 formulas use closed-form mathematical expressions at IEEE 754 double precision (~10⁻¹⁴). 43 use bounded numerical approximations with documented error margins (10⁻³ to 10⁻⁷). 26 are visualisation-grade — qualitatively faithful but not numerically verified for production scientific use. Reference values are cross-checked against mpmath, scipy.special, and NIST DLMF. Full per-formula breakdown and test methodology is available in the project's [Mathematical Accuracy](https://github.com/vimathic/vimathic/blob/main/MATHEMATICAL_ACCURACY.md) document on GitHub.
 
 ## Single-file deployment
 

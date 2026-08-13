@@ -77,9 +77,17 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
   // sin(fn*t*2.) — which is exactly zero when there is no treble. Measured span
   // in silence: 0.0e+0, against 0.98 at half treble. Every other branch keeps a
   // floor (the (0.3+b*.7) factor bottoms out at 0.3); this one had none, so the
-  // surface was a flat plate any time the track went quiet. The 0.35 offset
-  // gives it the same kind of floor without touching how it answers treble.
-  else if(mode==11){float s=0.;for(int n=1;n<=7;n++){float fn=float(n);s+=exp(-fn*r*.3)*cos(ang*fn*2.)*sin(fn*(0.35+t*2.));}y=s*.5*(0.3+b*.7)*a;}
+  // surface was a flat plate any time the track went quiet.
+  //
+  // FIX(second pass): the first repair wrote the offset INSIDE the harmonic
+  // index — sin(fn*(0.35+t*2.)) — which lines all seven harmonics up in phase
+  // and adds them constructively. Floor gained, ceiling lost: span went 2.046 →
+  // 3.290 under loud audio and 3.070 → 4.935 with the sliders up, against a
+  // camera half-frame of about 3.26. The offset belongs outside the index, so
+  // it shifts every harmonic by the same amount instead of by a multiple of it:
+  // silence 0.680 (was 0.0), loud 1.998, sliders up 2.997 — a floor, and a
+  // ceiling now slightly under what the branch had before either repair.
+  else if(mode==11){float s=0.;for(int n=1;n<=7;n++){float fn=float(n);s+=exp(-fn*r*.3)*cos(ang*fn*2.)*sin(fn*t*2.+0.6);}y=s*.5*(0.3+b*.7)*a;}
   else if(mode==12){y=exp(-r*.6)*sin(r*8.*wi*(0.5+t))*(0.3+b*.7)*a;}
   else if(mode==13){float e=0.;for(int n=1;n<=5;n++){float fn=float(n);e+=cos(ang*fn*4.)*exp(-r*.15*fn);}y=e*.4*(0.3+b*.7)*a;}
   else if(mode==14){y=sin(r*8.*wi*(0.5+t))*cos(ang*4.)*(0.3+b*.7)*a+bt*.3;}

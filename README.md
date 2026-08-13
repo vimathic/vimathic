@@ -18,11 +18,11 @@ Drop in a track — 192 mathematical formulas come to life on screen, driven by 
 ---
 
 <!-- Tier split is summed from the 12 per-collection headings in
-     MATHEMATICAL_ACCURACY.md — keep the two in step (124 + 42 + 26 = 192). -->
+     MATHEMATICAL_ACCURACY.md — keep the two in step (123 + 43 + 26 = 192). -->
 > **166 of 192 formulas at verifiable accuracy. Open tests.**
 >
-> 124 closed-form expressions at IEEE 754 double precision (~10⁻¹⁴).
-> 42 validated approximations with bounded error ≤ 10⁻³ to 10⁻⁷.
+> 123 closed-form expressions at IEEE 754 double precision (~10⁻¹⁴).
+> 43 validated approximations with bounded error ≤ 10⁻³ to 10⁻⁷.
 > 26 visualisation-grade (qualitatively faithful, not numerically verified).
 > Cross-checked against mpmath, scipy.special, and NIST DLMF.
 > `node --test tests/math-validation.test.js`
@@ -129,8 +129,8 @@ Integral Transforms · Topology & Geometry · Cellular Automata · Quantum Mecha
 <!-- Tier counts come from MATHEMATICAL_ACCURACY.md. -->
 | Tier | Count | What it means |
 |------|-------|---------------|
-| 🟢 A | 124 | IEEE 754 double precision — machine accuracy |
-| 🔵 B | 42  | Bounded approximation, error ≤ 10⁻³ to 10⁻⁷ |
+| 🟢 A | 123 | IEEE 754 double precision — machine accuracy |
+| 🔵 B | 43  | Bounded approximation, error ≤ 10⁻³ to 10⁻⁷ |
 | 🟡 C | 26  | Visualization-grade — qualitatively faithful, not numerically exact |
 
 This is not "math-flavoured visuals". These are canonical implementations —

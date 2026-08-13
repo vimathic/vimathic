@@ -75,7 +75,20 @@ export function gamma(n) {
     for (let i = 1; i < g + 2; i++) x1 += c[i] / (n1 + i);
     const t1 = n1 + g + 0.5;
     const gammaOneMinusN = Math.sqrt(TAU) * Math.pow(t1, n1 + 0.5) * Math.exp(-t1) * x1;
-    return Math.PI / (Math.sin(Math.PI * n) * gammaOneMinusN);
+    // FIX(r5, second pass): the log-space fallback below the positive branch was
+    // added first and this arm was left with the mine it was supposed to close.
+    // Γ(1−n) is computed by the same Math.pow(t1, n1+0.5) that overflows around
+    // n1 ≈ 142, and π/Infinity is 0 — so gamma(n) returned EXACTLY ZERO for every
+    // n ≲ −141.5, where the true value is comfortably representable: Γ(−141.5) is
+    // 1.39·10⁻²⁴⁴ and even Γ(−170.5) ≈ −3.3·10⁻³⁰⁸ still fits a double. Half a
+    // fix under a comment that claimed a whole one.
+    if (Number.isFinite(gammaOneMinusN)) {
+      return Math.PI / (Math.sin(Math.PI * n) * gammaOneMinusN);
+    }
+    const sinPn = Math.sin(Math.PI * n);
+    const logGammaOneMinusN = 0.5 * Math.log(TAU) + (n1 + 0.5) * Math.log(t1) - t1 + Math.log(x1);
+    const logOut = Math.log(Math.PI) - Math.log(Math.abs(sinPn)) - logGammaOneMinusN;
+    return Math.sign(sinPn) * Math.exp(logOut);
   }
   n -= 1;
   const g = 7;
@@ -288,6 +301,19 @@ function clausenCl2(theta) {
  * at the default wave intensity, so the wrong sign was on screen out of the box.
  * The code comment claimed the march held to |x| ≈ 6.
  *
+ * ACCURACY, corrected on the second pass. The first version of this note claimed
+ * ~10⁻¹⁴ and the entry was rated tier A on it. That was optimistic: the series is
+ * alternating, so it loses digits to cancellation exactly where |Ai| is smallest.
+ * At x = 8 the largest partial sum is 1.34·10⁶ against |Ai| = 4.7·10⁻⁸ — about
+ * 2.5 significant digits survive out of sixteen. Measured against a Decimal
+ * reference at 130+ digits, a contour integral and the Bessel identity
+ * Ai(−y) = √(y/3)·(J_{1/3}+J_{−1/3}), all three agreeing: absolute error is
+ * ≤10⁻¹³ over |x| ≤ 5.25 (the window the default wave intensity reaches) and
+ * ≤10⁻⁸ over the whole reachable |x| ≤ 24, with the worst point at the x = −8
+ * seam. That is tier B, and the document now says so. On the mesh it is
+ * invisible either way — 10⁻⁸ against a frame about 3 units high — but the
+ * number in the document has to be the number that was measured.
+ *
  * Series instead of marching: y″ = xy has c_{n+3} = c_n/((n+2)(n+3)), so
  *   Ai(x) = Ai(0)·f(x) − Ai′(0)·g(x),
  *   f = 1 + x³/6 + x⁶/180 + …,  g = x + x⁴/12 + x⁷/504 + …
@@ -312,13 +338,16 @@ function airyAi(x) {
     return 0.3550280538878172 * f - 0.2588194037928068 * g;
   }
   const zeta = (2/3) * Math.pow(ax, 1.5), z4 = Math.pow(ax, 0.25);
-  const u1 = 5/72, u2 = 385/10368, u3 = 85085/2239488;
+  // DLMF 9.7: u₀…u₅ of the Airy asymptotic expansion.
+  const u1 = 5/72, u2 = 385/10368, u3 = 85085/2239488,
+        u4 = 37182145/1289945088, u5 = 5391411025/75246796800;
+  const z2 = zeta*zeta, z3 = z2*zeta, z5 = z3*z2;
   if (x > 0) {
-    const s = 1 - u1/zeta + u2/(zeta*zeta) - u3/(zeta*zeta*zeta);
+    const s = 1 - u1/zeta + u2/z2 - u3/z3 + u4/(z2*z2) - u5/z5;
     return Math.exp(-zeta) / (2 * Math.sqrt(Math.PI) * z4) * s;
   }
   const th = zeta + Math.PI/4;
-  const p = 1 - u2/(zeta*zeta), q = u1/zeta - u3/(zeta*zeta*zeta);
+  const p = 1 - u2/z2 + u4/(z2*z2), q = u1/zeta - u3/z3 + u5/z5;
   return (Math.sin(th) * p - Math.cos(th) * q) / (Math.sqrt(Math.PI) * z4);
 }
 

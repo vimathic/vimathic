@@ -1917,9 +1917,36 @@ describe('Regression — special functions rewritten to their documented tier (#
       `ln gamma(150) = ${Math.log(gamma(150))} against Stirling ${lg(150)}`);
   });
 
+  test('gamma survives on the NEGATIVE axis too', () => {
+    // Second pass: the log fallback was added to the n >= 0.5 branch only. The
+    // reflection branch computes gamma(1-n) with the same Math.pow, and
+    // pi/Infinity is 0 — so gamma(n) returned exactly zero for every n <~ -141.5,
+    // where the value is comfortably representable.
+    const lgPos = n => (n - 0.5) * Math.log(n) - n + 0.5 * Math.log(2 * Math.PI)
+      + 1 / (12 * n) - 1 / (360 * n ** 3) + 1 / (1260 * n ** 5) - 1 / (1680 * n ** 7);
+    const ref = n => {
+      const s = Math.sin(Math.PI * n);
+      return Math.sign(s) * Math.exp(Math.log(Math.PI) - Math.log(Math.abs(s)) - lgPos(1 - n));
+    };
+    for (const n of [-141.5, -142.5, -150.5, -170.5]) {
+      const got = gamma(n);
+      assert.notEqual(got, 0, `gamma(${n}) collapsed to zero; true value is ${ref(n)}`);
+      assert.ok(Math.abs((got - ref(n)) / ref(n)) < 1e-11,
+        `gamma(${n}) = ${got} against ${ref(n)}`);
+    }
+    // The fallback reaches into the subnormals: gamma(-175.5) = 2.1e-319. Far
+    // enough out it really does underflow, and zero is then the right answer —
+    // compared with === rather than assert.equal, which is Object.is under
+    // node:assert/strict and would reject the -0 that comes back here.
+    assert.ok(gamma(-175.5) !== 0, 'the subnormal range is still reachable');
+    assert.ok(gamma(-200.5) === 0, `gamma(-200.5) should underflow, got ${gamma(-200.5)}`);
+  });
+
   test('control — gamma is unmoved where it always worked', () => {
     near(gamma(5), 24, 1e-12, 'gamma(5)');
     near(gamma(0.5), Math.sqrt(Math.PI), 1e-14, 'gamma(1/2)');
+    near(gamma(-0.5), -3.5449077018110322, 1e-13, 'gamma(-1/2)');
+    near(gamma(-2.5), -0.9453087204829419, 1e-14, 'gamma(-5/2)');
   });
 });
 
@@ -2200,10 +2227,17 @@ describe('Regression — GPU displacement branches that drew nothing (#R5)', () 
     }
   });
 
-  test('mode 11 keeps a floor when there is no treble', () => {
+  test('mode 11 keeps a floor when there is no treble, without gaining a ceiling', () => {
     // sin(fn*t*2.) with t = uTreble is exactly zero in silence, and this branch
     // had no (0.3 + b·.7)-style floor to fall back on: span 0.0 with no audio.
-    assert.ok(/0\.35\+t\*2\./.test(branch(11).replace(/\s/g, '')),
-      'mode 11 still vanishes when uTreble is zero');
+    // The offset has to sit OUTSIDE the harmonic index. Written as
+    // sin(fn*(0.35+t*2.)) it phases all seven harmonics together and they add:
+    // span went 2.046 → 3.290 loud and 3.070 → 4.935 with the sliders up,
+    // against a camera half-frame of about 3.26. Written as sin(fn*t*2.+0.6) it
+    // shifts each harmonic by the same amount and the ceiling stays put.
+    const src = branch(11).replace(/\s/g, '');
+    assert.ok(/t\*2\.\+0\.6/.test(src), 'mode 11 still vanishes when uTreble is zero');
+    assert.ok(!/fn\*\(0?\.\d+\+t/.test(src),
+      'the offset is inside the harmonic index again — that is what raised the peak out of frame');
   });
 });
