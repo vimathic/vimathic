@@ -64,10 +64,13 @@ guidance.
   is no analytics, no telemetry, no network activity at runtime, no
   background process that survives the tab closing. If your machine is
   warm, it is warm because of the rendering you can see on screen.
-- The **GIF recorder** at maximum settings (720p, 30fps, 60s) can allocate
-  up to ~1.5 GB of memory. The UI warns when estimated usage exceeds safe
-  limits and suggests reducing parameters. The **WebM recorder** uses ~50–
-  100 MB for the same duration.
+- The **GIF recorder** holds captured frames as uncompressed RGBA, so it is
+  capped at 1500 MB of queued frames. It prices the clip before capture and
+  **refuses to start** above that ceiling rather than warning: 720p × 30fps ×
+  60s is priced at 5273 MB and never records. At the 60-second cap the
+  largest 16:9 combination that still fits is 480p × 15fps (1340 MB).
+  The **WebM recorder** uses ~50–100 MB
+  for the same duration and has no such cap.
 - The codebase has not been audited for security vulnerabilities by an
   independent IT security professional. See
   [SECURITY.md](./SECURITY.md) for the disclosure policy.

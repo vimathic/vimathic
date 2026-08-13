@@ -196,8 +196,19 @@ export class UIController {
       clip.barsMode = bars;
       modeSecBtn.classList.toggle('active', !bars);
       modeBarsBtn.classList.toggle('active', bars);
-      holdInput.closest('.clip-time-sec').style.display  = bars ? 'none' : '';
-      barsInput.closest('.clip-time-bars').style.display = bars ? '' : 'none';
+      // 'flex', not '': the empty string REMOVES the inline declaration, which
+      // is the right "hand it back to the stylesheet" idiom only when a
+      // stylesheet owns the element's display. Nothing in index.html selects
+      // these two rows — their whole layout is the inline
+      // `display:flex;gap:6px;align-items:center` on the div — so erasing it
+      // dropped them to the <div> default `block`. That made the co-located
+      // gap and align-items inert and, visibly, `flex:1` on #clip-hold too:
+      // measured in Chromium, the Hold(s) input fell from 220px to the global
+      // input[type=number] width of 56px. _setMode(false) runs unconditionally
+      // at the end of bindClip, so the SEC row was in that state from first
+      // paint; BARS took the same damage on the first ♩ BARS click.
+      holdInput.closest('.clip-time-sec').style.display  = bars ? 'none' : 'flex';
+      barsInput.closest('.clip-time-bars').style.display = bars ? 'flex' : 'none';
     };
     modeSecBtn?.addEventListener('click',  () => _setMode(false));
     modeBarsBtn?.addEventListener('click', () => _setMode(true));

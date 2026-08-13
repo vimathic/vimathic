@@ -795,6 +795,48 @@
 .controls-panel.collapsed #ctrl-collapse {
   transform: rotate(-90deg);
 }
+
+/* ── Modal overlays: closed has to mean closed for the keyboard too ─────────
+   Every overlay above is permanently `display:flex` and is opened and closed
+   by `opacity` + `pointer-events` alone. Neither property takes an element out
+   of sequential focus navigation, so a Tab walk from a fresh load parked focus
+   inside dialogs nobody could see: 30 of the first 80 tab stops landed in a
+   CLOSED overlay, and 9 of those were INPUT/SELECT/TEXTAREA — the exact tag
+   test both global keydown handlers use to stand down (src/main.js,
+   src/ui/controls.js). Every hotkey went dead with nothing on screen to
+   explain it, and Enter on the invisible APPLY button still ran
+   compileAndApply(). The mouse was never affected: pointer-events blocks hit
+   testing, and only hit testing.
+
+   `visibility:hidden` removes the subtree from the focus order, from hit
+   testing and from the accessibility tree in one declaration — the last of
+   those also retires #about-overlay's permanent `aria-modal="true"` claim,
+   which until now told assistive tech a modal dialog was open at all times.
+   It keeps layout measurable, which `display:none` would not: the editors size
+   themselves from elements that are laid out while their overlay is shut.
+
+   The paired transitions keep the fade: `visibility 0s 0s` in the open state
+   makes the dialog focusable the instant it opens, `visibility 0s .25s` in the
+   closed state waits for the opacity fade to finish before it disappears.
+   (Measured caveat: the buttons inside carry `transition:all .15s`, so they
+   inherit the change through a transition of their own and stay hidden for
+   ~70ms after the overlay opens — a third of the way into the backdrop fade,
+   and Playwright's actionability check waits it out.)
+
+   This block sits after all five overlay rules on purpose — they each declare
+   `transition:opacity .25s`, and at equal specificity the later rule wins.
+   Pinned by tests/controller-shell.test.js, which fails if an overlay is added
+   without joining these two selector lists. */
+#about-overlay,
+#shader-editor-overlay,
+#audio-src-overlay,
+#output-overlay,
+#cam-editor-overlay      { visibility:hidden;  transition:opacity .25s, visibility 0s .25s; }
+#about-overlay.open,
+#shader-editor-overlay.open,
+#audio-src-overlay.open,
+#output-overlay.open,
+#cam-editor-overlay.open { visibility:visible; transition:opacity .25s, visibility 0s 0s; }
   </style>
 </head>
 <body>
@@ -1452,7 +1494,15 @@
       </div>
       <div id="ce-pane-params" style="display:none">
         <div id="ce-params">
-          <div class="ce-param"><label>ROT SPEED</label><input type="range" id="cp-rot" min="0" max="0.001" step="0.00001" value="0.00002"><span id="cp-rot-v" style="font-size:8px;color:var(--green);font-family:monospace">0.00002</span></div>
+          <!-- ROT SPEED's rail is the one that has to agree with something
+               outside this file: rotSpeed has no panel slider, so this IS its
+               slider, and src/params.js declares `min: 0, max: 0.002` for the
+               MIDI path while documents/camera-programmer.md publishes 0–0.002
+               to script authors. It read max="0.001" — half of both — so the
+               top half of a mapped encoder's travel pinned the thumb at the
+               rail. tests/controller-shell.test.js reads PARAMS.rotSpeed and
+               fails if the two drift apart again. -->
+          <div class="ce-param"><label>ROT SPEED</label><input type="range" id="cp-rot" min="0" max="0.002" step="0.00001" value="0.00002"><span id="cp-rot-v" style="font-size:8px;color:var(--green);font-family:monospace">0.00002</span></div>
           <div class="ce-param"><label>RADIUS</label><input type="range" id="cp-radius" min="2" max="20" step="0.1" value="7.2"><span id="cp-radius-v" style="font-size:8px;color:var(--green);font-family:monospace">7.2</span></div>
           <div class="ce-param"><label>HEIGHT</label><input type="range" id="cp-height" min="0" max="12" step="0.1" value="3.2"><span id="cp-height-v" style="font-size:8px;color:var(--green);font-family:monospace">3.2</span></div>
           <div class="ce-param"><label>GRAVITY</label><input type="range" id="cp-grav" min="0" max="0.005" step="0.0001" value="0.0004"><span id="cp-grav-v" style="font-size:8px;color:var(--green);font-family:monospace">0.0004</span></div>

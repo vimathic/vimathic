@@ -150,4 +150,6 @@ If you write only custom **fragment** code and assign `c = getColor(uCM, t)`, th
 
 ## Safety note
 
-The shader editor compiles GLSL via Three.js `compileAsync()`. GLSL runs in the GPU process and cannot escape its sandbox, but malformed code can still crash GPU drivers in extreme cases. If your screen freezes after APPLY, refresh the page — `customVS`/`customFS` are runtime-only and don't persist across reloads unless saved as a preset.
+The shader editor compiles each program on a throwaway probe mesh and reports link failures through Three.js's `renderer.debug.onShaderError` hook — the compile itself is synchronous, so a shader that fails to link is reported as failed rather than as applied. GLSL runs in the GPU process and cannot escape its sandbox, but malformed code can still crash GPU drivers in extreme cases.
+
+**If your screen freezes after APPLY, a plain refresh will not get you out.** The applied `customVS`/`customFS` are part of the auto-saved session snapshot (`localStorage` key `vimathic_persisted_state`, see [Presets & Clips](./presets.md)), so the next page load recompiles the same program. Two ways out: press **RESET ALL** if the panel still responds — it clears the custom shader *and* the snapshot — or, if the tab is unusable, delete the `vimathic_` keys in DevTools → **Application → Local Storage** ([Safety & Privacy](./safety.md)) before reloading.

@@ -119,6 +119,45 @@ describe('AudioEngine.loadPlay — which load wins', () => {
       'a stale failure must not report a stop');
   });
 
+  test('a live capture connected mid-load is not played over', async () => {
+    // The other half of the same defect, named in this.loadId's own comment and
+    // in the header above: ++this.loadId lived only in loadPlay, so a capture
+    // taking the analyser through _stopFilePlayback() left the in-flight load's
+    // claim intact. It then assigned audioBuffer and started a source on top of
+    // a running mic, with liveMode still reading 'mic'.
+    const { engine, events, decodes } = makeEngine();
+    let grant;
+    // navigator is a getter on the Node global, so it is replaced by descriptor
+    // and put back before anything can throw past it.
+    const realNav = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { mediaDevices: { getUserMedia: () => new Promise(res => { grant = res; }) } },
+    });
+    engine.audioCtx.createMediaStreamSource = () => ({ connect() {}, disconnect() {} });
+
+    const big = engine.loadPlay({ name: 'BIG' });
+    await flush();                                    // reached its decode
+
+    const mic = engine.captureMicrophone();           // AUDIO SOURCE → Microphone
+    await flush();
+    grant({ getTracks: () => [] });                   // the permission prompt is answered
+    const micResult = await mic;
+    Object.defineProperty(globalThis, 'navigator', realNav);
+
+    assert.deepEqual(micResult, { ok: true }, 'precondition: the capture was granted');
+    assert.equal(engine.liveMode, 'mic', 'precondition: the capture is wired');
+
+    decodes.get('BIG').resolve(buffer('BIG'));        // the abandoned decode lands
+    await big;
+
+    assert.equal(engine.liveMode, 'mic', 'the operator is listening to the mic');
+    assert.ok(engine.audioBuffer === null,
+      'the file the operator navigated away from must not take the analyser back');
+    assert.deepEqual(events.filter(e => e[0] === 'startSource'), [],
+      'a source started here plays the track over the live capture');
+  });
+
   test('control — a load with nothing racing it applies normally', async () => {
     const { engine, events, decodes } = makeEngine();
 
@@ -300,5 +339,63 @@ describe('the intro track loses every race it should lose', () => {
 
     assert.equal(fetched, false, 'an offline build should not pay for a fetch it will discard');
     assert.deepEqual(engine.playlist, []);
+  });
+});
+
+describe('AudioEngine.loadPlay — who owns the loading bar', () => {
+
+  /** Record the indicator calls; makeEngine's own onLoading is a no-op. */
+  function withLoading() {
+    const h = makeEngine();
+    h.loading = [];
+    h.engine.cb.onLoading = (...a) => h.loading.push(a);
+    return h;
+  }
+
+  test('a load abandoned by a capture takes its own bar down', async () => {
+    // A capture never touches the indicator, so the load it supersedes has to,
+    // or the bar slides for the rest of the session. _stopFilePlayback() is the
+    // one call both capture paths make; the permission prompt failing AFTER it
+    // leaves liveMode null, which is why this cannot be keyed on liveMode.
+    const { engine, decodes, loading } = withLoading();
+
+    const big = engine.loadPlay({ name: 'BIG' });
+    await flush();
+    assert.deepEqual(loading[0], [true, 0, 'LOADING TRACK…'], 'precondition: the bar is up');
+
+    engine._stopFilePlayback();                  // the capture claims the analyser…
+    decodes.get('BIG').resolve(buffer('BIG'));   // …and the abandoned decode lands
+    await big;
+
+    assert.deepEqual(loading.at(-1), [false],
+      'nobody else will clear this bar — the abandoned load must');
+  });
+
+  test('a stale load does not clip the bar of the load that replaced it', async () => {
+    // The other direction, and the one liveMode got wrong: after a capture the
+    // operator picks a new file, so the stale load finds liveMode truthy and a
+    // NEWER load already showing its own progress.
+    const { engine, decodes, loading } = withLoading();
+
+    const big = engine.loadPlay({ name: 'BIG' });
+    await flush();
+    engine._stopFilePlayback();
+    engine.liveMode = 'mic';                     // as a granted capture leaves it
+
+    const small = engine.loadPlay({ name: 'SMALL' });
+    await flush();
+    const barsUp = loading.length;
+    assert.equal(loading.at(-1)[0], true,
+      'precondition: the newer load owns the bar and is still working');
+
+    decodes.get('BIG').resolve(buffer('BIG'));   // the stale one lands mid-decode
+    await big;
+
+    assert.deepEqual(loading.slice(barsUp).filter(c => c[0] === false), [],
+      'the newer load is still decoding — its bar is not the stale load’s to clear');
+
+    decodes.get('SMALL').resolve(buffer('SMALL'));
+    await small;
+    assert.equal(engine.audioBuffer.tag, 'SMALL', 'control: the newer load still lands');
   });
 });

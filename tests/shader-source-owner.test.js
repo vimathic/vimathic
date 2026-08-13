@@ -28,7 +28,7 @@
 // exactly the "compiled successfully" path, and setVizModeGPU only builds
 // three.js objects. document is stubbed for #se-code / #se-error.
 
-import { test, describe, before, beforeEach } from 'node:test';
+import { test, describe, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 globalThis.document = {
@@ -402,5 +402,143 @@ describe('an editor vertex program still morphs', () => {
     const writes = yWrites(VS);
     assert.ok(writes.length);
     for (const line of writes) assert.match(line, /uMorphProgress/);
+  });
+});
+
+// ── The draft buffers, and the tab that hands them over ──────────────────────
+//
+// This file reasons at length about _vert/_frag being draft buffers "the
+// gallery, switchTab and compileAndApply's own pre-compile write all move
+// without anything having been applied" (shaders.js), and presets.js says the
+// same thing where it snapshots them. switchTab is named as the writer in two
+// places and was executed by nothing: coverage marked its whole body dead, and
+// deleting its save-on-leave left the suite green.
+//
+// What that loses is the operator's typing. Its first two lines are the only
+// write-back of the textarea into the buffer before the textarea is repainted
+// with the other tab's body, so without them a VERT → FRAG → VERT round trip —
+// the ordinary act of checking a uniform name — silently restores the stale
+// draft, with no undo. It propagates too: presets.js snapshots `vert: se._vert,
+// frag: se._frag`, so the preset saved afterwards stores the stale body as well.
+describe('switchTab hands the editor buffer over without losing the draft', () => {
+  let render, se, tabs, qsaBefore;
+
+  beforeEach(() => {
+    render = makeRender();
+    se = new ShaderEditor(render);
+    document._els.clear();
+    // The two tab buttons modals.js binds the click to, each recording whether
+    // switchTab left it marked active.
+    tabs = ['vert', 'frag'].map(name => {
+      const el = { dataset: { tab: name }, active: null };
+      el.classList = { toggle: (_cls, on) => { el.active = on; } };
+      return el;
+    });
+    qsaBefore = document.querySelectorAll;
+    document.querySelectorAll = sel => (sel === '#shader-editor-box .se-tab' ? tabs : []);
+  });
+
+  afterEach(() => {
+    document.querySelectorAll = qsaBefore;
+    delete document.createElement;
+  });
+
+  const shown = () => document.getElementById('se-code').value;
+  const type  = s => { document.getElementById('se-code').value = s; };
+  const activeTab = () => tabs.filter(t => t.active).map(t => t.dataset.tab);
+
+  test('a vertex draft survives the trip to FRAG and back', () => {
+    const NEW_VERT = 'y = sin(r * 9.0) * a;   // the operator\'s work';
+    assert.equal(se._tab, 'vert', 'precondition: the editor opens on the vertex tab');
+    type(NEW_VERT);
+
+    se.switchTab('frag');
+    assert.equal(se._vert, NEW_VERT,
+      'leaving the tab must bank the draft — this is the only place it is written back');
+    assert.equal(shown(), se._frag, 'the FRAG tab must show the fragment body');
+    assert.notEqual(shown(), NEW_VERT, 'the FRAG tab is showing the vertex draft');
+
+    se.switchTab('vert');
+    assert.equal(shown(), NEW_VERT,
+      'the vertex draft was repainted from a stale buffer — everything typed is gone');
+  });
+
+  test('a fragment draft survives the trip to VERT and back', () => {
+    // The mirror case: the save-on-leave has two branches and only one of them
+    // is exercised by the round trip above.
+    const NEW_FRAG = 'c = vec3(0.2, 0.9, 0.4);   // the operator\'s work';
+    se.switchTab('frag');
+    type(NEW_FRAG);
+
+    se.switchTab('vert');
+    assert.equal(se._frag, NEW_FRAG);
+    assert.equal(shown(), se._vert);
+
+    se.switchTab('frag');
+    assert.equal(shown(), NEW_FRAG);
+  });
+
+  test('the tab it switches to is the one marked active', () => {
+    se.switchTab('frag');
+    assert.deepEqual(activeTab(), ['frag'], 'the highlight names the tab on screen');
+    se.switchTab('vert');
+    assert.deepEqual(activeTab(), ['vert']);
+  });
+
+  test('the switch announces the tab and the body now on screen', () => {
+    // modals.js repaints the editor from this callback; a body that disagrees
+    // with the textarea is the same lost-draft bug one layer up.
+    const seen = [];
+    se.cb.onTabSwitch = (tab, code) => seen.push([tab, code]);
+    type('y = 1.0;');
+    se.switchTab('frag');
+
+    assert.equal(seen.length, 1);
+    assert.deepEqual(seen[0], ['frag', shown()]);
+    assert.equal(se._tab, 'frag', 'the editor must know which buffer it is on');
+  });
+
+  test('compileAndApply reads the buffer switchTab last wrote, not the abandoned one', () => {
+    // The consequence the buffers exist for: what APPLY compiles has to be the
+    // draft the operator is looking at.
+    const NEW_FRAG = 'c = vec3(1.0, 0.0, 1.0);';
+    type('y = sin(r) * a;');
+    se.switchTab('frag');
+    type(NEW_FRAG);
+    se.compileAndApply();
+
+    assert.ok(se.customFS, 'precondition: the compile took its success path');
+    assert.ok(se.customFS.includes(NEW_FRAG), 'APPLY compiled a body the operator is not looking at');
+  });
+
+  test('a gallery preset for the other tab banks the draft before it switches', () => {
+    // _buildPresets is switchTab's only other caller and was equally unrun.
+    // Each preset is clicked on its own fresh editor, because a preset for the
+    // tab you are already on legitimately replaces the draft.
+    document.createElement = () => ({ classList: {} });
+    const NEW_VERT = 'y = cos(r * 2.0) * a;';
+    const gallery = editor => {
+      const wrap = { innerHTML: '', children: [], appendChild(c) { this.children.push(c); } };
+      wrap.appendChild = c => wrap.children.push(c);
+      document._els.set('se-preset-wrap', wrap);
+      editor._buildPresets();
+      return wrap;
+    };
+
+    const count = gallery(se).children.length;
+    assert.ok(count, 'precondition: the gallery built buttons at all');
+
+    let crossed = 0;
+    for (let i = 0; i < count; i++) {
+      const ed = new ShaderEditor(render);
+      const wrap = gallery(ed);
+      type(NEW_VERT);                       // unsaved work on the VERT tab
+      wrap.children[i].onclick();
+      if (ed._tab === 'vert') continue;     // a VERT preset is entitled to replace it
+      crossed++;
+      assert.equal(ed._vert, NEW_VERT,
+        `gallery preset #${i} crossed to ${ed._tab} and threw the vertex draft away`);
+    }
+    assert.ok(crossed, 'precondition: the gallery has at least one preset for the other tab');
   });
 });

@@ -22,7 +22,7 @@ Drop in a track — 192 mathematical formulas come to life on screen, driven by 
 > **164 of 192 formulas at verifiable accuracy. Open tests.**
 >
 > 122 closed-form expressions at IEEE 754 double precision (~10⁻¹⁴).
-> 42 validated approximations with bounded error ≤ 10⁻⁷.
+> 42 validated approximations with bounded error ≤ 10⁻³ to 10⁻⁷.
 > 28 visualisation-grade (qualitatively faithful, not numerically verified).
 > Cross-checked against mpmath, scipy.special, and NIST DLMF.
 > `node --test tests/math-validation.test.js`
@@ -290,7 +290,7 @@ under BUSL-1.1 / GPL v3 and, separately, grant the maintainer rights to use the
 contribution in proprietary commercial derivatives. See
 [CONTRIBUTING.md](./CONTRIBUTING.md) for the full dual-grant terms.
 
-Uses Three.js, gif.js, micromark, Vite, and vite-plugin-singlefile — all MIT.
+Uses Three.js, gif.js, micromark, micromark-extension-gfm-table, Vite, and vite-plugin-singlefile — all MIT.
 See [LICENSE.txt](./LICENSE.txt) for full third-party attributions.
 
 ### Bundled audio

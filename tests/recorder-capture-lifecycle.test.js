@@ -186,9 +186,9 @@ globalThis.MediaRecorder = FakeMediaRecorder;
 globalThis.requestAnimationFrame = fn => { rafQueue.push(fn); return rafQueue.length; };
 globalThis.cancelAnimationFrame = () => {};
 
-let GifRecorder, WebmRecorder;
+let GifRecorder, WebmRecorder, gifFramePlan;
 before(async () => {
-  ({ GifRecorder, WebmRecorder } = await import('../src/recorder.js'));
+  ({ GifRecorder, WebmRecorder, gifFramePlan } = await import('../src/recorder.js'));
 });
 
 beforeEach(() => { workers = []; mediaRecorders = []; rafQueue = []; });
@@ -475,5 +475,92 @@ describe('WebmRecorder.abort() bails out without producing a file', () => {
     b.rec.stop();
     await sleep(10);
     assert.equal(trackB.stopped, true);
+  });
+});
+
+// ── The quantised period, and the two clocks it drives ───────────────────────
+// tests/recorder-gif-timing.test.js pins gifFramePlan's arithmetic and says so:
+// "the encoder path around it needs a browser, so it is checked through the
+// exported helper that start() uses". This file supplies the browser, so the
+// join can be pinned too — and it was not: hard-coding the addFrame delay or the
+// capture interval left both files green.
+//
+// The two consumers are the whole point of quantising in the first place. The
+// helper's own docblock: "Quantise once, then derive both clocks (the capture
+// interval and the frame budget) from the same number so `frames × frameDelay ≈
+// capMs` holds in the written file." A hard-coded addFrame delay reproduces the
+// wrong-length-GIF class that helper exists to prevent, one layer below where
+// the arithmetic test looks; a hard-coded interval makes the panel's FPS
+// selector move a number the capture never uses.
+describe('the frame period gifFramePlan returns is the period both clocks use', () => {
+
+  // 20 fps quantises to a 50 ms period — a value no plausible hard-coding
+  // (33 for 30 fps, 100, 40) coincides with. 150 ms of capture is three frames.
+  const RUN_20 = { duration: 150, fps: 20, width: 160, height: 90 };
+
+  test('the capture interval is the quantised period, not the requested rate', async () => {
+    const realSetInterval = globalThis.setInterval;
+    const periods = new Map();
+    globalThis.setInterval = (fn, ms, ...rest) => {
+      const id = realSetInterval(fn, ms, ...rest);
+      periods.set(id, ms);
+      return id;
+    };
+    try {
+      const g = makeGif();
+      g.start(RUN_20);
+      const { frameDelay } = gifFramePlan(RUN_20.fps, RUN_20.duration);
+      assert.equal(frameDelay, 50, 'precondition: 20 fps quantises to a 50 ms period');
+      assert.ok(g.rec._captureTimer, 'precondition: the capture loop is running');
+      assert.equal(periods.get(g.rec._captureTimer), frameDelay,
+        'the capture rate stops following the panel once this period is hard-coded');
+      await settled(g.events);
+    } finally {
+      globalThis.setInterval = realSetInterval;
+    }
+  });
+
+  test('every frame is queued with that same period as its delay', async () => {
+    const g = makeGif();
+    g.start(RUN_20);
+    // Read the queue while the encoder still exists: a finished run releases it.
+    const delays = g.rec._gif.frames.map(f => f.delay);
+    await settled(g.events);
+
+    const { frameDelay } = gifFramePlan(RUN_20.fps, RUN_20.duration);
+    assert.ok(delays.length >= 1, 'precondition: at least one frame was queued');
+    for (const d of delays) {
+      assert.equal(d, frameDelay,
+        'the file plays back at a rate the capture never ran at — a GIF of the wrong length');
+    }
+  });
+
+  test('the run reports the rate the file actually plays at, not the one asked for', async () => {
+    // The panel's default 30 fps quantises to a 40 ms period, i.e. 25 fps in the
+    // file. Reporting 30 would describe a file that does not exist — and that is
+    // exactly the mistake the quantisation was introduced to stop making.
+    const g = makeGif();
+    g.start(SHORT_RUN);
+    await settled(g.events);
+
+    const [, , meta] = g.events.find(e => e[0] === 'done');
+    const { frameDelay } = gifFramePlan(SHORT_RUN.fps, SHORT_RUN.duration);
+    assert.equal(frameDelay, 40, 'precondition: 30 fps quantises to a 40 ms period');
+    assert.equal(meta.fps, 25);
+    assert.equal(meta.fps, Math.round((1000 / frameDelay) * 100) / 100);
+    assert.equal(meta.fpsRequested, 30, 'and the rate the operator chose is kept beside it');
+  });
+
+  test('control — the default panel rate goes through the same join', async () => {
+    // 30 fps quantises to 40 ms, i.e. 25 fps in the file. Same code, a period
+    // that differs from the requested rate in the other direction.
+    const g = makeGif();
+    g.start(SHORT_RUN);
+    const delays = g.rec._gif.frames.map(f => f.delay);
+    await settled(g.events);
+
+    const { frameDelay } = gifFramePlan(SHORT_RUN.fps, SHORT_RUN.duration);
+    assert.equal(frameDelay, 40);
+    for (const d of delays) assert.equal(d, frameDelay);
   });
 });

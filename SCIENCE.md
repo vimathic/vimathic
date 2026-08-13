@@ -106,9 +106,10 @@ time, with 192 distinct formula systems across 12 mathematical domains.
 - **Real mathematics, not pre-rendered animation.** The height of every
   vertex, the colour of every fragment, and the acceleration of every camera
   movement is computed from audio analysis and mathematical functions at
-  frame rate — nothing is pre-baked. The GPU shaders evaluate canonical
-  mathematical expressions (Bessel functions, modular forms, reaction-diffusion
-  PDEs) per frame.
+  frame rate — nothing is pre-baked. The engine evaluates canonical
+  mathematical expressions per frame on both of its paths: modular forms
+  (Δ(τ), θ₃(q), η(τ), j(τ)) in the GPU shaders, Bessel functions and
+  Gray-Scott reaction-diffusion in the CPU math worker.
 - **User-chosen music.** The AVS devices in Johnson et al. (2024) used
   pre-programmed alpha/theta pulses. VIMATHIC processes whatever audio the
   user provides — a favourite album, a live mic feed, a DJ set — and maps

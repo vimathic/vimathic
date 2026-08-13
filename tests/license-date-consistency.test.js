@@ -32,10 +32,20 @@ import path from 'node:path';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = rel => readFileSync(path.join(ROOT, rel), 'utf8');
 
-/** Every file that states, or could state, when the code turns GPL v3. */
+/**
+ * Every file that states, or could state, when the code turns GPL v3.
+ *
+ * This list is hand-written, which is its own failure mode: the first fix
+ * corrected seven documents and pinned them here, and CONTRIBUTING.md — the
+ * page that sets the contribution terms, and the page the PR template sends
+ * contributors to — was not one of them. It went on promising the backstop
+ * date for another two commits with the suite green. When a new document
+ * states a conversion date, add it here in the same change.
+ */
 const QUOTING_FILES = [
   'README.md',
   'CHANGELOG.md',
+  'CONTRIBUTING.md',
   'documents/license.md',
   'documents/index.md',
   'documents/roadmap.md',

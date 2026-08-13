@@ -74,6 +74,7 @@ VIMATHIC is built on top of these open-source projects, each under its own licen
 - [Three.js](https://threejs.org) — MIT License, © mrdoob and contributors
 - [gif.js](https://github.com/jnordberg/gif.js) — MIT License, © Johan Nordberg
 - [micromark](https://github.com/micromark/micromark) — MIT License, © Titus Wormer
+- [micromark-extension-gfm-table](https://github.com/micromark/micromark-extension-gfm-table) — MIT License, © Titus Wormer
 - [Vite](https://vitejs.dev) — MIT License, © Evan You and Vite contributors
 - [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) — MIT License, © Richard Tallent
 

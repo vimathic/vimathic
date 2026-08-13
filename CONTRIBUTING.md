@@ -60,7 +60,7 @@ Use the [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.md). I
 4. **Run the test suite locally before pushing:**
 
 ```bash
-   npm test           # every unit suite in tests/ (208 tests)
+   npm test           # every unit suite in tests/ — the count is whatever the run prints
    npm run test:e2e   # Playwright smoke tests
    npm run build      # single-file build check
 ```
@@ -92,7 +92,7 @@ If your controller sends standard CC and you've worked out a useful default mapp
 
 ## Licensing of contributions
 
-VIMATHIC is licensed under [BUSL-1.1](./LICENSE.txt), auto-converting to GPL v3 on **2031-05-09**.
+VIMATHIC is licensed under [BUSL-1.1](./LICENSE.txt), auto-converting to GPL v3 four years after each version's release — **2030-05-18** for 1.0.0-beta. The `2031-05-09` in LICENSE.txt is a ceiling ("whichever comes first"), not the date: it binds nothing for any version published before 2027-05-09.
 
 By opening a pull request, you agree to the following:
 
