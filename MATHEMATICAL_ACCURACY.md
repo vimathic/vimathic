@@ -3,7 +3,11 @@
 
 # VIMATHIC — Mathematical Accuracy Report
 
-**Scope:** All 192 formulas across 12 collections, plus shared helper functions and 6 volume vector fields.
+**Scope:** All 192 formulas across 12 collections, shared helper functions, the
+6 volume vector fields, and — since round 5 — the 38 GPU displacement branches
+in `computeMode()`. Those 38 were outside every earlier revision of this
+document, which is how two of them came to render nothing at all and how
+SCIENCE.md came to name four modular forms of which one was implemented.
 **Date:** 2026-05-10
 **Method:** Per-formula classification by numerical method, comparison of stated formula vs implementation, audit of failure modes (truncation, modulation, approximation error).
 
@@ -13,12 +17,12 @@
 
 | Tier | Count | Definition | Marketing-defensible? |
 |------|------:|------------|:---------------------:|
-| **A** — machine precision | **122** | Closed-form analytic expressions evaluated at IEEE 754 double precision (~10⁻¹⁰ to 10⁻¹⁴ accuracy). | ✓ Yes |
+| **A** — machine precision | **124** | Closed-form analytic expressions evaluated at IEEE 754 double precision (~10⁻¹⁰ to 10⁻¹⁴ accuracy). | ✓ Yes |
 | **B** — bounded approximation | **42** | Polynomial fits, finite-converged series, well-behaved iterative methods, real PDE/ODE simulations on adaptive grids. Documented error ≤ 10⁻³ to 10⁻⁷. | ✓ Yes |
-| **C** — visualization-grade | **28** | Truncated chaotic iterations, decorative modulations, simplified models. Qualitatively faithful but not numerically exact. | Conditional |
+| **C** — visualization-grade | **26** | Truncated chaotic iterations, decorative modulations, simplified models. Qualitatively faithful but not numerically exact. | Conditional |
 | **D** — defects | **0** | All previously identified defects fixed and verified by automated tests. | n/a |
 
-**Tier A + B = 164 formulas with verifiable numerical accuracy.**
+**Tier A + B = 166 formulas with verifiable numerical accuracy.**
 
 **Round 1 — D-tier defects fixed (3):** `tinkerbell`, `dragon`, `jacobian` — all moved up to A or B with regression tests.
 
@@ -35,9 +39,71 @@
 - `excitableMedia` — sin-spiral replaced with FitzHugh-Nagumo PDE on an optimised internal grid, bilinearly interpolated onto the display mesh. C → **B**.
 - `reactionDiffusion` — threshold-of-oscillators replaced with Gray-Scott reaction-diffusion on an optimised internal grid, bilinearly interpolated onto the display mesh, with configurable F/k regimes. C → **B**.
 
-<!-- 133 counts tests/math-validation.test.js alone. `npm test`
-     reports 208 — it also runs every other suite in tests/. -->
-Test suite: **133 tests passing**, including 18 dedicated validation tests for the rewritten formulas comparing against canonical reference values (mpmath, NIST DLMF).
+**Round 5 — the 2026-08-13 audit.** Every entry below was re-derived against an
+independent reference (Gauss–Legendre quadrature of the defining integral, a
+second algorithm, or a canonical constant), not against the implementation.
+
+- `erf` — the Abramowitz & Stegun §7.1.26 Horner fit was rated A while its own
+  error bound is 1.5·10⁻⁷; measured 1.394·10⁻⁷ at x = 0.045. Replaced by the
+  all-positive series 2/√π·e^{−x²}·Σ2ⁿx^{2n+1}/(2n+1)!!, which has no
+  alternating cancellation. Now 7.7·10⁻¹⁵ over the reachable domain. Stays **A**,
+  and now earns it.
+- `dawson` — Taylor below |x| = 3.5, five-term asymptotic above: 1.9·10⁻¹² at
+  x = 3.4 against **3.2·10⁻⁵** at x = 3.5, a seam inside the domain the entry
+  reaches at the default wave intensity. The asymptotic series for F is
+  divergent, so no term count closes it. Replaced by Rybicki's lattice sum,
+  ~3·10⁻¹⁵ over |x| ≤ 24. Stays **A**.
+- `clausen` — twelve terms of Σ sin(kθ)/k², which converges like 1/N and had no
+  accuracy at the ends of the period. Replaced by the log-sine expansion
+  θ − θ ln θ + θ·Σ ζ(2n)/(n(2n+1))·(θ/2π)^{2n}. Exact to 10⁻¹⁶ at Catalan's
+  constant and at Cl₂(π/3). B → **A**.
+- `airy` — no forward march of y″ = xy survives, whatever the step size: the
+  growing Bi solution takes over. Measured, Ai came back **negative** from
+  ξ ≈ 4.88, inside the ξ ≤ 5.25 the default wave intensity reaches, where the
+  true Ai is positive everywhere. Marching replaced by the Maclaurin series on
+  |x| ≤ 8 and the standard asymptotics beyond. Exact to 10⁻¹⁴ on the visible
+  range, and cheaper than the RK4 loop it replaces. C → **A**.
+- `zeta` — 14–22 terms of Σn^{−s} is 85 % below ζ(1.05); shifting the window to
+  start at 1.05 removes the divergence and nothing else. Euler–Maclaurin closes
+  it in the same budget, ~10⁻¹⁰ across the window. C → **B**.
+- `hypergeometric` — the early exit at 10⁻⁸ never fired (the twelfth term at
+  z = 0.875 is 2.5·10⁻²), so the truncation was hard at twelve terms and two
+  orders outside tier B. Euler's transformation plus a 120-term cap brings the
+  worst reachable point to 6.5·10⁻⁵. Stays **B**.
+- `chebyshev` — the ±(1−10⁻⁹) guard inside acos cost 2.5·10⁻⁸ on the entire
+  saturated rim, not at one point. Removed; the argument was already clamped.
+  Stays **A**.
+- `gamma_fn` — drew 0.12·ln|Γ(n)| under the caption Γ(n) = (n−1)!. Over the
+  window it shows, Γ runs 4.591 → 0.8856 → 4.694 and fits the frame directly,
+  so the log was not even buying headroom. Now plots Γ. Stays **A**.
+- `hydrogenS` — |ψ₁₀₀|² was multiplied by cos²(l·θ + 0.3t) with l = 0, i.e. by
+  cos²(0.3t): the 1s orbital blinked out completely every 21.8 s of wall clock,
+  peak falling from 3.623 to 4.9·10⁻¹¹. An s state is spherically symmetric and
+  stationary. The angular factor is now applied only for l ≥ 1. Stays **A**.
+- `feynmanPath` — the eighth entry reading the session clock as a physical age,
+  missed by round 4 because that fix worked from a hand-written list. Amplitude
+  1/√(0.5+0.05t) fell to 0.107 of boot at thirty minutes and 0.038 at four
+  hours. Now folded to a 24-unit period; t = 0 is bit-identical. Stays **A**.
+- `catenoid` — exact and unwatchable: peak |y| of 8.2·10¹ at the **default**
+  wave intensity against a frame ~3 units high, 5.1·10¹² at the top of the
+  range. Output clamped to ±1.5, which leaves the neck and the zero level set
+  untouched. Stays **A**.
+- `legendre2` / `sinc` — captions corrected to the surface actually drawn
+  (Pₙ with n ∈ {3,4,5}; the radial sinc, not sinc of x).
+
+Volume fields: `fluidVortex` was described as incompressible and had
+∇·v = −amp·0.1·freq·sin(y·freq+t) — its vertical component is now driven by the
+cylindrical radius, so ∇·v ≡ 0 exactly. `magneticDipole` applied its
+regularising ε to the numerator as well as the denominator, which made the
+axis-to-equator ratio −1.667 instead of the −2 a dipole gives at any radius;
+the true r² is restored and the ratio is now exact. `lorenzField` scaled its
+three components by three different constants, so the direction of the vector
+was wrong everywhere; one scale now, and β = 8/3 rather than 2.667.
+
+<!-- This counts tests/math-validation.test.js alone. `npm test`
+     runs every other suite in tests/ as well. -->
+Test suite: **184 tests passing** in the validation file, including 24 that fail
+on the pre-round-5 code and pass on this one.
 
 ### A note on grid resolution
 
@@ -107,25 +173,25 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `henon` | Hénon Map | 🔵 B | 20 iterations on canonical attractor. |
 | `tinkerbell` | Tinkerbell Map | 🔵 B | 12-iteration map on canonical Tinkerbell attractor. Post-loop `isFinite` guard added — no longer returns `Infinity`. |
 
-### 2. Special Functions (16) — 9 A · 5 B · 2 C · 0 D
+### 2. Special Functions (16) — 11 A · 5 B · 0 C · 0 D
 
 | Key | Name | Tier | Rationale |
 |-----|------|:----:|-----------|
 | `bessel0` | Bessel J₀ | 🔵 B | Numerical Recipes polynomial fit, max error ~10⁻⁷. |
 | `bessel1` | Bessel J₁ | 🔵 B | Numerical Recipes J₁ polynomial fit, max error ~10⁻⁷. Replaced finite-difference approximation. |
 | `legendre2` | Legendre Pₙ Surface | 🟢 A | Closed-form polynomials P₀–P₆. n = round(1 + comp·4), so the reachable comp range renders P₃–P₅. |
-| `gamma_fn` | Gamma Function | 🟢 A | Lanczos g=7 approximation, ~10⁻¹⁴ accuracy. |
-| `erf` | Error Function | 🟢 A | Abramowitz & Stegun §7.1.26 Horner approximation, max error 1.5×10⁻⁷. |
-| `zeta` | Riemann Zeta (real axis) | 🟡 C | Truncated 4–24 term Σ 1/n^s. Slow convergence near s=1. Domain shifted to [1.05, 5.05] which avoids the issue but the result no longer represents ζ across full real axis. |
-| `airy` | Airy Function Ai(x) | 🟡 C | RK4 integration of Ai″ = x·Ai, dx=0.15, marched outward in both directions from the exact (Ai(0), Ai′(0)) seed. ~10⁻³ over the displayed domain. Stays on C because past \|x\| ≈ 6 — reachable at high wave intensity — the growing Bi solution dominates any forward march and the output is clamped. Replaced a forward Euler march that imposed the x=0 seed at x=−3, integrating a different solution entirely (wrong sign at x=0) and returning a constant for x < −3. |
-| `hypergeometric` | ₂F₁(a,b;c;z) | 🔵 B | Truncated 12-term Pochhammer series with early-exit at 10⁻⁸. Convergent for \|z\|<0.95. |
+| `gamma_fn` | Gamma Function | 🟢 A | Lanczos g=7, ~10⁻¹⁴. Plots Γ(n) itself over n ∈ [0.2, 3.8], including the minimum 0.8856 at n = 1.4616 — it used to plot 0.12·ln\|Γ(n)\| under this caption. |
+| `erf` | Error Function | 🟢 A | All-positive series 2/√π·e^{−x²}·Σ2ⁿx^{2n+1}/(2n+1)!!, measured 7.7×10⁻¹⁵. Replaced an Abramowitz & Stegun Horner fit whose own bound is 1.5×10⁻⁷ — a tier-B number under a tier-A rating. |
+| `zeta` | Riemann Zeta (real axis) | 🔵 B | Euler–Maclaurin: 15 direct terms, integral tail, two Bernoulli corrections. ~10⁻¹⁰ across the window. Replaced a 14–22 term Σ 1/n^s that was 85 % below ζ(1.05) — the domain shift to [1.05, 5.05] removed the divergence and left the convergence rate untouched. `comp` now stretches the s-window instead of setting the term count. |
+| `airy` | Airy Function Ai(x) | 🟢 A | Maclaurin series on \|x\| ≤ 8 from the exact (Ai(0), Ai′(0)) seed, standard asymptotics beyond, ~10⁻¹⁴ on the visible range. Replaced an RK4 march: no forward march of y″ = x·y survives, and that one returned Ai **negative** from ξ ≈ 4.88 — inside the ξ ≤ 5.25 the default wave intensity reaches — where Ai is positive everywhere. |
+| `hypergeometric` | ₂F₁(a,b;c;z) | 🔵 B | Euler transformation (1−z)^{c−a−b}·₂F₁(c−a,c−b;c;z), 120-term cap, relative early exit at 10⁻¹². Worst reachable point 6.5×10⁻⁵. The previous 12-term cut never reached its 10⁻⁸ exit: the twelfth term at z = 0.875 is 2.5×10⁻². |
 | `laguerre` | Laguerre L_n | 🟢 A | Closed-form three-term recurrence. |
-| `chebyshev` | Chebyshev T_n | 🟢 A | Direct cos(n·acos(x)) within \|x\|≤1. |
-| `sinc` | Cardinal Sinc | 🟢 A | sin(πx)/(πx) trivially exact. |
+| `chebyshev` | Chebyshev T_n | 🟢 A | Direct cos(n·acos(x)), \|x\| ≤ 1. Exact on the rim now: the ±(1−10⁻⁹) guard inside acos cost 2.5×10⁻⁸ across the whole saturated edge, and the argument was already clamped. |
+| `sinc` | Cardinal Sinc (radial) | 🟢 A | sin(πr)/(πr) with r = √(x²+z²)·freq·2 — the "sombrero", which is what it always drew. The caption said sinc(x). |
 | `ellipticK` | Elliptic K(k) | 🔵 B | Midpoint rule N=16. ~10⁻⁴ accuracy for k<0.95. |
-| `dawson` | Dawson F(x) | 🟢 A | Taylor series (\|x\|<3.5) + asymptotic series (\|x\|≥3.5). ~10⁻⁷ accuracy verified against mpmath. |
-| `clausen` | Clausen Cl₂(θ) | 🔵 B | Truncated 12-term Fourier series. |
-| `polygamma` | Digamma ψ(x) | 🟢 A | Full Bernoulli series + recurrence + reflection formula for x<1. ~10⁻¹⁰ accuracy. |
+| `dawson` | Dawson F(x) | 🟢 A | Rybicki lattice sum, one algorithm for the whole line, ~3×10⁻¹⁵ over \|x\| ≤ 24. Replaced a Taylor/asymptotic pair with a 3.2×10⁻⁵ step at their |x| = 3.5 seam, inside the reachable domain. |
+| `clausen` | Clausen Cl₂(θ) | 🟢 A | Log-sine expansion θ − θ ln θ + θ·Σ ζ(2n)/(n(2n+1))·(θ/2π)^{2n}, exact to 10⁻¹⁶ at Catalan's constant. Replaced a 12-term Fourier sum, which converges like 1/N and so had no accuracy at the ends of the period. |
+| `polygamma` | Digamma ψ(x) | 🟢 A | Recurrence up to x ≥ 8 plus a four-term Bernoulli asymptotic, ~10⁻¹⁰. (No reflection formula, contrary to what this row used to claim — none is needed, the argument is clamped to [0.2, 4.2].) |
 | `lambertW` | Lambert W(x) | 🟢 A | Halley iteration converges quadratically — 6 steps → machine precision. |
 
 ### 3. Probability & Statistics (16) — 11 A · 2 B · 3 C · 0 D
@@ -344,6 +410,53 @@ The cleanest collection: integer-valued automata with discrete rules — these a
 
 ---
 
+## GPU displacement ladder (38 branches)
+
+`computeMode()` in `src/shaders.js` is a 38-way if/else on `uMode`, and `main()`
+**assigns** `pos.y` from it rather than accumulating, so a branch that returns
+zero is a flat plate in a flat colour — `vH` feeds the palette too.
+
+These branches are GLSL and cannot be evaluated in the Node test suite. They
+were measured by transliterating each branch into JS (the ladder uses only
+`length`, `atan`, `exp`, `sin`, `cos`, `pow`, `abs`, `tanh`, all of which match
+JS semantics — no `mod`, `fract` or `step` appears in it) and taking the surface
+span over [−3.5, 3.5]² in three uniform states: silence, mid-level music, and
+loud. The regression tests that guard the two repairs read the shader source.
+
+**Two branches drew nothing.**
+
+| Mode | Label then | Span | Cause |
+|-----:|------------|------|-------|
+| 10 | 11. τ(n) Ramanujan Tau | 7.9·10⁻⁶ | every term carried `sin(fn*3.14159)` — that is sin(nπ) = 0 for integer n |
+| 30 | 31. Dragon Curve | 1.1·10⁻¹⁶ | summand `sin(5n·x)cos(5n·z)` is odd in n, the unrolled weight `exp(-4.*.3)` was even, so every ±n pair cancelled exactly |
+
+Mode 10 now carries the tau coefficients its label names (1, −24, 252, −1472,
+4830, −6048, −16744, scaled by 10⁻³); mode 30 carries the sign of n in its
+exponent, which is what the loop it was unrolled from would have produced.
+Mode 8 is unrolled the same way and is unaffected — its summand `cos(ang·n)` is
+even, so its pairs add. The difference is the parity of the summand.
+
+**Two more had no floor or no ears.**
+
+- Mode 11 multiplied its whole sum by `sin(fn*t*2.)`, where `t` is `uTreble`,
+  not time — span 0.0 in silence. Given an offset, like every other branch has.
+- Modes 35 and 36, labelled "EQ 3D" and "Vocoder", read neither `uBass` nor
+  `uMid` nor `uTreble`: their span was identical to the digit in silence and
+  under loud music. The three bands now drive the harmonics they name.
+
+**Nineteen labels named mathematics that was not in the branch.** Δ(τ) is
+q∏(1−qⁿ)²⁴ and mode 8 is a theta sum; η(τ) is q^{1/24}∏(1−qⁿ) and mode 14 is
+`sin(8r)·cos(4θ)`; j(τ) has a pole at q → 0 and mode 15 is a sum of sines;
+E₄ needs the divisor sum σ₃; none of the eight branches under "FRACTALS &
+CHAOS" iterates anything. Those labels are now descriptive of what the branch
+computes. The three that were accurate keep their names: mode 6 (Ramanujan
+theta), mode 9 (θ₃(q)), mode 37 (spectral centroid, which really is
+(treble+ε)/(treble+bass+2ε)), and mode 10 now joins them.
+
+Presets store the numeric `uMode`, not the label, so no saved preset moved.
+
+---
+
 ## Previously Fixed Defects (Tier D → resolved)
 
 All three Tier D defects identified in Round 1 have been fixed and verified by automated tests. Listed here for historical reference.
@@ -363,18 +476,18 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 
 ### ✓ Defensible (current state — defects fixed + Tier C upgrades)
 
-> **164 mathematical formulas with verifiable numerical accuracy.**
-> 122 closed-form analytic expressions evaluated at IEEE 754 double precision.
+> **166 mathematical formulas with verifiable numerical accuracy.**
+> 124 closed-form analytic expressions evaluated at IEEE 754 double precision.
 > 42 well-validated approximations with documented bounded error (≤ 10⁻³ to 10⁻⁷), including real PDE simulations on adaptive internal grids with bilinear interpolation to the full-resolution display mesh.
-> Source-available, open test suite (133 automated tests passing, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
+> Source-available, open test suite (184 automated tests in the validation file, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
 
 ### ✓ Defensible (alternative — domain-coverage emphasis)
 
-> **Implements 192 canonical mathematical models across 12 domains** — special functions, statistical distributions, complex analysis, Fourier theory, dynamical systems, integral transforms, topology, quantum mechanics, cellular automata. 85% achieve numerical accuracy verifiable against scipy/Wolfram references; 15% are visualization-grade for systems where exact real-time evaluation is computationally prohibitive at 60 fps.
+> **Implements 192 canonical mathematical models across 12 domains** — special functions, statistical distributions, complex analysis, Fourier theory, dynamical systems, integral transforms, topology, quantum mechanics, cellular automata. 86% achieve numerical accuracy verifiable against scipy/Wolfram references; 14% are visualization-grade for systems where exact real-time evaluation is computationally prohibitive at 60 fps.
 
 ### ✓ Defensible (slogan)
 
-> **164 formulas. Verifiable accuracy. Open tests.**
+> **166 formulas. Verifiable accuracy. Open tests.**
 
 ### ✗ Not defensible without major rework
 
@@ -386,10 +499,10 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 
 ## How to Verify
 
-<!-- 133 is the count for this file alone, same as the "Test
+<!-- This is the count for this file alone, same as the "Test
      suite" line above — move both together. `npm test` reports 208. -->
-The companion file `tests/math-validation.test.js` contains **133 executable test cases** covering:
-- All 122 Tier A formulas at canonical reference points (boundary values, known special-function values, identity tests).
+The companion file `tests/math-validation.test.js` contains **184 executable test cases** covering:
+- All 124 Tier A formulas at canonical reference points (boundary values, known special-function values, identity tests).
 - Sanity checks for Tier B formulas (PDF integration, convergence behaviour, polynomial fit boundary error, PDE simulation stability).
 - Qualitative checks for Tier C formulas (peak location, sign changes, energy bounds, determinism).
 - Regression tests for all three previously fixed Tier D defects.
@@ -400,7 +513,7 @@ Run with:
 node --test tests/math-validation.test.js
 ```
 
-All 133 tests currently passing against the live `math-collections.js`.
+All 184 tests currently passing against the live `math-collections.js`.
 
 ---
 

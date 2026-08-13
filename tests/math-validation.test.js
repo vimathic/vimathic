@@ -30,6 +30,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   MATH_COLLECTIONS,
@@ -1691,5 +1692,518 @@ describe('Catalog statistics', () => {
     }
     assert.equal(missing.length, 0,
       `Volume schema violations: ${missing.join(', ')}`);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROUND 5 — the 2026-08-13 audit
+//
+// Every test below fails on the code as it stood before that audit. Where a
+// defect was found by a probe that a hand-written list could not have found,
+// the test is written list-free for the same reason.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Independent quadrature — five-node Gauss–Legendre on `seg` panels. */
+function gaussLegendre(f, a, b, seg) {
+  const nodes = [
+    [-0.9061798459386640, 0.2369268850561891],
+    [-0.5384693101056831, 0.4786286704993665],
+    [0,                   0.5688888888888889],
+    [ 0.5384693101056831, 0.4786286704993665],
+    [ 0.9061798459386640, 0.2369268850561891],
+  ];
+  let s = 0;
+  const h = (b - a) / seg;
+  for (let i = 0; i < seg; i++) {
+    const c = a + h * (i + 0.5);
+    for (const [xi, w] of nodes) s += w * f(c + xi * h / 2);
+  }
+  return s * h / 2;
+}
+
+describe('Regression — special functions rewritten to their documented tier (#R5)', () => {
+  // erf: was the Abramowitz & Stegun §7.1.26 Horner fit, whose error bound is
+  // 1.5e-7 by construction — measured 1.394e-7 at x = 0.045 — while the entry
+  // is rated tier A. The wrapper at z = 0, amp = freq = 1 is a factor 0.5.
+  test('erf holds machine precision, not the 1.5e-7 of the polynomial fit', () => {
+    const ref = x => 2 / Math.sqrt(Math.PI) * gaussLegendre(u => Math.exp(-u * u), 0, x, 400);
+    let worst = 0, worstX = 0;
+    for (let x = 0.005; x <= 4; x += 0.005) {
+      const got = evalAt('specialFunctions', 'erf', x, 0) / 0.5;
+      const d = Math.abs(got - ref(x));
+      if (d > worst) { worst = d; worstX = x; }
+    }
+    assert.ok(worst < 1e-12,
+      `erf is off by ${worst.toExponential(3)} at x=${worstX.toFixed(3)}; tier A allows 1e-12`);
+  });
+
+  test('erf at the canonical points', () => {
+    // erf(1) and erf(2) to sixteen digits, NIST DLMF 7.1.
+    near(evalAt('specialFunctions', 'erf', 1, 0) / 0.5, 0.8427007929497149, 1e-14, 'erf(1)');
+    near(evalAt('specialFunctions', 'erf', 2, 0) / 0.5, 0.9953222650189527, 1e-14, 'erf(2)');
+    near(evalAt('specialFunctions', 'erf', 0, 0), 0, 1e-16, 'erf(0)');
+  });
+
+  // dawson: Taylor below |x| = 3.5 and a five-term asymptotic above it. The
+  // asymptotic series for F is divergent, so the seam could not be closed by
+  // adding terms — measured 1.9e-12 at x = 3.4 against 3.2e-5 at x = 3.5, and
+  // xv = x·freq·1.5 reaches 5.25 at the default wave intensity.
+  test('dawson has no step at the old 3.5 seam', () => {
+    const ref = x => Math.exp(-x * x) * gaussLegendre(u => Math.exp(u * u), 0, x, 1200);
+    let worst = 0, worstX = 0;
+    for (let x = 0.02; x <= 5.25; x += 0.01) {
+      const got = evalAt('specialFunctions', 'dawson', x / 1.5, 0) / 0.4;
+      const d = Math.abs(got - ref(x));
+      if (d > worst) { worst = d; worstX = x; }
+    }
+    assert.ok(worst < 1e-12,
+      `Dawson is off by ${worst.toExponential(3)} at x=${worstX.toFixed(3)}`);
+  });
+
+  test('dawson at the canonical points', () => {
+    const at = x => evalAt('specialFunctions', 'dawson', x / 1.5, 0) / 0.4;
+    near(at(0.5), 0.4244363835020223, 1e-14, 'F(0.5)');
+    near(at(1),   0.5380795069127684, 1e-14, 'F(1)');
+    near(at(2),   0.3013403889237920, 1e-14, 'F(2)');
+    near(at(3),   0.1782710306105583, 1e-14, 'F(3)');
+    near(at(5),   0.1021340744242768, 1e-14, 'F(5)');
+  });
+
+  // clausen: twelve terms of Σ sin(kθ)/k², which converges like 1/N and so had
+  // no accuracy at all near the ends of the period, where Cl₂ has infinite slope.
+  test('clausen matches Catalan and the other canonical values', () => {
+    const xOf = th => 7 * th / (2 * Math.PI) - 3.5;
+    const at = th => evalAt('specialFunctions', 'clausen', xOf(th), 0) / 0.3;
+    // Cl₂(π/2) is Catalan's constant; Cl₂(π/3) is its maximum; Cl₂(π) = 0.
+    near(at(Math.PI / 2),     0.9159655941772190, 1e-13, 'Cl2(pi/2) = Catalan');
+    near(at(Math.PI / 3),     1.0149416064096537, 1e-13, 'Cl2(pi/3)');
+    near(at(2 * Math.PI / 3), 0.6766277376064358, 1e-13, 'Cl2(2pi/3)');
+    near(at(Math.PI),         0,                  1e-15, 'Cl2(pi)');
+  });
+
+  // zeta: 14–22 terms of Σn^{-s} against a window starting at s = 1.05, where
+  // the truncated sum is 85 % low. The display map is a log now, so the test
+  // inverts it to read back the ζ the surface is actually drawn from.
+  test('zeta is ζ, not a truncated sum 85 % below it', () => {
+    const sumFromHeight = h => Math.exp((h + 0.35) / 0.25);
+    const xOf = s => ((s - 1.05) / 4) * 7 - 3.5;      // comp = 0.5 window
+    const cases = [
+      [2,    Math.PI ** 2 / 6],
+      [4,    Math.PI ** 4 / 90],
+      [3,    1.2020569031595943],   // Apéry
+      [1.5,  2.6123753486854883],
+    ];
+    for (const [s, exact] of cases) {
+      const got = sumFromHeight(evalAt('specialFunctions', 'zeta', xOf(s), 0));
+      assert.ok(Math.abs(got - exact) / exact < 1e-9,
+        `zeta(${s}) reads back ${got} against ${exact}`);
+    }
+  });
+
+  // hypergeometric: the early exit at 1e-8 never fired — the twelfth term at
+  // z = 0.875 is 2.5e-2 — so the loop always stopped at its cap of twelve.
+  test('hypergeometric reaches its tier-B floor at the right-hand edge', () => {
+    const ref = (zv, comp) => {
+      const a = 0.5, b = 0.5 + comp, c = 1.5;
+      let sum = 1, term = 1;
+      for (let n = 1; n <= 200000; n++) {
+        term *= ((a + n - 1) * (b + n - 1)) / ((c + n - 1) * n) * zv;
+        sum += term;
+        if (Math.abs(term) < 1e-18) break;
+      }
+      return sum;
+    };
+    let worst = 0;
+    for (const comp of [0.5, 0.7, 0.9]) {
+      for (const zv of [-0.95, -0.5, 0, 0.5, 0.875, 0.95]) {
+        const got = evalAt('specialFunctions', 'hypergeometric', zv / 0.25, 0, 0,
+          { amp: 1, freq: 1, comp }) / 0.15;
+        worst = Math.max(worst, Math.abs(got - ref(zv, comp)) / Math.abs(ref(zv, comp)));
+      }
+    }
+    assert.ok(worst < 1e-3, `2F1 relative error ${worst.toExponential(3)} exceeds tier B`);
+  });
+
+  // chebyshev: the ±(1−1e-9) guard inside acos cost 2.5e-8 at |x| = 1, and xv is
+  // clamped to [−1, 1], so that was the whole rim of the surface and not a point.
+  test('chebyshev is exact on the saturated rim', () => {
+    // freq = 2 puts x·freq·0.28 at 1.96, so the clamp delivers exactly ±1 —
+    // the rim the entry saturates against, where T_n(±1) = (±1)ⁿ. Solving for
+    // the freq that lands on 1.0 arithmetically would not do: it lands one ulp
+    // short and the test would be measuring its own rounding.
+    const P = { amp: 1, freq: 2, comp: 0.5 };   // comp 0.5 → n = 4
+    near(evalAt('specialFunctions', 'chebyshev',  3.5, 0, 0, P) / 0.45, 1, 1e-15, 'T4(1)');
+    near(evalAt('specialFunctions', 'chebyshev', -3.5, 0, 0, P) / 0.45, 1, 1e-15, 'T4(-1)');
+  });
+
+  // gamma_fn: drew 0.12·ln|Γ(n)| under the caption Γ(n) = (n−1)!. It plots Γ now,
+  // so the surface carries the feature that makes Γ recognisable.
+  test('gamma_fn plots Γ, and has its minimum where Γ does', () => {
+    // n = 0.2 + (x+3.5)/7·3.6, so x = (n − 0.2)/3.6·7 − 3.5.
+    const xOf = n => (n - 0.2) / 3.6 * 7 - 3.5;
+    const at = n => evalAt('specialFunctions', 'gamma_fn', xOf(n), 0);
+    // The height is gamma(n)·0.22 − 0.6, read back at three points.
+    for (const n of [0.5, 1, 2, 3.5]) {
+      near(at(n), gamma(n) * 0.22 - 0.6, 1e-12, `gamma_fn at n=${n}`);
+    }
+    // Γ has a single minimum on the positive axis at n = 1.4616321449683623,
+    // where Γ = 0.8856031944108887 — the surface's lowest point must be there.
+    let lowest = Infinity, lowestN = 0;
+    for (let n = 0.2; n <= 3.8; n += 0.001) {
+      const v = at(n);
+      if (v < lowest) { lowest = v; lowestN = n; }
+    }
+    near(lowestN, 1.4616321449683623, 2e-3, 'position of the gamma minimum');
+    near(lowest, 0.8856031944108887 * 0.22 - 0.6, 1e-6, 'depth of the gamma minimum');
+  });
+
+  // sinc: exact all along; the caption said sinc(x) for a surface that is the
+  // radial sombrero. The zeros are the check that fixes which one it is.
+  test('sinc is the radial sinc, with its zeros on circles', () => {
+    // r = sqrt(x²+z²)·freq·2 + 1e-8, so r = k at radius k/2 when freq = 1.
+    for (const k of [1, 2, 3]) {
+      const onAxis = evalAt('specialFunctions', 'sinc', k / 2, 0);
+      const offAxis = evalAt('specialFunctions', 'sinc', k / 2 / Math.SQRT2, k / 2 / Math.SQRT2);
+      near(onAxis, 0, 1e-7, `sinc zero at r=${k} on the x axis`);
+      near(offAxis, 0, 1e-7, `sinc zero at r=${k} on the diagonal — a circle, not a stripe`);
+    }
+    near(evalAt('specialFunctions', 'sinc', 0, 0), 0.6, 1e-7, 'sinc(0) = 1');
+  });
+
+  // airy: an RK4 march of y″ = xy amplifies the growing Bi solution whatever the
+  // step size. Measured on the marching code, Ai came back negative from
+  // ξ ≈ 4.88, inside the ξ ≤ 5.25 the default wave intensity reaches.
+  test('airy never returns a negative Ai on the positive axis', () => {
+    let negatives = 0, firstAt = null;
+    for (let xi = 0.01; xi <= 24; xi += 0.01) {
+      if (evalAt('specialFunctions', 'airy', xi / 1.5, 0) < 0) {
+        negatives++;
+        if (firstAt === null) firstAt = xi;
+      }
+    }
+    assert.equal(negatives, 0,
+      `Ai(x) > 0 for every x > 0; got ${negatives} negative samples, first at xi=${firstAt}`);
+  });
+
+  test('airy at the canonical points, both sides of the origin', () => {
+    const at = xi => evalAt('specialFunctions', 'airy', xi / 1.5, 0) / 0.7;
+    near(at(0),  0.3550280538878172, 1e-15, 'Ai(0)');
+    near(at(1),  0.1352924163128814, 1e-14, 'Ai(1)');
+    near(at(2),  0.0349241304232744, 1e-14, 'Ai(2)');
+    near(at(-1), 0.5355608832923521, 1e-14, 'Ai(-1)');
+    near(at(-2), 0.2274074282016538, 1e-13, 'Ai(-2)');
+    // First zero of Ai, DLMF 9.9.1.
+    near(at(-2.338107410459767), 0, 1e-13, 'Ai(a1) = 0');
+  });
+
+  test('control — airy keeps its clamp and its z envelope', () => {
+    const v0 = evalAt('specialFunctions', 'airy', 0, 0);
+    const vz = evalAt('specialFunctions', 'airy', 0, 1.5);
+    near(vz / v0, Math.exp(-1.5 * 1.5 * 0.3), 1e-12, 'z envelope');
+    assert.ok(Math.abs(evalAt('specialFunctions', 'airy', -3.4, 0, 0,
+      { amp: 8, freq: 1, comp: 0.5 })) <= 0.8, 'clamp still holds');
+  });
+
+  // gamma: Math.pow(t, n+0.5) overflowed at n ≈ 142.2 while the product it sits
+  // in did not — the exp(-t) that brings it back is applied afterwards.
+  test('gamma survives to the true double overflow, not to 142', () => {
+    assert.ok(Number.isFinite(gamma(150)), 'gamma(150) overflowed');
+    assert.ok(Number.isFinite(gamma(171)), 'gamma(171) overflowed');
+    assert.ok(!Number.isFinite(gamma(172)), 'gamma(172) should overflow — 171! is the last one that fits');
+    // Value check via Stirling with three correction terms, in logs.
+    const lg = n => (n - 0.5) * Math.log(n) - n + 0.5 * Math.log(2 * Math.PI)
+      + 1 / (12 * n) - 1 / (360 * n ** 3) + 1 / (1260 * n ** 5);
+    assert.ok(Math.abs(Math.log(gamma(150)) - lg(150)) < 1e-9,
+      `ln gamma(150) = ${Math.log(gamma(150))} against Stirling ${lg(150)}`);
+  });
+
+  test('control — gamma is unmoved where it always worked', () => {
+    near(gamma(5), 24, 1e-12, 'gamma(5)');
+    near(gamma(0.5), Math.sqrt(Math.PI), 1e-14, 'gamma(1/2)');
+  });
+});
+
+describe('Regression — surfaces that went out over the length of a set (#R5)', () => {
+  // hydrogenS drew |ψ₁₀₀|² multiplied by cos²(l·θ + 0.3t) with l = 0, i.e. by
+  // cos²(0.3t): the 1s orbital blinked out completely every π/0.3 = 10.47
+  // formula units, 21.8 s of wall clock. An s state is spherically symmetric
+  // AND stationary — the entry's own caption is |ψ₁₀₀|² = 1/π·e^{−2r}, with no
+  // t in it. The drift test above could not catch this: it samples uptimes far
+  // apart, and this surface always came back.
+  test('hydrogenS is stationary — it does not depend on the clock at all', () => {
+    const v0 = evalAt('quantumMechanics', 'hydrogenS', 0.8, 0.3, 0);
+    for (const t of [0.5, 5.236, 10.472, 15.708, 100, 864]) {
+      assert.equal(evalAt('quantumMechanics', 'hydrogenS', 0.8, 0.3, t), v0,
+        `1s orbital moved between t=0 and t=${t}`);
+    }
+  });
+
+  test('hydrogenS never collapses to a flat plate', () => {
+    let lo = Infinity, hi = 0, loAt = 0;
+    for (let t = 0; t <= 42; t += 0.05) {
+      const p = peakOf('quantumMechanics', 'hydrogenS', BOOT, t, 25);
+      if (p < lo) { lo = p; loAt = t; }
+      if (p > hi) hi = p;
+    }
+    assert.ok(lo > hi * 0.9,
+      `1s peak fell to ${lo.toExponential(2)} at t=${loAt} against ${hi.toExponential(2)}`);
+  });
+
+  test('control — hydrogen2p keeps the angular factor l = 1 gives it', () => {
+    // l = 1 is a real angular dependence and must stay. cos(θ + 0.3t) sweeps the
+    // azimuth, so some vertex is always near the maximum and nothing collapses,
+    // but the surface must still move with t.
+    const a = evalAt('quantumMechanics', 'hydrogen2p', 1.2, 0.4, 0);
+    const b = evalAt('quantumMechanics', 'hydrogen2p', 1.2, 0.4, 5.2);
+    assert.notEqual(a, b, '2p should still rotate with the clock');
+  });
+
+  // feynmanPath is the eighth entry that read the session clock as a physical
+  // age. It is not in the DRIFTERS list above because that list is written by
+  // hand — which is the actual defect this second test is here to cover.
+  test('feynmanPath replays instead of fading out', () => {
+    const born = peakOf('quantumMechanics', 'feynmanPath', BOOT, 0);
+    for (const secs of [1800, 3600, 14400]) {
+      let alive = 0;
+      for (const d of [0, 0.13, 0.29, 0.47]) {
+        alive = Math.max(alive, peakOf('quantumMechanics', 'feynmanPath', BOOT, uptime(secs) + d));
+      }
+      assert.ok(alive > born * 0.1,
+        `feynmanPath at ${secs}s uptime: peak ${alive.toExponential(2)} against ${born.toExponential(2)} at boot`);
+    }
+  });
+
+  test('control — feynmanPath at t = 0 is what it always was', () => {
+    // cos(0)·amp·0.4/sqrt(0.5), the value the pre-fix code produced.
+    near(evalAt('quantumMechanics', 'feynmanPath', 0, 0, 0), 0.4 / Math.sqrt(0.5), 1e-15);
+  });
+
+  // The list-free version of the drift guard. Written this way on purpose: the
+  // hand-written DRIFTERS array is what let feynmanPath through for a whole
+  // round, so this one asks the same question of all 192 entries and needs no
+  // maintenance when an entry is added.
+  test('no entry in the catalogue fades out over the length of a set', () => {
+    // Sampled over a window rather than at an instant, so an oscillator caught
+    // at a zero crossing is not mistaken for a dead surface. Four hours as well
+    // as thirty minutes: feynmanPath cleared the thirty-minute line by 7 % and
+    // failed at every longer uptime, which is exactly the shape of decay a
+    // single checkpoint misses.
+    const windowPeak = (colId, key, t0) => {
+      let m = 0;
+      for (let i = 0; i < 9; i++) m = Math.max(m, peakOf(colId, key, BOOT, t0 + i * 0.7, 25));
+      return m;
+    };
+    const dead = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const key of Object.keys(col.formulas)) {
+        const born = windowPeak(colId, key, 0);
+        if (born < 1e-9) continue;               // an entry that never draws is another test's business
+        for (const secs of [1800, 14400]) {
+          const later = windowPeak(colId, key, uptime(secs));
+          if (later < born * 0.1) {
+            dead.push(`${colId}/${key} @${secs}s: ${later.toExponential(2)}`
+              + ` against ${born.toExponential(2)} at boot`);
+          }
+        }
+      }
+    }
+    assert.equal(dead.length, 0, `Faded out over a set:\n  ${dead.join('\n  ')}`);
+  });
+});
+
+describe('Regression — surfaces that left the frame (#R5)', () => {
+  // catenoid is exact — a·cosh(z/a) — and unwatchable: cosh(2·z·freq) with
+  // |z| ≤ 3.5 measured a peak of 8.2e1 at the DEFAULT wave intensity against a
+  // frame about 3 units high, 3.3e9 at the top of the slider and 5.1e12 with
+  // treble on top. The value stays finite, so the isFinite guard in
+  // generateSurfaceFromFormula passed it straight to the mesh.
+  test('catenoid stays inside the frame across the whole slider', () => {
+    const worst = [];
+    for (const freq of [0.3, 0.6, 1, 2, 3.5, 4.55, 6.5]) {
+      const hf = generateSurfaceFromFormula(getFormula('topology', 'catenoid').f,
+        { amp: 1.5, freq, comp: 0.9 }, 49, 3.5, 0);
+      let p = 0;
+      for (let i = 0; i < hf.length; i++) p = Math.max(p, Math.abs(hf[i]));
+      if (p > 1.5 + 1e-9) worst.push(`freq=${freq}: ${p.toExponential(2)}`);
+    }
+    assert.equal(worst.length, 0, `catenoid left the frame at ${worst.join(', ')}`);
+  });
+
+  test('control — catenoid is untouched where it was always legible', () => {
+    // The neck, and the value the pre-fix code produced there.
+    near(evalAt('topology', 'catenoid', 0, 0, 0), 0.15, 1e-12);
+    // A point well inside the clamp must be bit-identical to a·cosh(z/a) − |x|.
+    const x = 0.4, z = 0.7;
+    near(evalAt('topology', 'catenoid', x, z, 0),
+      (0.5 * Math.cosh(z / 0.5) - Math.abs(x)) * 0.3, 1e-15);
+  });
+});
+
+describe('Regression — volume fields say what they do (#R5)', () => {
+  const H = 1e-5;
+  const V = (key, x, y, z, t) => VOLUME_FORMULAS[key].f(x, y, z, t, BASELINE);
+  const divergence = (key, x, y, z, t) =>
+    ((V(key, x + H, y, z, t).dx - V(key, x - H, y, z, t).dx)
+   + (V(key, x, y + H, z, t).dy - V(key, x, y - H, z, t).dy)
+   + (V(key, x, y, z + H, t).dz - V(key, x, y, z - H, t).dz)) / (2 * H);
+
+  const SAMPLE = [];
+  for (const a of [-2, -0.7, 0.4, 1.6]) for (const b of [-1.3, 0.5, 2.1]) for (const c of [-1.1, 0.9, 2.4]) {
+    SAMPLE.push([a, b, c]);
+  }
+
+  test('fluidVortex is incompressible, which is what its description claims', () => {
+    // Before: ∇·v = −amp·0.1·freq·sin(y·freq+t), from the vertical component
+    // alone — |∇·v|/|v| averaged 0.80 over this sample.
+    let worst = 0, at = null;
+    for (const t of [0, 0.7, 3.1]) {
+      for (const p of SAMPLE) {
+        const d = Math.abs(divergence('fluidVortex', p[0], p[1], p[2], t));
+        if (d > worst) { worst = d; at = [...p, t]; }
+      }
+    }
+    assert.ok(worst < 1e-8,
+      `div v = ${worst.toExponential(3)} at (x,y,z,t)=${JSON.stringify(at)}`);
+  });
+
+  test('control — the divergence stencil can read a zero', () => {
+    // A field that is solenoidal by construction. Without this the test above
+    // would pass just as well on a stencil that always returns something small.
+    const probe = { f: (x, y, z) => ({ dx: -z, dy: 0, dz: x }) };
+    VOLUME_FORMULAS.__divProbe = probe;
+    try {
+      let worst = 0;
+      for (const p of SAMPLE) worst = Math.max(worst, Math.abs(divergence('__divProbe', p[0], p[1], p[2], 0)));
+      assert.ok(worst === 0, `stencil noise on a solenoidal field: ${worst}`);
+      // And it can read a non-zero: ∇·(x,y,z) = 3.
+      VOLUME_FORMULAS.__divProbe = { f: (x, y, z) => ({ dx: x, dy: y, dz: z }) };
+      near(divergence('__divProbe', 0.4, 0.5, 0.9, 0), 3, 1e-6, 'div of the identity field');
+    } finally {
+      delete VOLUME_FORMULAS.__divProbe;
+    }
+  });
+
+  test('magneticDipole has the dipole shape at every radius', () => {
+    // B_axis/B_equator = −2 for a dipole, at any r. ε regularises the
+    // denominator and must cancel out of the ratio; before the fix it did not,
+    // because ε was also inside the numerator's m·r² term — measured −1.667 at
+    // r = 2 against the −2 a dipole gives.
+    for (const R of [0.5, 1, 2, 4, 8, 16]) {
+      const axis = VOLUME_FORMULAS.magneticDipole.f(0, 0, R, 1, BASELINE).dz;
+      const equator = VOLUME_FORMULAS.magneticDipole.f(R, 0, 0, 1, BASELINE).dz;
+      near(axis / equator, -2, 1e-12, `axis/equator at r=${R}`);
+    }
+  });
+
+  test('magneticDipole is finite at the origin the mesh passes through', () => {
+    const v = VOLUME_FORMULAS.magneticDipole.f(0, 0, 0, 1, BASELINE);
+    assert.ok(Number.isFinite(v.dx) && Number.isFinite(v.dy) && Number.isFinite(v.dz));
+  });
+
+  test('lorenzField is the Lorenz field, not three fields glued together', () => {
+    // The three components carried three different scales — 1.2e-2, 1.8e-3,
+    // 1.2e-3 — so the direction of the vector was wrong at every point.
+    const sigma = 10, rho = 28, beta = 8 / 3;
+    for (const [x, y, z] of [[1, 2, 3], [-4, 5, 20], [0.5, -0.5, 1]]) {
+      const v = VOLUME_FORMULAS.lorenzField.f(x, y, z, 0, BASELINE);
+      const kx = v.dx / (sigma * (y - x));
+      const ky = v.dy / (x * (rho - z) - y);
+      const kz = v.dz / (x * y - beta * z);
+      near(ky / kx, 1, 1e-12, `dy scale against dx at (${x},${y},${z})`);
+      near(kz / kx, 1, 1e-12, `dz scale against dx at (${x},${y},${z})`);
+    }
+  });
+});
+
+describe('Regression — the label the viewer reads is the entry that draws (#R5)', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+
+  // The `formula` string on every catalogue entry is never rendered anywhere —
+  // buildMathCollectionUI() would show it and nothing calls it (see dom.js, the
+  // three ids under OPTIONAL). What a viewer actually reads is the <option>
+  // text in index.html, which is a second, hand-maintained copy of the name.
+  // Nothing checked the two against each other, which is how index.html came to
+  // say "Legendre P₂ Surface" for an entry that can only draw P₃…P₅.
+  test('every m: option text matches the catalogue name it selects', () => {
+    const opts = [...html.matchAll(/<option value="m:([A-Za-z]+):([A-Za-z0-9_]+)"[^>]*>([^<]+)<\/option>/g)];
+    assert.equal(opts.length, 192, `expected 192 m: options, found ${opts.length}`);
+    const drift = [], seen = new Set();
+    for (const [, colId, key, text] of opts) {
+      seen.add(`${colId}:${key}`);
+      const entry = MATH_COLLECTIONS[colId]?.formulas?.[key];
+      if (!entry) { drift.push(`option m:${colId}:${key} selects nothing`); continue; }
+      if (entry.name.trim() !== text.trim()) {
+        drift.push(`m:${colId}:${key}: markup "${text.trim()}" against catalogue "${entry.name}"`);
+      }
+    }
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const key of Object.keys(col.formulas)) {
+        if (!seen.has(`${colId}:${key}`)) drift.push(`${colId}:${key} has no option`);
+      }
+    }
+    assert.equal(drift.length, 0, `Label drift:\n  ${drift.join('\n  ')}`);
+  });
+
+  test('every volume option text matches its VOLUME_FORMULAS name', () => {
+    const drift = [];
+    for (const [key, entry] of Object.entries(VOLUME_FORMULAS)) {
+      const m = html.match(new RegExp(`<option value="${key}">([^<]+)</option>`));
+      if (!m) { drift.push(`${key} has no option`); continue; }
+      if (m[1].trim() !== entry.name.trim()) {
+        drift.push(`${key}: markup "${m[1].trim()}" against "${entry.name}"`);
+      }
+    }
+    assert.equal(drift.length, 0, `Volume label drift:\n  ${drift.join('\n  ')}`);
+  });
+});
+
+describe('Regression — GPU displacement branches that drew nothing (#R5)', () => {
+  // GLSL cannot be evaluated here, so these read the shader source. Both defects
+  // are visible in the text once you know what to look for, and both were
+  // invisible for as long as nobody looked: the modes rendered a flat plate in a
+  // flat colour, because main() assigns pos.y rather than accumulating it.
+  const vs = readFileSync(new URL('../src/shaders.js', import.meta.url), 'utf8');
+  const branch = n => {
+    const m = vs.match(new RegExp(`mode==${n}\\)\\{([\\s\\S]*?)\\}\\n?\\s*(?:else|// FIX|return)`));
+    assert.ok(m, `could not find branch mode==${n}`);
+    return m[1];
+  };
+
+  test('mode 10 no longer multiplies every term by sin(nπ)', () => {
+    const src = branch(10);
+    assert.ok(!/sin\(fn\*3\.14159\)/.test(src),
+      'sin(fn*3.14159) is sin(n·π) = 0 for integer n — the whole sum was zero');
+    // And it carries the tau coefficients its label names.
+    for (const c of ['0.001', '-0.024', '0.252', '-1.472', '4.830', '-6.048', '-16.744']) {
+      assert.ok(src.includes(c), `tau coefficient ${c} missing from mode 10`);
+    }
+  });
+
+  test('mode 30 weights the negative half of the sum with the sign of n', () => {
+    const src = branch(30);
+    // The summand sin(5n·x)cos(5n·z) is odd in n. With an even weight every pair
+    // cancels exactly — measured span 1.1e-16. The n = −4 term must therefore
+    // carry exp(+1.2), not the exp(−1.2) its mirror carries.
+    assert.ok(/exp\(4\.\*\.3\)/.test(src), 'the n = -4 term still uses the positive-n weight');
+    assert.ok(/exp\(-4\.\*\.3\)/.test(src), 'the n = +4 term should keep its own weight');
+  });
+
+  test('the two spectrum modes read the spectrum', () => {
+    // "EQ 3D" and "Vocoder" used neither uBass nor uMid nor uTreble: their
+    // surface span was identical to the digit in silence and under loud music.
+    for (const n of [35, 36]) {
+      const src = branch(n);
+      for (const uniform of ['b', 'm', 't']) {
+        assert.ok(new RegExp(`[+*(]\\s*${uniform}\\s*\\*`).test(src),
+          `mode ${n} does not read uniform ${uniform}`);
+      }
+    }
+  });
+
+  test('mode 11 keeps a floor when there is no treble', () => {
+    // sin(fn*t*2.) with t = uTreble is exactly zero in silence, and this branch
+    // had no (0.3 + b·.7)-style floor to fall back on: span 0.0 with no audio.
+    assert.ok(/0\.35\+t\*2\./.test(branch(11).replace(/\s/g, '')),
+      'mode 11 still vanishes when uTreble is zero');
   });
 });

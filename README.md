@@ -18,12 +18,12 @@ Drop in a track — 192 mathematical formulas come to life on screen, driven by 
 ---
 
 <!-- Tier split is summed from the 12 per-collection headings in
-     MATHEMATICAL_ACCURACY.md — keep the two in step (122 + 42 + 28 = 192). -->
-> **164 of 192 formulas at verifiable accuracy. Open tests.**
+     MATHEMATICAL_ACCURACY.md — keep the two in step (124 + 42 + 26 = 192). -->
+> **166 of 192 formulas at verifiable accuracy. Open tests.**
 >
-> 122 closed-form expressions at IEEE 754 double precision (~10⁻¹⁴).
+> 124 closed-form expressions at IEEE 754 double precision (~10⁻¹⁴).
 > 42 validated approximations with bounded error ≤ 10⁻³ to 10⁻⁷.
-> 28 visualisation-grade (qualitatively faithful, not numerically verified).
+> 26 visualisation-grade (qualitatively faithful, not numerically verified).
 > Cross-checked against mpmath, scipy.special, and NIST DLMF.
 > `node --test tests/math-validation.test.js`
 
@@ -129,17 +129,19 @@ Integral Transforms · Topology & Geometry · Cellular Automata · Quantum Mecha
 <!-- Tier counts come from MATHEMATICAL_ACCURACY.md. -->
 | Tier | Count | What it means |
 |------|-------|---------------|
-| 🟢 A | 122 | IEEE 754 double precision — machine accuracy |
+| 🟢 A | 124 | IEEE 754 double precision — machine accuracy |
 | 🔵 B | 42  | Bounded approximation, error ≤ 10⁻³ to 10⁻⁷ |
-| 🟡 C | 28  | Visualization-grade — qualitatively faithful, not numerically exact |
+| 🟡 C | 26  | Visualization-grade — qualitatively faithful, not numerically exact |
 
 This is not "math-flavoured visuals". These are canonical implementations —
-Bessel J₁ from Numerical Recipes, Gamma via Lanczos g=7, Dawson F via Taylor + asymptotic series,
+Bessel J₁ from Numerical Recipes, Gamma via Lanczos g=7, Dawson F via Rybicki's lattice sum,
 Gray-Scott reaction-diffusion as a real PDE on a 64×64 grid.
 
 ### 38 GPU Shaders
-Ramanujan modular forms, Mandelbrot, wave and heat equations, Lorenz attractor, Schrödinger —
-running in real time on the GPU with audio-reactive uniforms.
+Jacobi and Ramanujan theta sums, a τ(n)-weighted lattice, standing and travelling
+waves, turbulence, and a spectrum family driven by the three audio bands — running
+in real time on the GPU with audio-reactive uniforms. Which branch computes which
+object is listed in [MATHEMATICAL_ACCURACY.md](./MATHEMATICAL_ACCURACY.md).
 
 ### 44 Colour Schemes
 Cinematic, Synthwave, Scientific, Premium, Monochrome, Trending, a 12-palette "New" collection (cyberpunkGold, arcticFire, bloodMoon, cosmicDust, toxicWaste, cherryBlossom, midnightChrome, solarFlare, deepSpace, acidRain, volcanic, bioluminescence), and an 8-palette "Dark" collection (charcoalSmoke, slateIndigo, mossStone, petrol, emberBlack, burgundyVelvet, midnightForest, coalPlum).

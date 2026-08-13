@@ -1017,26 +1017,32 @@
           <option value="0">1. Bass Reactive Waves</option>
           <option value="1">2. Spectrogram Mode</option><option value="2">3. Frequency Rings</option>
           <option value="3">4. Turbulence Mode</option><option value="4">5. Ripple Effect</option>
-          <option value="5">6. Treble Spikes</option><option value="6">7. Modular Form (Ramanujan)</option>
+          <option value="5">6. Treble Spikes</option><option value="6">7. Ramanujan Theta Sum</option>
           <option value="7">8. Quantum Wave</option>
         </optgroup>
-        <optgroup label="RAMANUJAN &amp; MODULAR">
-          <option value="8">9. Δ(τ) Modular Discriminant</option><option value="9">10. θ₃(q) Jacobi Theta</option>
-          <option value="10">11. τ(n) Ramanujan Tau</option><option value="11">12. Mock Theta Function</option>
-          <option value="12">13. p(n) Partition</option><option value="13">14. E₄(τ) Eisenstein</option>
-          <option value="14">15. η(τ) Dedekind Eta</option><option value="15">16. j(τ) j-invariant</option>
+        <!-- Renamed 2026-08-13. These eight branches were labelled Δ(τ), θ₃(q),
+             τ(n), a mock theta, p(n), E₄(τ) and j(τ); only two of them computed
+             the object they named. A theta sum Σ q^{n²}cos(knθ) is what modes 9,
+             10 and 11 are, and τ(n) now really carries the tau coefficients —
+             the rest are trigonometric sums and are named as such. See
+             MATHEMATICAL_ACCURACY.md § "GPU displacement ladder". -->
+        <optgroup label="THETA &amp; HARMONIC LATTICES">
+          <option value="8">9. Theta Lattice (radial)</option><option value="9">10. θ₃(q) Jacobi Theta</option>
+          <option value="10">11. τ(n) Ramanujan Tau</option><option value="11">12. Decaying Angular Modes</option>
+          <option value="12">13. Damped Radial Wave</option><option value="13">14. Angular Petal Cascade</option>
+          <option value="14">15. Four-Lobe Radial Wave</option><option value="15">16. Radial-Angular Harmonics</option>
         </optgroup>
-        <optgroup label="WAVE &amp; PDE">
-          <option value="16">17. Wave Equation</option><option value="17">18. Standing Wave</option>
-          <option value="18">19. Heat Equation</option><option value="19">20. Schrödinger</option>
-          <option value="20">21. Helmholtz</option><option value="21">22. KdV Soliton</option>
-          <option value="22">23. Burgers Shock</option><option value="23">24. Navier-Stokes</option>
+        <optgroup label="STANDING &amp; TRAVELLING MODES">
+          <option value="16">17. Travelling Sech Pulse</option><option value="17">18. Standing Wave</option>
+          <option value="18">19. Spiral Decay Modes</option><option value="19">20. Cartesian Mode Grid</option>
+          <option value="20">21. Radial Mode Cascade</option><option value="21">22. Angular Ring Modes</option>
+          <option value="22">23. Radial × Axial Beat</option><option value="23">24. Swirling Ripple Modes</option>
         </optgroup>
-        <optgroup label="FRACTALS &amp; CHAOS">
-          <option value="24">25. Mandelbrot Set</option><option value="25">26. Julia Set</option>
-          <option value="26">27. Lorenz Attractor</option><option value="27">28. Sierpiński</option>
-          <option value="28">29. Fractal Terrain</option><option value="29">30. Newton Fractal</option>
-          <option value="30">31. Dragon Curve</option><option value="31">32. Logistic Map</option>
+        <optgroup label="INTERFERENCE PATTERNS">
+          <option value="24">25. Spiral Interference</option><option value="25">26. Rotating Ripple</option>
+          <option value="26">27. Harmonic Rosette</option><option value="27">28. Chequer Interference</option>
+          <option value="28">29. Petal Ripple</option><option value="29">30. Damped Spiral Modes</option>
+          <option value="30">31. Lattice Beat</option><option value="31">32. Drifting Ring Modes</option>
         </optgroup>
         <optgroup label="SPECTRUM">
           <option value="32">33. 3D Spectrogram</option><option value="33">34. Waterfall</option>
@@ -1069,7 +1075,7 @@
         <optgroup label="━━ ∿ SPECIAL FUNCTIONS ━━">
           <option value="m:specialFunctions:bessel0">Bessel J₀ Radial</option>
           <option value="m:specialFunctions:bessel1">Bessel J₁ Radial</option>
-          <option value="m:specialFunctions:legendre2">Legendre P₂ Surface</option>
+          <option value="m:specialFunctions:legendre2">Legendre Pₙ Surface</option>
           <option value="m:specialFunctions:gamma_fn">Gamma Function</option>
           <option value="m:specialFunctions:erf">Error Function erf(x)</option>
           <option value="m:specialFunctions:zeta">Riemann Zeta (real axis)</option>
@@ -1077,7 +1083,7 @@
           <option value="m:specialFunctions:hypergeometric">₂F₁ Hypergeometric</option>
           <option value="m:specialFunctions:laguerre">Laguerre Polynomial</option>
           <option value="m:specialFunctions:chebyshev">Chebyshev T_n(x)</option>
-          <option value="m:specialFunctions:sinc">Cardinal Sinc</option>
+          <option value="m:specialFunctions:sinc">Cardinal Sinc (radial)</option>
           <option value="m:specialFunctions:ellipticK">Elliptic Integral K(k)</option>
           <option value="m:specialFunctions:dawson">Dawson Function F(x)</option>
           <option value="m:specialFunctions:clausen">Clausen Function</option>

@@ -85,7 +85,20 @@ export function gamma(n) {
   let x = c[0];
   for (let i = 1; i < g + 2; i++) x += c[i] / (n + i);
   const t2 = n + g + 0.5;
-  return Math.sqrt(TAU) * Math.pow(t2, n + 0.5) * Math.exp(-t2) * x;
+  const out = Math.sqrt(TAU) * Math.pow(t2, n + 0.5) * Math.exp(-t2) * x;
+  // FIX: Math.pow(t2, n+0.5) overflows a double at n ≈ 142.2 even though the
+  // product it belongs to does not — the exp(-t2) that brings it back down is
+  // applied afterwards. Measured: Γ(142.2) = 5.11·10²⁴³ came back fine and
+  // Γ(142.3) came back Infinity, against a true overflow threshold of
+  // n ≈ 171.62. Nothing in the catalogue reaches it (gamma_fn clamps its
+  // argument to [0.2, 3.8], chiSquare asks for Γ(k/2) with k ∈ {5…8}), but
+  // this function is exported and the suite calls it directly, so the mine
+  // stays live for the next caller. Redoing the same expression in logs costs
+  // one branch that never fires on the hot path and leaves every reachable
+  // value bit-identical.
+  if (Number.isFinite(out)) return out;
+  const logOut = 0.5 * Math.log(TAU) + (n + 0.5) * Math.log(t2) - t2 + Math.log(x);
+  return Math.exp(logOut);
 }
 
 /** Bessel J0 via polynomial approximation */
@@ -119,7 +132,19 @@ function besselJ1(x) {
   return x < 0 ? -result : result;
 }
 
-/** Legendre P_n(x), n up to 6 */
+/**
+ * Legendre P_n(x). Closed forms for n ≤ 6, Bonnet's recurrence above that.
+ *
+ * FIX: the `default:` arm used to hand back P₆ for every n outside {0…5} —
+ * 7, 12, −1, 2.5, NaN all drew P₆ with no error anywhere. The only caller in
+ * the catalogue (legendre2) asks for n = round(1+comp·4) with comp ∈ [0.5, 0.9],
+ * so n ∈ {3,4,5} and the arm was unreachable; that is exactly what let it sit
+ * there. Bonnet's recurrence (n+1)P_{n+1} = (2n+1)xP_n − nP_{n−1} answers any
+ * non-negative integer, and the closed forms are kept ahead of it so the
+ * reachable degrees stay bit-identical rather than picking up recurrence
+ * round-off. Non-integer and negative n return NaN, which the caller's own
+ * isFinite guard turns into a flat vertex instead of a wrong surface.
+ */
 function legendreP(n, x) {
   switch(n) {
     case 0: return 1;
@@ -128,8 +153,17 @@ function legendreP(n, x) {
     case 3: return 0.5*(5*x*x*x - 3*x);
     case 4: return 0.125*(35*x*x*x*x - 30*x*x + 3);
     case 5: return 0.125*(63*Math.pow(x,5) - 70*x*x*x + 15*x);
-    default: return 0.0625*(231*Math.pow(x,6) - 315*Math.pow(x,4) + 105*x*x - 5);
+    case 6: return 0.0625*(231*Math.pow(x,6) - 315*Math.pow(x,4) + 105*x*x - 5);
   }
+  if (!Number.isInteger(n) || n < 0) return NaN;
+  let p0 = 0.0625*(231*Math.pow(x,6) - 315*Math.pow(x,4) + 105*x*x - 5);   // P₆
+  let p1 = 0.0625*(429*Math.pow(x,7) - 693*Math.pow(x,5) + 315*x*x*x - 35*x); // P₇
+  if (n === 7) return p1;
+  for (let k = 7; k < n; k++) {
+    const p2 = ((2*k + 1)*x*p1 - k*p0) / (k + 1);
+    p0 = p1; p1 = p2;
+  }
+  return p1;
 }
 
 /** Generalized Laguerre L_n^α(x) via recurrence. n must be >=0 integer. */
@@ -143,6 +177,149 @@ function laguerreL(n, alpha, x) {
     lc = lnext;
   }
   return lc;
+}
+
+/**
+ * Dawson's integral F(x) = e^{−x²}∫₀ˣ e^{t²}dt, by Rybicki's method.
+ *
+ * Rybicki (1989), "Dawson's integral and the sampling theorem": the integral is
+ * the convolution of a Gaussian with 1/x, and the sampling theorem turns that
+ * into F(x) = 1/√π · Σ_{n odd} e^{−(x−nh)²}/n on a lattice of step h. Recentring
+ * the lattice on the nearest even multiple of h keeps the sample off the nodes,
+ * so one expression covers the whole real line.
+ *
+ * FIX: what stood here was Taylor below |x| = 3.5 and a five-term asymptotic
+ * series above it, with a code comment claiming "both ~10⁻¹⁰". Measured against
+ * Gauss–Legendre quadrature of the defining integral: 1.9·10⁻¹² at x = 3.4 and
+ * 3.2·10⁻⁵ at x = 3.5 — a seven-order step at the seam, inside the domain the
+ * entry actually reaches (xv = x·freq·1.5 gets to 5.25 at the default wave
+ * intensity). No term count fixes it: the asymptotic series for F is divergent
+ * and its smallest term at x = 3.5 is already ~10⁻⁶, so the error there has a
+ * floor no truncation can go under.
+ *
+ * h = 0.25 puts the sampling error at e^{−(π/2h)²} ≈ 7·10⁻¹⁸; fifteen terms
+ * take the lattice sum out to e^{−(29h)²} ≈ 10⁻²³. Below |x| = 0.2 the lattice
+ * sum loses relative precision to cancellation, so the Maclaurin series
+ * F = x − 2x³/3 + 4x⁵/15 − 8x⁷/105 answers instead — exact to 10⁻¹⁶ there.
+ */
+const DAWSON_H = 0.25;
+const DAWSON_C = Array.from({ length: 15 }, (_, i) => Math.exp(-(((2*i + 1) * DAWSON_H) ** 2)));
+function dawsonF(x) {
+  const ax = Math.abs(x);
+  if (ax < 0.2) {
+    // Maclaurin F(x) = Σ (−1)ⁿ2ⁿx^{2n+1}/(2n+1)!!, term ratio −2x²/(2n+1).
+    // Summed to exhaustion rather than truncated at four terms: at x = 0.2 the
+    // fifth term is 16x⁹/945 ≈ 8.7·10⁻⁹, and a four-term Horner left exactly
+    // that as a step at the seam (measured 8.6·10⁻⁹ across x = 0.2), which is
+    // the same kind of discontinuity this rewrite exists to remove.
+    const x2 = x * x;
+    let term = x, sum = x;
+    for (let n = 1; n < 20; n++) {
+      term = -term * 2 * x2 / (2*n + 1);
+      sum += term;
+      if (Math.abs(term) < Math.abs(sum) * 1e-18) break;
+    }
+    return sum;
+  }
+  const n0 = 2 * Math.round(0.5 * ax / DAWSON_H);
+  const xp = ax - n0 * DAWSON_H;
+  let e1 = Math.exp(2 * xp * DAWSON_H);
+  const e2 = e1 * e1;
+  // n0 is even, so d1 and d2 are odd and never land on the pole at zero.
+  let d1 = n0 + 1, d2 = d1 - 2, sum = 0;
+  for (let i = 0; i < DAWSON_C.length; i++) {
+    sum += DAWSON_C[i] * (e1 / d1 + 1 / (d2 * e1));
+    d1 += 2; d2 -= 2; e1 *= e2;
+  }
+  return Math.sign(x) * Math.exp(-xp * xp) * sum / Math.sqrt(Math.PI);
+}
+
+/**
+ * Clausen function Cl₂(θ) = −∫₀^θ ln|2 sin(t/2)| dt.
+ *
+ * FIX: the entry summed twelve terms of the Fourier series Σ sin(kθ)/k². That
+ * series converges like 1/N — fine in the middle of the period, useless at the
+ * ends, where Cl₂ has infinite slope. The entry is documented tier B (error
+ * ≤ 10⁻³…10⁻⁷) and did not hold it near θ = 0 or 2π.
+ *
+ * Replaced by the log-sine expansion, which is what the Fourier series is hiding.
+ * From ln(sin u / u) = −Σ ζ(2n)u^{2n}/(n π^{2n}) with u = t/2:
+ *   ln(2 sin(t/2)) = ln t − Σ_{n≥1} ζ(2n) t^{2n} / (n (2π)^{2n})
+ * and integrating term by term from 0 to θ,
+ *   Cl₂(θ) = θ − θ ln θ + θ · Σ_{n≥1} ζ(2n)/(n(2n+1)) · (θ/2π)^{2n}.
+ * All terms positive, ratio (θ/2π)², so on θ ∈ [0, π] — where the reflections
+ * below put every argument — twenty terms reach machine precision.
+ *
+ * Reductions used: Cl₂ has period 2π, and Cl₂(2π − θ) = −Cl₂(θ).
+ */
+const CLAUSEN_Z = (() => {
+  // ζ(2n)/(n(2n+1)) for n = 1…20. ζ(2n) → 1 fast, so the tail is summed
+  // directly; the first five are the closed forms, kept exact.
+  const zeta2n = [Math.PI**2/6, Math.PI**4/90, Math.PI**6/945, Math.PI**8/9450, Math.PI**10/93555];
+  const out = [];
+  for (let n = 1; n <= 20; n++) {
+    let z = zeta2n[n - 1];
+    if (z === undefined) { z = 0; for (let k = 1; k <= 12; k++) z += Math.pow(k, -2*n); }
+    out.push(z / (n * (2*n + 1)));
+  }
+  return out;
+})();
+function clausenCl2(theta) {
+  let th = theta % TAU;
+  if (th < 0) th += TAU;
+  if (th === 0 || th === Math.PI) return 0;
+  if (th > Math.PI) return -clausenCl2(TAU - th);
+  const q = (th / TAU) ** 2;
+  let p = q, s = 0;
+  for (let i = 0; i < CLAUSEN_Z.length; i++) { s += CLAUSEN_Z[i] * p; p *= q; }
+  return th - th * Math.log(th) + th * s;
+}
+
+/**
+ * Airy function Ai(x) — Maclaurin series on |x| ≤ 8, asymptotics beyond.
+ *
+ * FIX: the entry marched y″ = x·y outward from the exact (Ai(0), Ai′(0)) seed
+ * with RK4 at dx = 0.15. Round 4 had already fixed that march once — it used to
+ * impose the x = 0 seed at x = −3 and integrate a different solution entirely —
+ * but no forward march of this equation can survive: the growing Bi solution is
+ * amplified by every step, and whatever round-off seeds it takes over.
+ * Measured on the shipped code, Ai came back NEGATIVE from ξ ≈ 4.88 onward,
+ * while the true Ai(x) is positive for every x > 0. ξ = x·freq·1.5 reaches 5.25
+ * at the default wave intensity, so the wrong sign was on screen out of the box.
+ * The code comment claimed the march held to |x| ≈ 6.
+ *
+ * Series instead of marching: y″ = xy has c_{n+3} = c_n/((n+2)(n+3)), so
+ *   Ai(x) = Ai(0)·f(x) − Ai′(0)·g(x),
+ *   f = 1 + x³/6 + x⁶/180 + …,  g = x + x⁴/12 + x⁷/504 + …
+ * with Ai(0) = 3^{−2/3}/Γ(2/3) and −Ai′(0) = 3^{−1/3}/Γ(1/3). Past |x| = 8 the
+ * alternating terms cost more digits than the answer has, so the standard
+ * asymptotic expansions take over — the decaying one on the right, the
+ * oscillatory one on the left, both to three terms in 1/ζ with ζ = ⅔|x|^{3/2}.
+ *
+ * This is also cheaper than what it replaces: O(1) per vertex against a loop
+ * that ran |ξ|/0.15 RK4 steps, i.e. up to 160 of them at the top of the slider.
+ */
+function airyAi(x) {
+  const ax = Math.abs(x);
+  if (ax <= 8) {
+    const x3 = x * x * x;
+    let f = 1, ft = 1, g = x, gt = x;
+    for (let k = 0; k < 60; k++) {
+      ft *= x3 / ((3*k + 2) * (3*k + 3)); f += ft;
+      gt *= x3 / ((3*k + 3) * (3*k + 4)); g += gt;
+      if (Math.abs(ft) + Math.abs(gt) < 1e-19) break;
+    }
+    return 0.3550280538878172 * f - 0.2588194037928068 * g;
+  }
+  const zeta = (2/3) * Math.pow(ax, 1.5), z4 = Math.pow(ax, 0.25);
+  const u1 = 5/72, u2 = 385/10368, u3 = 85085/2239488;
+  if (x > 0) {
+    const s = 1 - u1/zeta + u2/(zeta*zeta) - u3/(zeta*zeta*zeta);
+    return Math.exp(-zeta) / (2 * Math.sqrt(Math.PI) * z4) * s;
+  }
+  const th = zeta + Math.PI/4;
+  const p = 1 - u2/(zeta*zeta), q = u1/zeta - u3/(zeta*zeta*zeta);
+  return (Math.sin(th) * p - Math.cos(th) * q) / (Math.sqrt(Math.PI) * z4);
 }
 
 /** Normal distribution PDF */
@@ -189,9 +366,28 @@ function hydrogenPsi(n, l, x, z, t) {
   if      (n===1 && l===0) R = 2*Math.exp(-r/a0);
   else if (n===2 && l===0) R = (2-r/a0)*Math.exp(-r/(2*a0))/Math.sqrt(8);
   else if (n===2 && l===1) R = (r/a0)*Math.exp(-r/(2*a0))/Math.sqrt(24);
-  else if (n===3 && l===0) R = (27-18*(r/a0)+2*(r/a0)**2)*Math.exp(-r/(3*a0))/81;
+  // FIX: R₃₀ was missing its normalisation. The true radial function is
+  // 2/(81√3)·(27−18r+2r²)e^{−r/3}; the code had 1/81, low by a factor 2/√3, so
+  // |ψ|² came out low by 4/3. Unreachable from the catalogue today — hydrogenS
+  // asks for (1,0) and hydrogen2p for (2,1) — and a constant factor would have
+  // drowned in `amp` anyway, but the three siblings beside it are all correctly
+  // normalised (2e^{−r}, (2−r)e^{−r/2}/√8, r·e^{−r/2}/√24) and this one was the
+  // odd one out.
+  else if (n===3 && l===0) R = 2*(27-18*(r/a0)+2*(r/a0)**2)*Math.exp(-r/(3*a0))/(81*Math.sqrt(3));
   else                     R = Math.exp(-r/(n*a0));
-  const Y = Math.cos(l*theta + t*0.3); // angular part approximation
+  // FIX: `Math.cos(l*theta + t*0.3)` degenerates to cos(0.3·t) when l = 0, and
+  // the square of that is a factor the whole surface is multiplied by. An s
+  // state has no angular dependence and, being a stationary state, no time
+  // dependence either — hydrogenS is documented as |ψ₁₀₀|² = 1/π·e^{−2r} and
+  // rated tier A on exactly that. Measured before this fix: peak |y| fell from
+  // 3.623 at t = 0 to 4.9·10⁻¹¹ at t = 5.236 and back, i.e. the 1s orbital
+  // blinked out completely every π/0.3 = 10.47 formula units — 21.8 s of wall
+  // clock at 60 fps — and did it for the whole life of the tab. Same failure
+  // family as the seven entries replayTime was added for in round 4, only
+  // periodic instead of monotone, which is why the drift test's hand-written
+  // list did not have it. l ≥ 1 keeps the rotating angular factor: there the
+  // cos never vanishes over a full azimuth, so nothing collapses.
+  const Y = l === 0 ? 1 : Math.cos(l*theta + t*0.3);
   return R*R * Y * Y * 0.6;
 }
 
@@ -633,83 +829,140 @@ const SPECIAL_FUNCTIONS = {
     gamma_fn: {
       name: 'Gamma Function',
       formula: 'Γ(n) = (n−1)!',
+      // FIX: the surface was 0.12·ln|Γ(n)|, and the entry is called "Gamma
+      // Function" with the caption Γ(n) = (n−1)! and a tier-A rating. A
+      // logarithm is not one of the studio's documented wrappers (amp, a fixed
+      // scale, the exp(−z²k) envelope, a light time modulation) — it is a
+      // different function, not a scaled one, and nothing said so.
+      //
+      // Over the window the entry actually shows, n ∈ [0.2, 3.8], Γ runs from
+      // 4.591 down through its minimum 0.8856 at n = 1.4616 and back up to
+      // 4.694 — a range that fits the frame directly, so the log was not even
+      // buying headroom. Plotted straight, the surface now has the feature that
+      // makes Γ recognisable: the single minimum between 1 and 2.
       f(x, z, t, {amp=1, freq=1}) {
         const n=clamp(0.2+(x+3.5)/7*3.6, 0.2, 3.8);
-        return clamp(Math.log(Math.abs(gamma(n)))*0.12, -0.8, 0.8) * amp * Math.exp(-z*z*0.5);
+        return clamp(gamma(n)*0.22-0.6, -0.8, 0.8) * amp * Math.exp(-z*z*0.5);
       }
     },
     erf: {
       name: 'Error Function erf(x)',
       formula: 'erf(x) = 2/√π ∫₀ˣ e^{−t²} dt',
+      // FIX: the Abramowitz & Stegun §7.1.26 Horner fit that stood here is
+      // accurate to 1.5·10⁻⁷ by construction, and measured 1.394·10⁻⁷ at
+      // x = 0.045 against Gauss–Legendre quadrature of the defining integral.
+      // That is a tier-B number under this project's own definitions, while the
+      // entry is documented tier A ("~14 significant digits") — and the two
+      // Bessel entries, quoting the same 1.5·10⁻⁷ bound, sit in tier B.
+      //
+      // The series below is the all-positive rearrangement
+      //   erf(x) = 2/√π · e^{−x²} · Σ 2ⁿx^{2n+1}/(2n+1)!!
+      // (term ratio 2x²/(2n+3), so it starts shrinking once n > x²). Being
+      // positive term by term it has none of the alternating cancellation that
+      // makes the naive Taylor series unusable, and it holds machine precision
+      // everywhere instead of bottoming out at a fixed 10⁻⁷. Past |x| = 6 the
+      // result is 1 to within 2·10⁻¹⁷, so the tail short-circuits rather than
+      // summing three hundred terms per vertex.
       f(x, z, t, {amp=1, freq=1}) {
-        // Horner approximation
-        const y=x*freq, t2=1/(1+0.3275911*Math.abs(y));
-        const poly=t2*(0.254829592+t2*(-0.284496736+t2*(1.421413741+t2*(-1.453152027+t2*1.061405429))));
-        return Math.sign(y)*(1-poly*Math.exp(-y*y)) * amp * 0.5 * Math.exp(-z*z*0.4);
+        const y=x*freq, ay=Math.abs(y);
+        let e;
+        if (ay >= 6) e = 1;
+        else {
+          const y2=ay*ay;
+          let term=ay, sum=ay;
+          for (let n=0; n<400; n++) {
+            term *= 2*y2/(2*n + 3);
+            sum += term;
+            if (term < sum*1e-17) break;
+          }
+          e = 2/Math.sqrt(Math.PI)*Math.exp(-y2)*sum;
+        }
+        return Math.sign(y)*e * amp * 0.5 * Math.exp(-z*z*0.4);
       }
     },
     zeta: {
       name: 'Riemann Zeta (real axis)',
       formula: 'ζ(s) = Σ 1/nˢ',
+      // FIX: 14–22 terms of Σ n^{−s} is not ζ(s) anywhere near s = 1. Measured
+      // against the true value: at the left edge of the displayed window
+      // (s = 1.05) the sum came to 3.084 against ζ = 20.581 — low by 85 %, and
+      // still 83 % low with the term count at its maximum. Shifting the domain
+      // to start at 1.05, which MATHEMATICAL_ACCURACY.md credits with "avoiding
+      // the issue", removes the divergence at s ≤ 1 and does nothing at all
+      // about the convergence rate: no term count reachable at 60 fps helps,
+      // since the tail of Σn^{−1.05} needs ~10⁴⁰ terms.
+      //
+      // Euler–Maclaurin closes it in the same arithmetic budget: sum the first
+      // fifteen terms directly, then add the integral tail and two Bernoulli
+      // corrections. That is exact to ~10⁻¹² across the whole window.
+      //
+      // Two knock-on changes the fix forces, both deliberate:
+      //  • `comp` used to set the term count, i.e. it modulated the error. With
+      //    the sum converged there is no error left to modulate, so comp now
+      //    stretches the s-window; at comp = 0.5 that window is exactly the
+      //    [1.05, 5.05] this entry has always drawn.
+      //  • the display map is retuned. ζ now spans 20.58 down to 1.00 where the
+      //    truncated sum spanned 3.46 down to 1.00, so the old `·0.08 − 0.3`
+      //    saturates the clamp. The log compresses that back into the frame and
+      //    keeps the same sense (height falls as s grows) over a wider range
+      //    than the ±0.2 the entry used to occupy.
       f(x, z, t, {amp=1, freq=1, comp=1}) {
-        const s=clamp(1.05+(x+3.5)/7*4, 1.05, 5.05);
-        const terms=4+Math.floor(comp*20);
+        const s=clamp(1.05+(x+3.5)/7*(2+comp*4), 1.05, 7.05);
+        const N=16;
         let sum=0;
-        for (let n=1; n<=terms; n++) sum+=1/Math.pow(n,s);
-        return clamp(sum*0.08-0.3, -0.7, 0.7) * amp * Math.exp(-z*z*0.3);
+        for (let n=1; n<N; n++) sum+=Math.pow(n,-s);
+        const Ns=Math.pow(N,-s);
+        sum += Ns*0.5 + N*Ns/(s-1) + s*Ns/N/12 - s*(s+1)*(s+2)*Ns/(N*N*N)/720;
+        return clamp(Math.log(sum)*0.25-0.35, -0.7, 0.7) * amp * Math.exp(-z*z*0.3);
       }
     },
     airy: {
       name: 'Airy Function Ai(x)',
-      formula: 'Ai\'\'(x) = x·Ai(x)',
+      formula: 'Ai(x), Ai\'\'(x) = x·Ai(x)',
+      // History, because it took two rounds to get here. Round 4 fixed a march
+      // that imposed the x = 0 seed at x = −3 — the right initial condition at
+      // the wrong point selects a different combination of Ai and Bi, so the
+      // result was not Ai anywhere (it came out −0.365 at x = 0 against
+      // Ai(0) = +0.355), and the loop never ran at all for ξ < −3, leaving a
+      // constant shelf where Ai should oscillate. Moving the seed to the point
+      // it describes and going from Euler to RK4 fixed those two, and left the
+      // third: no forward march of y″ = x·y survives, because it amplifies the
+      // growing Bi solution on every step. Measured on that code, Ai came back
+      // negative from ξ ≈ 4.88 — inside the ξ ≤ 5.25 the default wave intensity
+      // reaches — where the true Ai is positive everywhere. The march is now
+      // gone entirely; see airyAi() among the shared helpers.
       f(x, z, t, {amp=1, freq=1}) {
-        // FIX(#3, r4): the march used to start at xx = −3.0 while seeding the
-        // state with Ai(0) = 0.3550280539 and Ai′(0) = −0.2588194038. The right
-        // initial condition imposed at the wrong point selects a different
-        // combination of Ai and Bi, so the result was not Ai anywhere: at x = 0
-        // it came out −0.365 against Ai(0) = +0.355, sign included. Worse,
-        // `while (xx < xi)` never ran at all for xi < −3, so the left quarter
-        // of the domain answered with the untouched seed — a constant shelf
-        // where Ai should be oscillating. The seed is now used at the point it
-        // actually describes, and the integration runs outward from there in
-        // whichever direction the sample lies.
-        //
-        // Forward Euler goes with it. Any march of y″ = x·y toward +x amplifies
-        // the growing Bi solution, and Euler at dx = 0.05 lost the decaying
-        // tail completely — it hit the −0.8 clamp by x ≈ 4, where Ai(4) is
-        // 0.00095. RK4 at dx = 0.15 holds 8·10⁻⁴ over |x| ≤ 5.6, the domain the
-        // app displays at the wave-intensity default, for about a quarter more
-        // arithmetic than the Euler march it replaces (measured on a 161×161
-        // mesh: 3.9 ms → 4.8 ms). Past |x| ≈ 6 nothing forward-marched survives
-        // at any step size, and the clamp below is what keeps that off the mesh.
-        const xi=x*freq*1.5;
-        const dx=0.15; let ai=0.3550280539, dai=-0.2588194038;
-        let xx=0;
-        while (Math.abs(xi-xx) > 1e-12) {
-          const h=(xi > xx ? 1 : -1)*Math.min(dx, Math.abs(xi-xx));
-          const k1a=dai,         k1d=xx*ai;
-          const k2a=dai+h/2*k1d, k2d=(xx+h/2)*(ai+h/2*k1a);
-          const k3a=dai+h/2*k2d, k3d=(xx+h/2)*(ai+h/2*k2a);
-          const k4a=dai+h*k3d,   k4d=(xx+h)*(ai+h*k3a);
-          ai +=h/6*(k1a+2*k2a+2*k3a+k4a);
-          dai+=h/6*(k1d+2*k2d+2*k3d+k4d);
-          xx+=h;
-        }
-        return clamp(ai * amp * 0.7 * Math.exp(-z*z*0.3), -0.8, 0.8);
+        return clamp(airyAi(x*freq*1.5) * amp * 0.7 * Math.exp(-z*z*0.3), -0.8, 0.8);
       }
     },
     hypergeometric: {
       name: '₂F₁ Hypergeometric',
       formula: '₂F₁(a,b;c;z) = Σ (a)ₙ(b)ₙ/(c)ₙ·zⁿ/n!',
+      // FIX: twelve terms with an early exit at 10⁻⁸ that never fired. At the
+      // right edge of the reachable domain (z = 0.875 at the default wave
+      // intensity, 0.95 once the clamp bites) the twelfth term is still
+      // 2.5·10⁻², so the loop always ran to its cap and stopped there — a hard
+      // truncation two orders outside the 10⁻³ floor of the tier B this entry
+      // is documented at.
+      //
+      // Euler's transformation ₂F₁(a,b;c;z) = (1−z)^{c−a−b}·₂F₁(c−a,c−b;c;z)
+      // does not change |z|, so the geometric rate is the same — what it changes
+      // is the algebraic factor: terms fall as zⁿ·n^{−1.5−comp} instead of
+      // zⁿ·n^{comp−1.5}, which is worth two to three orders by the hundredth
+      // term. With the cap at 120 and the exit tightened to a relative 10⁻¹²,
+      // the worst reachable point lands well inside tier B and everywhere else
+      // is at machine precision.
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const zv=clamp(x*freq*0.25,-0.95,0.95), a=0.5, b=0.5+comp, c=1.5;
+        const A=c-a, B=c-b;
         let sum=1, term=1;
-        for (let n=1; n<=12; n++) {
-          term*=((a+n-1)*(b+n-1))/((c+n-1)*n)*zv;
+        for (let n=1; n<=120; n++) {
+          term*=((A+n-1)*(B+n-1))/((c+n-1)*n)*zv;
           sum+=term;
-          if (Math.abs(term)<1e-8) break;
+          if (Math.abs(term)<Math.abs(sum)*1e-12) break;
         }
-        return clamp(sum * 0.15 * amp * Math.exp(-z*z*0.4), -0.8, 0.8);
+        const F=Math.pow(1-zv, c-a-b)*sum;
+        return clamp(F * 0.15 * amp * Math.exp(-z*z*0.4), -0.8, 0.8);
       }
     },
     laguerre: {
@@ -726,14 +979,22 @@ const SPECIAL_FUNCTIONS = {
     chebyshev: {
       name: 'Chebyshev T_n(x)',
       formula: 'T_n(cos θ) = cos(nθ)',
+      // FIX: the ±(1−10⁻⁹) guard inside acos cost 2.5·10⁻⁸ at |x| = 1, where
+      // T_n(±1) = (±1)ⁿ exactly. That is not one vertex: xv is itself clamped to
+      // [−1, 1], so every point past |x·freq·0.28| = 1 saturates there — the
+      // whole rim of the surface at the default wave intensity. The guard also
+      // was not buying anything: acos(±1) is exactly 0 and π, and xv is already
+      // inside the domain by the clamp on the line above.
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const xv=clamp(x*freq*0.28,-1,1), n=Math.round(1+comp*6);
-        return Math.cos(n*Math.acos(Math.max(-1+1e-9,Math.min(1-1e-9,xv)))) * amp * 0.45 * Math.exp(-z*z*0.3);
+        return Math.cos(n*Math.acos(xv)) * amp * 0.45 * Math.exp(-z*z*0.3);
       }
     },
     sinc: {
-      name: 'Cardinal Sinc',
-      formula: 'sinc(x) = sin(πx)/(πx)',
+      // The kernel is exact; the caption was not. What is drawn is the radial
+      // ("sombrero") sinc of r = √(x²+z²)·freq·2, not sinc of the x coordinate.
+      name: 'Cardinal Sinc (radial)',
+      formula: 'sinc(r) = sin(πr)/(πr), r = √(x²+z²)',
       f(x, z, t, {amp=1, freq=1}) {
         const r=Math.sqrt(x*x+z*z)*freq*2+1e-8;
         return Math.sin(Math.PI*r)/(Math.PI*r) * amp * 0.6;
@@ -756,41 +1017,25 @@ const SPECIAL_FUNCTIONS = {
     dawson: {
       name: 'Dawson Function F(x)',
       formula: 'F(x) = e^{−x²} ∫₀ˣ e^{t²} dt',
+      // The two-region implementation that stood here is now dawsonF() among the
+      // shared helpers, rewritten to Rybicki's lattice sum — see the note there
+      // for the seam it had and the measurements. Accuracy across the reachable
+      // domain |xv| ≤ 24 is ~3·10⁻¹⁵ against Gauss–Legendre quadrature.
       f(x, z, t, {amp=1, freq=1}) {
-        const xv=x*freq*1.5;
-        // Two-region implementation, both ~10⁻¹⁰ accuracy vs mpmath:
-        //   |x| < 3.5: Taylor series F(x) = Σ (-1)^n · 2^n · x^(2n+1) / (2n+1)!!
-        //              25 terms suffice in this region.
-        //   |x| ≥ 3.5: asymptotic series F(x) ≈ Σ (2n-1)!! / (2x)^(2n+1)
-        const ax = Math.abs(xv);
-        let F;
-        if (ax < 3.5) {
-          // Taylor series: term_{n+1}/term_n = -2x²/(2n+3) (no factorial blowup needed)
-          let term = xv, sum = xv;
-          const x2 = xv * xv;
-          for (let n = 1; n < 50; n++) {
-            term = -term * 2 * x2 / (2*n + 1);
-            sum += term;
-            if (Math.abs(term) < Math.abs(sum) * 1e-14) break;
-          }
-          F = sum;
-        } else {
-          // Asymptotic: F(x) ~ 1/(2x) · [1 + 1/(2x²) + 3/(2x²)² + 15/(2x²)³ + ...]
-          // Coefficients: (2k-1)!! for k=0,1,2,3,4
-          const inv2 = 1 / (2 * xv * xv);
-          F = (1 / (2 * xv)) * (1 + inv2 * (1 + inv2 * (3 + inv2 * (15 + inv2 * 105))));
-        }
-        return clamp(F * 0.4 * amp, -0.6, 0.6) * Math.exp(-z*z*0.4);
+        return clamp(dawsonF(x*freq*1.5) * 0.4 * amp, -0.6, 0.6) * Math.exp(-z*z*0.4);
       }
     },
     clausen: {
       name: 'Clausen Function',
       formula: 'Cl₂(θ) = −∫₀^θ ln|2sin(t/2)| dt',
+      // The twelve-term Fourier sum is now clausenCl2() among the shared
+      // helpers, rewritten to the log-sine expansion — see the note there.
+      // Σ sin(kθ)/k² converges like 1/N, which is adequate mid-period and not
+      // at the ends, where Cl₂ has infinite slope; the replacement is exact to
+      // 10⁻¹⁶ at the canonical points (Catalan's constant at θ = π/2,
+      // Cl₂(π/3) = 1.0149416064096537) across the whole period.
       f(x, z, t, {amp=1, freq=1}) {
-        const th=(x+3.5)/7*TAU, N=12;
-        let sum=0;
-        for (let k=1; k<=N; k++) sum+=Math.sin(k*th)/(k*k);
-        return sum * 0.3 * amp * Math.exp(-z*z*0.4);
+        return clausenCl2((x+3.5)/7*TAU) * 0.3 * amp * Math.exp(-z*z*0.4);
       }
     },
     polygamma: {
@@ -2211,10 +2456,25 @@ const TOPOLOGY_GEOMETRY = {
     catenoid: {
       name: 'Catenoid (Minimal)',
       formula: 'r = a·cosh(z/a)',
+      // FIX: exact, and unwatchable over most of the slider. cosh(2·z·freq)
+      // with |z| ≤ 3.5 leaves a frame about 3 units high almost immediately:
+      // measured peak |y| is 6.2·10⁻¹ at freq = 0.3 (the slider minimum),
+      // 8.2·10¹ at freq = 1 (its default), 3.3·10⁹ at freq = 3.5 (its maximum)
+      // and 5.1·10¹² at the 4.55 that treble can push it to. The value stays
+      // finite, so the isFinite guard in generateSurfaceFromFormula passes it
+      // straight through to the mesh. This is the one defect class the accuracy
+      // audit could not see, because the mathematics is right — the entry is
+      // correctly rated A and was never worth a second look.
+      //
+      // The clamp leaves the catenoid itself untouched: the neck, and the whole
+      // neighbourhood of the zero level set where the surface is legible, sit
+      // well inside ±1.5. Only the far field — which was never on screen anyway,
+      // just dragging the camera framing with it — saturates. At z = 0 the value
+      // is 0.15 exactly, as before.
       f(x, z, t, {amp=1, freq=1}) {
         const a=0.5, Z=z*freq;
         const r=a*Math.cosh(Z/a), rxy=Math.sqrt(x*x)*freq;
-        return (r-rxy) * amp * 0.3;
+        return clamp((r-rxy) * amp * 0.3, -1.5, 1.5);
       }
     },
     helicoid: {
@@ -2944,8 +3204,19 @@ const QUANTUM_MECHANICS = {
     feynmanPath: {
       name: 'Feynman Path Integral (free particle)',
       formula: 'K(x,t) = (m/2πiħt)^½ e^{imx²/2ħt}',
+      // FIX(#5-family): the eighth entry that read the session clock as the age
+      // of a decaying solution, and the one the round-4 sweep missed because its
+      // DRIFTERS list is written by hand. The propagator's amplitude is 1/√T
+      // with T = 0.5 + 0.05·t, so it falls without bound and never returns:
+      // measured at BOOT parameters, peak |y| went 4.356·10⁻¹ at t = 0 →
+      // 1.070·10⁻¹ of that after thirty minutes of uptime → 0.076 after an hour
+      // → 0.038 after four. It cleared the suite's "an order of magnitude below
+      // boot" line at thirty minutes by 7 %, and failed it on any longer set.
+      // Folding the clock to a 24-unit period keeps the quietest instant at
+      // 1/√1.7 against 1/√0.5 at t = 0 — a factor 1.84, well inside the same
+      // convention the other seven use — and leaves t = 0 bit-identical.
       f(x, z, t, {amp=1, freq=1}) {
-        const T=0.5+t*0.05, hbar=1;
+        const T=0.5+replayTime(t, 24)*0.05;
         const phase=(x*freq)**2/(2*T);
         return Math.cos(phase) * amp * 0.4 / Math.sqrt(T) * Math.exp(-z*z*0.25);
       }
@@ -3210,19 +3481,40 @@ export function generateCollapseScalarField(fn, params = {}, basePositions, time
 export const VOLUME_FORMULAS = {
   lorenzField: {
     name: 'Lorenz Vector Field',
-    description: 'Classic chaotic attractor as displacement field',
+    // FIX: the description promised an attractor and the three components were
+    // scaled by three different constants — 1.200·10⁻², 1.800·10⁻³, 1.200·10⁻³,
+    // a factor of ten between the first and the last. A vector field scaled
+    // anisotropically is a different vector field: the direction is wrong at
+    // every point, so what was drawn was not Lorenz. One scale for all three
+    // fixes that; β is the canonical 8/3 rather than the rounded 2.667.
+    //
+    // The description is also honest now about what this is. The visualiser
+    // applies it as ONE displacement from the stored base positions
+    // (applyDisplacementField), not as an integration step fed back in, so no
+    // orbit accumulates and no attractor can form. What the mesh shows is the
+    // field itself — which is a real thing to show, and is what the name says.
+    //
+    // 0.0045 is set from the field's own size: |F| peaks near 135 over the
+    // ±3.5 box the shapes occupy, so this puts the largest displacement around
+    // 0.6 units, close to what the old dx term produced.
+    description: 'Lorenz field σ=10, ρ=28, β=8/3 — the vector field itself, one displacement per vertex',
     f(x, y, z, t, { amp = 1, freq = 1, comp = 0.5 }) {
-      const sigma = 10, rho = 28, beta = 2.667;
-      const dt = 0.012 * amp;
-      const dx = sigma * (y - x) * dt * freq;
-      const dy = (x * (rho - z) - y) * dt * freq * 0.15;
-      const dz = (x * y - beta * z) * dt * freq * 0.1;
-      return { dx, dy, dz };
+      const sigma = 10, rho = 28, beta = 8 / 3;
+      const k = 0.0045 * amp * freq;
+      return {
+        dx: sigma * (y - x) * k,
+        dy: (x * (rho - z) - y) * k,
+        dz: (x * y - beta * z) * k,
+      };
     }
   },
   breathe: {
     name: 'Radial Breathe',
-    description: 'Uniform expansion/contraction along surface normals',
+    // The displacement is neither uniform (the sin(t·freq·2 + r·2) phase makes
+    // it a wave along the radius — measured 0.363 at r = 1 against 0.111 at
+    // r = 3) nor along surface normals (it points away from the origin, which
+    // coincides with the normal on a sphere and on none of the other 19 shapes).
+    description: 'Wave travelling outward along the radius from the centre',
     f(x, y, z, t, { amp = 1, freq = 1, comp = 0.5 }) {
       const r    = Math.sqrt(x * x + y * y + z * z) + 0.001;
       const wave = Math.sin(t * freq * 2 + r * 2) * amp * 0.4;
@@ -3254,29 +3546,60 @@ export const VOLUME_FORMULAS = {
   },
   magneticDipole: {
     name: 'Magnetic Dipole Field',
-    description: 'B-field of a magnetic dipole at origin',
+    // FIX: the ε = 0.5 that keeps the field finite at the origin was being
+    // applied twice — once to the denominator, where it belongs, and once
+    // inside the numerator's m·r² term, where it does not. That second use is
+    // what made the result not a softened dipole but a different field:
+    // measured against B = (3r̂(m·r̂) − m)/r³, the on-axis value was 73 % low at
+    // r = 1 and 30 % low at r = 2, and the axis-to-equator ratio came to −1.667
+    // where a dipole gives exactly −2.
+    //
+    // With the true r² restored in the numerator the ratio is −2 to a part in
+    // 10³ by r = 2, and the field stays bounded at the origin on its own — the
+    // numerator vanishes there faster than the denominator does, so no spike
+    // replaces the one ε was hired to prevent.
+    //
+    // ε survives in the denominator by design, and the description says so:
+    // a point dipole has no finite field at r = 0, and this one has to be
+    // drawn on a mesh that passes through the origin.
+    description: 'B-field of a magnetic dipole at the origin, regularised at r→0',
     f(x, y, z, t, { amp = 1, freq = 1 }) {
-      const r2   = x * x + y * y + z * z + 0.5;
-      const r5   = Math.pow(r2, 2.5);
+      const rr   = x * x + y * y + z * z;      // true r²
+      const r5   = Math.pow(rr + 0.5, 2.5);    // regularised denominator
       const m    = amp * 0.8 * Math.sin(t * 0.3); // oscillating dipole moment
       const dot3 = 3 * z * m; // dipole along Z
       return {
         dx: dot3 * x / r5 * freq,
         dy: dot3 * y / r5 * freq,
-        dz: (dot3 * z - m * r2) / r5 * freq,
+        dz: (dot3 * z - m * rr) / r5 * freq,
       };
     }
   },
   fluidVortex: {
     name: 'Fluid Vortex',
-    description: 'Incompressible vortex flow (curl field)',
+    // FIX: the description claims incompressibility, which is the statement
+    // ∇·v ≡ 0, and the field did not have it. The swirl in (x, z) is fine — the
+    // two terms ∂dx/∂x and ∂dz/∂z cancel identically for any radial strength
+    // function — but the vertical component was cos(y·freq + t), whose
+    // y-derivative is the entire divergence: measured ∇·v = −amp·0.1·freq·
+    // sin(y·freq + t), matching that prediction to seven digits, with
+    // |∇·v|/|v| averaging 0.80 over the sample box. A control run on a field
+    // that is solenoidal by construction returned exactly 0, so the reading
+    // was the field's and not the difference stencil's.
+    //
+    // Driving the vertical wave from the cylindrical radius instead of from y
+    // removes the only y-dependence in dy, so ∂dy/∂y vanishes and the field is
+    // divergence-free everywhere, exactly. The visible motion is much the same:
+    // a wave along the column instead of across it.
+    description: 'Incompressible vortex flow — ∇·v = 0 exactly',
     f(x, y, z, t, { amp = 1, freq = 1, comp = 0.5 }) {
+      const rho = Math.sqrt(x * x + z * z);
       const r2  = x * x + z * z + 0.3;
       const str = amp * 0.5 / r2;
       const osc = Math.sin(t * 0.4 + y * freq);
       return {
         dx: -z * str * osc,
-        dy:  Math.cos(y * freq + t) * amp * 0.1,
+        dy:  Math.cos(rho * freq + t) * amp * 0.1,
         dz:  x * str * osc,
       };
     }
