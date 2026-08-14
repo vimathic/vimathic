@@ -64,7 +64,7 @@ given freely.
  38   GPU shaders
  44   colour schemes
  20   base shapes × 3 deformation modes
-133   validation tests against scipy, mpmath, NIST DLMF
+      validation tests against scipy, mpmath, NIST DLMF
  14   documentation pages
   ∞   yours to use, study, fork, share
 </pre>

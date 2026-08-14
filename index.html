@@ -1015,32 +1015,38 @@
       <select id="gpu-sel">
         <optgroup label="AUDIO REACTIVE">
           <option value="0">1. Bass Reactive Waves</option>
-          <option value="1">2. Spectrogram Mode</option><option value="2">3. Frequency Rings</option>
+          <option value="1">2. Chirped Radial Rings</option><option value="2">3. Frequency Rings</option>
           <option value="3">4. Turbulence Mode</option><option value="4">5. Ripple Effect</option>
-          <option value="5">6. Treble Spikes</option><option value="6">7. Modular Form (Ramanujan)</option>
+          <option value="5">6. Treble Spikes</option><option value="6">7. Ramanujan Theta Sum</option>
           <option value="7">8. Quantum Wave</option>
         </optgroup>
-        <optgroup label="RAMANUJAN &amp; MODULAR">
-          <option value="8">9. Δ(τ) Modular Discriminant</option><option value="9">10. θ₃(q) Jacobi Theta</option>
-          <option value="10">11. τ(n) Ramanujan Tau</option><option value="11">12. Mock Theta Function</option>
-          <option value="12">13. p(n) Partition</option><option value="13">14. E₄(τ) Eisenstein</option>
-          <option value="14">15. η(τ) Dedekind Eta</option><option value="15">16. j(τ) j-invariant</option>
+        <!-- Renamed 2026-08-13. These eight branches were labelled Δ(τ), θ₃(q),
+             τ(n), a mock theta, p(n), E₄(τ) and j(τ); only two of them computed
+             the object they named. A theta sum Σ q^{n²}cos(knθ) is what modes 9,
+             10 and 11 are, and τ(n) now really carries the tau coefficients —
+             the rest are trigonometric sums and are named as such. See
+             MATHEMATICAL_ACCURACY.md § "GPU displacement ladder". -->
+        <optgroup label="THETA &amp; HARMONIC LATTICES">
+          <option value="8">9. Theta Lattice (radial)</option><option value="9">10. θ₃(q) Jacobi Theta</option>
+          <option value="10">11. τ(n) Ramanujan Tau</option><option value="11">12. Decaying Angular Modes</option>
+          <option value="12">13. Damped Radial Wave</option><option value="13">14. Angular Petal Cascade</option>
+          <option value="14">15. Four-Lobe Radial Wave</option><option value="15">16. Radial-Angular Harmonics</option>
         </optgroup>
-        <optgroup label="WAVE &amp; PDE">
-          <option value="16">17. Wave Equation</option><option value="17">18. Standing Wave</option>
-          <option value="18">19. Heat Equation</option><option value="19">20. Schrödinger</option>
-          <option value="20">21. Helmholtz</option><option value="21">22. KdV Soliton</option>
-          <option value="22">23. Burgers Shock</option><option value="23">24. Navier-Stokes</option>
+        <optgroup label="STANDING &amp; TRAVELLING MODES">
+          <option value="16">17. Travelling Sech Pulse</option><option value="17">18. Standing Wave</option>
+          <option value="18">19. Spiral Decay Modes</option><option value="19">20. Cartesian Mode Grid</option>
+          <option value="20">21. Radial Mode Cascade</option><option value="21">22. Angular Ring Modes</option>
+          <option value="22">23. Radial × Axial Beat</option><option value="23">24. Swirling Ripple Modes</option>
         </optgroup>
-        <optgroup label="FRACTALS &amp; CHAOS">
-          <option value="24">25. Mandelbrot Set</option><option value="25">26. Julia Set</option>
-          <option value="26">27. Lorenz Attractor</option><option value="27">28. Sierpiński</option>
-          <option value="28">29. Fractal Terrain</option><option value="29">30. Newton Fractal</option>
-          <option value="30">31. Dragon Curve</option><option value="31">32. Logistic Map</option>
+        <optgroup label="INTERFERENCE PATTERNS">
+          <option value="24">25. Spiral Interference</option><option value="25">26. Rotating Ripple</option>
+          <option value="26">27. Harmonic Rosette</option><option value="27">28. Chequer Interference</option>
+          <option value="28">29. Petal Ripple</option><option value="29">30. Damped Spiral Modes</option>
+          <option value="30">31. Lattice Beat</option><option value="31">32. Drifting Ring Modes</option>
         </optgroup>
         <optgroup label="SPECTRUM">
-          <option value="32">33. 3D Spectrogram</option><option value="33">34. Waterfall</option>
-          <option value="34">35. FFT Spectrum</option><option value="35">36. EQ 3D</option>
+          <option value="32">33. Turbulent Ring Field</option><option value="33">34. Treble Ripple (coarse)</option>
+          <option value="34">35. Treble Ripple (fine)</option><option value="35">36. EQ 3D</option>
           <option value="36">37. Vocoder</option><option value="37">38. Spectral Centroid</option>
         </optgroup>
         <!-- ── CPU math collections (value="m:<collection>:<key>") ─────────
@@ -1069,7 +1075,7 @@
         <optgroup label="━━ ∿ SPECIAL FUNCTIONS ━━">
           <option value="m:specialFunctions:bessel0">Bessel J₀ Radial</option>
           <option value="m:specialFunctions:bessel1">Bessel J₁ Radial</option>
-          <option value="m:specialFunctions:legendre2">Legendre P₂ Surface</option>
+          <option value="m:specialFunctions:legendre2">Legendre Pₙ Surface</option>
           <option value="m:specialFunctions:gamma_fn">Gamma Function</option>
           <option value="m:specialFunctions:erf">Error Function erf(x)</option>
           <option value="m:specialFunctions:zeta">Riemann Zeta (real axis)</option>
@@ -1077,7 +1083,7 @@
           <option value="m:specialFunctions:hypergeometric">₂F₁ Hypergeometric</option>
           <option value="m:specialFunctions:laguerre">Laguerre Polynomial</option>
           <option value="m:specialFunctions:chebyshev">Chebyshev T_n(x)</option>
-          <option value="m:specialFunctions:sinc">Cardinal Sinc</option>
+          <option value="m:specialFunctions:sinc">Cardinal Sinc (radial)</option>
           <option value="m:specialFunctions:ellipticK">Elliptic Integral K(k)</option>
           <option value="m:specialFunctions:dawson">Dawson Function F(x)</option>
           <option value="m:specialFunctions:clausen">Clausen Function</option>
@@ -1130,13 +1136,13 @@
           <option value="m:trigonometry:tangentWave">Tanh / Smooth Step</option>
           <option value="m:trigonometry:lissajous">Lissajous Height</option>
           <option value="m:trigonometry:hyperbolicGeom">Cosh²−Sinh²=1 Surface</option>
-          <option value="m:trigonometry:chebyshevTrig">Chebyshev via cos(n·arccos)</option>
+          <option value="m:trigonometry:chebyshevTrig">Chebyshev Identity cos(nθ)</option>
           <option value="m:trigonometry:standingWave">Standing Wave</option>
           <option value="m:trigonometry:travelingWave">Traveling Wave</option>
           <option value="m:trigonometry:modeInterference">Mode Interference</option>
-          <option value="m:trigonometry:circularFunctions">sec / csc / cot Landscape</option>
+          <option value="m:trigonometry:circularFunctions">sec · csc Landscape</option>
           <option value="m:trigonometry:atan2Field">atan2 Phase Field</option>
-          <option value="m:trigonometry:inverseTrig">Arcsin / Arccos Surface</option>
+          <option value="m:trigonometry:inverseTrig">Arcsin Surface</option>
         </optgroup>
         <optgroup label="━━ 🔄 COMPLEX NUMBERS ━━">
           <option value="m:complexNumbers:euler">Euler's Formula Re(e^{ix})</option>
@@ -1147,7 +1153,7 @@
           <option value="m:complexNumbers:complexLog">Complex Logarithm</option>
           <option value="m:complexNumbers:riemannSphere">Riemann Sphere Projection</option>
           <option value="m:complexNumbers:mobiusTransform">Möbius Transformation</option>
-          <option value="m:complexNumbers:cauchyRiemann">Cauchy–Riemann Satisfaction</option>
+          <option value="m:complexNumbers:cauchyRiemann">Re(z²) — Harmonic Saddle</option>
           <option value="m:complexNumbers:complexSin">Complex sin(z) Real Part</option>
           <option value="m:complexNumbers:juliaPotential">Julia Potential</option>
           <option value="m:complexNumbers:windingNumber">Winding Number Field</option>
@@ -1201,14 +1207,14 @@
           <option value="m:integralTransforms:waveletTransform">Morlet Wavelet</option>
           <option value="m:integralTransforms:hilbertTransform">Hilbert Transform</option>
           <option value="m:integralTransforms:radonTransform">Radon Transform (sinogram)</option>
-          <option value="m:integralTransforms:hankelTransform">Hankel Transform</option>
-          <option value="m:integralTransforms:mellinTransform">Mellin Transform</option>
+          <option value="m:integralTransforms:hankelTransform">Hankel Kernel J₀(ρ)</option>
+          <option value="m:integralTransforms:mellinTransform">Mellin Integrand x^{s−1}e^{−x}</option>
           <option value="m:integralTransforms:stieltjesTransform">Stieltjes Transform</option>
           <option value="m:integralTransforms:cauchyIntegral">Cauchy Integral Formula</option>
           <option value="m:integralTransforms:stocksFormula">Green's Theorem Flow</option>
           <option value="m:integralTransforms:poissonIntegral">Poisson Integral Formula</option>
           <option value="m:integralTransforms:continuousWavelet">CWT Scalogram</option>
-          <option value="m:integralTransforms:fourierSlice">Fourier Slice Theorem</option>
+          <option value="m:integralTransforms:fourierSlice">Angle-Swept Sinusoid</option>
         </optgroup>
         <optgroup label="━━ ∞ TOPOLOGY & GEOMETRY ━━">
           <option value="m:topology:mobiusStrip">Möbius Strip Height</option>
@@ -1239,7 +1245,7 @@
           <option value="m:cellularAutomata:cyclicCA">Cyclic CA</option>
           <option value="m:cellularAutomata:wiredFire">Wireworld (wire / fire)</option>
           <option value="m:cellularAutomata:sandpile">Abelian Sandpile</option>
-          <option value="m:cellularAutomata:voronoiCA">Voronoi Growth CA</option>
+          <option value="m:cellularAutomata:voronoiCA">Voronoi Tessellation</option>
           <option value="m:cellularAutomata:excitableMedia">Excitable Medium (FitzHugh-Nagumo)</option>
           <option value="m:cellularAutomata:reactionDiffusion">Gray-Scott Pattern</option>
           <option value="m:cellularAutomata:forestFire">Forest Fire CA</option>

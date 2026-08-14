@@ -54,13 +54,60 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
   // FIX: mode 8 loop n=-6..6 unrolled for WebGL1
   else if(mode==8){float s=0.;s+=cos(ang*-6.)*exp(-r*.25*36.*(0.5+t));s+=cos(ang*-5.)*exp(-r*.25*25.*(0.5+t));s+=cos(ang*-4.)*exp(-r*.25*16.*(0.5+t));s+=cos(ang*-3.)*exp(-r*.25*9.*(0.5+t));s+=cos(ang*-2.)*exp(-r*.25*4.*(0.5+t));s+=cos(ang*-1.)*exp(-r*.25*1.*(0.5+t));s+=1.;s+=cos(ang*1.)*exp(-r*.25*1.*(0.5+t));s+=cos(ang*2.)*exp(-r*.25*4.*(0.5+t));s+=cos(ang*3.)*exp(-r*.25*9.*(0.5+t));s+=cos(ang*4.)*exp(-r*.25*16.*(0.5+t));s+=cos(ang*5.)*exp(-r*.25*25.*(0.5+t));s+=cos(ang*6.)*exp(-r*.25*36.*(0.5+t));y=tanh(s*.7)*(0.3+b*.7)*a;}
   else if(mode==9){float s=0.;for(int n=-8;n<=8;n++){float fn=float(n);s+=cos(ang*fn*2.)*exp(-r*.3*fn*fn*(0.5+t));}y=s*.5*(0.3+b*.7)*a;}
-  else if(mode==10){float s=0.;for(int n=1;n<=7;n++){float fn=float(n);s+=sin(fn*3.14159)*exp(-fn*.3)*sin(r*fn*5.*wi*(0.5+t));}y=s*.4*(0.3+b*.7)*a;}
-  else if(mode==11){float s=0.;for(int n=1;n<=7;n++){float fn=float(n);s+=exp(-fn*r*.3)*cos(ang*fn*2.)*sin(fn*t*2.);}y=s*.5*(0.3+b*.7)*a;}
+  // FIX: this branch drew nothing at all. Every term carried the factor
+  // sin(fn*3.14159) with fn integer — that is sin(nπ), which is zero: the seven
+  // values are 2.7e-6, −5.3e-6, 8.0e-6, −1.1e-5, 1.3e-5, −1.6e-5, 1.9e-5, all
+  // of them float residue. Measured surface span over [−3.5, 3.5]² was 7.9e-6
+  // against 0.75…5.5 for its neighbours in the block, and pos.y is assigned,
+  // not accumulated, so picking mode 11 gave a flat plate in a flat colour.
+  // Now weighted by τ(n) itself — 1, −24, 252, −1472, 4830, −6048, −16744,
+  // the coefficients of q∏(1−qⁿ)²⁴ — scaled by 10⁻³ so the sum lands in the
+  // same amplitude band as the rest of the ladder. Unrolled to match the other
+  // WebGL1-safe branches here.
+  else if(mode==10){float s=0.;
+    s+= 0.001*exp(-1.*.3)*sin(r*1.*5.*wi*(0.5+t));
+    s+=-0.024*exp(-2.*.3)*sin(r*2.*5.*wi*(0.5+t));
+    s+= 0.252*exp(-3.*.3)*sin(r*3.*5.*wi*(0.5+t));
+    s+=-1.472*exp(-4.*.3)*sin(r*4.*5.*wi*(0.5+t));
+    s+= 4.830*exp(-5.*.3)*sin(r*5.*5.*wi*(0.5+t));
+    s+=-6.048*exp(-6.*.3)*sin(r*6.*5.*wi*(0.5+t));
+    s+=-16.744*exp(-7.*.3)*sin(r*7.*5.*wi*(0.5+t));
+    y=s*.4*(0.3+b*.7)*a;}
+  // FIX: t here is uTreble, not time, and the whole sum was multiplied by
+  // sin(fn*t*2.) — which is exactly zero when there is no treble. Measured span
+  // in silence: 0.0e+0, against 0.98 at half treble. Every other branch keeps a
+  // floor (the (0.3+b*.7) factor bottoms out at 0.3); this one had none, so the
+  // surface was a flat plate any time the track went quiet.
+  //
+  // FIX(second pass): the first repair wrote the offset INSIDE the harmonic
+  // index — sin(fn*(0.35+t*2.)) — which lines all seven harmonics up in phase
+  // and adds them constructively. Floor gained, ceiling lost: span went 2.046 →
+  // 3.290 under loud audio and 3.070 → 4.935 with the sliders up, against a
+  // camera half-frame of about 3.26. The offset belongs outside the index, so
+  // it shifts every harmonic by the same amount instead of by a multiple of it:
+  // silence 0.680 (was 0.0), loud 1.998, sliders up 2.997 — a floor, and a
+  // ceiling now slightly under what the branch had before either repair.
+  else if(mode==11){float s=0.;for(int n=1;n<=7;n++){float fn=float(n);s+=exp(-fn*r*.3)*cos(ang*fn*2.)*sin(fn*t*2.+0.6);}y=s*.5*(0.3+b*.7)*a;}
   else if(mode==12){y=exp(-r*.6)*sin(r*8.*wi*(0.5+t))*(0.3+b*.7)*a;}
   else if(mode==13){float e=0.;for(int n=1;n<=5;n++){float fn=float(n);e+=cos(ang*fn*4.)*exp(-r*.15*fn);}y=e*.4*(0.3+b*.7)*a;}
   else if(mode==14){y=sin(r*8.*wi*(0.5+t))*cos(ang*4.)*(0.3+b*.7)*a+bt*.3;}
   else if(mode==15){float s=0.;for(int n=1;n<=6;n++){float fn=float(n);s+=sin(fn*r*5.*wi*(0.5+t))*cos(fn*ang);}y=s*.25*(0.3+b*.7)*a;}
-  else if(mode==16){y=h_sech(r*2.-T*2.-(b*.8+.1)*3.)*(0.6+b*.6)*a+bt*.4;}
+  // FIX(r6): the crest sits at r = T + 1.5(0.8b+0.1) and T is uTime, which
+  // only grows — so the pulse crossed the plane's half-diagonal of 4.9497 at
+  // T ≈ 4.2 and never came back. Span fell under 1 % of its T=0 value after
+  // 15.5 s of uptime, reached 7.5e-14 at 42 s and was literally 0.000e+0 from
+  // thirty minutes on: a flat plate for the rest of the session, with the whole
+  // mesh pinned at the extreme. Folding the ARGUMENT into one period rather
+  // than the time turns it into a train of the same pulse, and costs nothing:
+  // sech is even, so mod(u+5., 10.)-5. matches value for value across the wrap
+  // (seam 1.3e-9, against 4.8e-3 for an ordinary 0.008 frame step), where
+  // wrapping the time instead would teleport the crest back to the centre with
+  // a seam of 1.32 — 264 frame steps. Spacing is 5 in r against a corner at
+  // 4.9497, so exactly one crest is on the plate at a time, as before; the
+  // branch is identical to what shipped at T=0 wherever the crest is (6.7e-16
+  // inside r<2.5) and its peak is untouched at every slider setting — 0.4199 at
+  // the factory sliders, 2.9700 at the top of both.
+  else if(mode==16){float u=r*2.-T*2.-(b*.8+.1)*3.;y=h_sech(mod(u+5.,10.)-5.)*(0.6+b*.6)*a+bt*.4;}
   else if(mode==17){y=sin(xz.x*6.*wi*(0.5+t))*cos(xz.y*6.*wi*(0.5+t))*(0.3+b*.7)*a+bt*.4;}
   else if(mode==18){float s=0.;for(int n=1;n<=4;n++){float fn=float(n);s+=sin(r*fn*4.*wi*(0.5+t)+ang*fn)*exp(-r*.2*fn);}y=s*.3*(0.3+b*.7)*a;}
   else if(mode==19){float s=0.;for(int n=1;n<=4;n++){float fn=float(n);s+=cos(xz.x*fn*5.*wi)*sin(xz.y*fn*5.*wi);}y=s*.2*(0.3+b*.7)*a+bt*.4;}
@@ -74,14 +121,41 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
   else if(mode==27){float s=0.;for(int n=1;n<=4;n++){float fn=float(n);s+=sin(xz.x*fn*4.*wi*(0.5+t))*cos(xz.y*fn*4.*wi*(0.5+t))/(fn*.5);}y=s*.2*(0.3+b*.7)*a+bt*.3;}
   else if(mode==28){y=sin(r*12.*wi*(0.5+t))*sin(ang*5.)*(0.3+b*.7)*a+bt*.4;}
   else if(mode==29){float s=0.;for(int n=1;n<=4;n++){float fn=float(n);s+=exp(-r*.2*fn)*sin(r*fn*6.*wi*(0.5+t)+ang*fn*2.);}y=s*.35*(0.3+b*.7)*a;}
-  // FIX: mode 30 loop n=-4..4 unrolled for WebGL1
-  else if(mode==30){float s=0.;s+=sin(xz.x*-4.*5.*wi)*cos(xz.y*-4.*5.*wi)*exp(-4.*.3);s+=sin(xz.x*-3.*5.*wi)*cos(xz.y*-3.*5.*wi)*exp(-3.*.3);s+=sin(xz.x*-2.*5.*wi)*cos(xz.y*-2.*5.*wi)*exp(-2.*.3);s+=sin(xz.x*-1.*5.*wi)*cos(xz.y*-1.*5.*wi)*exp(-1.*.3);s+=0.;s+=sin(xz.x*1.*5.*wi)*cos(xz.y*1.*5.*wi)*exp(-1.*.3);s+=sin(xz.x*2.*5.*wi)*cos(xz.y*2.*5.*wi)*exp(-2.*.3);s+=sin(xz.x*3.*5.*wi)*cos(xz.y*3.*5.*wi)*exp(-3.*.3);s+=sin(xz.x*4.*5.*wi)*cos(xz.y*4.*5.*wi)*exp(-4.*.3);y=s*.25*(0.3+b*.7)*a+bt*.4;}
+  // FIX: mode 30 loop n=-4..4 unrolled for WebGL1 — and the unrolling killed it.
+  // The summand sin(5n·x)·cos(5n·z) is ODD in n, and the weight as written was
+  // EVEN: the n = −4 term carried exp(-4.*.3), exactly what the n = +4 term
+  // carried. So every pair cancelled and the branch returned zero for all x, z,
+  // wi, b, a — measured span 1.1e-16, pure round-off. (Its sibling unrolling at
+  // mode==8 survives because its summand cos(ang·n) is even, so its pairs add
+  // instead of cancelling. The difference is the parity of the summand, not of
+  // the weight.) The exponent now carries the sign of n, which is what a loop
+  // over exp(-fn*.3) would have produced; the pairs combine to
+  // −2·sin(5n·x)·cos(5n·z)·sinh(0.3n) and the surface spans ~1.1 at b = 0.5.
+  else if(mode==30){float s=0.;s+=sin(xz.x*-4.*5.*wi)*cos(xz.y*-4.*5.*wi)*exp(4.*.3);s+=sin(xz.x*-3.*5.*wi)*cos(xz.y*-3.*5.*wi)*exp(3.*.3);s+=sin(xz.x*-2.*5.*wi)*cos(xz.y*-2.*5.*wi)*exp(2.*.3);s+=sin(xz.x*-1.*5.*wi)*cos(xz.y*-1.*5.*wi)*exp(1.*.3);s+=0.;s+=sin(xz.x*1.*5.*wi)*cos(xz.y*1.*5.*wi)*exp(-1.*.3);s+=sin(xz.x*2.*5.*wi)*cos(xz.y*2.*5.*wi)*exp(-2.*.3);s+=sin(xz.x*3.*5.*wi)*cos(xz.y*3.*5.*wi)*exp(-3.*.3);s+=sin(xz.x*4.*5.*wi)*cos(xz.y*4.*5.*wi)*exp(-4.*.3);y=s*.25*(0.3+b*.7)*a+bt*.4;}
   else if(mode==31){float s=0.;for(int n=1;n<=5;n++){float fn=float(n);s+=cos(r*fn*4.*wi*(0.5+t)+T*fn*.3)*exp(-r*.15);}y=s*.2*(0.3+b*.7)*a+bt*.3;}
   else if(mode==32){y=sin(r*8.*wi+T)*(0.2+b*.8)*a+turb(xz*(2.+t)*wi)*b*.2+sin(ang*4.)*.1+bt*.4;}
   else if(mode==33){y=sin(r*10.*wi*(0.5+t))*exp(-r*.3)*(0.3+b*.7)*a;}
   else if(mode==34){y=sin(r*12.*wi*(0.5+t))*exp(-r*.3)*(0.3+b*.7)*a;}
-  else if(mode==35){float eq=0.;for(int i=1;i<=4;i++){float fi=float(i);eq+=sin(r*8.*wi*fi)*.2;}y=eq*.4*a;}
-  else if(mode==36){float v3=0.;for(int i=1;i<=4;i++){float fi=float(i);v3+=sin(r*10.*wi*fi)*.2;}y=v3*.5*a;}
+  // FIX: an equaliser and a vocoder that did not read the spectrum. Both branches
+  // used only uAmp and uWI — no uBass, no uMid, no uTreble anywhere in them — so
+  // their output was identical in silence and under loud music. Measured: the
+  // surface span came to 5.172e-1 and 6.465e-1 in all three uniform states,
+  // digit for digit, while the other 36 modes all moved. The bands now drive
+  // the harmonics they are named for: low harmonic ← bass, middle ← mid, upper
+  // two ← treble, which is what a three-band EQ display and a channel vocoder
+  // both do.
+  else if(mode==35){float eq=0.;
+    eq+=sin(r* 8.*wi     )*(0.10+b*.55);
+    eq+=sin(r* 8.*wi*2.  )*(0.10+m*.55);
+    eq+=sin(r* 8.*wi*3.  )*(0.08+t*.50);
+    eq+=sin(r* 8.*wi*4.  )*(0.05+t*.30);
+    y=eq*.4*a;}
+  else if(mode==36){float v3=0.;
+    v3+=sin(r*10.*wi     )*(0.08+b*.50);
+    v3+=sin(r*10.*wi*2.  )*(0.08+m*.45)*cos(ang*2.);
+    v3+=sin(r*10.*wi*3.  )*(0.06+t*.40)*cos(ang*3.);
+    v3+=sin(r*10.*wi*4.  )*(0.04+t*.25)*cos(ang*4.);
+    y=v3*.5*a;}
   // Spectral Centroid: frequency scales with treble/bass ratio — the wave
   // gets denser when highs dominate, sparser when lows dominate. Ratio is
   // normalised so silence (b≈t≈0) lands at the neutral midpoint. Note: the

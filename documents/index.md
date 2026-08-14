@@ -10,7 +10,7 @@ VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern
 
 ## What it does
 
-The visualizer takes any audio source and decomposes it into bass and treble bands plus beat detection. Bass and treble drive geometric deformation through canonical mathematical functions — Bessel functions, modular forms, fractals, reaction-diffusion equations, and others — rather than from pre-rendered animations. The beat detector runs in the background: its BPM feeds the Camera Programmer and the beat-synced GIF recorder, while its direct effect on the default visualisation is intentionally muted.
+The visualizer takes any audio source and decomposes it into bass and treble bands plus beat detection. Bass and treble drive geometric deformation through canonical mathematical functions — Bessel functions, theta sums, fractals, reaction-diffusion equations, and others — rather than from pre-rendered animations. The beat detector runs in the background: its BPM feeds the Camera Programmer and the beat-synced GIF recorder, while its direct effect on the default visualisation is intentionally muted.
 
 - **192 CPU formulas** across 12 mathematical domains (fractals, special functions, probability, linear algebra, trigonometry, complex analysis, Fourier series, differential equations, integral transforms, topology, cellular automata, quantum mechanics)
 - **38 GPU shaders** (audio-reactive vertex and fragment programs) running on the graphics card for real-time performance
@@ -22,7 +22,7 @@ The visualizer takes any audio source and decomposes it into bass and treble ban
 
 ## Mathematical accuracy
 
-Every formula is documented with its accuracy tier. 122 formulas use closed-form mathematical expressions at IEEE 754 double precision (~10⁻¹⁴). 42 use bounded numerical approximations with documented error margins (10⁻³ to 10⁻⁷). 28 are visualisation-grade — qualitatively faithful but not numerically verified for production scientific use. Reference values are cross-checked against mpmath, scipy.special, and NIST DLMF. Full per-formula breakdown and test methodology is available in the project's [Mathematical Accuracy](https://github.com/vimathic/vimathic/blob/main/MATHEMATICAL_ACCURACY.md) document on GitHub.
+Every formula is documented with its accuracy tier. 123 formulas use closed-form mathematical expressions at IEEE 754 double precision (~10⁻¹⁴). 43 use bounded numerical approximations with documented error margins (10⁻³ to 10⁻⁷). 26 are visualisation-grade — qualitatively faithful but not numerically verified for production scientific use. Reference values are cross-checked against mpmath, scipy.special, and NIST DLMF. Full per-formula breakdown and test methodology is available in the project's [Mathematical Accuracy](https://github.com/vimathic/vimathic/blob/main/MATHEMATICAL_ACCURACY.md) document on GitHub.
 
 ## Single-file deployment
 
