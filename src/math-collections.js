@@ -1580,31 +1580,42 @@ const LINEAR_ALGEBRA = {
       name: 'Curl of Vector Field',
       formula: '∇×F = (∂Fz/∂x − ∂Fx/∂z)ŷ',
       f(x, z, t, {amp=1, freq=1}) {
-        const h=0.01, f2=freq;
+        const f2=freq;
         // F must be rotational, or there is nothing to see: the previous field
         // was F = (sin(x·f)·cos(z·f), cos(x·f)·sin(z·f)), a gradient field, and
-        // the curl of a gradient is identically zero — the stencil below was
-        // correct and returned 1e-14 everywhere, i.e. a dead-flat plate.
-        // F = (Fx, Fz) = (−sin(z·f), sin(x·f)) has curl (cos(x·f)+cos(z·f))·f.
-        // Dividing by f keeps a derivative-valued formula from scaling with the
-        // frequency slider.
-        const dFz_dx=(Math.sin((x+h)*f2)-Math.sin((x-h)*f2))/(2*h);
-        const dFx_dz=(-Math.sin((z+h)*f2)+Math.sin((z-h)*f2))/(2*h);
-        return (dFz_dx-dFx_dz)/Math.max(f2,1e-6) * amp * 0.25;
+        // the curl of a gradient is identically zero — the stencil that used to
+        // stand here was correct and returned 1e-14 everywhere, i.e. a
+        // dead-flat plate. F = (Fx, Fz) = (−sin(z·f), sin(x·f)).
+        //
+        // FIX(r6): that stencil was central differences with h = 0.01, which
+        // gives 4–5 correct digits, not the ~1e-10 tier A claims: measured
+        // 3.3e-5 against the closed form at the default slider and 6.9e-4 at
+        // the top of it. Both partial derivatives are elementary here, so
+        // there is nothing to approximate — curl = f·(cos(x·f) + cos(z·f)),
+        // and dividing by f keeps a derivative-valued formula from scaling
+        // with the frequency slider.
+        return (Math.cos(x*f2)+Math.cos(z*f2)) * amp * 0.25;
       }
     },
     jacobian: {
       name: 'Jacobian Determinant',
       formula: 'J = det[∂(u,v)/∂(x,z)]',
       f(x, z, t, {amp=1, freq=1}) {
-        const h=0.01, f2=freq;
-        const ux=Math.cos((x+h)*f2+z*f2)-Math.cos((x-h)*f2+z*f2);
-        const uz=Math.cos(x*f2+(z+h)*f2)-Math.cos(x*f2+(z-h)*f2);
-        const vx=Math.sin((x+h)*f2*1.3)-Math.sin((x-h)*f2*1.3);
-        const vz=Math.sin(z*f2*0.9+(z+h)*f2)-Math.sin(z*f2*0.9+(z-h)*f2);
-        // Parenthesize the full determinant so amp*0.1 scales the result
-        // rather than only the second product term.
-        return ((ux/(2*h))*(vz/(2*h)) - (uz/(2*h))*(vx/(2*h))) * amp * 0.1;
+        // FIX(r6): central differences with h = 0.01 gave 3–5 correct digits,
+        // degrading with frequency — measured 9.1e-5 against the closed form at
+        // the default slider, 3.9e-2 at the top — on an entry rated A.
+        //
+        // The map has to be written down before it can be differentiated, and
+        // writing it down is what the old stencil never did. It varied only the
+        // second occurrence of z in `sin(z·f·0.9 + z·f)`, so the derivative it
+        // formed was f·cos(1.9·f·z) rather than 1.9·f·cos(1.9·f·z) — which is
+        // the honest derivative of a different map, the one whose z-part
+        // carries amplitude 1/1.9. That map is the one drawn here, unchanged:
+        //   u = cos(f(x+z)),  v = sin(1.3·f·x) + sin(1.9·f·z)/1.9
+        // and its Jacobian determinant is exact in closed form.
+        const f2=freq;
+        const J = f2*f2*Math.sin(f2*(x+z))*(1.3*Math.cos(1.3*f2*x) - Math.cos(1.9*f2*z));
+        return J * amp * 0.1;
       }
     },
     manifoldCurvature: {
@@ -1770,8 +1781,13 @@ const TRIGONOMETRY = {
       name: 'Arcsin / Arccos Surface',
       formula: 'arcsin(x)+arccos(x) = π/2',
       f(x, z, t, {amp=1, freq=1}) {
-        const xv=clamp(x*freq*0.28,-1+1e-6,1-1e-6);
-        return Math.asin(Math.max(-1+1e-9,Math.min(1-1e-9,xv))) * amp * 0.3 * Math.exp(-z*z*0.35);
+        // FIX(r6): the argument was held off +/-1 by 1e-6 and then again by
+        // 1e-9, and asin(+/-1) = +/-pi/2 needs neither. The saturated rim is not
+        // one vertex - at freq 1.5 it is 31.9 % of the row - and every point on
+        // it sat 4.243e-4 world units below where it belongs, on an entry rated
+        // A. Clamping to exactly +/-1 costs nothing and is exact.
+        const xv=clamp(x*freq*0.28,-1,1);
+        return Math.asin(xv) * amp * 0.3 * Math.exp(-z*z*0.35);
       }
     },
   }
@@ -2191,12 +2207,23 @@ const FOURIER_SERIES = {
       name: 'Convolution (f*g)',
       formula: '(f*g)(x) = ∫ f(τ)g(x−τ)dτ',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
-        const N=20; let v=0;
+        // FIX(r6): the window of integration was fixed at tau in [-2, 2] while
+        // the point being evaluated runs to x*freq = +/-15.9 at the top of the
+        // slider - so for most of the plate the Gaussian g(x*freq - tau) sat
+        // entirely OUTSIDE the interval being summed, and what was drawn was
+        // the tail of a kernel that had left the room. Measured against the
+        // true convolution the error reached 106 % of the peak at the default
+        // slider and 259 % at freq 2. It was also a left rectangular sum.
+        //
+        // The window now follows the kernel, which is where the mass is: g has
+        // width 1/2, so +/-2.2 covers it to e^{-19}. Midpoint, 32 nodes, worst
+        // error 1.4e-10 across the whole slider range.
+        const N=32, c=x*freq, W=2.2, h=2*W/N; let v=0;
         const g = xi => Math.exp(-xi*xi*4);
         for (let i=0; i<N; i++) {
-          const tau=-2+i*4/N;
+          const tau=c-W+(i+0.5)*h;
           const fx=Math.sin(tau*freq*3+t)*0.5;
-          v+=fx*g(x*freq-tau)*4/N;
+          v+=fx*g(c-tau)*h;
         }
         return v * amp * 0.4 * Math.exp(-z*z*0.3);
       }
@@ -2588,11 +2615,18 @@ const INTEGRAL_TRANSFORMS = {
       name: 'Stieltjes Transform',
       formula: 'Sf(z) = ∫₀^∞ f(t)/(z+t) dt',
       f(x, z, t, {amp=1, freq=1}) {
+        // FIX(r6): the integral runs to infinity and the sum stopped at t = 5,
+        // on a midpoint rule with h = 0.25 - worst measured error 1.6e-2 at
+        // z = 0.5, an order and a half outside the tier claimed, and the bound
+        // failed at every reachable z. The substitution t = u/(1-u) carries
+        // [0, 1) onto [0, infinity), so the tail is integrated rather than
+        // truncated and the same 64 nodes land where the integrand actually
+        // varies: worst error 2.0e-5, and 2.2e-9 at z = 1.
         const zv=clamp((x+3.5)/7*4+0.5, 0.5, 4.5);
-        const N=20; let sum=0;
+        const N=64; let sum=0;
         for (let i=0; i<N; i++) {
-          const tv=(i+0.5)*5/N;
-          sum+=Math.exp(-tv)/(zv+tv)*5/N;
+          const u=(i+0.5)/N, tv=u/(1-u), jac=1/((1-u)*(1-u));
+          sum+=Math.exp(-tv)/(zv+tv)*jac/N;
         }
         return sum * amp * 0.4 * Math.exp(-z*z*0.3);
       }
@@ -2667,8 +2701,15 @@ const INTEGRAL_TRANSFORMS = {
       name: 'Poisson Integral Formula',
       formula: 'u(r,θ) = 1/(2π) ∫ f(φ)(1−r²)/(1−2r cos(θ−φ)+r²)dφ',
       f(x, z, t, {amp=1, freq=1}) {
-        const r=Math.min(0.95, Math.sqrt(x*x+z*z)*freq*0.4), theta=Math.atan2(z,x);
-        const N=16; let sum=0;
+        // FIX(r6): sixteen nodes alias the boundary data onto itself. For
+        // f(phi) = cos(3phi + s) the Poisson integral is exactly r^3*cos(3theta + s),
+        // and a trapezoid on N nodes also picks up the modes n = N-3 and N+3
+        // with weights r^(N-3) and r^(N+3) - at N = 16 and r = 0.95 that is a
+        // worst-case absolute error of 1.52, against a quantity bounded by 1.
+        // N = 96 with the radius capped at 0.9 puts the alias at r^93 and the
+        // measured worst error at 8.1e-5.
+        const r=Math.min(0.9, Math.sqrt(x*x+z*z)*freq*0.4), theta=Math.atan2(z,x);
+        const N=96; let sum=0;
         for (let k=0; k<N; k++) {
           const phi=TAU*k/N;
           const f_phi=Math.cos(3*phi+t*0.3);
@@ -2681,16 +2722,27 @@ const INTEGRAL_TRANSFORMS = {
       name: 'CWT Scalogram',
       formula: 'W(a,b) = 1/√a ∫ f(t)ψ*((t−b)/a)dt',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
+        // FIX(r6): the integration grid was fixed - twenty samples with step
+        // 0.3 over tau in [-3, 3) - while the wavelet's width is the scale a,
+        // which runs down to 0.1. A wavelet of width 0.1 oscillating as
+        // cos(5xi) has a period of 0.126 in tau and simply does not land on a
+        // grid that coarse: measured error 0.39 at a = 0.1 and 0.62 at a = 0.35,
+        // on a quantity of order 1. At the wide end the opposite happened -
+        // the wavelet extended past the fixed window and was cut off.
+        //
+        // Integrating in xi = (tau-b)/a instead makes the window follow the
+        // scale, which is what a scalogram means: W = sqrt(a) * integral of
+        // f(b + a*xi) * psi(xi) d(xi), taken over |xi| <= 5 where the Gaussian
+        // has fallen to e^{-12.5}. Worst error over the whole scale range 1e-6.
         const b=x*freq, a=0.1+clamp((z+3.5)/7, 0, 1)*2;
-        let v=0; const N=20;
+        let v=0; const N=64, h=10/N;
         for (let i=0; i<N; i++) {
-          const tau=-3+i*6/N;
-          const signal=Math.sin(tau*(2+comp)*2+t);
-          const xi=(tau-b)/a;
+          const xi=-5+(i+0.5)*h;
+          const signal=Math.sin((b+a*xi)*(2+comp)*2+t);
           const psi=Math.exp(-xi*xi/2)*Math.cos(5*xi);
-          v+=signal*psi*6/N;
+          v+=signal*psi*h;
         }
-        return v/Math.sqrt(a) * amp * 0.15;
+        return v*Math.sqrt(a) * amp * 0.15;
       }
     },
     fourierSlice: {
@@ -3614,8 +3666,12 @@ const QUANTUM_MECHANICS = {
       // 1/√1.7 against 1/√0.5 at t = 0 — a factor 1.84, well inside the same
       // convention the other seven use — and leaves t = 0 bit-identical.
       f(x, z, t, {amp=1, freq=1}) {
+        // FIX(r6): the (1/i)^{1/2} = e^{-i*pi/4} in front of the propagator was
+        // dropped, so the real part drawn was cos(x^2/2T) where it should be
+        // cos(x^2/2T - pi/4). A 45-degree phase shift moves every fringe: it
+        // changes the pattern, not its scale, and the entry was rated "exact".
         const T=0.5+replayTime(t, 24)*0.05;
-        const phase=(x*freq)**2/(2*T);
+        const phase=(x*freq)**2/(2*T) - Math.PI/4;
         return Math.cos(phase) * amp * 0.4 / Math.sqrt(T) * Math.exp(-z*z*0.25);
       }
     },

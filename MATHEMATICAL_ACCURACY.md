@@ -17,8 +17,8 @@ SCIENCE.md came to name four modular forms of which one was implemented.
 
 | Tier | Count | Definition | Marketing-defensible? |
 |------|------:|------------|:---------------------:|
-| **A** — machine precision | **129** | Closed-form analytic expressions evaluated at IEEE 754 double precision (~10⁻¹⁰ to 10⁻¹⁴ accuracy). | ✓ Yes |
-| **B** — bounded approximation | **39** | Polynomial fits, finite-converged series, well-behaved iterative methods, real PDE/ODE simulations on adaptive grids. Documented error ≤ 10⁻³ to 10⁻⁷. | ✓ Yes |
+| **A** — machine precision | **130** | Closed-form analytic expressions evaluated at IEEE 754 double precision (~10⁻¹⁰ to 10⁻¹⁴ accuracy). | ✓ Yes |
+| **B** — bounded approximation | **38** | Polynomial fits, finite-converged series, well-behaved iterative methods, real PDE/ODE simulations on adaptive grids. Documented error ≤ 10⁻³ to 10⁻⁷. | ✓ Yes |
 | **C** — visualization-grade | **24** | Truncated chaotic iterations, decorative modulations, simplified models. Qualitatively faithful but not numerically exact. | Conditional |
 | **D** — defects | **0** | All previously identified defects fixed and verified by automated tests. | n/a |
 
@@ -244,8 +244,8 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `spectralRadius` | Spectral Radius | 🟢 A | Round 6: ρ = (\|tr\| + √disc)/2 for a real pair and √det for a complex one — both branches closed-form and exact. The previous kernel returned √\|disc\|·0.3, which is 0.3·\|λ₁ − λ₂\|, the spread rather than the radius; the trace here is not zero (tr = x·freq·comp), so the ratio to ρ ran across [0.220, 0.600] and no constant could absorb it. The 0.8 clamp went with it — it was pinning 57.8 % of the mesh flat at the default slider. |
 | `matrixExp` | Matrix Exponential | 🟡 C | `cosh(r·comp)·cos(r) - 1` is a stylized substitute, not general e^A. |
 | `kronecker` | Kronecker Product | 🔵 B | Grid+sub-grid product structure correct conceptually. |
-| `vectorField` | Curl ∇×F | 🟢 A | Central-difference curl of F = (−sin(z·f), sin(x·f)), error O(h²) with h=0.01. The field has to be named: the stencil was always correct, but it was applied to a gradient field, whose curl is identically zero — the formula rendered a flat plate until the field was replaced. |
-| `jacobian` | Jacobian Det | 🟢 A | Operator precedence bug fixed — entire determinant expression now correctly scaled by `amp*0.1`. |
+| `vectorField` | Curl ∇×F | 🟢 A | Closed form. F = (−sin(z·f), sin(x·f)) has curl f·(cos(x·f) + cos(z·f)), divided by f so a derivative-valued formula does not scale with the frequency slider. The field has to be named: the stencil that used to stand here was correct, but it was applied to a gradient field, whose curl is identically zero — the formula rendered a flat plate until the field was replaced. Round 6 removed the stencil itself: central differences with h = 0.01 give 4–5 correct digits, measured 3.3e-5 at the default slider and 6.9e-4 at the top of it, which is not the ~10⁻¹⁰ this row claimed. |
+| `jacobian` | Jacobian Det | 🟢 A | Closed form for u = cos(f(x+z)), v = sin(1.3fx) + sin(1.9fz)/1.9 — which is the map the old stencil was in fact differentiating: it varied only the second occurrence of z in `sin(z·f·0.9 + z·f)`, so the derivative it formed was f·cos(1.9fz) rather than 1.9f·cos(1.9fz). The drawn surface is unchanged; it is now exact rather than 9.1e-5 out at the default slider and 3.9e-2 at the top. (Round 1 fixed an operator-precedence bug here; round 6 removed the stencil.) |
 | `manifoldCurvature` | Gaussian Curvature | 🔵 B | Round 6: now the full K = (F_xx·F_zz − F_xz²)/(1 + F_x² + F_z²)², h = 0.05 central differences, worst deviation from the closed-form K 8.4e-5 over the plate. The denominator — named in the formula string — was absent, so the drawn quantity was the Hessian determinant, off by up to 1.39× in shape, not scale. The display constant rose 0.15 → 6.0 with it (the old one left the peak at 0.021 units against a ~3-unit frame) and the ±0.6 clamp became `soften(±1.2, ±2.6)`: K grows as freq⁴ where both slopes vanish, so the over-drive range is folded instead of cut. |
 
 ### 5. Trigonometry (16) — 14 A · 1 B · 1 C · 0 D
@@ -267,7 +267,7 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `modeInterference` | Mode interference | 🟢 A | Σ sin(nx)·cos(nωt)/n. |
 | `circularFunctions` | sec/csc/cot | 🟡 C | Threshold regularization `\|cos\|>0.1` — not actual sec/csc, decorative. |
 | `atan2Field` | atan2 phase | 🟢 A | Exact. |
-| `inverseTrig` | arcsin | 🟢 A | Math.asin clamped to ±1. |
+| `inverseTrig` | arcsin | 🟢 A | Math.asin clamped to exactly ±1. Round 6: the argument was held off ±1 by 1e-6 and then again by 1e-9, and asin(±1) = ±π/2 needs neither — the whole saturated rim sat 4.243e-4 world units below where it belongs, and the rim is 31.9 % of the row at freq 1.5, not one vertex. |
 
 ### 6. Complex Numbers (16) — 14 A · 1 B · 1 C · 0 D
 
@@ -290,7 +290,7 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `argandField` | arg(z^n) | 🟢 A | sin(n·θ). |
 | `riemannZetaStrip` | ζ on critical strip | 🟡 C | Truncated Dirichlet series — **diverges** on Re(s)=½. Real critical-line ζ needs Riemann-Siegel formula. |
 
-### 7. Fourier Series (16) — 14 A · 2 B · 0 C · 0 D
+### 7. Fourier Series (16) — 15 A · 1 B · 0 C · 0 D
 
 This is the cleanest collection — every wave is a real truncated Fourier series, exhibiting genuine convergence behaviour including the Gibbs phenomenon.
 
@@ -306,7 +306,7 @@ This is the cleanest collection — every wave is a real truncated Fourier serie
 | `parseval` | Parseval spectrum | 🟢 A | \|cₙ\|² for square wave. |
 | `wavelets` | Haar wavelet | 🟢 A | ±1 indicator on dyadic intervals. |
 | `dct` | DCT-II | 🔵 B | Full DCT-II, X[k] = Σₙ x[n]cos(π(n+½)k/N) over N=8 samples of a two-harmonic test signal with f₀ = 1 + comp·3. Exact to float64; kept at B because the signal is synthetic rather than a canonical function. Replaced a sum of the basis vector alone, which is the transform of the constant 1 and therefore exactly 0 for every k ≥ 1. |
-| `convolution` | (f*g) | 🔵 B | Trapezoidal-ish integration N=20. |
+| `convolution` | (f*g) | 🟢 A | Midpoint rule, 32 nodes, over a window that follows the evaluation point. Round 6: the window was fixed at τ ∈ [−2, 2] while x·freq runs to ±15.9, so for most of the plate the Gaussian kernel sat entirely outside the interval being summed — measured error 106 % of the peak at the default slider and 259 % at freq 2. Worst error now 1.4e-10 across the whole slider range. |
 | `spectralLeakage` | Hann + DFT | 🟢 A | Real Hann window + DFT magnitude. |
 | `harmonics` | Σ aₙ sin(nx) | 🟢 A | Standard harmonic sum. |
 | `stochasticFourier` | Random-phase Fourier | 🟢 A | Despite "random" naming — fully deterministic seeded phases, exactly reproducible. |
@@ -348,11 +348,11 @@ This is the cleanest collection — every wave is a real truncated Fourier serie
 | `radonTransform` | Sinogram | 🟢 A | Analytic Radon transform of two Gaussians (closed form). Replaced decorative rotated Gaussian. |
 | `hankelTransform` | "Hankel of f" | 🟡 C | Just J₀(ρ)·exp(-ρ·0.3) — that's the kernel evaluated, not the transform of any function. |
 | `mellinTransform` | Mellin kernel | 🔵 B | x^(s-1)·e^(-x) is the integrand. Not the transform itself. |
-| `stieltjesTransform` | Stieltjes | 🔵 B | Numerical N=20 integration. |
+| `stieltjesTransform` | Stieltjes | 🔵 B | Midpoint on the substitution t = u/(1−u), which carries [0, ∞) onto [0, 1), 64 nodes. Round 6: the integral runs to infinity and the sum stopped at t = 5 with h = 0.25 — worst error 1.6e-2 at z = 0.5, an order and a half outside this tier, and the bound failed at every reachable z. Now 2.0e-5 worst, 2.2e-9 at z = 1, checked against e^z·E₁(z). |
 | `cauchyIntegral` | Cauchy formula | 🟢 A | Round 6: singularity subtraction, ∮f/(z−z₀)dz = ∮[f(z)−f(z₀)]/(z−z₀)dz + f(z₀)·2πi·n(z₀). The regular integrand is the polynomial z + z₀ for f = z²+c, so the quadrature never meets the pole, and the winding number is counted by argument increments. Plain quadrature broke as z₀ neared the contour and the reachable region crosses it (\|z₀\| reaches 2.47 against R = 2): peak 1.28 / 4.37 / 14.7 / 35.1 across grids 25 / 90 / 161 / 400, and 33 % low inside the contour. Now exact to 1e-12 at every mesh density. |
 | `stocksFormula` | Green's theorem | 🟢 A | Curl computed analytically, exact. |
-| `poissonIntegral` | Poisson formula | 🔵 B | Discretized N=16 boundary integral. |
-| `continuousWavelet` | CWT scalogram | 🔵 B | Numerical N=20 wavelet transform. |
+| `poissonIntegral` | Poisson formula | 🔵 B | Trapezoid on 96 nodes, radius capped at 0.9. Round 6: for boundary data cos(3φ+s) the integral is exactly r³cos(3θ+s), and a trapezoid on N nodes also picks up the modes N±3 with weights r^(N∓3) — at N = 16 and r = 0.95 that is a worst absolute error of 1.52 on a quantity bounded by 1. Now 8.1e-5. |
+| `continuousWavelet` | CWT scalogram | 🔵 B | Integrated in ξ = (τ−b)/a over \|ξ\| ≤ 5, 64 nodes, so the window follows the scale. Round 6: the grid was fixed at twenty samples of step 0.3 while the scale runs down to a = 0.1, whose oscillation has period 0.126 in τ — the wavelet simply did not land on it (error 0.39 at a = 0.1, 0.62 at a = 0.35, on a quantity of order 1) — and at the wide end the same fixed window cut the wavelet off. Worst error now 1e-6 over the whole scale range. |
 | `fourierSlice` | Slice theorem | 🟡 C | Decorative; doesn't actually compute slice. |
 
 ### 10. Topology & Geometry (16) — 5 A · 6 B · 5 C · 0 D
@@ -393,8 +393,8 @@ The cleanest collection: integer-valued automata with discrete rules — these a
 | `wiredFire` | Wireworld | 🟢 A | Exact 4-state CA on 50×50 internal grid. |
 | `sandpile` | Abelian Sandpile | 🟢 A | Exact toppling rule on 40×40 internal grid. |
 | `voronoiCA` | Voronoi growth | 🟢 A | Exact nearest-seed. |
-| `excitableMedia` | FitzHugh-Nagumo | 🔵 B | Real FHN PDE on 64×64 internal grid, Euler integration. Bilinearly interpolated to display mesh. ~10⁻³ accuracy limited by grid discretisation. |
-| `reactionDiffusion` | Gray-Scott | 🔵 B | Real Gray-Scott PDE on 64×64 internal grid, configurable F/k regimes. Bilinearly interpolated to display mesh. ~10⁻³ accuracy limited by grid discretisation and Euler integration. |
+| `excitableMedia` | FitzHugh-Nagumo | 🔵 B | Real FHN PDE on 64×64 internal grid, explicit Euler at dt = 0.1, bilinearly interpolated to the display mesh. Round 6 corrected the error claim rather than the code: the time-stepping error alone is 3.9e-3 in u, whose display range is [0, 1] — about four times the ~10⁻³ this row used to assert, before any spatial error on a front two cells wide. The number stated is now the measured one. |
+| `reactionDiffusion` | Gray-Scott | 🔵 B | Real Gray-Scott PDE on 64×64 internal grid, configurable F/k regimes, bilinearly interpolated to the display mesh. Round 6 corrected the error claim rather than the code: explicit Euler at dt = 1.0 contributes 5.5e-2 to 8.5e-2 in the displayed clamp(4v, 0, 1), whose range is exactly [0, 1], and 1.7e-2 in v itself — seventeen to eighty-five times the ~10⁻³ this row used to assert. Reducing dt would cost a proportional number of iterations on a device that already carries this entry as the heaviest in the catalogue, so the number is stated instead of the tier being pretended. |
 | `forestFire` | Forest Fire CA | 🟢 A | Exact tree/fire/ash CA on 50×50 internal grid. |
 | `conway3D` | Conway 3D | 🔵 B | Real 3D B5-7/S6 simulation on 18³ grid, 3–5 generations. Mid-y slice extracted and bilinearly interpolated to display mesh. Replaced 1D Wolfram rule. |
 | `turmite` | Turmite | 🟢 A | 2-state 2-colour turmite on a 56×56 internal grid. Round 6 replaced the transition table: both state-0 rows of the old one wrote state 0, so the state-1 rows were unreachable and the machine degenerated into a one-state ant of period 8 — 4 raised cells out of 3136. The new table is the survivor of an exhaustive run over all 65 536 rules of the family, scored on both states being used, the pattern still growing at the end of the run, and fill; it reaches 7.7 % of the plate at 700 steps and 39.3 % at 6000, where the runner-up saturates at 7.0 %. The step count rose to 1500 + comp·3000 to make the complexity slider visible (19 % → 35 %). |
@@ -417,7 +417,7 @@ The cleanest collection: integer-valued automata with discrete rules — these a
 | `coherentState` | Wigner of coherent | 🟢 A | 2·exp(-2\|α-β\|²) exact. |
 | `atomicOrbitals` | sp² hybrid (xz-plane) | 🟢 A | Proper 3-lobe geometry at 120° in xz-plane. Renamed from misleading "sp³" — honest sp² description. |
 | `bellState` | Bell correlation | 🟢 A | E(a,b) = -cos(a-b) exact. |
-| `feynmanPath` | Free propagator | 🟢 A | (m/2πiħt)^½·exp(imx²/2ħt) — Re part only, exact. |
+| `feynmanPath` | Free propagator | 🟢 A | (m/2πiħt)^½·exp(imx²/2ħt) — real part. Round 6 restored the (1/i)^{1/2} = e^{−iπ/4} that was dropped: the real part is cos(x²/2T − π/4), and forty-five degrees moves every fringe, so this was a change of pattern and not of scale. The clock is folded to a 24-unit period (round 5) so the 1/√T amplitude replays instead of fading. |
 | `quantumZeno` | Zeno survival | 🟢 A | cos²ᴺ(ωt/2N) exact. |
 
 ---

@@ -354,11 +354,15 @@ describe('Tier A — Quantum Mechanics', () => {
     near(evalAt('quantumMechanics', 'quantumZeno', -3.5, 0, 0), 0.5, 1e-12);
   });
 
-  test('feynmanPath: cos(0)·1 at x=0', () => {
-    // x=0: phase = 0, cos(0) = 1
-    // T = 0.5 + 0·0.05 = 0.5
-    // · amp · 0.4 / sqrt(0.5) · exp(0) = 0.4/0.7071 ≈ 0.5657
-    near(evalAt('quantumMechanics', 'feynmanPath', 0, 0, 0), 0.4 / Math.sqrt(0.5), 1e-12);
+  test('feynmanPath carries the −π/4 of (1/i)^{1/2}', () => {
+    // x=0: phase = 0 − π/4, so the value is cos(−π/4) = 1/√2 of what it was.
+    // T = 0.5 + 0·0.05 = 0.5; · amp · 0.4 / sqrt(0.5) · exp(0).
+    // Round 6 restored the factor: (1/i)^{1/2} = e^{−iπ/4}, so the real part of
+    // the free propagator is cos(x²/2T − π/4), not cos(x²/2T). Forty-five
+    // degrees moves every fringe — it changes the pattern, not its scale — and
+    // this entry was rated "exact" without it.
+    near(evalAt('quantumMechanics', 'feynmanPath', 0, 0, 0),
+      Math.cos(-Math.PI / 4) * 0.4 / Math.sqrt(0.5), 1e-12);
   });
 
   test('bellState: E(0,0) = -cos(0) = -1', () => {
@@ -2016,9 +2020,14 @@ describe('Regression — surfaces that went out over the length of a set (#R5)',
     }
   });
 
-  test('control — feynmanPath at t = 0 is what it always was', () => {
-    // cos(0)·amp·0.4/sqrt(0.5), the value the pre-fix code produced.
-    near(evalAt('quantumMechanics', 'feynmanPath', 0, 0, 0), 0.4 / Math.sqrt(0.5), 1e-15);
+  test('control — feynmanPath at t = 0 is what the clock wrap left it', () => {
+    // This guards the clock wrap, not the propagator: replayTime(0, 24) is 0,
+    // so T is 0.5 exactly and t = 0 must be untouched by the folding. The
+    // baseline moved once, in round 6, when the −π/4 of (1/i)^{1/2} was
+    // restored — cos(−π/4)·amp·0.4/√0.5 — and the assertion is still pinned to
+    // 1e-15.
+    near(evalAt('quantumMechanics', 'feynmanPath', 0, 0, 0),
+      Math.cos(-Math.PI / 4) * 0.4 / Math.sqrt(0.5), 1e-15);
   });
 
   // The list-free version of the drift guard. Written this way on purpose: the
@@ -2369,6 +2378,127 @@ describe('Linear algebra — the three kernels that computed something else (#R6
       if (peak < worst) { worst = peak; worstT = t; }
     }
     assert.ok(worst > 0.3, `eigenField collapses to ${worst} at t=${worstT}`);
+  });
+});
+
+describe('Accuracy — entries that did not hold the tier they claimed (#R6)', () => {
+  const BASE = { amp: 1, freq: 1, comp: 0.5 };
+
+  test('inverseTrig is exact on the saturated rim, not 4e-4 below it', () => {
+    // The argument was held off ±1 by 1e-6 and again by 1e-9, and asin(±1)
+    // needs neither. At freq 1.5 the rim is 31.9 % of the row, and every point
+    // on it sat 4.243e-4 world units low — on an entry rated A.
+    const f = MATH_COLLECTIONS.trigonometry.formulas.inverseTrig.f;
+    for (const freq of [1.5, 3, 4.55]) {
+      for (const x of [-3.5, -3.0, 3.0, 3.5]) {
+        const want = Math.asin(Math.max(-1, Math.min(1, x * freq * 0.28))) * 0.3;
+        assert.ok(Math.abs(f(x, 0, 0, { amp: 1, freq }) - want) < 1e-15,
+          `freq ${freq}, x ${x}: ${f(x, 0, 0, { amp: 1, freq })} vs ${want}`);
+      }
+    }
+  });
+
+  test('vectorField and jacobian are closed form, not a stencil', () => {
+    // Central differences with h = 0.01 give 4–5 correct digits and degrade
+    // with frequency: measured 3.3e-5 / 6.9e-4 for the curl and 9.1e-5 / 3.9e-2
+    // for the Jacobian at the default slider and at the top of it. Both maps
+    // are elementary, so there is nothing here to approximate.
+    const LA = MATH_COLLECTIONS.linearAlgebra.formulas;
+    for (const freq of [1, 2, 4.55]) {
+      for (const [x, z] of [[0.4, -1.1], [-2.7, 2.2], [3.5, 0]]) {
+        const curl = (Math.cos(x * freq) + Math.cos(z * freq)) * 0.25;
+        assert.ok(Math.abs(LA.vectorField.f(x, z, 0, { amp: 1, freq }) - curl) < 1e-15,
+          `curl at freq ${freq}, (${x}, ${z})`);
+        // u = cos(f(x+z)), v = sin(1.3fx) + sin(1.9fz)/1.9 — the map the old
+        // stencil was actually differentiating, kept as it was.
+        const J = freq * freq * Math.sin(freq * (x + z)) *
+          (1.3 * Math.cos(1.3 * freq * x) - Math.cos(1.9 * freq * z)) * 0.1;
+        assert.ok(Math.abs(LA.jacobian.f(x, z, 0, { amp: 1, freq }) - J) < 1e-14,
+          `jacobian at freq ${freq}, (${x}, ${z})`);
+      }
+    }
+  });
+
+  test('convolution integrates where the kernel is, not where it was', () => {
+    // The window was fixed at τ ∈ [−2, 2] while the evaluation point runs to
+    // x·freq = ±15.9, so for most of the plate the Gaussian sat entirely
+    // outside the interval being summed: error 106 % of the peak at the
+    // default slider, 259 % at freq 2.
+    const f = MATH_COLLECTIONS.fourierSeries.formulas.convolution.f;
+    const ref = (x, freq) => {
+      const N = 4000, lo = x * freq - 8, hi = x * freq + 8, h = (hi - lo) / N;
+      let s = 0;
+      for (let i = 0; i < N; i++) {
+        const tau = lo + (i + 0.5) * h;
+        s += Math.sin(tau * freq * 3) * 0.5 * Math.exp(-((x * freq - tau) ** 2) * 4) * h;
+      }
+      return s;
+    };
+    for (const freq of [1, 2, 4.55]) {
+      for (const x of [-3.2, -0.7, 1.4, 3.5]) {
+        assert.ok(Math.abs(f(x, 0, 0, { amp: 1, freq }) / 0.4 - ref(x, freq)) < 1e-7,
+          `freq ${freq}, x ${x}: ${f(x, 0, 0, { amp: 1, freq }) / 0.4} vs ${ref(x, freq)}`);
+      }
+    }
+  });
+
+  test('poissonIntegral reproduces the closed form it can be checked against', () => {
+    // For boundary data cos(3φ + s) the Poisson integral is exactly
+    // r³cos(3θ + s) — no quadrature needed for the reference. A trapezoid on N
+    // nodes also picks up the modes N ± 3, weighted r^(N∓3); at N = 16 and
+    // r = 0.95 that was a worst error of 1.52 on a quantity bounded by 1.
+    const f = MATH_COLLECTIONS.integralTransforms.formulas.poissonIntegral.f;
+    for (const [x, z] of [[0.5, 0.3], [-1.2, 1.7], [2.0, -0.4], [3.5, 3.5]]) {
+      const r = Math.min(0.9, Math.hypot(x, z) * 0.4), theta = Math.atan2(z, x);
+      const want = r ** 3 * Math.cos(3 * theta) * 0.35;
+      assert.ok(Math.abs(f(x, z, 0, BASE) - want) < 1e-3,
+        `(${x}, ${z}): ${f(x, z, 0, BASE)} vs ${want}`);
+    }
+  });
+
+  test('stieltjesTransform integrates the tail instead of truncating it', () => {
+    // ∫₀^∞ e^{−t}/(z+t)dt = e^z·E₁(z). The sum used to stop at t = 5 on a
+    // midpoint rule with h = 0.25: worst error 1.6e-2 at z = 0.5, and the tier
+    // bound failed at every reachable z. The substitution t = u/(1−u) carries
+    // the whole half-line into [0, 1).
+    const f = MATH_COLLECTIONS.integralTransforms.formulas.stieltjesTransform.f;
+    const E1 = z => {                       // series, exact to double for z ≤ 5
+      let s = -0.5772156649015329 - Math.log(z), term = 1;
+      for (let k = 1; k <= 60; k++) { term *= -z / k; s -= term / k; }
+      return s;
+    };
+    for (const zv of [0.5, 1, 2, 4.5]) {
+      const x = 7 * (zv - 0.5) / 4 - 3.5;
+      const want = Math.exp(zv) * E1(zv) * 0.4;
+      assert.ok(Math.abs(f(x, 0, 0, BASE) - want) < 1e-4,
+        `z=${zv}: ${f(x, 0, 0, BASE)} vs ${want}`);
+    }
+  });
+
+  test('continuousWavelet resolves the scale it is drawing', () => {
+    // Twenty samples with step 0.3 cannot see a wavelet of width 0.1 — its
+    // oscillation has period 0.126 in τ — and at the wide end the same fixed
+    // window cut the wavelet off. Errors measured 0.39 and 0.62 on a quantity
+    // of order 1. Integrating in ξ makes the window follow the scale.
+    const f = MATH_COLLECTIONS.integralTransforms.formulas.continuousWavelet.f;
+    const ref = (b, a, comp) => {
+      const N = 20000, lo = b - 12 * a, hi = b + 12 * a, h = (hi - lo) / N;
+      let v = 0;
+      for (let i = 0; i < N; i++) {
+        const tau = lo + (i + 0.5) * h, xi = (tau - b) / a;
+        v += Math.sin(tau * (2 + comp) * 2) * Math.exp(-xi * xi / 2) * Math.cos(5 * xi) * h;
+      }
+      return v / Math.sqrt(a);
+    };
+    for (const zc of [-3.5, -1.2, 1.0, 3.5]) {
+      const a = 0.1 + Math.max(0, Math.min(1, (zc + 3.5) / 7)) * 2;
+      for (const x of [-2, 0.4, 1.8]) {
+        // z enters only through the scale, so compare at the same z.
+        const got = f(x, zc, 0, BASE) / 0.15;
+        assert.ok(Math.abs(got - ref(x, a, 0.5)) < 1e-4,
+          `scale ${a.toFixed(2)}, b=${x}: ${got} vs ${ref(x, a, 0.5)}`);
+      }
+    }
   });
 });
 
