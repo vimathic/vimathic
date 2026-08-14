@@ -755,7 +755,76 @@ const FRACTALS_AND_CHAOS = {
     lorenz: {
       name: 'Lorenz Attractor Slice',
       formula: 'ẋ=σ(y−x), ẏ=x(ρ−z)−y, ż=xy−βz',
-      f(x, z, t, {amp=1, freq=1, comp=1}) { return lorenzY(x*freq, z*freq, t) * amp; }
+      // FIX(r8): rossler's defect, one entry up, in the entry round 6 did not
+      // look at. Eight Euler steps of dt = 0.004 is T = 0.032, so what came back
+      // from a plane of initial conditions was its own linearisation:
+      // least-squares plane R² = 0.9788, non-planar residual 6.1e-3 rms against
+      // a peak-to-peak of 0.174 at the factory sliders. Deleting BOTH quadratic
+      // couplings — the −xz and the +xy that are the entire reason this system
+      // is famous — moved the plate by 11 % of that and nothing else moved at
+      // all. And `lorenzY` took t and never read it, so the entry was frozen:
+      // the plate at t = 17.3 was the plate at t = 0 to the last bit.
+      //
+      // Same repair as rossler and chua, for the same reason: what draws an
+      // attractor is one long orbit splatted as a density, paid once per rebuild
+      // instead of once per vertex. Against DOP853 at rtol = atol = 1e-12 the
+      // RK4 orbit holds 3.6e-4 over T = 0.5, 1.1e-5 of its own radius; past that
+      // no integrator agrees with any other, which is what a positive Lyapunov
+      // exponent means, and only the measure survives. The drawn density matches
+      // a T = 960 reference orbit to a correlation of 0.969, where reference
+      // segments of the same 12 000 samples score 0.961 [0.955, 0.968] against
+      // it — the picture sits on the sampling noise floor, with no bias left to
+      // find. Measured: plane R² 0.9788 → 0.0020, peak 0.174 → 0.644, share of
+      // the mesh at the extreme 0.037 %, and the clock moves it again — 21 % of
+      // the peak over 17 s, where rossler moves 21 % and chua 10 %. Cost over
+      // four runs 0.2–0.4 → 0.7–1.2 ms per 90-plate, beside rossler's 0.7–1.1
+      // and chua's 1.1–1.8, and it stops following the mesh: at grid 200 it is
+      // 2.4–2.5 ms where per-vertex work would have quadrupled.
+      //
+      // Drawn in the (x, z) projection because that is the butterfly: x and y
+      // are 0.88 correlated on the attractor, so (x, y) folds onto its own
+      // diagonal — 6 % of the variance lies across it against 45 % here. β is
+      // the canonical 8/3 the caption always claimed rather than 2.667, which
+      // buys honesty and not pixels: it shifts the fixed points
+      // (±√(β(ρ−1)), ρ−1) = (±8.485, 27) by 5.3e-4 world units, six
+      // ten-thousandths of one accumulator cell.
+      //
+      // The trade, the one the other eleven heavy entries already make: a cached
+      // sampler is fed u = (x+3.5)/7, so Wave Intensity no longer moves this
+      // entry. Compression stays off the constants for rossler's r7 reason — ρ
+      // on a slider would hand back a fresh sample of the invariant measure on
+      // every rebuild instead of an evolving orbit, and at ~20 Hz that is the
+      // flashing the DISCLAIMER warns about.
+      f: createCachedHeavySampler((t, {amp = 1}, res) => {
+        const sigma = 10, rho = 28, beta = 8/3, dt = 0.01;
+        const d = (p, q, r) => [sigma*(q - p), p*(rho - r) - q, p*q - beta*r];
+        const step = v => {
+          const k1 = d(v[0], v[1], v[2]);
+          const k2 = d(v[0]+dt/2*k1[0], v[1]+dt/2*k1[1], v[2]+dt/2*k1[2]);
+          const k3 = d(v[0]+dt/2*k2[0], v[1]+dt/2*k2[1], v[2]+dt/2*k2[2]);
+          const k4 = d(v[0]+dt*k3[0], v[1]+dt*k3[1], v[2]+dt*k3[2]);
+          return [v[0]+dt/6*(k1[0]+2*k2[0]+2*k3[0]+k4[0]),
+                  v[1]+dt/6*(k1[1]+2*k2[1]+2*k3[1]+k4[1]),
+                  v[2]+dt/6*(k1[2]+2*k2[2]+2*k3[2]+k4[2])];
+        };
+        // Extents from DOP853 over T = 200: x [−17.80, 18.79], z [3.44, 46.27],
+        // symmetrised — the field is exactly equivariant under (x, y) → (−x, −y),
+        // so the asymmetry is finite-time sampling — and given a unit of margin.
+        const X0 = -20, X1 = 20, Z0 = 1.5, Z1 = 48.5;
+        const acc = new Float32Array(res*res);
+        let v = [1, 1, 1];
+        const skip = 1500 + Math.floor((t*6) % 3000);
+        for (let i = 0; i < skip; i++) v = step(v);
+        for (let i = 0; i < 12000; i++) {
+          v = step(v);
+          const ix = Math.floor((v[0]-X0)/(X1-X0)*res), iz = Math.floor((v[2]-Z0)/(Z1-Z0)*res);
+          if (ix >= 0 && ix < res && iz >= 0 && iz < res) acc[iz*res+ix]++;
+        }
+        let mx = 0; for (const q of acc) if (q > mx) mx = q;
+        const out = new Float32Array(res*res);
+        for (let i = 0; i < acc.length; i++) out[i] = Math.sqrt(acc[i]/(mx||1)) * amp;
+        return out;
+      }, 48),
     },
     rossler: {
       name: 'Rössler Attractor',
@@ -1038,17 +1107,81 @@ const FRACTALS_AND_CHAOS = {
     },
     duffing: {
       name: 'Duffing Oscillator',
-      formula: 'ẍ + δẋ − x + x³ = γcos(ωt), δ = 0.15',
-      f(x, z, t, {amp=1, freq=1, comp=1}) {
-        const gamma=0.3+comp*0.15, omega=1.2, delta=0.15;
-        const dt=0.01, steps=15;
-        let px=x*0.5, pv=z*0.3;
-        for (let i=0; i<steps; i++) {
-          const F=-delta*pv+px-px*px*px+gamma*Math.cos(omega*(t+i*dt));
-          pv+=F*dt; px+=pv*dt;
+      formula: 'ẍ + δẋ − x + x³ = γcos(ωt), δ = 0.25, γ = 0.3, ω = 1; drawn: orbit density in (x, ẋ)',
+      // FIX(r8): the flattest of the flow-map plates in this collection.
+      // Fifteen Euler steps of dt = 0.01 is T = 0.15, a fortieth of one drive
+      // period, so what stood here was position plus velocity times 0.15 —
+      // least-squares plane R² = 0.99990. Deleting the terms that make the
+      // equation Duffing moved the picture by 1.20 % of its own frame (the whole
+      // restoring term −x + x³), 1.74 % (the cubic alone) and 0.24 % (the drive).
+      // A plate in which the nonlinearity is worth under two hundredths is not a
+      // plate of the nonlinearity. rossler and chua were condemned for exactly
+      // this at R² = 1.000000 and 0.999839 and repaired in round 6; duffing was
+      // flatter than chua and was left.
+      //
+      // Same repair, because it is the same defect: one long orbit splatted as a
+      // density, instead of a sheet of initial conditions carried a hair's
+      // breadth. Measured: plane R² 0.999905 → 0.007436, peak 0.391 → 0.634 at
+      // the factory sliders, cost 1.21 → 1.81 ms per 90-plate and 5.74 → 2.46 ms
+      // per 200-plate — cheaper there, because the simulation is now paid once
+      // per rebuild instead of once per vertex. RK4 and not Euler, for the
+      // reason rossler gives: at dt = 0.01 it tracks DOP853 to 1.1e-8 over a
+      // drive period and a half, where Euler's first-order error on an
+      // oscillatory field is a systematic outward drift.
+      //
+      // The constants are Holmes's two-well set (δ = 0.25, γ = 0.30, ω = 1) and
+      // not the γ = 0.3 + comp·0.15 that stood here. γ is a chaotic parameter,
+      // and FIX(r7) above records what the audio does to one of those: every
+      // rebuild comes back a fresh realisation of a different invariant measure
+      // rather than the next moment of one system. Frozen, the plate changes by
+      // 0.0 % between consecutive rebuilds (2.1 % worst) and 15.2 % four seconds
+      // apart, which is evolution and not the flashing DISCLAIMER warns about.
+      // Largest Lyapunov exponent measured +0.133, so this is an attractor and
+      // not a closed curve.
+      //
+      // The (x, ẋ) plane and not a Poincaré section: a section takes one point
+      // per drive period, so filling a 48² grid is ~10⁴ periods, six million RK4
+      // steps. The continuous orbit needs 24 000. Against 370 000 DOP853 samples
+      // of the same measure the drawn field correlates 0.729 — and 24 000
+      // samples of the DOP853 orbit itself correlate 0.769 ± 0.03, so the gap is
+      // the sample count and not the integrator.
+      //
+      // The trade the other thirteen heavy entries already make: fed
+      // u = (x+3.5)/7, this entry no longer answers Wave Intensity, and with γ
+      // frozen it no longer answers Compression either (measured 0.0000 across
+      // comp 0.1–0.9).
+      f: createCachedHeavySampler((t, {amp = 1}, res) => {
+        const delta = 0.25, gamma = 0.3, omega = 1, dt = 0.01;
+        const d = (s, p, v) => [v, -delta*v + p - p*p*p + gamma*Math.cos(omega*s)];
+        const step = (s, u) => {
+          const k1 = d(s, u[0], u[1]);
+          const k2 = d(s+dt/2, u[0]+dt/2*k1[0], u[1]+dt/2*k1[1]);
+          const k3 = d(s+dt/2, u[0]+dt/2*k2[0], u[1]+dt/2*k2[1]);
+          const k4 = d(s+dt,   u[0]+dt*k3[0],   u[1]+dt*k3[1]);
+          return [u[0]+dt/6*(k1[0]+2*k2[0]+2*k3[0]+k4[0]),
+                  u[1]+dt/6*(k1[1]+2*k2[1]+2*k3[1]+k4[1])];
+        };
+        // Measured extents of the attractor at these constants: x ±1.480,
+        // ẋ ±0.831, with a margin. All of a 370 000-sample orbit lands inside.
+        const X0 = -1.62, X1 = 1.62, V0 = -0.95, V1 = 0.95;
+        const acc = new Float32Array(res*res);
+        let u = [0.5, 0.1], s = 0;
+        // The dropped transient slides with the clock, as in rossler above, so
+        // the traced segment breathes instead of standing still.
+        const skip = 3000 + Math.floor((t*6) % 3000);
+        for (let i = 0; i < skip; i++) { u = step(s, u); s += dt; }
+        for (let i = 0; i < 24000; i++) {
+          u = step(s, u); s += dt;
+          const ix = Math.floor((u[0]-X0)/(X1-X0)*res), iv = Math.floor((u[1]-V0)/(V1-V0)*res);
+          if (ix >= 0 && ix < res && iv >= 0 && iv < res) acc[iv*res+ix]++;
         }
-        return px * 0.3 * amp;
-      }
+        let mx = 0; for (const q of acc) if (q > mx) mx = q;
+        const out = new Float32Array(res*res);
+        // sqrt of the occupancy, as in rossler: the invariant measure piles up
+        // on the fold and a linear ramp hides the rest of the band under it.
+        for (let i = 0; i < acc.length; i++) out[i] = Math.sqrt(acc[i]/(mx||1)) * amp;
+        return out;
+      }, 48),
     },
     henon: {
       name: 'Hénon Map',
@@ -3072,22 +3205,93 @@ const TOPOLOGY_GEOMETRY = {
     },
     boysSurface: {
       name: "Boy's Surface Slice",
-      formula: 'RP² immersed in ℝ³',
+      formula: 'Bryant–Kusner immersion of RP², height coordinate',
+      // FIX(r8): the caption said RP² and the height had the symmetry of a torus.
+      // sin u·cos(v/2) + sin 2u·cos²(v/2) is invariant under (u,v) ~ (u+2π, −v)
+      // and under nothing finer, so under the two antipodal identifications that
+      // make RP² — (u+π, π−v) and (u+π, −v) — it moved by 0.733 and 0.799 against
+      // its own sup of 0.696: two-valued on RP², hence not a function on it.
+      //
+      // Boy's surface is nowhere a graph, so a height field has to choose a
+      // coordinate of some immersion, and the choice has to be checked. Apéry's
+      // parametrisation, the one usually quoted, does not survive the check: the
+      // whole circle v = π/2 goes to the origin with ∂r/∂u = 0 there, so it is
+      // not an immersion, and the RP² invariance it does have is necessary but
+      // not sufficient. Bryant–Kusner is an immersion everywhere (least EG−F²
+      // over the sphere 0.213 in the sphere's own metric), and this is its third
+      // coordinate, written in the homogeneous stereographic w = p/q so that the
+      // pole w = ∞ — which lands on the plate's own z edge — is an ordinary
+      // value and not a hole.
+      //
+      // The plate is the sphere: θ across x, φ down z, so the antipodal map of
+      // RP² is the glide (x,z) → (x+3.5, −z), and the drawn height is invariant
+      // under it to 0.0 exactly where the old one moved 0.5625 on a sup of
+      // 0.4928. The three roots of p⁶+√5p³q³−q⁶ are the three points of RP² that
+      // meet at the triple point — the feature that tells Boy's surface from
+      // Steiner's Roman surface below. Against the immersion at 50 digits the
+      // height is exact to 4.6·10⁻¹⁶, and |B| ≤ 2 bounds it for every slider, so
+      // unlike `catenoid` this one cannot leave frame and needs no fold. t turns
+      // the immersion about its own 3-fold axis, once every 10.5 s, instead of
+      // pulsing the amplitude — a motion the surface actually has.
       f(x, z, t, {amp=1, freq=1}) {
-        const u=x*freq*2, v=z*freq*2;
-        const y=(Math.sin(u)*Math.cos(v/2)+Math.sin(2*u)*Math.cos(v/2)**2)*0.4;
-        return y * amp * (1+Math.sin(t*0.3)*0.15);
+        const th=x*freq*(TAU/7)+t*0.2, ph=Math.PI/2+z*freq*(Math.PI/7);
+        const s=Math.sin(ph/2), c=Math.cos(ph/2), sc=s*c;
+        const s3=s*s*s, s4=s3*s, s6=s3*s3, c3=c*c*c, c4=c3*c, c6=c3*c3;
+        const a=Math.cos(th), b=Math.sin(th);
+        const a3=a*(a*a-3*b*b), b3=b*(3*a*a-b*b), a6=a3*a3-b3*b3, b6=2*a3*b3;
+        const a5=a6*a+b6*b, b5=b6*a-a6*b, k=Math.sqrt(5)*s3*c3;
+        const dR=s6*a6+k*a3-c6, dI=s6*b6+k*b3, dd=dR*dR+dI*dI+1e-30;
+        const g1=-1.5*(sc*(c4*b-s4*b5)*dR-sc*(c4*a-s4*a5)*dI)/dd;
+        const g2=-1.5*(sc*(c4*a+s4*a5)*dR+sc*(c4*b+s4*b5)*dI)/dd;
+        const g3=(s6*b6*dR-(c6+s6*a6)*dI)/dd-0.5;
+        // g/|g|² is the immersion; its height spans [−2, 0.4426], centred here
+        return (g3/(g1*g1+g2*g2+g3*g3)+0.78) * amp * 0.55;
       }
     },
     romanSurface: {
       name: "Steiner's Roman Surface",
       formula: 'x²y²+y²z²+z²x² = r²xyz',
+      // FIX(r8): "solve numerically" was a comment, not a solve. The height was
+      // xz/(2a+|x|+|z|), which meets the equation only in the limit x, z → 0:
+      // at (−1.05, −1.05) the surface is at 0.6439 and the guess drew 0.2162.
+      // Worse, Steiner's surface is compact — it is the image of a sphere, so
+      // it lives inside |x|, |z| ≤ r²/2 — and over 86 % of the plate there was
+      // no height to draw at all, and one was drawn anyway.
+      //
+      // The equation is quadratic in y, not quartic — y²(x²+z²) − r²xz·y + x²z²
+      // — so the branch is closed form and not a search; sympy gives the roots
+      // as xz(r² ± √(r⁴−4x²−4z²))/(2(x²+z²)) with residual 0. This is the lower
+      // one, written as 2xz/(r²+√…) because differencing two nearly equal roots
+      // near the axis costs exactly the digits the picture is made of. It is
+      // the sheet through the origin, the one carrying the double lines (y ≡ 0
+      // on both axes), and its small limit xz/r² is what the old guess was
+      // reaching for. Against mpmath's roots at 30 digits it is exact to
+      // 5.8e-16, and the drawn point's preimage on the sphere closes to r²
+      // within 3e-15 — the check that says the point is on Steiner's surface
+      // and not merely on the quartic that contains it.
+      //
+      // Where the root turns complex nothing is drawn, because nothing is
+      // there: the fold circle ρ = r²/2 is the surface's own edge, where the
+      // two sheets meet vertically and this one peaks at exactly r²/4. At the
+      // factory sliders that circle is the plate's inscribed circle, so 23.7 %
+      // of the mesh is honestly empty (7 % to 49 % as r breathes), and the wall
+      // at the rim is the fold seen edge-on — four petals, not a ring, since
+      // the sheet is zero along both axes.
+      //
+      // amp and freq move r² itself rather than stretching the height, because
+      // a stretched Steiner surface is a Steiner surface for no r at all: fit
+      // the best r² to this plate scaled by 3.21 — amp at the top of its range
+      // — and the median point still misses the equation by 0.75 of its own
+      // scale. So amp grows the surface, freq zooms out of it, t breathes it,
+      // and every frame at every slider setting is exactly the named surface.
+      // That is also what frames it without a clamp: the sheet peaks at r²/4
+      // until the plate corner cuts the fold off, which bounds peak |y| by
+      // 2.475 over the whole reachable range — 1.52 at the factory sliders.
       f(x, z, t, {amp=1, freq=1}) {
-        const a=1.5;
-        const xv=x*freq, zv=z*freq;
-        // y from implicit: x²y²+y²z²+z²x²=xyz·r², solve numerically (approx y=xz/2a)
-        const yv=(xv*zv)/(2*a+Math.abs(xv)+Math.abs(zv)+1e-9);
-        return yv * amp * (1+Math.sin(t*0.3)*0.2);
+        const r2=10*amp/freq*(1+Math.sin(t*0.3)*0.2);
+        const d=r2*r2-4*(x*x+z*z);
+        if (d<=0) return 0;
+        return 2*x*z/(r2+Math.sqrt(d));
       }
     },
     enneperSurface: {
