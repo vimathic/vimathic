@@ -282,10 +282,15 @@ describe('Tier A — Integral Transforms', () => {
   });
 
   test('laplaceTransform: L{1}(s=1) = 1', () => {
-    // s clamped: (x+3.5)/7·5 + 0.1; for s=1: x = -2.24
-    // 1/1 · 0.5 = 0.5
-    const xForS1 = -2.24;
-    near(evalAt('integralTransforms', 'laplaceTransform', xForS1, 0, 0), 0.5, 1e-2);
+    // Round 6 moved the window off the pole: s = (x+3.5)/7·4.75 + 0.35, which
+    // starts at 0.35 instead of 0.1. Starting at 0.1 put the left edge of the
+    // plate at 1/0.1 = 10, i.e. 3.5 world units at the factory sliders against
+    // a ~3-unit frame — the entry left the frame purely because the window was
+    // pushed up against the pole, not because the transform is large.
+    // For s = 1: (x+3.5)/7 = 0.65/4.75 → x = −2.5421052631578946.
+    // 1/1 · 0.9 = 0.9.
+    const xForS1 = 7 * (0.65 / 4.75) - 3.5;
+    near(evalAt('integralTransforms', 'laplaceTransform', xForS1, 0, 0), 0.9, 1e-12);
   });
 
   test('hilbertTransform: H[sin(ωx)] returns sin+(-cos) structure', () => {
@@ -487,12 +492,17 @@ describe('Tier B — Topology & Geometry', () => {
     near(evalAt('topology', 'enneperSurface', 0, 0, 0), 0, 1e-15);
   });
 
-  test('breatherSurface bounded |output| ≤ 0.6', () => {
-    // Sweep a small grid; output is clamped at ±0.6 by the implementation.
+  test('breatherSurface bounded |output| < 0.95', () => {
+    // Round 6 replaced the ±0.6 clamp with `soften(0.45, 0.95)`: the clamp was
+    // pinning 66.3 % of the mesh at the bound at the default sliders and 100 %
+    // of it at the top of the range, so the entry drew a flat tabletop. The
+    // bound asserted here is the ceiling of the fold, and it is a strict one —
+    // tanh approaches it without reaching it (measured maximum 0.9455 over the
+    // whole plate with both sliders at maximum under loud audio).
     for (const x of [-2, -1, 0, 1, 2]) {
       for (const z of [-2, 0, 2]) {
         const v = evalAt('topology', 'breatherSurface', x, z, 0);
-        assert.ok(Math.abs(v) <= 0.6 + 1e-12, `Output ${v} exceeded clamp at (${x},${z})`);
+        assert.ok(Math.abs(v) < 0.95, `Output ${v} exceeded the fold ceiling at (${x},${z})`);
       }
     }
   });
@@ -1384,7 +1394,13 @@ describe('Regression — the session clock is not a physical time (#5, #6)', () 
       ['fourierSeries',    'heat2D',             0,   0, 0.399655647258448],
       ['differentialEqs',  'dampedOscillator',   0,   0, 0.0895990196292607],
       ['differentialEqs',  'heatEquation',       0,   0, 0.496563422446714],
-      ['differentialEqs',  'fishersEquation',    0.5, 0, 0.365529289315002],
+      // Round 6 changed this profile on purpose: the logistic drawn here is not
+      // a travelling-wave solution of Fisher–KPP at any speed, and it was
+      // replaced by the Ablowitz–Zeppetella solution (1+e^{ξ√(r/6D)})⁻² at its
+      // own speed 5√(rD/6). The value below is the new t = 0 baseline; the
+      // assertion is unchanged and still pins it to 1e-12, which is what this
+      // test is for — it guards the clock wrap, not the choice of profile.
+      ['differentialEqs',  'fishersEquation',    0.5, 0, 0.0850867873741434],
       ['quantumMechanics', 'wavePacket',         0.7, 0, 0.187642285592130],
       ['quantumMechanics', 'schrodingerSoliton', 0.5, 0, 0.298292904140666],
       ['complexNumbers',   'complexHeat',        0.5, 0, 0.0861491219772305],
@@ -2051,7 +2067,11 @@ describe('Regression — surfaces that left the frame (#R5)', () => {
         { amp: 1.5, freq, comp: 0.9 }, 49, 3.5, 0);
       let p = 0;
       for (let i = 0; i < hf.length; i++) p = Math.max(p, Math.abs(hf[i]));
-      if (p > 1.5 + 1e-9) worst.push(`freq=${freq}: ${p.toExponential(2)}`);
+      // Round 6 replaced the ±1.5 clamp with soften(1.2, 1.9): the clamp held
+      // this bound by flattening 49.6 % of the mesh at the default slider and
+      // 95.8 % at the maximum. 1.9 is the ceiling of the fold and is never
+      // reached, and it is still well inside the camera half-frame of ~2.9.
+      if (p >= 1.9) worst.push(`freq=${freq}: ${p.toExponential(2)}`);
     }
     assert.equal(worst.length, 0, `catenoid left the frame at ${worst.join(', ')}`);
   });
@@ -2239,5 +2259,476 @@ describe('Regression — GPU displacement branches that drew nothing (#R5)', () 
     assert.ok(/t\*2\.\+0\.6/.test(src), 'mode 11 still vanishes when uTreble is zero');
     assert.ok(!/fn\*\(0?\.\d+\+t/.test(src),
       'the offset is inside the harmonic index again — that is what raised the peak out of frame');
+  });
+});
+
+describe('Linear algebra — the three kernels that computed something else (#R6)', () => {
+  const LA = MATH_COLLECTIONS.linearAlgebra.formulas;
+  // Factory sliders in silence, which is where the viewer starts:
+  // amp = ampSlider·(1+bass·0.5), freq = waveInt·(1+treble·0.3), comp = 0.5+mid·0.4.
+  const FACTORY = { amp: 0.7, freq: 1, comp: 0.5 };
+  const UNIT    = { amp: 1,   freq: 1, comp: 0.5 };
+
+  // Share of a real 90×90 plate sitting at the extreme value. A clamp is
+  // invisible to a peak assertion — it is the number a clamp fixes — so the
+  // plateau has to be measured directly or a flat tabletop passes as a repair.
+  const plateauShare = (fn, params, time = 0) => {
+    const hf = generateSurfaceFromFormula(fn, params, 90, 3.5, time);
+    let peak = 0;
+    for (const v of hf) peak = Math.max(peak, Math.abs(v));
+    if (peak === 0) return 1;
+    let at = 0;
+    for (const v of hf) if (Math.abs(Math.abs(v) - peak) < 1e-9) at++;
+    return at / hf.length;
+  };
+
+  test('spectralRadius returns ρ(A), not the spread |λ₁ − λ₂|', () => {
+    // x = 1, z = 0, t = 0, comp = 0.5 → A = [[1.5, 0], [0, −1]], a diagonal
+    // matrix: λ = {1.5, −1}, so ρ = 1.5 and the height is 1.5·0.27 = 0.405.
+    // The old kernel returned √|disc|·0.3 = √|(0.5)² + 6|·0.3 = 0.75, which the
+    // 0.8 clamp then nearly hid.
+    assert.ok(Math.abs(LA.spectralRadius.f(1, 0, 0, UNIT) - 0.405) < 1e-12,
+      `expected 0.405 (ρ = 1.5), got ${LA.spectralRadius.f(1, 0, 0, UNIT)}`);
+
+    // The complex branch needs its own point, because there ρ is not a root of
+    // the real characteristic polynomial: x = 0, z = −1, t = π gives
+    // tr = 0, det = 0.5, disc = −2, so λ = ±i/√2 and ρ = √det = √0.5.
+    const want = Math.sqrt(0.5) * 0.27;
+    assert.ok(Math.abs(LA.spectralRadius.f(0, -1, Math.PI, UNIT) - want) < 1e-12,
+      `complex pair: expected ${want}, got ${LA.spectralRadius.f(0, -1, Math.PI, UNIT)}`);
+
+    // ρ is a spectral radius: never negative, and never below the modulus of
+    // either diagonal entry of a diagonal matrix.
+    assert.ok(LA.spectralRadius.f(2.3, 0, 0, FACTORY) > 0, 'ρ must be non-negative');
+  });
+
+  test('spectralRadius no longer stands on a clamp for most of the plate', () => {
+    // Measured before the fix: 57.8 % of the mesh at the default slider,
+    // 97.8 % with both sliders at maximum under loud audio.
+    assert.ok(plateauShare(LA.spectralRadius.f, FACTORY) < 0.05,
+      `plateau at factory sliders is ${(plateauShare(LA.spectralRadius.f, FACTORY) * 100).toFixed(1)}%`);
+    assert.ok(plateauShare(LA.spectralRadius.f, { amp: 2.25, freq: 4.55, comp: 0.9 }) < 0.05,
+      'plateau at the slider maximum');
+  });
+
+  test('manifoldCurvature divides by the first fundamental form', () => {
+    // F = (sin x + sin z)·0.45 at (0.6, −1.1), freq 1, comp 0.5. By hand:
+    //   F_x = 0.45·cos(0.6) = 0.371417,  F_z = 0.45·cos(−1.1) = 0.204100
+    //   F_xx = −0.45·sin(0.6) = −0.254088, F_zz = −0.45·sin(−1.1) = 0.401045
+    //   K = F_xx·F_zz/(1 + F_x² + F_z²)² = −0.10190074/1.391460 = −0.07323280
+    // times amp 0.7 and the display constant 6.0 → −0.30757774.
+    // Without the denominator the same point gives −0.42798, i.e. 1.391× too
+    // large — the shape, not just the scale, is wrong.
+    const got = LA.manifoldCurvature.f(0.6, -1.1, 0, FACTORY);
+    assert.ok(Math.abs(got - (-0.30757774)) < 5e-4,
+      `expected ≈ −0.30757774 (exact K times the display constant), got ${got}`);
+    // The tolerance is the h = 0.05 stencil error, not slack: tighten it to
+    // 1e-6 and this still passes on the exact K while the numerator-only form
+    // misses by 0.12 — two hundred times the tolerance.
+  });
+
+  test('manifoldCurvature is a visible surface, not a 1%-of-frame plate', () => {
+    // The old display constant was calibrated against the numerator alone and
+    // left the peak at 0.021 world units against a frame about 3 units high.
+    const hf = generateSurfaceFromFormula(LA.manifoldCurvature.f, FACTORY, 90, 3.5, 0);
+    let peak = 0;
+    for (const v of hf) peak = Math.max(peak, Math.abs(v));
+    assert.ok(peak > 0.3 && peak < 1.5, `peak at factory sliders is ${peak}`);
+  });
+
+  test('eigenField vanishes exactly on the eigenvectors and nowhere else in bulk', () => {
+    // A(t) = R(0.3t)·diag(1+comp, −1)·R(0.3t)ᵀ, so the eigenvectors are the
+    // axes turned by θ = 0.3t. The height is (v × Av)/|v|, which is zero iff
+    // Av ∥ v — the definition the label 'Av = λv' states.
+    for (const t of [0, 2.7, 5 * Math.PI, 40]) {
+      const th = t * 0.3, r = 2;
+      const along = LA.eigenField.f(r * Math.cos(th), r * Math.sin(th), t, FACTORY);
+      assert.ok(Math.abs(along) < 1e-12,
+        `t=${t}: on the eigenvector the height should be 0, got ${along}`);
+      // Halfway between the two eigenvectors the cross product is largest:
+      // r·(λ₁−λ₂)/2·amp·0.23 = 2·1.25·0.7·0.23 = 0.4025, and it does not
+      // depend on t — the pattern turns rigidly rather than breathing.
+      const across = LA.eigenField.f(r * Math.cos(th + Math.PI / 4), r * Math.sin(th + Math.PI / 4), t, FACTORY);
+      assert.ok(Math.abs(Math.abs(across) - 0.4025) < 1e-9,
+        `t=${t}: expected 0.4025 midway between eigenvectors, got ${across}`);
+    }
+  });
+
+  test('eigenField never goes flat, including at t = 5π where it used to die', () => {
+    // The old matrix was exactly zero whenever cos(0.3t) and sin(0.4t) vanished
+    // together — t = 5π + 10πk, once every 65 s of playback — and the whole
+    // plate collapsed to 7.5e-17. Sampling two distant uptimes, as the round-4
+    // test did, steps straight over a dip that narrow, so this walks the
+    // neighbourhood of the known zero at the resolution the app renders at
+    // (t advances 0.008 per frame).
+    let worst = Infinity, worstT = 0;
+    for (let t = 5 * Math.PI - 0.5; t <= 5 * Math.PI + 0.5; t += 0.008) {
+      const hf = generateSurfaceFromFormula(LA.eigenField.f, FACTORY, 25, 3.5, t);
+      let peak = 0;
+      for (const v of hf) peak = Math.max(peak, Math.abs(v));
+      if (peak < worst) { worst = peak; worstT = t; }
+    }
+    assert.ok(worst > 0.3, `eigenField collapses to ${worst} at t=${worstT}`);
+  });
+});
+
+describe('Fourier waveforms — the clock is a shift, not a common phase (#R6)', () => {
+  const FS = MATH_COLLECTIONS.fourierSeries.formulas;
+  const FACTORY = { amp: 0.7, freq: 1, comp: 0.5 };
+
+  // Adding t to every harmonic alike turns Σ sin((2k−1)u + t) into
+  // cos(t)·(the series) + sin(t)·(its conjugate), so the surface rotates into
+  // the Hilbert transform of the waveform it is named after. Putting t inside
+  // the index makes the sum a rigid translation — which is an identity, not an
+  // approximation, and so can be asserted exactly.
+  for (const key of ['squareWave', 'sawtoothWave', 'triangleWave', 'pulseWave']) {
+    test(`${key} is the same waveform at every instant, only moved`, () => {
+      for (const t of [0.3, 1.0, Math.PI / 2, 2.4, 5.0]) {
+        for (let i = 0; i < 60; i++) {
+          const x = -3.5 + 7 * i / 59;
+          const here  = FS[key].f(x, 0.4, t, FACTORY);
+          const there = FS[key].f(x + t / (2 * FACTORY.freq), 0.4, 0, FACTORY);
+          assert.ok(Math.abs(here - there) < 1e-12,
+            `${key} at x=${x.toFixed(3)}, t=${t}: ${here} ≠ ${there} — the surface is not a translate of itself`);
+        }
+      }
+    });
+  }
+
+  test('the family stops breathing: the peak is steady across a full cycle', () => {
+    // Measured before the fix, as the ratio of the largest to the smallest peak
+    // over one 2π cycle: square 2.179, sawtooth 1.624, pulse 1.556,
+    // triangle 1.315. A travelling wave has no reason to change height at all.
+    for (const key of ['squareWave', 'sawtoothWave', 'triangleWave', 'pulseWave']) {
+      let lo = Infinity, hi = 0;
+      for (let t = 0; t < 2 * Math.PI; t += 0.05) {
+        let peak = 0;
+        for (let i = 0; i < 200; i++) peak = Math.max(peak, Math.abs(FS[key].f(-3.5 + 7 * i / 199, 0, t, FACTORY)));
+        lo = Math.min(lo, peak); hi = Math.max(hi, peak);
+      }
+      assert.ok(hi / lo < 1.02, `${key} peak swings ×${(hi / lo).toFixed(3)} over a cycle`);
+    }
+  });
+});
+
+describe('Cellular automata — exact rules fed an input they cannot work on (#R6)', () => {
+  const CA = MATH_COLLECTIONS.cellularAutomata.formulas;
+  const FACTORY = { amp: 0.7, freq: 1, comp: 0.5 };
+
+  const raisedShare = (fn, params, time) => {
+    const hf = generateSurfaceFromFormula(fn, params, 90, 3.5, time);
+    let n = 0;
+    for (const v of hf) if (Math.abs(v) > 1e-6) n++;
+    return n / hf.length;
+  };
+
+  test('Game of Life is seeded with a soup, not a lattice', () => {
+    // The seed was `(i·2654435761) >>> 0 % 100 < density` — a Weyl sequence,
+    // equidistributed rather than independent, so nearly every live cell was
+    // isolated and generation 1 killed 97 % of the population. At t = 1.5
+    // (generation 2 at the default complexity) the plate measured a peak of
+    // exactly zero. Life on a real soup at this density settles around 5 %.
+    for (const t of [1.5, 4.0, 9.0]) {
+      const share = raisedShare(CA.gameOfLifeDensity.f, FACTORY, t);
+      assert.ok(share > 0.02, `t=${t}: only ${(share * 100).toFixed(2)}% of the plate is alive`);
+    }
+  });
+
+  test('cyclic CA is not vertical stripes', () => {
+    // `(i·2246822519) >>> 0 % N` is degenerate when N divides a power of two:
+    // the state depends on the column alone, so the variance down every column
+    // was exactly 0. N = 4 + round(comp·4), so comp 0 and comp 1 are the two
+    // powers of two in range and the two cases that were broken.
+    for (const comp of [0, 1]) {
+      const hf = generateSurfaceFromFormula(CA.cyclicCA.f, { amp: 0.7, freq: 1, comp }, 90, 3.5, 6);
+      let uniformCols = 0;
+      for (let c = 0; c < 90; c++) {
+        const first = hf[c];
+        let same = true;
+        for (let r = 1; r < 90; r++) if (Math.abs(hf[r * 90 + c] - first) > 1e-9) { same = false; break; }
+        if (same) uniformCols++;
+      }
+      assert.ok(uniformCols < 9,
+        `comp=${comp} (N=${4 + Math.round(comp * 4)}): ${uniformCols} of 90 columns are a single flat value`);
+    }
+  });
+
+  test('the turmite uses both of its states and keeps building', () => {
+    // Both state-0 rows of the old table wrote state 0, so the state-1 rows
+    // were unreachable: a one-state ant with period 8, leaving 4 raised cells
+    // out of 3136 — 0.13 % of the plate. The replacement is the rule that
+    // survived a search over all 65 536 rules of the family, and it is still
+    // growing at the end of its run rather than closing into a cycle.
+    const low  = raisedShare(CA.turmite.f, { amp: 0.7, freq: 1, comp: 0 }, 0);
+    const high = raisedShare(CA.turmite.f, { amp: 0.7, freq: 1, comp: 1 }, 0);
+    assert.ok(low > 0.10, `at minimum complexity only ${(low * 100).toFixed(2)}% of the plate is raised`);
+    // The complexity slider drives the step count, so it has to be visible.
+    assert.ok(high > low * 1.3,
+      `complexity does not change the structure: ${(low * 100).toFixed(1)}% → ${(high * 100).toFixed(1)}%`);
+  });
+});
+
+describe('Singularities — the peak must not depend on where the mesh samples (#R6)', () => {
+  // The display grid is not a constant: math-visualizer derives it from the
+  // plane geometry, which the renderer sizes by GPU capability — 60 on a
+  // phone, 200 on a desktop. An entry with a pole inside the drawn region has
+  // its peak set by whichever vertex lands nearest the pole, so the same
+  // formula at the same settings is a different picture on different hardware,
+  // and no assertion on a single grid can see it. Measured before the repairs:
+  // doubleSlitProbability ×1926, cauchyIntegral ×27.3, windingNumber ×12.8,
+  // zTransform ×10.6 across grids 25…400.
+  const GRIDS = [25, 49, 90, 161];
+  const peakAt = (fn, params, grid, time = 0) => {
+    const hf = generateSurfaceFromFormula(fn, params, grid, 3.5, time);
+    let p = 0;
+    for (const v of hf) p = Math.max(p, Math.abs(v));
+    return p;
+  };
+  const spread = (fn, params, time = 0) => {
+    const ps = GRIDS.map(g => peakAt(fn, params, g, time));
+    return { ratio: Math.max(...ps) / Math.min(...ps), ps };
+  };
+  const BASE = { amp: 1, freq: 1, comp: 0.5 };
+
+  for (const [collection, key] of [
+    ['quantumMechanics',   'doubleSlitProbability'],
+    ['integralTransforms', 'cauchyIntegral'],
+    ['integralTransforms', 'zTransform'],
+    ['complexNumbers',     'windingNumber'],
+  ]) {
+    test(`${key} draws the same surface at every mesh density`, () => {
+      const { ratio, ps } = spread(MATH_COLLECTIONS[collection].formulas[key].f, BASE);
+      assert.ok(ratio < 1.05,
+        `${key} peak varies ×${ratio.toFixed(1)} across grids ${GRIDS.join('/')}: ${ps.map(v => v.toPrecision(4)).join(', ')}`);
+    });
+  }
+
+  test('cauchyIntegral is now Cauchy’s formula exactly, inside and outside', () => {
+    // Singularity subtraction leaves no quadrature error at all for f = z² + c:
+    // the regular integrand is the polynomial z + z₀ and integrates to zero
+    // around a closed contour, so what remains is the analytic term.
+    const f = MATH_COLLECTIONS.integralTransforms.formulas.cauchyIntegral.f;
+    for (const [x, z] of [[1, 0], [0.5, 0.3], [-3.5, 0], [2.0, -1.2]]) {
+      const z0re = x * 0.5, z0im = z * 0.5;
+      const inside = Math.hypot(z0re, z0im) < 2;
+      const want = (inside ? z0re * z0re - z0im * z0im + 0.15 : 0) * 0.4;
+      assert.ok(Math.abs(f(x, z, 0, BASE) - want) < 1e-12,
+        `z₀=(${z0re}, ${z0im}) ${inside ? 'inside' : 'outside'}: got ${f(x, z, 0, BASE)}, expected ${want}`);
+    }
+  });
+
+  test('windingNumber returns the integer it is defined to be', () => {
+    // n_loops = round(1 + comp·3) = 3 at comp 0.5. Summing argument increments
+    // gives the integer to round-off; integrating 1/(z−z₀) on 12–16 nodes per
+    // loop did not, and carried a ring of spurious poles at |z₀| = 1.
+    const f = MATH_COLLECTIONS.complexNumbers.formulas.windingNumber.f;
+    for (const [x, z, want] of [[0, 0, 3], [0.8, 0.6, 3], [-3.5, 3.5, 0], [6, 0, 0]]) {
+      assert.ok(Math.abs(f(x, z, 0, BASE) / 0.18 - want) < 1e-9,
+        `(${x}, ${z}): expected winding ${want}, got ${f(x, z, 0, BASE) / 0.18}`);
+    }
+  });
+
+  test('doubleSlit draws the interference its caption states, bounded', () => {
+    // |ψ₁+ψ₂|² = 2I₀(1 + cos δ) is the equal-amplitude statement. The 1/r
+    // factors the code carried are a near-field detail the caption never
+    // claimed, and both sources sit inside the plate, so they were poles.
+    const f = MATH_COLLECTIONS.quantumMechanics.formulas.doubleSlitProbability.f;
+    let peak = 0, trough = Infinity;
+    for (let i = 0; i < 500; i++) {
+      const v = f(-3.5 + 7 * i / 499, 1.3, 0, BASE);
+      peak = Math.max(peak, v); trough = Math.min(trough, v);
+    }
+    assert.ok(peak <= 1 + 1e-12, `intensity exceeds its own maximum: ${peak}`);
+    assert.ok(peak > 0.99, `no bright fringe on the line z = 1.3: peak ${peak}`);
+    // Fringe visibility (I_max − I_min)/(I_max + I_min). Two waves of equal
+    // amplitude interfere with visibility 1; the true minima are exactly zero,
+    // and the shortfall here is only that 500 samples do not land on one.
+    const visibility = (peak - trough) / (peak + trough);
+    assert.ok(visibility > 0.99, `fringes have no contrast: visibility ${visibility}`);
+    // On the perpendicular bisector the paths are equal, so it is always bright.
+    for (const z of [0.4, 1.1, 2.7, -3.0]) {
+      assert.ok(Math.abs(f(0, z, 0, BASE) - 1) < 1e-12,
+        `central fringe at (0, ${z}) is ${f(0, z, 0, BASE)}, not the maximum`);
+    }
+  });
+
+  test('no entry in the catalogue has a pole inside the drawn region', () => {
+    // Asked of all 192 rather than of a list. Every handwritten list in this
+    // project has eventually missed the thing it was written for — the drifting
+    // formulas, the entries that leave the frame — because a list records what
+    // was known when it was typed.
+    //
+    // What is being detected is unboundedness, not merely mesh sensitivity: a
+    // chaotic map sampled on a lattice moves its peak around too (tinkerbell
+    // varies ×17 across grids), but it is bounded by its own escape guard and
+    // settles. A pole does not settle — refine around the worst point and the
+    // value keeps climbing. Measured on the pre-round-6 code this separates the
+    // two cleanly: doubleSlitProbability ×790 per refinement, zTransform ×59,
+    // windingNumber ×20, cauchyIntegral ×15, complexLog ×7.2, and no false
+    // positive anywhere in the other 187.
+    const offenders = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        const f = entry.f;
+        // Worst vertex on the display mesh, then four rounds of local refinement.
+        const g = 90, s = 7 / (g - 1);
+        let best = 0, bx = 0, bz = 0;
+        for (let zi = 0; zi < g; zi++) for (let xi = 0; xi < g; xi++) {
+          const x = -3.5 + xi * s, z = -3.5 + zi * s;
+          let y = 0;
+          try { y = f(x, z, 0, BASELINE); } catch { /* the app swallows these too */ }
+          if (Number.isFinite(y) && Math.abs(y) > best) { best = Math.abs(y); bx = x; bz = z; }
+        }
+        let prev = best, half = s, growth = 1;
+        for (let round = 0; round < 4; round++) {
+          let m = 0, mx = bx, mz = bz;
+          const n = 41, step = 2 * half / (n - 1);
+          for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+            const x = bx - half + i * step, z = bz - half + j * step;
+            let y = 0;
+            try { y = f(x, z, 0, BASELINE); } catch { /* ditto */ }
+            if (Number.isFinite(y) && Math.abs(y) > m) { m = Math.abs(y); mx = x; mz = z; }
+          }
+          if (prev > 0) growth = Math.max(growth, m / prev);
+          prev = m; bx = mx; bz = mz; half = step * 2;
+        }
+        if (growth > 2) offenders.push(`${colId}/${key} grows ×${growth.toFixed(1)} per refinement`);
+      }
+    }
+    assert.deepEqual(offenders, [],
+      `unbounded inside the drawn region, so the picture differs per GPU:\n  ${offenders.join('\n  ')}`);
+  });
+
+  test('no entry leaves the frame at the factory sliders', () => {
+    // Factory means the sliders as they boot, in silence: amp 0.7, freq 1.0,
+    // comp 0.5. The suite deliberately exempts the top of the slider range —
+    // that over-drive is the operator's to ask for — but nothing should leave
+    // the frame before the operator has touched anything. Round 5 measured the
+    // camera half-frame at 2.90–3.25 world units; 3.0 is the conservative end.
+    const FACTORY = { amp: 0.7, freq: 1, comp: 0.5 };
+    const offenders = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        const hf = generateSurfaceFromFormula(entry.f, FACTORY, 90, 3.5, 0);
+        let p = 0;
+        for (const v of hf) p = Math.max(p, Math.abs(v));
+        if (p > 3.0) offenders.push(`${colId}/${key} peak ${p.toPrecision(4)}`);
+      }
+    }
+    assert.deepEqual(offenders, [], `out of frame before the operator touched anything:\n  ${offenders.join('\n  ')}`);
+  });
+
+  test('no continuous surface is mostly a flat tabletop', () => {
+    // The failure mode a clamp creates, and the one no peak assertion can see:
+    // the peak is exactly what a clamp fixes. Discrete-valued entries — the
+    // escape-time fractals, the cellular automata, a winding number — are
+    // supposed to repeat one value over large areas, and they are told apart
+    // here by how many distinct values they take rather than by being listed.
+    const offenders = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        const hf = generateSurfaceFromFormula(entry.f, { amp: 0.7, freq: 1, comp: 0.5 }, 90, 3.5, 0);
+        let peak = 0;
+        for (const v of hf) peak = Math.max(peak, Math.abs(v));
+        if (peak === 0) continue;
+        let atPeak = 0;
+        const seen = new Set();
+        for (const v of hf) {
+          if (Math.abs(Math.abs(v) - peak) < 1e-9) atPeak++;
+          if (seen.size <= 50) seen.add(v.toFixed(9));
+        }
+        if (seen.size <= 50) continue;              // genuinely discrete-valued
+        const share = atPeak / hf.length;
+        if (share > 0.35) offenders.push(`${colId}/${key} ${(share * 100).toFixed(1)}% at |y|=${peak.toPrecision(4)}`);
+      }
+    }
+    assert.deepEqual(offenders, [],
+      `a clamp is standing in for the surface:\n  ${offenders.join('\n  ')}`);
+  });
+
+  test('fishersEquation draws a solution of the equation in its own caption', () => {
+    // The strongest test available for a PDE entry: put the drawn profile back
+    // into ∂u/∂t = D u_xx + r u(1−u) as a travelling wave u = U(ξ), ξ = x − ct,
+    // and measure the residual −cU′ − DU″ − rU(1−U). The logistic drawn before
+    // round 6 leaves 1.29 at the speed the code claimed and 0.48 at the best
+    // speed any logistic could have — it is not a solution at all. The
+    // Ablowitz–Zeppetella profile leaves 6e-8, which is the finite-difference
+    // error of the check itself.
+    const f = MATH_COLLECTIONS.differentialEqs.formulas.fishersEquation.f;
+    const D = 0.5, comp = 0.5, r = 1 + comp;
+    const c = 5 * Math.sqrt(r * D / 6);
+    // Read the profile straight off the surface along z = 0, where the
+    // Gaussian envelope is 1, and undo the display constant.
+    const U = xi => f(xi, 0, 0, { amp: 1, freq: 1, comp }) / 0.5;
+    const h = 1e-4;
+    let worst = 0;
+    for (let xi = -3; xi <= 3; xi += 0.1) {
+      const u0 = U(xi), up = U(xi + h), um = U(xi - h);
+      const d1 = (up - um) / (2 * h), d2 = (up - 2 * u0 + um) / (h * h);
+      worst = Math.max(worst, Math.abs(-c * d1 - D * d2 - r * u0 * (1 - u0)));
+    }
+    assert.ok(worst < 1e-5, `the drawn front is not a solution: residual ${worst}`);
+  });
+
+  test('juliaPotential draws the Green’s function, not its logarithm', () => {
+    // G(z) = lim log|fⁿ(z)|/2ⁿ. Dropping the 2⁻ⁿ leaves log₂(log|z_n|), which
+    // is the logarithm of the potential plus the escape index — a different
+    // surface, and off by up to 2.158 on a range whose maximum is 1.612.
+    // The oracle here runs the same limit far past the entry's twelve
+    // iterations, to an escape radius of 10⁵⁰, and is therefore converged.
+    const f = MATH_COLLECTIONS.complexNumbers.formulas.juliaPotential.f;
+    const green = (zx0, zy0, cr, ci) => {
+      let zx = zx0, zy = zy0;
+      for (let n = 0; n < 200; n++) {
+        const r2 = zx * zx + zy * zy;
+        if (!Number.isFinite(r2)) return null;
+        if (r2 > 1e100) return Math.log(Math.sqrt(r2)) / Math.pow(2, n);
+        const nx = zx * zx - zy * zy + cr; zy = 2 * zx * zy + ci; zx = nx;
+      }
+      return 0;
+    };
+    let worst = 0, checked = 0;
+    for (let i = 0; i < 40; i++) for (let j = 0; j < 40; j++) {
+      const x = -3.5 + 7 * i / 39, z = -3.5 + 7 * j / 39;
+      const g = green(x, z, -0.4, 0.6);
+      if (g === null || g <= 0) continue;
+      checked++;
+      worst = Math.max(worst, Math.abs(f(x, z, 0, { amp: 1, freq: 1, comp: 0 }) / 0.55 - g));
+    }
+    assert.ok(checked > 500, `only ${checked} escaping points were checked`);
+    assert.ok(worst < 5e-3, `worst deviation from G(z) is ${worst} over ${checked} points`);
+  });
+
+  test('ornsteinUhlenbeck draws a path with noise in it', () => {
+    // The old seed advanced ~8 per vertex out of a 65536 period read through
+    // &0xffff, so every vertex on the row was driven by the same twenty
+    // increments and what varied along it was the initial condition relaxing
+    // smoothly. Total variation over span is 1 for a monotone curve; the old
+    // row measured 1.09, which is the signature of no noise at all.
+    const f = MATH_COLLECTIONS.probability.formulas.ornsteinUhlenbeck.f;
+    const row = [];
+    for (let i = 0; i < 90; i++) row.push(f(-3.5 + 7 * i / 89, 0, 0, { amp: 1, freq: 1, comp: 0.5 }));
+    let tv = 0;
+    for (let i = 1; i < row.length; i++) tv += Math.abs(row[i] - row[i - 1]);
+    const span = Math.max(...row) - Math.min(...row);
+    assert.ok(tv / span > 4, `the row is smooth, not a sample path: total variation over span ${(tv / span).toFixed(2)}`);
+    // And it is still an OU path: mean-reverting, so it stays bounded rather
+    // than wandering like a random walk.
+    assert.ok(span < 1, `the path is not mean-reverting: span ${span}`);
+  });
+
+  test('zTransform is drawn only where it converges', () => {
+    // Z{aⁿ}(z) = z/(z−a) is the sum of Σaⁿz⁻ⁿ, which exists for |z| > a. The
+    // plate used to start at Re z = 0.5 while a reaches 0.9, so part of the
+    // picture stood outside the region of convergence and straddled the pole.
+    const f = MATH_COLLECTIONS.integralTransforms.formulas.zTransform.f;
+    for (const comp of [0, 0.5, 1]) {
+      const a = 0.7 + comp * 0.2;
+      // The left edge of the plate is the closest approach to the pole.
+      const zrMin = a + 0.2;
+      assert.ok(zrMin > a, 'the plate must not reach the pole');
+      const { ratio } = spread(f, { amp: 1, freq: 1, comp });
+      assert.ok(ratio < 1.05, `comp=${comp}: peak varies ×${ratio.toFixed(2)} with mesh density`);
+    }
   });
 });
