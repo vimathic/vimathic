@@ -454,7 +454,17 @@ function clausenCl2(theta) {
  */
 function airyAi(x) {
   const ax = Math.abs(x);
-  if (ax <= 8) {
+  // FIX(r8): one handover for both signs was wrong, because the two sides fail
+  // in opposite directions. Ai decays on the right, so the alternating series
+  // loses everything to cancellation there — relative error 1.1e-3 at x = +8,
+  // where the asymptotic is already good to 2.5e-14 — while on the left Ai
+  // oscillates at O(1) and the series still holds 1.9e-9 at x = −10, where the
+  // asymptotic is only worth 8.8e-9. Measured worst |ΔAi| over the reachable
+  // range against mpmath: right side 1.87e-10 → 8.7e-13 by handing over at 7,
+  // left side 1.26e-7 → 3.3e-8 by handing over at 10. The row's own ≤10⁻⁸ claim
+  // was violated by the old single threshold of 8 and is now met on one side
+  // and stated as measured on the other.
+  if (ax <= (x > 0 ? 7 : 10)) {
     const x3 = x * x * x;
     let f = 1, ft = 1, g = x, gt = x;
     for (let k = 0; k < 60; k++) {
@@ -1365,15 +1375,23 @@ const SPECIAL_FUNCTIONS = {
         // series converges fast), then the standard Bernoulli expansion.
         let xa = xv, psi = 0;
         // Recur up: subtract 1/x for each step to keep ψ(xv) correct
-        while (xa < 8) { psi -= 1/xa; xa += 1; }
-        // Asymptotic: ψ(x) ≈ ln(x) - 1/(2x) - Σ B_{2k}/(2k·x^{2k}) for k=1,2,3,4
-        // B_2=1/6, B_4=-1/30, B_6=1/42, B_8=-1/30
-        const x2 = xa*xa, x4 = x2*x2, x6 = x4*x2, x8 = x6*x2;
+        // FIX(r8): the lift stopped at 8 with four Bernoulli terms, which leaves
+        // the first dropped term B₁₀/(10·8¹⁰) = 7.06e-12 — and the measured
+        // worst error was 6.77e-12, i.e. that term and nothing else. A tier-A
+        // row promising machine precision cannot rest on it, and the row's own
+        // prose already said ~10⁻¹⁰, contradicting its letter. Lifting to 12 and
+        // carrying B₁₀ costs four more divisions per vertex and puts the first
+        // dropped term at B₁₂/(12·12¹²) = 2.4e-15.
+        while (xa < 12) { psi -= 1/xa; xa += 1; }
+        // Asymptotic: ψ(x) ≈ ln(x) - 1/(2x) - Σ B_{2k}/(2k·x^{2k}) for k=1..5
+        // B_2=1/6, B_4=-1/30, B_6=1/42, B_8=-1/30, B_10=5/66
+        const x2 = xa*xa, x4 = x2*x2, x6 = x4*x2, x8 = x6*x2, x10 = x8*x2;
         psi += Math.log(xa) - 1/(2*xa)
              - (1/6)/(2*x2)
              - (-1/30)/(4*x4)
              - (1/42)/(6*x6)
-             - (-1/30)/(8*x8);
+             - (-1/30)/(8*x8)
+             - (5/66)/(10*x10);
         return clamp(psi * 0.2 * amp, -0.6, 0.6) * Math.exp(-z*z*0.4);
       }
     },
@@ -2106,8 +2124,16 @@ const COMPLEX_NUMBERS = {
         // Softening the radius itself says what is actually meant: the surface
         // is Log(z) outside a small disc, and the disc has a size a viewer
         // could see (0.08 world units) instead of 10⁻⁹.
+        // FIX(r8): √(r²+ε²) is not ln|z| anywhere — the bias is ½ln(1+ε²/r²),
+        // which is small but never zero, so "ln|z| outside a disc of radius
+        // 0.08" was false on 100 % of the vertices and by 5.8e-2 at r = 0.07.
+        // Outside the disc the logarithm is now itself; inside, the quadratic
+        // that meets it in value and slope at the rim, which is what "a disc a
+        // viewer can see" was always meant to say.
+        const R0=0.08;
         const r=Math.hypot(x*freq, z*freq);
-        return Math.log(Math.sqrt(r*r + 0.08*0.08)) * amp * 0.2 * (1+Math.sin(t*0.4)*0.2);
+        const lg = r >= R0 ? Math.log(r) : Math.log(R0) + (r*r - R0*R0)/(2*R0*R0);
+        return lg * amp * 0.2 * (1+Math.sin(t*0.4)*0.2);
       }
     },
     riemannSphere: {
@@ -2254,7 +2280,11 @@ const COMPLEX_NUMBERS = {
     },
     argandField: {
       name: 'Argand Phase Color',
-      formula: 'arg(z^n)',
+      // FIX(r8): what is drawn is the sine of the named quantity, not the
+      // quantity — so the surface is two-to-one in the phase (π/6 and 5π/6 give
+      // the same height) and spans ±0.45 rather than ±π. The accuracy row's own
+      // rationale column already said sin(n·θ); only this line disagreed.
+      formula: 'sin(arg(zⁿ))',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const n=Math.round(1+comp*4);
         const theta=Math.atan2(z*freq,x*freq);
@@ -3072,9 +3102,16 @@ const TOPOLOGY_GEOMETRY = {
       name: 'Scherk Minimal Surface',
       formula: 'e^z cos y = cos x',
       f(x, z, t, {amp=1, freq=1}) {
+        // FIX(r8): a graph y = k·ln(cos(a·x)/cos(a·z)) is Scherk's surface —
+        // that is, minimal — only for k = 1/a. Here a = 2·freq and k was a flat
+        // 0.25, so the surface was a vertically compressed Scherk graph whose
+        // mean curvature reached 1.05 where minimality requires exactly 0, under
+        // a row claiming machine precision. k = 0.5/freq is the same expression
+        // at the one scale that satisfies the equation, verified symbolically:
+        // 2H·(1+|∇y|²)^{3/2} vanishes identically.
         const cx=Math.cos(x*freq*2), cz=Math.cos(z*freq*2+t*0.2);
         if (Math.abs(cx)<1e-3||Math.abs(cz)<1e-3) return 0;
-        return clamp(Math.log(Math.abs(cx/cz))*0.25*amp,-0.7,0.7);
+        return soften(Math.log(Math.abs(cx/cz))*(0.5/freq)*amp, 0.7, 1.6);
       }
     },
     catenoid: {
@@ -3137,9 +3174,14 @@ const TOPOLOGY_GEOMETRY = {
       name: 'Torus Cross Section',
       formula: '(√(x²+z²)−R)² + y² = r²',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
+        // FIX(r8): the extra 0.5 halved the vertical semi-axis, so the section
+        // drawn was an ellipse of aspect 2:1 and the implicit equation in the
+        // caption held only on the tube's boundary curve. At amp = 1 the section
+        // is now the circle of radius r the caption states; amp scales the whole
+        // picture here as it does everywhere else in the catalogue.
         const R=1.5, r=0.5+comp*0.3;
         const dist=Math.sqrt(x*x+z*z)*freq-R;
-        return Math.sqrt(Math.max(0, r*r-dist*dist)) * amp * 0.5 * Math.sign(x+z);
+        return Math.sqrt(Math.max(0, r*r-dist*dist)) * amp * Math.sign(x+z);
       }
     },
     breatherSurface: {
@@ -3184,7 +3226,15 @@ const TOPOLOGY_GEOMETRY = {
         const rho=Math.sqrt(x*x+z*z)*freq;
         const T=Math.PI*rho/(rho+2.5);
         const theta=Math.atan2(z, x);
-        return soften((Math.log(Math.tan(T/2))+1/Math.cosh(T)) * amp * 0.35, 0.35, 0.8);
+        // FIX(r8): the profile was ln tan(T/2) + sech T. The tractrix is
+        // ln tan(T/2) + cos T — sech and cos agree to first order at T = 0 and
+        // part company immediately after, by 0.57 over the drawn range, so the
+        // curve the row quotes as "the tractrix" was not one. The reparametrised
+        // radius is a separate matter and is stated in the row rather than
+        // fixed: T is a monotone map of the plate radius, not arcsin of it, so
+        // what is drawn is the tractrix profile revolved, not a surface of
+        // constant curvature.
+        return soften((Math.log(Math.tan(T/2))+Math.cos(T)) * amp * 0.35, 0.35, 0.8);
       }
     },
     crossCap: {
@@ -3623,7 +3673,12 @@ const CELLULAR_AUTOMATA = {
     },
     conway3D: {
       name: 'Conway 3D Rule (slice)',
-      formula: 'B5-7/S6 — 3D Game of Life rule, mid-y slice',
+      // FIX(r8): the caption promised the mid-y slice and the code has averaged
+      // three adjacent layers since round 6 — a projection that smooths the
+      // rule's own structure across more than half the plate's cells.
+      // MATHEMATICAL_ACCURACY.md recorded the change; the line a user reads did
+      // not.
+      formula: 'B5-7/S6 — 3D Game of Life rule, mean of three adjacent y layers',
       // Full 3D B5-7/S6 simulation on an 18³ grid; returns the y=mid slice.
       // Initial configuration is hash-seeded (~30% density), then 3-5
       // generations are evolved.
@@ -3827,7 +3882,12 @@ const QUANTUM_MECHANICS = {
     },
     spinorVisualization: {
       name: 'Spinor / Bloch Sphere Projection',
-      formula: '|ψ⟩ = cos(θ/2)|0⟩+e^{iφ}sin(θ/2)|1⟩',
+      // FIX(r8): the caption named only the state, which left the accuracy row
+      // as the sole statement of what is plotted — and that row still described
+      // the population difference cos θ that round 6 replaced with ⟨σx⟩. The
+      // two differ by 70.7 % of full scale, so the caption now says which Bloch
+      // component reaches the screen.
+      formula: '|ψ⟩ = cos(θ/2)|0⟩+e^{iφ}sin(θ/2)|1⟩; drawn: ⟨σx⟩ = sin θ·cos φ',
       f(x, z, t, {amp=1, freq=1}) {
         const theta=Math.PI*(x*freq+1)*0.5, phi=z*freq*Math.PI+t*0.4;
         // FIX(r6): cos²(θ/2) − sin²(θ/2) = cos θ is the population difference and
@@ -3878,7 +3938,13 @@ const QUANTUM_MECHANICS = {
     },
     landauLevels: {
       name: 'Landau Level (2D magnetic)',
-      formula: 'E_n = ħω_c(n+½); drawn: [L_n(r²)]²·e^{−r²}·cos²(nθ + ω_c t/10) — the m = ±n pair, turning',
+      // FIX(r8): the parenthetical was false. [L_n^0(r²)]²e^{−r²} is the radial
+      // density of the m = 0 state of level n, and multiplying it by cos²(nθ)
+      // — the angular factor of |m| = n — gives a function that is an
+      // eigenstate of nothing: the m = ±n pair has to vanish at the origin and
+      // this surface is brightest there. The Laguerre recurrence itself is
+      // exact to 4.7e-16, so the arithmetic stays and the claim goes.
+      formula: 'E_n = ħω_c(n+½); drawn: the m = 0 radial density [L_n(r²)]²·e^{−r²}, given a turning cos²(nθ + ω_c t/10) pattern',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const n=Math.round(comp*5), omega_c=2+comp;
         const r2=(x*freq)**2+(z*freq)**2;
@@ -3890,7 +3956,12 @@ const QUANTUM_MECHANICS = {
     },
     schrodingerSoliton: {
       name: 'NLS Soliton',
-      formula: '|ψ| = A·sech(A(x−vt))',
+      // FIX(r8): three names for one surface — the kernel returns A²sech²,
+      // which is |ψ|²; this caption called it |ψ| = A·sech, and the accuracy
+      // row called it A·sech², which is neither the amplitude nor the density.
+      // The kernel is right and was verified against a symbolic NLS residual of
+      // zero, so the two labels move to it.
+      formula: '|ψ|² = A²·sech²(A(x−vt))',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const A=1+comp, v=0.5;
         // FIX(#5, r4): the soliton translates at v·0.3 per unit of clock and

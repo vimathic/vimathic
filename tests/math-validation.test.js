@@ -317,11 +317,15 @@ describe('Tier A — Topology & Geometry', () => {
   });
 
   test('torusSection: implicit torus equation', () => {
-    // dist = √(x²+z²) - R = √(2.25) - 1.5 = 0 at x=1.5
-    // sqrt(max(0, r²-0)) · sign(1.5) = sqrt(r²) = r = 0.65 (with comp=0.5); · 0.5
+    // dist = √(x²+z²) - R = √(2.25) - 1.5 = 0 at x=1.5, so the height is the
+    // tube radius itself: r = 0.5 + 0.3·comp = 0.65 at comp = 0.5.
+    // FIX(r8): this used to expect r/2, pinning the very factor that made the
+    // section an ellipse of aspect 2:1 while the caption promised the circle
+    // (√(x²+z²)−R)² + y² = r². A test can hold a defect in place as firmly as
+    // it holds a contract.
     const params = { amp: 1, freq: 1, comp: 0.5 };
     const v = evalAt('topology', 'torusSection', 1.5, 0, 0, params);
-    near(v, 0.65 * 0.5, 1e-12);
+    near(v, 0.65, 1e-12);
   });
 });
 
