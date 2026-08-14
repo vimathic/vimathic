@@ -30,7 +30,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import {
   MATH_COLLECTIONS,
@@ -2052,6 +2052,18 @@ describe('Regression — surfaces that went out over the length of a set (#R5)',
     // it re-measured t = 0 three times and could not fail by construction.
     // Twelve samples 2.617 apart span 28.8 units, more than one period, and the
     // step is deliberately not a divisor of it.
+    //
+    // FIX(r7): that widening fixes the zero-crossing case and NOT the one the
+    // sentence above claims. The offset i·2.617 is added to every sample, so
+    // for an entry that really is 24-periodic the window at t₀ = 864 samples
+    // the same twelve phases as the window at t₀ = 0 and returns an identical
+    // double — measured: six of the eight folded entries, feynmanPath among
+    // them, give born === later bit for bit. What that costs is nothing, and
+    // the honest statement is why: an entry that folds cannot drift, so a
+    // guard that cannot fail on it hides nothing, and the failure it could
+    // hide instead — dying inside the period — is what the sibling test below
+    // measures. This guard's real job is the entry that does NOT fold, and
+    // there the uptimes being multiples of 24 is irrelevant.
     const windowPeak = (colId, key, t0) => {
       let m = 0;
       for (let i = 0; i < 12; i++) m = Math.max(m, peakOf(colId, key, BOOT, t0 + i * 2.617, 25));
@@ -2255,10 +2267,23 @@ describe('Regression — GPU displacement branches that drew nothing (#R5)', () 
   // invisible for as long as nobody looked: the modes rendered a flat plate in a
   // flat colour, because main() assigns pos.y rather than accumulating it.
   const vs = readFileSync(new URL('../src/shaders.js', import.meta.url), 'utf8');
+  // FIX(r7): this used to end the branch at the first `}` followed by
+  // `else`/`// FIX`/`return`. Mode 36 closes into a five-line comment, so the
+  // `\s*` failed there and the match ran on through mode 37's body — the guard
+  // below then read mode 37's uniforms and passed while mode 36 could stop
+  // reading uBass entirely (verified by deleting its only `b` term: still
+  // green). A branch ends where the next one begins, whatever sits between
+  // them, and the extractor now proves it took only one.
   const branch = n => {
-    const m = vs.match(new RegExp(`mode==${n}\\)\\{([\\s\\S]*?)\\}\\n?\\s*(?:else|// FIX|return)`));
-    assert.ok(m, `could not find branch mode==${n}`);
-    return m[1];
+    const start = vs.indexOf(`mode==${n})`);
+    assert.ok(start >= 0, `could not find branch mode==${n}`);
+    const open = vs.indexOf('{', start);
+    const rest = vs.slice(open + 1);
+    const stop = rest.search(/else\s*(?:if\s*\(\s*mode\s*==|\{)|\n\s*return\b/);
+    const src = stop >= 0 ? rest.slice(0, stop) : rest;
+    assert.ok(!/mode\s*==/.test(src),
+      `the extractor ran past the end of mode ${n} and into another branch`);
+    return src;
   };
 
   test('mode 10 no longer multiplies every term by sin(nπ)', () => {
@@ -2442,8 +2467,14 @@ describe('Captions and counts, asked of the whole catalogue (#R6)', () => {
     // or names arccos without calling one, is still caught.
     const has = (src, re) => re.test(src);
     const CALLED = {
+      // FIX(r7): the fallback here used to be "calls cos AND calls sin AND
+      // contains a slash", which 34 of the 192 kernels satisfy — including
+      // trigonometry/circularFunctions, the very kernel this rule was written
+      // about. Putting its old name back left the guard green, so the rule
+      // could not fail on the caption it exists to protect. A cotangent is a
+      // tangent inverted or a cos/sin ratio written out; nothing else is.
       cot: src => has(src, /\bcot\s*\(|Math\.tan\s*\(/) ||
-                  (has(src, /Math\.cos\s*\(/) && has(src, /Math\.sin\s*\(/) && has(src, /\//)),
+                  has(src, /Math\.cos\s*\([^;]{0,80}\)\s*\/\s*Math\.sin\s*\(/),
       arccos: src => has(src, /Math\.acos\s*\(/),
       arcsin: src => has(src, /Math\.asin\s*\(/),
       arctan: src => has(src, /Math\.atan2?\s*\(/),
@@ -2464,6 +2495,15 @@ describe('Captions and counts, asked of the whole catalogue (#R6)', () => {
       }
     }
     assert.deepEqual(offenders, [], offenders.join('\n  '));
+
+    // Control, and the reason the rule above was rewritten: the kernel this
+    // round renamed must still be reported if the old name comes back. A guard
+    // over a catalogue is only worth its runtime if it fails on the entry it
+    // was written for, and this one did not.
+    const cf = MATH_COLLECTIONS.trigonometry.formulas.circularFunctions;
+    assert.ok(cf, 'trigonometry/circularFunctions is gone — this control needs rewriting');
+    assert.ok(!CALLED.cot(cf.f.toString()),
+      'the cot rule accepts a kernel that computes sec·csc, so the caption it renamed is unguarded');
   });
 
   test('anything captioned as a probability or a density is non-negative', () => {
@@ -2532,6 +2572,25 @@ describe('Captions and counts, asked of the whole catalogue (#R6)', () => {
       mismatches.push(`Executive Summary says ${sumA[1]}/${sumB[1]}/${sumC[1]}, the sections sum to ${totA}/${totB}/${totC}`);
     }
     assert.equal(totA + totB + totC, 192, `the sections describe ${totA + totB + totC} formulas, not 192`);
+
+    // FIX(r7): the counts are also stated outside this document, and nothing
+    // compared them — documents/index.md shipped 123/43/26 to the public
+    // overview page while this file and README.md both read 128/40/24. Both
+    // shapes the project uses to state them are read out of every markdown
+    // file it ships, so a third copy in a fourth file is covered too.
+    for (const rel of [...readdirSync(new URL('../', import.meta.url)).filter(n => n.endsWith('.md')).map(n => '../' + n),
+                       ...readdirSync(new URL('../documents/', import.meta.url)).filter(n => n.endsWith('.md')).map(n => '../documents/' + n)]) {
+      const text = readFileSync(new URL(rel, import.meta.url), 'utf8');
+      const table = [/\| 🟢 A \| (\d+) \|/, /\| 🔵 B \| (\d+) \|/, /\| 🟡 C \| (\d+) \|/].map(re => re.exec(text));
+      const prose = [/(\d+) formulas use closed-form/, /(\d+) use bounded numerical/, /(\d+) are visualisation-grade/].map(re => re.exec(text));
+      for (const [shape, got] of [['table', table], ['prose', prose]]) {
+        if (!got[0] && !got[1] && !got[2]) continue;
+        const said = got.map(m => (m ? +m[1] : null));
+        if (said[0] !== totA || said[1] !== totB || said[2] !== totC) {
+          mismatches.push(`${rel.replace('../', '')} (${shape}) says ${said.join('/')}, the catalogue is ${totA}/${totB}/${totC}`);
+        }
+      }
+    }
     assert.deepEqual(mismatches, [], mismatches.join('\n  '));
   });
 
@@ -2541,11 +2600,20 @@ describe('Captions and counts, asked of the whole catalogue (#R6)', () => {
     // only forbids a count on a line that also mentions `npm test`. A number
     // that has to be maintained by hand in five places will drift, so the fix
     // is to state none of them.
-    const files = ['../MATHEMATICAL_ACCURACY.md', '../README.md', '../CONTRIBUTING.md', '../documents/roadmap.md'];
+    // FIX(r7): the list was four filenames and a `catch { continue }`, in a
+    // guard whose own describe block calls itself "four guards with no
+    // handwritten list in them". documents/roadmap.md was in it and the other
+    // documents were not, so a count could be written anywhere else and pass.
+    // Every markdown file the project ships is asked instead, and a file that
+    // cannot be read is a failure rather than a silent skip.
+    const dir = rel => readdirSync(new URL(rel, import.meta.url))
+      .filter(n => n.endsWith('.md')).map(n => rel + n);
+    const files = [...dir('../'), ...dir('../documents/')];
+    assert.ok(files.length >= 15, `only ${files.length} markdown files found — the walk is not reaching them`);
     const offenders = [];
     for (const rel of files) {
-      let text;
-      try { text = readFileSync(new URL(rel, import.meta.url), 'utf8'); } catch { continue; }
+      const text0 = readFileSync(new URL(rel, import.meta.url), 'utf8');
+      let text = text0;
       // Strip HTML comments first: a note explaining why a count must not be
       // written down is not itself a count. Line numbers are preserved by
       // replacing the comment body with blanks rather than removing it.
@@ -3155,11 +3223,230 @@ describe('Singularities — the peak must not depend on where the mesh samples (
     const f = MATH_COLLECTIONS.integralTransforms.formulas.zTransform.f;
     for (const comp of [0, 0.5, 1]) {
       const a = 0.7 + comp * 0.2;
-      // The left edge of the plate is the closest approach to the pole.
-      const zrMin = a + 0.2;
-      assert.ok(zrMin > a, 'the plate must not reach the pole');
+      // FIX(r7): this used to read `const zrMin = a + 0.2; assert.ok(zrMin > a)`,
+      // which is `a + 0.2 > a` — true for every finite a, and it never touched
+      // the kernel. The distance to the pole has to be read off the surface the
+      // kernel actually draws, so a mapping that walked back onto the pole would
+      // be caught. |z − a| is bounded below by the real part alone, and the
+      // closest approach is the left edge of the plate at every freq, so a
+      // vertex-by-vertex minimum over a real plate is the honest measurement.
+      let closest = Infinity;
+      for (const freq of [1, 2, 4.55]) {
+        for (let i = 0; i < 90; i++) {
+          const x = -3.5 + i * 7 / 89;
+          for (let j = 0; j < 90; j++) {
+            const zz = -3.5 + j * 7 / 89;
+            const zr = a + 0.2 + (x + 3.5) / 7 * 2.5, zi = zz * freq * 0.4;
+            closest = Math.min(closest, Math.hypot(zr - a, zi));
+          }
+        }
+      }
+      assert.ok(closest > 0.15,
+        `comp=${comp}: the plate reaches within ${closest.toFixed(3)} of the pole at z = a`);
       const { ratio } = spread(f, { amp: 1, freq: 1, comp });
       assert.ok(ratio < 1.05, `comp=${comp}: peak varies ×${ratio.toFixed(2)} with mesh density`);
+    }
+  });
+});
+
+describe('Round 7 — repairs that cost more than they bought (#R7)', () => {
+  // The audio the app feeds itself with nothing playing: audio.js drives three
+  // LFOs at 0.7, 0.9 and 1.1 rad/s and main.js advances the formula clock by
+  // 0.008 per rendered frame. So "silence" is not a constant — every parameter
+  // is moving, always, and a kernel that cannot take a small parameter step
+  // flickers on an idle machine.
+  const idleFrame = k => {
+    const time = k * 0.008;
+    const bass = 0.2 + Math.sin(time * 0.7) * 0.1;
+    const mid = 0.2 + Math.sin(time * 0.9) * 0.09;
+    const treble = 0.15 + Math.cos(time * 1.1) * 0.08;
+    return { time, params: { amp: 0.7 * (1 + bass * 0.5), freq: 1 + treble * 0.3, comp: 0.5 + mid * 0.4 } };
+  };
+  const relChange = (a, b) => {
+    let num = 0, den = 0;
+    for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; num += d * d; den += a[i] * a[i]; }
+    return den > 1e-24 ? Math.sqrt(num / den) : 0;
+  };
+
+  test('no cached simulation redraws itself from scratch between frames', () => {
+    // The entries drawn through createCachedHeavySampler are selected by what
+    // they are rather than by name: their kernel is the wrapper, so the wrapper's
+    // own identifiers appear in every one of them and in nothing else. Thirteen
+    // today; a fourteenth is covered the day it is added.
+    //
+    // A rebuild is meant to advance a simulation, not to draw a new one. rossler
+    // fed `comp` into the chaotic parameter c = 5.7 + comp, and this cache
+    // rebuilds about every third frame, so every rebuild integrated thousands of
+    // RK4 steps under a c that had moved and came back with a different sample
+    // of the same attractor: 75.4 % of the plate's own norm between consecutive
+    // frames, with nothing playing. The measurement has to be the WORST step and
+    // not the median — two frames in three change nothing at all, so the median
+    // is 0.00 % for a plate that is flashing.
+    //
+    // 25 % sits between the two populations with room on both sides: the worst
+    // legitimate mover is Langton's Ant at 11.7 % (a discrete ant that really
+    // does jump), and the defect measured 75.4 %.
+    const offenders = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        if (!/cachedGrid|sampleGrid/.test(entry.f.toString())) continue;
+        let prev = null, worst = 0;
+        for (let k = 0; k < 24; k++) {
+          const { time, params } = idleFrame(k);
+          const cur = generateSurfaceFromFormula(entry.f, params, 41, 3.5, time);
+          if (prev) worst = Math.max(worst, relChange(prev, cur));
+          prev = cur;
+        }
+        if (worst > 0.25) offenders.push(`${colId}/${key} changes by ${(worst * 100).toFixed(1)} % between frames`);
+      }
+    }
+    assert.deepEqual(offenders, [], `a cached simulation is resampling, not evolving:\n  ${offenders.join('\n  ')}`);
+  });
+
+  test('ornsteinUhlenbeck keeps the whole path on screen above the factory wave intensity', () => {
+    // The domain map scaled x by freq and left the recentring offset alone, so
+    // above freq = 1 both ends of every row ran off the path and were held by
+    // the clamp — and the left one returned a literal zero, the loop never
+    // having been entered. Share of a plate sitting at its own row's edge
+    // value: 0.022 at freq 1 (which is the metric's floor — the edge columns
+    // are two of ninety), then 0.178, 0.356 and 0.511 at freq 1.2, 1.5 and 2.
+    const f = MATH_COLLECTIONS.probability.formulas.ornsteinUhlenbeck.f;
+    const edgeShare = freq => {
+      const g = 90, hf = generateSurfaceFromFormula(f, { amp: 0.7, freq, comp: 0.5 }, g, 3.5, 0);
+      let pinned = 0;
+      for (let zi = 0; zi < g; zi++) {
+        const row = hf.subarray(zi * g, (zi + 1) * g);
+        const l = row[0], r = row[g - 1];
+        for (const v of row) if (v === l || v === r) pinned++;
+      }
+      return pinned / hf.length;
+    };
+    for (const freq of [1, 1.2, 1.5, 2, 4.55]) {
+      const share = edgeShare(freq);
+      assert.ok(share < 0.05,
+        `freq ${freq}: ${(share * 100).toFixed(1)} % of the plate is pinned to the edge of the path`);
+    }
+  });
+
+  test('ornsteinUhlenbeck is a pure function of position, memoised or not', () => {
+    // The path moved out of the kernel into a one-slot cache, so the thing that
+    // has to be proved is that nothing changed but the arithmetic's location:
+    // the same vertex under the same parameters must give the same value after
+    // an intervening call with different parameters has evicted the slot.
+    const f = MATH_COLLECTIONS.probability.formulas.ornsteinUhlenbeck.f;
+    const at = (x, params) => f(x, 0.25, 0, params);
+    const A = { amp: 0.7, freq: 1, comp: 0.5 }, B = { amp: 0.7, freq: 1.7, comp: 0.9 };
+    const first = [-2, -0.5, 0.3, 2.8].map(x => at(x, A));
+    [-2, 0, 1].forEach(x => at(x, B));
+    const again = [-2, -0.5, 0.3, 2.8].map(x => at(x, A));
+    assert.deepEqual(again, first, 'the memoised path is not reproducing its own values');
+  });
+
+  test('randomWalk keeps the size its own note promises', () => {
+    // "the same LCG and step size are kept so the surface stays the same size it
+    // was" — it did not: one walk of 410 steps travels further than the 16 the
+    // per-vertex seed accumulated, and the 0.12 that was supposed to pay that
+    // back left the peak 3.820× small at every t and every slider.
+    const f = MATH_COLLECTIONS.probability.formulas.randomWalk.f;
+    for (const [time, want] of [[0, 0.2959], [0.7, 0.3082], [3.1, 0.3433]]) {
+      const hf = generateSurfaceFromFormula(f, { amp: 0.7, freq: 1, comp: 0.5 }, 90, 3.5, time);
+      let peak = 0;
+      for (const v of hf) peak = Math.max(peak, Math.abs(v));
+      assert.ok(Math.abs(peak - want) / want < 0.01,
+        `t=${time}: peak ${peak.toFixed(4)} against the ${want} it had before the walk was rebuilt`);
+    }
+  });
+
+  test('hydrogen2p turns the way its caption says it does', () => {
+    // The caption added in round 6 reads cos²(φ − 0.3t) and the kernel computes
+    // cos(l·θ + 0.3t)²; the sign is the direction the lobe pair turns, so the
+    // two disagreed about the picture. Read the direction off the surface and
+    // require the caption to carry the matching sign, rather than pinning the
+    // string on its own.
+    const entry = MATH_COLLECTIONS.quantumMechanics.formulas.hydrogen2p;
+    const lobeAzimuth = time => {
+      let best = -Infinity, at = 0;
+      for (let i = 0; i < 720; i++) {
+        const a = -Math.PI + i * 2 * Math.PI / 720;
+        const y = entry.f(Math.cos(a) * 1.5, Math.sin(a) * 1.5, time, { amp: 1, freq: 1, comp: 0.5 });
+        if (y > best) { best = y; at = a; }
+      }
+      return at;
+    };
+    // |ψ|² carries cos², so the lobe pattern has period π: wrap the step there.
+    let d = lobeAzimuth(0.5) - lobeAzimuth(0);
+    while (d > Math.PI / 2) d -= Math.PI;
+    while (d <= -Math.PI / 2) d += Math.PI;
+    assert.ok(Math.abs(d) > 0.05, `the lobe pair does not turn at all (Δφ = ${d.toFixed(4)})`);
+    const capturedSign = /cos²\(φ ([+−-]) 0\.3t\)/.exec(entry.formula);
+    assert.ok(capturedSign, `hydrogen2p's caption no longer states a rotation: ${entry.formula}`);
+    // cos²(φ + 0.3t) peaks where φ = −0.3t, so a '+' in the caption means the
+    // lobe travels toward negative azimuth.
+    const capturedForward = capturedSign[1] === '+';
+    assert.equal(capturedForward, d < 0,
+      `the caption says ${capturedSign[1]}0.3t but the lobe turns ${d < 0 ? 'toward negative' : 'toward positive'} azimuth`);
+  });
+
+  test('mode 11 has a floor without a ceiling, measured across the whole treble range', () => {
+    // The claim "a ceiling now slightly under what the branch had before either
+    // repair" was measured at one value of uTreble. A constant offset gives all
+    // seven harmonics the same phase, so near t = 0.1 they still add: sweeping
+    // uTreble across [0, 1] with the sliders up gives 6.653 for the shipped
+    // branch against 5.663 for the one before either repair. The scale carries
+    // the repair now, so it is read out of the shader rather than assumed.
+    const vs = readFileSync(new URL('../src/shaders.js', import.meta.url), 'utf8');
+    const seg = vs.slice(vs.indexOf('mode==11)'), vs.indexOf('mode==12)'));
+    const scale = /y=s\*(\.\d+|\d+\.\d*)\*\(0\.3\+b\*\.7\)\*a;/.exec(seg);
+    assert.ok(scale, 'mode 11 no longer has the shape this measurement transliterates');
+    const k = parseFloat(scale[1]);
+    const peakAt = (treble, b, a) => {
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < 81; i++) for (let j = 0; j < 81; j++) {
+        const x = -3.5 + 7 * i / 80, z = -3.5 + 7 * j / 80;
+        const r = Math.hypot(x, z), ang = Math.atan2(z, x);
+        let s = 0;
+        for (let n = 1; n <= 7; n++) s += Math.exp(-n * r * 0.3) * Math.cos(ang * n * 2) * Math.sin(n * treble * 2 + 0.6);
+        const y = s * k * (0.3 + b * 0.7) * a;
+        lo = Math.min(lo, y); hi = Math.max(hi, y);
+      }
+      return { peak: Math.max(Math.abs(lo), Math.abs(hi)), span: hi - lo };
+    };
+    let worst = 0;
+    for (let i = 0; i <= 40; i++) worst = Math.max(worst, peakAt(i / 40, 0.9, 2.25).peak);
+    assert.ok(worst <= 5.70, `mode 11 peaks at ${worst.toFixed(3)}, above the 5.663 it had before either repair`);
+    assert.ok(peakAt(0, 0.2, 0.7).span > 0.3,
+      'mode 11 has lost the floor that made it visible with no treble at all');
+  });
+
+  test('the two spectrum modes still have a surface with nothing playing', () => {
+    // Wiring uBass/uMid/uTreble in was the repair; paying for them out of the
+    // constant term was not. In silence the spans fell to 0.297 and 0.300 from
+    // 0.362 and 0.452 — a VJ who has not started the track sees a flat sheet.
+    const vs = readFileSync(new URL('../src/shaders.js', import.meta.url), 'utf8');
+    const coeffs = n => {
+      const start = vs.indexOf(`mode==${n})`);
+      const stop = vs.indexOf('mode==', vs.indexOf('{', start) + 1);
+      const body = vs.slice(start, stop < 0 ? undefined : stop);
+      return [...body.matchAll(/\((0?\.\d+)\+([bmt])\*(\.\d+)\)/g)].map(m => [parseFloat(m[1]), m[2], parseFloat(m[3])]);
+    };
+    const silent = { b: 0.20, m: 0.20, t: 0.15 };
+    for (const [n, harm, mult, outer, floor] of [[35, 8, false, 0.4, 0.35], [36, 10, true, 0.5, 0.40]]) {
+      const c = coeffs(n);
+      assert.equal(c.length, 4, `mode ${n} no longer has four band terms`);
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < 81; i++) for (let j = 0; j < 81; j++) {
+        const x = -3.5 + 7 * i / 80, z = -3.5 + 7 * j / 80;
+        const r = Math.hypot(x, z), ang = Math.atan2(z, x);
+        let v = 0;
+        c.forEach(([base, band, w], idx) => {
+          const term = Math.sin(r * harm * (idx + 1)) * (base + silent[band] * w);
+          v += mult && idx > 0 ? term * Math.cos(ang * (idx + 1)) : term;
+        });
+        const y = v * outer * 0.7;
+        lo = Math.min(lo, y); hi = Math.max(hi, y);
+      }
+      assert.ok(hi - lo > floor,
+        `mode ${n} spans only ${(hi - lo).toFixed(3)} in silence — the plate is nearly flat before the music starts`);
     }
   });
 });

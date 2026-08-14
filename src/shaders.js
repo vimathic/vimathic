@@ -87,7 +87,15 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
   // it shifts every harmonic by the same amount instead of by a multiple of it:
   // silence 0.680 (was 0.0), loud 1.998, sliders up 2.997 — a floor, and a
   // ceiling now slightly under what the branch had before either repair.
-  else if(mode==11){float s=0.;for(int n=1;n<=7;n++){float fn=float(n);s+=exp(-fn*r*.3)*cos(ang*fn*2.)*sin(fn*t*2.+0.6);}y=s*.5*(0.3+b*.7)*a;}
+  // FIX(r7): the sentence above was measured at one value of uTreble and is
+  // false at the worst one. A constant offset gives every harmonic the SAME
+  // phase, so near t = 0.1 all seven still add: sweeping uTreble across [0, 1]
+  // with the sliders up, the peak is 6.653 against 5.663 for the branch before
+  // either repair — 17 % above, not under. The offset is what makes the floor,
+  // so it stays and the branch is scaled by 5.663/6.653 = 0.851 instead:
+  // .5 → .425. Worst peak 5.655, and silence keeps a span of 0.62 where the
+  // shipped branch had exactly 0.
+  else if(mode==11){float s=0.;for(int n=1;n<=7;n++){float fn=float(n);s+=exp(-fn*r*.3)*cos(ang*fn*2.)*sin(fn*t*2.+0.6);}y=s*.425*(0.3+b*.7)*a;}
   else if(mode==12){y=exp(-r*.6)*sin(r*8.*wi*(0.5+t))*(0.3+b*.7)*a;}
   else if(mode==13){float e=0.;for(int n=1;n<=5;n++){float fn=float(n);e+=cos(ang*fn*4.)*exp(-r*.15*fn);}y=e*.4*(0.3+b*.7)*a;}
   else if(mode==14){y=sin(r*8.*wi*(0.5+t))*cos(ang*4.)*(0.3+b*.7)*a+bt*.3;}
@@ -144,17 +152,25 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
   // the harmonics they are named for: low harmonic ← bass, middle ← mid, upper
   // two ← treble, which is what a three-band EQ display and a channel vocoder
   // both do.
+  // FIX(r7): wiring the bands in was right; paying for them out of the silent
+  // level was not. The floors went from a flat 0.2 per term to 0.10/0.10/0.08/
+  // 0.05 and 0.08/0.08/0.06/0.04, so with nothing playing the two plates lost
+  // most of their relief — span 0.297 against 0.362 and 0.300 against 0.452 —
+  // and a VJ who has not started the track yet sees a nearly flat sheet. The
+  // floor is 0.15 on every term now, which lands silence at 0.384 and 0.440,
+  // and the band coefficients absorb the difference so the loud end does not
+  // grow: peak with the sliders up 1.294 and 1.325 against 1.379 and 1.421.
   else if(mode==35){float eq=0.;
-    eq+=sin(r* 8.*wi     )*(0.10+b*.55);
-    eq+=sin(r* 8.*wi*2.  )*(0.10+m*.55);
-    eq+=sin(r* 8.*wi*3.  )*(0.08+t*.50);
-    eq+=sin(r* 8.*wi*4.  )*(0.05+t*.30);
+    eq+=sin(r* 8.*wi     )*(0.15+b*.45);
+    eq+=sin(r* 8.*wi*2.  )*(0.15+m*.45);
+    eq+=sin(r* 8.*wi*3.  )*(0.15+t*.38);
+    eq+=sin(r* 8.*wi*4.  )*(0.15+t*.15);
     y=eq*.4*a;}
   else if(mode==36){float v3=0.;
-    v3+=sin(r*10.*wi     )*(0.08+b*.50);
-    v3+=sin(r*10.*wi*2.  )*(0.08+m*.45)*cos(ang*2.);
-    v3+=sin(r*10.*wi*3.  )*(0.06+t*.40)*cos(ang*3.);
-    v3+=sin(r*10.*wi*4.  )*(0.04+t*.25)*cos(ang*4.);
+    v3+=sin(r*10.*wi     )*(0.15+b*.38);
+    v3+=sin(r*10.*wi*2.  )*(0.15+m*.33)*cos(ang*2.);
+    v3+=sin(r*10.*wi*3.  )*(0.15+t*.26)*cos(ang*3.);
+    v3+=sin(r*10.*wi*4.  )*(0.15+t*.09)*cos(ang*4.);
     y=v3*.5*a;}
   // Spectral Centroid: frequency scales with treble/bass ratio — the wave
   // gets denser when highs dominate, sparser when lows dominate. Ratio is

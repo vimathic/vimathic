@@ -96,6 +96,35 @@ const WALK = (() => {
 })();
 
 /**
+ * FIX(r7): the partial sums of one Ornstein–Uhlenbeck path, memoised on the
+ * pair that defines it, for `ornsteinUhlenbeck` below.
+ *
+ * The integration reads only the step index and θ — nothing about the vertex —
+ * so walking it inside the kernel made every vertex of the mesh recompute a
+ * prefix of the same path, and the cost grew with the mesh instead of staying
+ * flat. One cached path per (θ, length) is the same arithmetic once.
+ *
+ * One slot, not a map: θ = 1 + comp moves continuously with the music, so a map
+ * keyed on it would grow without bound over a set. Consecutive frames share a
+ * θ or they do not, and rebuilding 128 steps when they do not is 3 µs.
+ */
+const OU_SIGMA = 0.4, OU_DT = 0.05;
+let ouCacheKey = '', ouCachePath = null;
+const ouPath = (theta, steps) => {
+  const key = theta + '|' + steps;
+  if (key === ouCacheKey) return ouCachePath;
+  const out = new Float64Array(steps + 1);
+  let v = 0;
+  for (let i = 0; i < steps; i++) {
+    const noise = ((hash32(i) & 0xffff) / 65535 - 0.5) * 2;
+    v += theta * (0 - v) * OU_DT + OU_SIGMA * noise * Math.sqrt(OU_DT);
+    out[i + 1] = v;
+  }
+  ouCacheKey = key; ouCachePath = out;
+  return out;
+};
+
+/**
  * FIX(#5, #6, r4): fold the session clock back into [0, period) so a solution
  * that evolves with `t` replays instead of running out.
  *
@@ -746,8 +775,23 @@ const FRACTALS_AND_CHAOS = {
       // The trade to know: a cached sampler is fed u = (x+3.5)/7, so Wave
       // Intensity no longer moves this entry — the same trade the other eleven
       // heavy entries already make.
-      f: createCachedHeavySampler((t, {amp = 1, comp = 1}, res) => {
-        const a = 0.2, b = 0.2, c = 5.7 + comp, dt = 0.02;
+      //
+      // FIX(r7): Compression makes the same trade, and it is not a preference.
+      // `c = 5.7 + comp` fed a chaotic parameter, and this cache rebuilds on
+      // its time trigger about every third frame — so each rebuild integrated
+      // 1500–4500 RK4 steps under a c that had moved by whatever the audio did
+      // meanwhile, and came back with a different realisation of the same
+      // invariant measure. Not evolution: a fresh Monte-Carlo sample. Measured
+      // between consecutive rebuilds, the plate changed by 39 % of its own norm
+      // (median, 70 % worst) with nothing playing at all, since the idle LFO
+      // moves comp too, and 45 % under music. A drift of 1e-6 per frame is
+      // already enough for 23 %. At the ~20 Hz this cache rebuilds at, that is
+      // flashing, and DISCLAIMER warns photosensitive users about exactly that.
+      // With c held at the canonical 5.7 the same measurement gives 0.0 %
+      // median, 0.2 % worst — and `chua` below, whose constants were never
+      // wired to a slider, was already the stable one for this reason.
+      f: createCachedHeavySampler((t, {amp = 1}, res) => {
+        const a = 0.2, b = 0.2, c = 5.7, dt = 0.02;
         const d = (p, q, r) => [-(q + r), p + a*q, b + r*(p - c)];
         const step = v => {
           const k1 = d(v[0], v[1], v[2]);
@@ -758,9 +802,9 @@ const FRACTALS_AND_CHAOS = {
                   v[1]+dt/6*(k1[1]+2*k2[1]+2*k3[1]+k4[1]),
                   v[2]+dt/6*(k1[2]+2*k2[2]+2*k3[2]+k4[2])];
         };
-        // Viewport from the measured extents over the reachable c ∈ [6.2, 6.6]:
-        // x [−10.5, 13.1], y [−12.5, 9.1].
-        const X0 = -11.5, X1 = 14.5, Y0 = -13.5, Y1 = 10.5;
+        // Viewport from the measured extents at c = 5.7 over 200 000 steps:
+        // x [−9.11, 11.43], y [−10.79, 7.84], with a unit of margin.
+        const X0 = -10.1, X1 = 12.4, Y0 = -11.8, Y1 = 8.8;
         const acc = new Float32Array(res*res);
         let v = [1, 1, 1];
         // The dropped transient slides with the clock, so the traced segment
@@ -1424,8 +1468,15 @@ const PROBABILITY_STATISTICS = {
         // mesh lag 0.078 and 1.10 at lag 2, flat where a path needs it ∝ lag.
         // One walk, accumulated along x and memoised, restores the increment
         // law at no per-frame cost: the 410 partial sums are built once.
+        // FIX(r7): the factor was 0.12 under a note promising the surface kept
+        // the size it had. It did not: one walk of 410 steps travels further
+        // than the 16 the per-vertex seed used to accumulate, and 0.12 did not
+        // pay that back — the peak came out 3.820× small at every t and every
+        // slider (a pure scale, so one number fixes it), which left the entry
+        // the sixth flattest of the 192. 0.12 × 3.820 restores it: peak 0.2959
+        // against 0.2959 at t = 0, 0.3082 against 0.3082 at t = 0.7.
         const m = Math.max(0, Math.min(WALK.length-1, Math.round((x+3.5)*57.3)));
-        return WALK[m] * 0.12 * amp * Math.exp(-z*z*0.35) * (1+Math.sin(t*0.3)*0.2);
+        return WALK[m] * 0.4584 * amp * Math.exp(-z*z*0.35) * (1+Math.sin(t*0.3)*0.2);
       }
     },
     ornsteinUhlenbeck: {
@@ -1451,16 +1502,29 @@ const PROBABILITY_STATISTICS = {
         // lag 1.0 of 0.194 against e^{−θ} = 0.223, both within what explicit
         // Euler at dt = 0.05 gives up.
         //
-        // The wave-intensity slider now selects which stretch of the path is on
-        // screen; it used to do nothing at all here.
-        const theta=1+comp, mu=0, sigma=0.4, dt=0.05, steps=128;
-        const n=clamp(Math.round((x*freq+3.5)/7*steps), 0, steps);
-        let v=0;
-        for (let i=0; i<n; i++) {
-          const noise=((hash32(i)&0xffff)/65535-0.5)*2;
-          v+=theta*(mu-v)*dt + sigma*noise*Math.sqrt(dt);
-        }
-        return v * 0.9 * amp * Math.exp(-z*z*0.35);
+        // The wave-intensity slider now selects how long a stretch of the path
+        // is on screen; it used to do nothing at all here.
+        //
+        // FIX(r7): it selected that stretch by scaling x and not the recentring
+        // offset — `(x·freq + 3.5)/7·steps` — so above freq = 1 both ends of
+        // the row ran off the path and were held by the clamp. n = 0 does not
+        // even enter the loop, so the left part returned a literal zero. The
+        // share of each row sitting at its own edge value went 0.022 at freq 1
+        // (the metric's own floor) to 0.178 at 1.2, 0.356 at 1.5 and 0.511 at
+        // 2.0 — the tabletop this round set out to remove, moved just past the
+        // factory slider where the plateau guard does not look. The stretch is
+        // chosen by making the path longer instead, so the whole of it is
+        // always on screen: at freq = 1 this is bit-identical to before.
+        //
+        // The path is also built once per (θ, length) rather than per vertex.
+        // The loop body read only `i` and θ, so all 40 000 vertices of a 200²
+        // mesh were re-walking prefixes of the same path: 3.01 ms per plate at
+        // grid 90 against 0.73 ms before this entry was touched. Memoised the
+        // way WALK above is, it is 0.75 ms. Still a pure function of position.
+        const theta=1+comp, steps=clamp(Math.round(128*freq), 16, 512);
+        const path=ouPath(theta, steps);
+        const n=clamp(Math.round((x+3.5)/7*steps), 0, steps);
+        return path[n] * 0.9 * amp * Math.exp(-z*z*0.35);
       }
     },
     chiSquare: {
@@ -3707,7 +3771,10 @@ const QUANTUM_MECHANICS = {
     },
     hydrogen2p: {
       name: 'Hydrogen 2p |ψ|²',
-      formula: '|ψ_{2p}|² ∝ r²e^{−r}·cos²(φ − 0.3t) — a 2p lobe pair in the xz-plane, turning',
+      // FIX(r7): the caption this round added read cos²(φ − 0.3t) while
+      // hydrogenPsi computes cos(l·θ + 0.3t) — the sign is the direction the
+      // lobe pair turns, so the picture and its own caption disagreed on it.
+      formula: '|ψ_{2p}|² ∝ r²e^{−r}·cos²(φ + 0.3t) — a 2p lobe pair in the xz-plane, turning',
       f(x, z, t, {amp=1, freq=1}) {
         return hydrogenPsi(2, 1, x*freq*0.5, z*freq*0.5, t) * amp * 4;
       }
