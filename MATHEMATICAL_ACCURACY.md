@@ -431,7 +431,10 @@ zero is a flat plate in a flat colour — `vH` feeds the palette too.
 These branches are GLSL and cannot be evaluated in the Node test suite. They
 were measured by transliterating each branch into JS (the ladder uses only
 `length`, `atan`, `exp`, `sin`, `cos`, `pow`, `abs`, `tanh`, all of which match
-JS semantics — no `mod`, `fract` or `step` appears in it) and taking the surface
+JS semantics; the one exception is `mod`, added to mode 16 in round 6 and
+transliterated as `x − y·floor(x/y)`, which is what GLSL means by it and is
+**not** JS `%` for a negative first argument — that difference is the whole
+point of the branch, whose argument goes negative on every wrap) and taking the surface
 span over [−3.5, 3.5]² in three uniform states: silence, mid-level music, and
 loud. The regression tests that guard the two repairs read the shader source.
 
