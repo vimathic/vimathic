@@ -1015,7 +1015,7 @@
       <select id="gpu-sel">
         <optgroup label="AUDIO REACTIVE">
           <option value="0">1. Bass Reactive Waves</option>
-          <option value="1">2. Spectrogram Mode</option><option value="2">3. Frequency Rings</option>
+          <option value="1">2. Chirped Radial Rings</option><option value="2">3. Frequency Rings</option>
           <option value="3">4. Turbulence Mode</option><option value="4">5. Ripple Effect</option>
           <option value="5">6. Treble Spikes</option><option value="6">7. Ramanujan Theta Sum</option>
           <option value="7">8. Quantum Wave</option>
@@ -1045,8 +1045,8 @@
           <option value="30">31. Lattice Beat</option><option value="31">32. Drifting Ring Modes</option>
         </optgroup>
         <optgroup label="SPECTRUM">
-          <option value="32">33. 3D Spectrogram</option><option value="33">34. Waterfall</option>
-          <option value="34">35. FFT Spectrum</option><option value="35">36. EQ 3D</option>
+          <option value="32">33. Turbulent Ring Field</option><option value="33">34. Treble Ripple (coarse)</option>
+          <option value="34">35. Treble Ripple (fine)</option><option value="35">36. EQ 3D</option>
           <option value="36">37. Vocoder</option><option value="37">38. Spectral Centroid</option>
         </optgroup>
         <!-- ── CPU math collections (value="m:<collection>:<key>") ─────────
@@ -1136,13 +1136,13 @@
           <option value="m:trigonometry:tangentWave">Tanh / Smooth Step</option>
           <option value="m:trigonometry:lissajous">Lissajous Height</option>
           <option value="m:trigonometry:hyperbolicGeom">Cosh²−Sinh²=1 Surface</option>
-          <option value="m:trigonometry:chebyshevTrig">Chebyshev via cos(n·arccos)</option>
+          <option value="m:trigonometry:chebyshevTrig">Chebyshev Identity cos(nθ)</option>
           <option value="m:trigonometry:standingWave">Standing Wave</option>
           <option value="m:trigonometry:travelingWave">Traveling Wave</option>
           <option value="m:trigonometry:modeInterference">Mode Interference</option>
-          <option value="m:trigonometry:circularFunctions">sec / csc / cot Landscape</option>
+          <option value="m:trigonometry:circularFunctions">sec · csc Landscape</option>
           <option value="m:trigonometry:atan2Field">atan2 Phase Field</option>
-          <option value="m:trigonometry:inverseTrig">Arcsin / Arccos Surface</option>
+          <option value="m:trigonometry:inverseTrig">Arcsin Surface</option>
         </optgroup>
         <optgroup label="━━ 🔄 COMPLEX NUMBERS ━━">
           <option value="m:complexNumbers:euler">Euler's Formula Re(e^{ix})</option>
@@ -1153,7 +1153,7 @@
           <option value="m:complexNumbers:complexLog">Complex Logarithm</option>
           <option value="m:complexNumbers:riemannSphere">Riemann Sphere Projection</option>
           <option value="m:complexNumbers:mobiusTransform">Möbius Transformation</option>
-          <option value="m:complexNumbers:cauchyRiemann">Cauchy–Riemann Satisfaction</option>
+          <option value="m:complexNumbers:cauchyRiemann">Re(z²) — Harmonic Saddle</option>
           <option value="m:complexNumbers:complexSin">Complex sin(z) Real Part</option>
           <option value="m:complexNumbers:juliaPotential">Julia Potential</option>
           <option value="m:complexNumbers:windingNumber">Winding Number Field</option>
@@ -1207,14 +1207,14 @@
           <option value="m:integralTransforms:waveletTransform">Morlet Wavelet</option>
           <option value="m:integralTransforms:hilbertTransform">Hilbert Transform</option>
           <option value="m:integralTransforms:radonTransform">Radon Transform (sinogram)</option>
-          <option value="m:integralTransforms:hankelTransform">Hankel Transform</option>
-          <option value="m:integralTransforms:mellinTransform">Mellin Transform</option>
+          <option value="m:integralTransforms:hankelTransform">Hankel Kernel J₀(ρ)</option>
+          <option value="m:integralTransforms:mellinTransform">Mellin Integrand x^{s−1}e^{−x}</option>
           <option value="m:integralTransforms:stieltjesTransform">Stieltjes Transform</option>
           <option value="m:integralTransforms:cauchyIntegral">Cauchy Integral Formula</option>
           <option value="m:integralTransforms:stocksFormula">Green's Theorem Flow</option>
           <option value="m:integralTransforms:poissonIntegral">Poisson Integral Formula</option>
           <option value="m:integralTransforms:continuousWavelet">CWT Scalogram</option>
-          <option value="m:integralTransforms:fourierSlice">Fourier Slice Theorem</option>
+          <option value="m:integralTransforms:fourierSlice">Angle-Swept Sinusoid</option>
         </optgroup>
         <optgroup label="━━ ∞ TOPOLOGY & GEOMETRY ━━">
           <option value="m:topology:mobiusStrip">Möbius Strip Height</option>
@@ -1245,7 +1245,7 @@
           <option value="m:cellularAutomata:cyclicCA">Cyclic CA</option>
           <option value="m:cellularAutomata:wiredFire">Wireworld (wire / fire)</option>
           <option value="m:cellularAutomata:sandpile">Abelian Sandpile</option>
-          <option value="m:cellularAutomata:voronoiCA">Voronoi Growth CA</option>
+          <option value="m:cellularAutomata:voronoiCA">Voronoi Tessellation</option>
           <option value="m:cellularAutomata:excitableMedia">Excitable Medium (FitzHugh-Nagumo)</option>
           <option value="m:cellularAutomata:reactionDiffusion">Gray-Scott Pattern</option>
           <option value="m:cellularAutomata:forestFire">Forest Fire CA</option>

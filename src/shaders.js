@@ -92,7 +92,22 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
   else if(mode==13){float e=0.;for(int n=1;n<=5;n++){float fn=float(n);e+=cos(ang*fn*4.)*exp(-r*.15*fn);}y=e*.4*(0.3+b*.7)*a;}
   else if(mode==14){y=sin(r*8.*wi*(0.5+t))*cos(ang*4.)*(0.3+b*.7)*a+bt*.3;}
   else if(mode==15){float s=0.;for(int n=1;n<=6;n++){float fn=float(n);s+=sin(fn*r*5.*wi*(0.5+t))*cos(fn*ang);}y=s*.25*(0.3+b*.7)*a;}
-  else if(mode==16){y=h_sech(r*2.-T*2.-(b*.8+.1)*3.)*(0.6+b*.6)*a+bt*.4;}
+  // FIX(r6): the crest sits at r = T + 1.5(0.8b+0.1) and T is uTime, which
+  // only grows — so the pulse crossed the plane's half-diagonal of 4.9497 at
+  // T ≈ 4.2 and never came back. Span fell under 1 % of its T=0 value after
+  // 15.5 s of uptime, reached 7.5e-14 at 42 s and was literally 0.000e+0 from
+  // thirty minutes on: a flat plate for the rest of the session, with the whole
+  // mesh pinned at the extreme. Folding the ARGUMENT into one period rather
+  // than the time turns it into a train of the same pulse, and costs nothing:
+  // sech is even, so mod(u+5., 10.)-5. matches value for value across the wrap
+  // (seam 1.3e-9, against 4.8e-3 for an ordinary 0.008 frame step), where
+  // wrapping the time instead would teleport the crest back to the centre with
+  // a seam of 1.32 — 264 frame steps. Spacing is 5 in r against a corner at
+  // 4.9497, so exactly one crest is on the plate at a time, as before; the
+  // branch is identical to what shipped at T=0 wherever the crest is (6.7e-16
+  // inside r<2.5) and its peak is untouched at every slider setting — 0.4199 at
+  // the factory sliders, 2.9700 at the top of both.
+  else if(mode==16){float u=r*2.-T*2.-(b*.8+.1)*3.;y=h_sech(mod(u+5.,10.)-5.)*(0.6+b*.6)*a+bt*.4;}
   else if(mode==17){y=sin(xz.x*6.*wi*(0.5+t))*cos(xz.y*6.*wi*(0.5+t))*(0.3+b*.7)*a+bt*.4;}
   else if(mode==18){float s=0.;for(int n=1;n<=4;n++){float fn=float(n);s+=sin(r*fn*4.*wi*(0.5+t)+ang*fn)*exp(-r*.2*fn);}y=s*.3*(0.3+b*.7)*a;}
   else if(mode==19){float s=0.;for(int n=1;n<=4;n++){float fn=float(n);s+=cos(xz.x*fn*5.*wi)*sin(xz.y*fn*5.*wi);}y=s*.2*(0.3+b*.7)*a+bt*.4;}

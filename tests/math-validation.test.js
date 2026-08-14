@@ -1406,7 +1406,12 @@ describe('Regression — the session clock is not a physical time (#5, #6)', () 
       // test is for — it guards the clock wrap, not the choice of profile.
       ['differentialEqs',  'fishersEquation',    0.5, 0, 0.0850867873741434],
       ['quantumMechanics', 'wavePacket',         0.7, 0, 0.187642285592130],
-      ['quantumMechanics', 'schrodingerSoliton', 0.5, 0, 0.298292904140666],
+      // Round 6 restored the A² in the soliton's amplitude: an NLS soliton ties
+      // height to width (peak A², width 1/A), and the code carried sech²(Aξ)
+      // with no A², so the width rode `comp` and the height did not — the
+      // relation that makes a soliton a soliton was cut. New t = 0 baseline;
+      // the assertion is unchanged and still pins it to 1e-12.
+      ['quantumMechanics', 'schrodingerSoliton', 0.5, 0, 0.335579517158249],
       ['complexNumbers',   'complexHeat',        0.5, 0, 0.0861491219772305],
       ['topology',         'helicoid',           1,   0, 0],
     ];
@@ -2040,9 +2045,16 @@ describe('Regression — surfaces that went out over the length of a set (#R5)',
     // as thirty minutes: feynmanPath cleared the thirty-minute line by 7 % and
     // failed at every longer uptime, which is exactly the shape of decay a
     // single checkpoint misses.
+    // FIX(r6): the window used to span 5.6 units, and every entry repaired by
+    // folding the clock replays on a 24-unit period — so the guard sampled a
+    // twentieth of the cycle and called it the whole. Worse, the uptimes it
+    // checks are 864 and 6912, both exact multiples of 24, so for those entries
+    // it re-measured t = 0 three times and could not fail by construction.
+    // Twelve samples 2.617 apart span 28.8 units, more than one period, and the
+    // step is deliberately not a divisor of it.
     const windowPeak = (colId, key, t0) => {
       let m = 0;
-      for (let i = 0; i < 9; i++) m = Math.max(m, peakOf(colId, key, BOOT, t0 + i * 0.7, 25));
+      for (let i = 0; i < 12; i++) m = Math.max(m, peakOf(colId, key, BOOT, t0 + i * 2.617, 25));
       return m;
     };
     const dead = [];
@@ -2060,6 +2072,30 @@ describe('Regression — surfaces that went out over the length of a set (#R5)',
       }
     }
     assert.equal(dead.length, 0, `Faded out over a set:\n  ${dead.join('\n  ')}`);
+  });
+
+  test('an entry that replays its clock stays alive across the whole period', () => {
+    // The entries this applies to are found by reading the kernels for
+    // replayTime rather than by keeping a list — the list is what let
+    // feynmanPath through a whole round. Within one period the quietest
+    // instant must still be within an order of magnitude of the loudest, which
+    // is the same convention the drift guard above uses between uptimes.
+    const quiet = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        if (!/replayTime\s*\(/.test(entry.f.toString())) continue;
+        let lo = Infinity, hi = 0, at = 0;
+        for (let t = 0; t < 24; t += 0.25) {
+          const p = peakOf(colId, key, BOOT, t, 21);
+          if (p > hi) hi = p;
+          if (p < lo) { lo = p; at = t; }
+        }
+        if (hi > 1e-9 && lo < hi * 0.1) {
+          quiet.push(`${colId}/${key}: ${lo.toExponential(2)} at t=${at.toFixed(2)} against ${hi.toExponential(2)} in the same period`);
+        }
+      }
+    }
+    assert.deepEqual(quiet, [], `a replayed solution goes quiet inside its own period:\n  ${quiet.join('\n  ')}`);
   });
 });
 
@@ -2378,6 +2414,271 @@ describe('Linear algebra — the three kernels that computed something else (#R6
       if (peak < worst) { worst = peak; worstT = t; }
     }
     assert.ok(worst > 0.3, `eigenField collapses to ${worst} at t=${worstT}`);
+  });
+});
+
+describe('Captions and counts, asked of the whole catalogue (#R6)', () => {
+  // Four guards with no handwritten list in them. Each one exists because the
+  // thing it checks drifted while a list of what to check stood right next to
+  // it and stayed silent.
+
+  test('no entry is named after a function its kernel never calls', () => {
+    // The viewer reads the name. `sec / csc / cot Landscape` computed no
+    // cotangent in any form; `Chebyshev via cos(n·arccos)` called no arccos and
+    // formed no Chebyshev polynomial of the coordinate; `Arcsin / Arccos
+    // Surface` drew arcsin alone. The formula string is deliberately NOT
+    // scanned: it states identities, and an identity may legitimately name the
+    // side that is not evaluated.
+    const NAMED = {
+      cot: /\bcot\b/i, arccos: /\barccos\b|\bacos\b/i, arcsin: /\barcsin\b|\basin\b/i,
+      arctan: /\barctan\b|\batan\b/i, sec: /\bsec\b/i, csc: /\bcsc\b/i,
+      tanh: /\btanh\b/i, sech: /\bsech\b/i,
+    };
+    // A reciprocal is often taken of a local rather than of the call itself
+    // (`const c = Math.cos(u); … 1/c`), so sec/csc/sech are recognised as
+    // "the base function is called AND something is inverted", not by a
+    // literal `1/Math.cos`. The rule stays strict where it matters: an entry
+    // that names cot without computing a tangent or a cos/sin ratio anywhere,
+    // or names arccos without calling one, is still caught.
+    const has = (src, re) => re.test(src);
+    const CALLED = {
+      cot: src => has(src, /\bcot\s*\(|Math\.tan\s*\(/) ||
+                  (has(src, /Math\.cos\s*\(/) && has(src, /Math\.sin\s*\(/) && has(src, /\//)),
+      arccos: src => has(src, /Math\.acos\s*\(/),
+      arcsin: src => has(src, /Math\.asin\s*\(/),
+      arctan: src => has(src, /Math\.atan2?\s*\(/),
+      sec: src => has(src, /Math\.cos\s*\(/) && has(src, /1\s*\//),
+      csc: src => has(src, /Math\.sin\s*\(/) && has(src, /1\s*\//),
+      tanh: src => has(src, /Math\.tanh\s*\(/),
+      sech: src => has(src, /Math\.cosh\s*\(/) && has(src, /1\s*\//),
+    };
+    const offenders = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        const src = entry.f.toString();
+        for (const [fn, inName] of Object.entries(NAMED)) {
+          if (inName.test(entry.name) && !CALLED[fn](src)) {
+            offenders.push(`${colId}/${key} — the name says ${fn}, the kernel does not compute it`);
+          }
+        }
+      }
+    }
+    assert.deepEqual(offenders, [], offenders.join('\n  '));
+  });
+
+  test('anything captioned as a probability or a density is non-negative', () => {
+    // `poisson` multiplied an exact PMF by (−1)^k for contrast, so 48.3 % of
+    // the surface lay below zero under a caption reading P(k;λ) = λᵏe^{−λ}/k!.
+    // Asked of every entry whose own caption makes the claim, so a new one
+    // cannot arrive without being asked too.
+    const CLAIMS = /\bPMF\b|\bPDF\b|probability|density|\|ψ.*\|²|\|ψ.*\|\^2/i;
+    const offenders = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        if (!CLAIMS.test(`${entry.name} ${entry.formula}`)) continue;
+        const hf = generateSurfaceFromFormula(entry.f, BASELINE, 60, 3.5, 0);
+        let min = Infinity, peak = 0;
+        for (const v of hf) { min = Math.min(min, v); peak = Math.max(peak, Math.abs(v)); }
+        if (min < -1e-9 * Math.max(1, peak) && min < -0.01 * peak) {
+          offenders.push(`${colId}/${key} reaches ${min.toPrecision(4)} against a peak of ${peak.toPrecision(4)}`);
+        }
+      }
+    }
+    assert.deepEqual(offenders, [], offenders.join('\n  '));
+  });
+
+  test('every tier header agrees with the rows under it, and with the summary', () => {
+    // The §2 header read 11 A · 5 B while its own rows read 10 A · 6 B. The
+    // counts are typed in fourteen places; nothing was comparing them.
+    const doc = readFileSync(new URL('../MATHEMATICAL_ACCURACY.md', import.meta.url), 'utf8');
+    const lines = doc.split('\n');
+    const header = /^### (\d+)\. (.+?) \((\d+)\) — (\d+) A · (\d+) B · (\d+) C · (\d+) D$/;
+    // The Name cell may contain an escaped pipe (\|ψ\|²), so the tier is read
+    // by position from the end of the row rather than by splitting on '|'.
+    const row = /^\| `[^`]+` \| .*? \| (🟢 A|🔵 B|🟡 C|🔴 D) \|/;
+    let cur = null;
+    const mismatches = [];
+    let totA = 0, totB = 0, totC = 0;
+    for (const line of lines) {
+      const h = header.exec(line);
+      if (h) {
+        if (cur) mismatches.push(...check(cur));
+        cur = { h, A: 0, B: 0, C: 0, D: 0 };
+        continue;
+      }
+      if (cur && line.startsWith('## ')) { mismatches.push(...check(cur)); cur = null; continue; }
+      if (!cur) continue;
+      const r = row.exec(line);
+      if (r) cur[r[1].split(' ')[1]]++;
+    }
+    if (cur) mismatches.push(...check(cur));
+    function check(sec) {
+      const [, num, , total, a, b, c, d] = sec.h;
+      totA += sec.A; totB += sec.B; totC += sec.C;
+      const out = [];
+      if (+a !== sec.A || +b !== sec.B || +c !== sec.C || +d !== sec.D) {
+        out.push(`§${num}: header says ${a}A/${b}B/${c}C/${d}D, its rows say ${sec.A}A/${sec.B}B/${sec.C}C/${sec.D}D`);
+      }
+      if (+total !== sec.A + sec.B + sec.C + sec.D) {
+        out.push(`§${num}: header claims ${total} entries, ${sec.A + sec.B + sec.C + sec.D} rows`);
+      }
+      return out;
+    }
+    const sumA = /\| \*\*A\*\* — machine precision \| \*\*(\d+)\*\* \|/.exec(doc);
+    const sumB = /\| \*\*B\*\* — bounded approximation \| \*\*(\d+)\*\* \|/.exec(doc);
+    const sumC = /\| \*\*C\*\* — visualization-grade \| \*\*(\d+)\*\* \|/.exec(doc);
+    assert.ok(sumA && sumB && sumC, 'the Executive Summary tier table is missing');
+    if (+sumA[1] !== totA || +sumB[1] !== totB || +sumC[1] !== totC) {
+      mismatches.push(`Executive Summary says ${sumA[1]}/${sumB[1]}/${sumC[1]}, the sections sum to ${totA}/${totB}/${totC}`);
+    }
+    assert.equal(totA + totB + totC, 192, `the sections describe ${totA + totB + totC} formulas, not 192`);
+    assert.deepEqual(mismatches, [], mismatches.join('\n  '));
+  });
+
+  test('no document states a test count', () => {
+    // Four places in MATHEMATICAL_ACCURACY.md and one in roadmap.md said 184
+    // while the file held 209, and the existing guard could not see them: it
+    // only forbids a count on a line that also mentions `npm test`. A number
+    // that has to be maintained by hand in five places will drift, so the fix
+    // is to state none of them.
+    const files = ['../MATHEMATICAL_ACCURACY.md', '../README.md', '../CONTRIBUTING.md', '../documents/roadmap.md'];
+    const offenders = [];
+    for (const rel of files) {
+      let text;
+      try { text = readFileSync(new URL(rel, import.meta.url), 'utf8'); } catch { continue; }
+      // Strip HTML comments first: a note explaining why a count must not be
+      // written down is not itself a count. Line numbers are preserved by
+      // replacing the comment body with blanks rather than removing it.
+      text = text.replace(/<!--[\s\S]*?-->/g, m => m.replace(/[^\n]/g, ' '));
+      text.split('\n').forEach((line, i) => {
+        if (line.trim().startsWith('//')) return;
+        if (/\b\d{2,}\b[^.\n]{0,40}\btests?\b/i.test(line) || /\btests?\b[^.\n]{0,40}\b\d{2,}\b/i.test(line)) {
+          offenders.push(`${rel.replace('../', '')}:${i + 1}  ${line.trim().slice(0, 90)}`);
+        }
+      });
+    }
+    assert.deepEqual(offenders, [], `a test count will drift the moment a test is added:\n  ${offenders.join('\n  ')}`);
+  });
+});
+
+describe('Attractors and states that were drawn as something simpler (#R6)', () => {
+  const FACTORY = { amp: 0.7, freq: 1, comp: 0.5 };
+  const FR = MATH_COLLECTIONS.fractals.formulas;
+
+  // How much of a plate is explained by a plane. An ODE integrated for a
+  // two-hundredth of one loop is indistinguishable from its own linearisation,
+  // and that is exactly what these two entries were showing.
+  const planeR2 = (fn, params) => {
+    const g = 45, hf = generateSurfaceFromFormula(fn, params, g, 3.5, 0);
+    let sx = 0, sz = 0, sy = 0, sxx = 0, szz = 0, sxz = 0, sxy = 0, szy = 0, n = 0;
+    for (let zi = 0; zi < g; zi++) for (let xi = 0; xi < g; xi++) {
+      const x = -3.5 + xi * 7 / (g - 1), z = -3.5 + zi * 7 / (g - 1), y = hf[zi * g + xi];
+      sx += x; sz += z; sy += y; sxx += x * x; szz += z * z; sxz += x * z; sxy += x * y; szy += z * y; n++;
+    }
+    // Solve the 3×3 normal equations for y = a·x + b·z + c.
+    const A = [[sxx, sxz, sx], [sxz, szz, sz], [sx, sz, n]], B = [sxy, szy, sy];
+    for (let i = 0; i < 3; i++) {
+      let p = i;
+      for (let k = i + 1; k < 3; k++) if (Math.abs(A[k][i]) > Math.abs(A[p][i])) p = k;
+      [A[i], A[p]] = [A[p], A[i]]; [B[i], B[p]] = [B[p], B[i]];
+      for (let k = i + 1; k < 3; k++) {
+        const f = A[k][i] / A[i][i];
+        for (let j = i; j < 3; j++) A[k][j] -= f * A[i][j];
+        B[k] -= f * B[i];
+      }
+    }
+    const c = [0, 0, 0];
+    for (let i = 2; i >= 0; i--) {
+      let s = B[i];
+      for (let j = i + 1; j < 3; j++) s -= A[i][j] * c[j];
+      c[i] = s / A[i][i];
+    }
+    const mean = sy / n;
+    let ssRes = 0, ssTot = 0;
+    for (let zi = 0; zi < g; zi++) for (let xi = 0; xi < g; xi++) {
+      const x = -3.5 + xi * 7 / (g - 1), z = -3.5 + zi * 7 / (g - 1), y = hf[zi * g + xi];
+      const p = c[0] * x + c[1] * z + c[2];
+      ssRes += (y - p) ** 2; ssTot += (y - mean) ** 2;
+    }
+    return ssTot > 0 ? 1 - ssRes / ssTot : 1;
+  };
+
+  for (const key of ['rossler', 'chua']) {
+    test(`${key} draws its attractor, not the tangent plane at one point`, () => {
+      // Twelve Euler steps of dt = 0.003 is T = 0.036 — about a two-hundredth
+      // of one loop from a starting point sitting on a mesh vertex. Measured
+      // before the repair: least-squares plane R² = 1.000000 for rossler and
+      // 0.999904 for chua, with peaks of 0.019 and 0.012 against a ~3-unit
+      // frame, i.e. a tilted sheet at half a percent of the frame height.
+      const r2 = planeR2(FR[key].f, FACTORY);
+      assert.ok(r2 < 0.5, `${key} is still a plane: R² = ${r2.toFixed(6)}`);
+      const hf = generateSurfaceFromFormula(FR[key].f, FACTORY, 90, 3.5, 0);
+      let peak = 0;
+      for (const v of hf) peak = Math.max(peak, Math.abs(v));
+      assert.ok(peak > 0.3, `${key} peak is ${peak.toPrecision(4)} — invisible against the frame`);
+    });
+  }
+
+  test('the dragon branch is the Heighway map, not its conjugate', () => {
+    // f₂ = 1 − (1−i)w/2 is what the caption, this document and Heighway all
+    // name; the code had 1 − (1+i)w/2, whose attractor is a different set —
+    // centrally symmetric about z = 1/2, box x ∈ [−1/3, 4/3] against the
+    // dragon's [−1/3, 7/6]. Against a dragon built with no IFS at all (the
+    // paper-folding sequence) the Jaccard index goes 0.536 → 0.967.
+    //
+    // This is asserted on the source, not on a value: the two maps are complex
+    // conjugates and the entry only ever reads |w|², so almost nothing the
+    // entry returns separates them. Saying that plainly is better than an
+    // assertion that looks numeric and is not.
+    const src = readFileSync(new URL('../src/math-collections.js', import.meta.url), 'utf8');
+    const from = src.indexOf('dragon: {');
+    assert.ok(from > 0, 'the dragon entry is gone');
+    const body = src.slice(from, src.indexOf('chua: {', from));
+    assert.ok(body.length > 100, 'could not isolate the dragon entry');
+    assert.ok(/nx\s*=\s*1\s*-\s*cosA\s*\*\s*px\s*-\s*sinA\s*\*\s*pz/.test(body),
+      'the second contraction is not 1 − (1−i)w/2');
+    assert.ok(!/nx\s*=\s*-\s*cosA\s*\*\s*px\s*\+\s*sinA\s*\*\s*pz\s*\+\s*1/.test(body),
+      'the conjugate map is back');
+  });
+
+  test('harmonicOscillator normalisation stops the height jumping with the music', () => {
+    // √(2ⁿn!√π) was replaced by the constant 0.003, and n = round(comp·6) is
+    // driven by the mid band, so the surface changed height by ×74 across one
+    // sweep of the slider. Restoring it stabilises rather than shrinks the
+    // picture: max|ψ_n|² is 0.3456, 0.3288, 0.3163 for the reachable n.
+    const f = MATH_COLLECTIONS.quantumMechanics.formulas.harmonicOscillator.f;
+    let lo = Infinity, hi = 0;
+    for (let comp = 0.5; comp <= 0.9001; comp += 0.02) {
+      const hf = generateSurfaceFromFormula(f, { amp: 0.7, freq: 1, comp }, 90, 3.5, 0);
+      let peak = 0;
+      for (const v of hf) peak = Math.max(peak, Math.abs(v));
+      lo = Math.min(lo, peak); hi = Math.max(hi, peak);
+    }
+    assert.ok(hi / lo < 1.25, `height still moves ×${(hi / lo).toFixed(1)} across the mid band`);
+    assert.ok(hi > 0.5 && hi < 1.5, `peak ${hi.toPrecision(3)} is outside the frame-friendly range`);
+  });
+
+  test('tunneling decays through the barrier instead of growing into it', () => {
+    // Inside the barrier the amplitude was e^{−κ|ξ|}·0.7 — a symmetric tent
+    // with its maximum at the CENTRE — so on the entry half the wave grew by
+    // ×2.718 where the exact scattering solution decays monotonically. The
+    // transmitted intensity was 1.353e-1 against the 1.832e-2 = e^{−2κL} the
+    // entry's own caption implies.
+    const f = MATH_COLLECTIONS.quantumMechanics.formulas.tunneling.f;
+    // The carrier is cos(freq²·4·x + t), which is known exactly, so the
+    // envelope can be divided out rather than guessed at by windowing — a
+    // window wide enough to catch a carrier maximum is also wide enough to
+    // smooth over the growth being looked for.
+    const carrier = x => Math.cos(FACTORY.freq * (x * FACTORY.freq) * 4);
+    let prev = null, worst = 1, at = 0;
+    for (let x = -1.2; x <= 1.2; x += 0.004) {
+      const c = carrier(x);
+      if (Math.abs(c) < 0.5) continue;                    // stay away from the nodes
+      const e = Math.abs(f(x, 0, 0, FACTORY) / (c * 0.45 * FACTORY.amp));
+      if (prev !== null && prev > 1e-9 && e / prev > worst) { worst = e / prev; at = x; }
+      prev = e;
+    }
+    assert.ok(worst < 1.02, `the envelope grows by ×${worst.toFixed(4)} at x=${at.toFixed(3)}`);
   });
 });
 

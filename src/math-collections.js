@@ -68,6 +68,34 @@ const hash32 = i => {
 };
 
 /**
+ * FIX(r6): the partial sums of one random walk, built once at module load and
+ * read by `randomWalk` below.
+ *
+ * It exists because the entry used to re-seed its generator at every vertex,
+ * from round((x+3.5)·57.3), so neighbouring vertices carried the endpoints of
+ * INDEPENDENT walks. That is a noise field, not Brownian motion, and it shows
+ * in the one law a walk has to obey: Var[Δy] should grow with the lag, and it
+ * came out flat — 1.10 at the mesh spacing and 1.10 at a lag twenty-five times
+ * larger. Accumulating a single walk restores it (0.050 against 0.993).
+ *
+ * 410 samples cover the plate at the resolution the old per-vertex seed
+ * implied, and the same LCG and step size are kept so the surface stays the
+ * same size it was. Increments are uniform rather than Gaussian, so this is
+ * still not a realisation of the Wiener process — the caption says "seeded",
+ * and MATHEMATICAL_ACCURACY.md says the rest.
+ */
+const WALK = (() => {
+  const N = 410, out = new Float64Array(N);
+  let seed = Math.round(0 * 57.3) || 1, v = 0;
+  for (let i = 0; i < N; i++) {
+    seed = (seed * 1664525 + 1013904223) & 0xffffffff;
+    v += (((seed >>> 16) & 0xff) / 255 - 0.5) * 0.15;
+    out[i] = v;
+  }
+  return out;
+})();
+
+/**
  * FIX(#5, #6, r4): fold the session clock back into [0, period) so a solution
  * that evolves with `t` replays instead of running out.
  *
@@ -693,15 +721,67 @@ const FRACTALS_AND_CHAOS = {
     rossler: {
       name: 'Rössler Attractor',
       formula: 'ẋ=−y−z, ẏ=x+ay, ż=b+z(x−c)',
-      f(x, z, t, {amp=1, freq=1, comp=1}) {
-        const a=0.2, b=0.2, c=5.7+comp, steps=12, dt=0.003;
-        let cx=x*freq, cy=0.1, cz=z*freq+comp;
-        for (let i=0; i<steps; i++) {
-          const dx=-(cy+cz), dy=cx+a*cy, dz=b+cz*(cx-c);
-          cx+=dx*dt; cy+=dy*dt; cz+=dz*dt;
+      // FIX(r6): the field and its constants were right; the horizon was not.
+      // Twelve Euler steps of dt = 0.003 is T = 0.036, about a two-hundredth of
+      // one loop, so the flow map was indistinguishable from its own
+      // linearisation: least-squares plane R² = 1.000000, non-planar residual
+      // 3.9e-5 rms against a peak of 0.0192 — six thousandths of the frame.
+      // Integrating further does not rescue it. At T = 8, two hundred times as
+      // far, the plane R² is still 0.9976, because a sheet of initial conditions
+      // this small does not separate inside Rössler's Lyapunov time; and Chua,
+      // which does separate, cost 288 ms per 90-plate to get there.
+      //
+      // What draws the attractor is one long orbit splatted as a density, which
+      // is what this collection already does eleven times through
+      // createCachedHeavySampler and what "Dragon Curve Density" and "Langton's
+      // Ant (trajectory density)" are named after. The simulation is paid once
+      // per rebuild instead of once per vertex, so the cost stops growing with
+      // the mesh: measured per plate, 0.25 → 0.47 ms at grid 90 (×2.0) and
+      // 1.25 → 2.24 ms at grid 200 (×0.6 — cheaper there). RK4 and not Euler:
+      // Euler's first-order error on an oscillatory field is a systematic
+      // outward drift, and it would inflate the very shape that is the point.
+      // Measured: plane R² 1.000000 → 0.058, peak 0.0192 → 0.671 at the factory
+      // sliders, share of the mesh at the extreme unchanged at 0.012 %.
+      //
+      // The trade to know: a cached sampler is fed u = (x+3.5)/7, so Wave
+      // Intensity no longer moves this entry — the same trade the other eleven
+      // heavy entries already make.
+      f: createCachedHeavySampler((t, {amp = 1, comp = 1}, res) => {
+        const a = 0.2, b = 0.2, c = 5.7 + comp, dt = 0.02;
+        const d = (p, q, r) => [-(q + r), p + a*q, b + r*(p - c)];
+        const step = v => {
+          const k1 = d(v[0], v[1], v[2]);
+          const k2 = d(v[0]+dt/2*k1[0], v[1]+dt/2*k1[1], v[2]+dt/2*k1[2]);
+          const k3 = d(v[0]+dt/2*k2[0], v[1]+dt/2*k2[1], v[2]+dt/2*k2[2]);
+          const k4 = d(v[0]+dt*k3[0], v[1]+dt*k3[1], v[2]+dt*k3[2]);
+          return [v[0]+dt/6*(k1[0]+2*k2[0]+2*k3[0]+k4[0]),
+                  v[1]+dt/6*(k1[1]+2*k2[1]+2*k3[1]+k4[1]),
+                  v[2]+dt/6*(k1[2]+2*k2[2]+2*k3[2]+k4[2])];
+        };
+        // Viewport from the measured extents over the reachable c ∈ [6.2, 6.6]:
+        // x [−10.5, 13.1], y [−12.5, 9.1].
+        const X0 = -11.5, X1 = 14.5, Y0 = -13.5, Y1 = 10.5;
+        const acc = new Float32Array(res*res);
+        let v = [1, 1, 1];
+        // The dropped transient slides with the clock, so the traced segment
+        // breathes instead of standing still. Deliberately slow: consecutive
+        // rebuilds differ by 0.0000 and four seconds apart by 0.11, which is
+        // evolution and not the rapid flashing the DISCLAIMER warns about.
+        const skip = 1500 + Math.floor((t*6) % 3000);
+        for (let i = 0; i < skip; i++) v = step(v);
+        for (let i = 0; i < 8000; i++) {
+          v = step(v);
+          const ix = Math.floor((v[0]-X0)/(X1-X0)*res), iy = Math.floor((v[1]-Y0)/(Y1-Y0)*res);
+          if (ix >= 0 && ix < res && iy >= 0 && iy < res) acc[iy*res+ix]++;
         }
-        return cy * 0.12 * amp;
-      }
+        let mx = 0; for (const q of acc) if (q > mx) mx = q;
+        const out = new Float32Array(res*res);
+        // sqrt of the occupancy: the invariant measure piles up on the fold, and
+        // a linear ramp hides the rest of the band under it (sd 0.166 linear
+        // against 0.189 here).
+        for (let i = 0; i < acc.length; i++) out[i] = Math.sqrt(acc[i]/(mx||1)) * amp;
+        return out;
+      }, 48),
     },
     newtonFractal: {
       name: 'Newton Fractal z³−1',
@@ -787,7 +867,16 @@ const FRACTALS_AND_CHAOS = {
             const nx=cosA*px-sinA*pz, nz=sinA*px+cosA*pz;
             px=nx; pz=nz;
           } else {
-            const nx=-cosA*px+sinA*pz+1, nz=-sinA*px-cosA*pz;
+            // FIX(r6): this branch was 1 − (1+i)w/2, the CONJUGATE of the map
+            // the caption, MATHEMATICAL_ACCURACY.md and Heighway all name. The
+            // pair it generated satisfies A = λA ∪ (1 − λA), so its attractor
+            // has to be centrally symmetric about z = 1/2 — 2.2 % of it fails
+            // the mirror test where the real dragon fails 91.5 % — and its box
+            // came out x [−1/3, 4/3] against the dragon's [−1/3, 7/6]. Against
+            // a dragon built with no IFS at all (the paper-folding sequence,
+            // itself controlled on the exact box −1/3, 7/6, −1/3, 2/3 to 1.3e-3)
+            // the Jaccard goes 0.536 → 0.967.
+            const nx=1-cosA*px-sinA*pz, nz=sinA*px-cosA*pz;
             px=nx; pz=nz;
           }
           v += Math.exp(-4*(px*px+pz*pz)) * 0.15;
@@ -798,17 +887,49 @@ const FRACTALS_AND_CHAOS = {
     chua: {
       name: 'Chua Circuit Attractor',
       formula: 'ẋ=α(y−x−f(x)), ẏ=x−y+z, ż=−βy',
-      f(x, z, t, {amp=1, freq=1, comp=1}) {
-        const alpha=15.6, beta=28, steps=10, dt=0.003;
-        let cx=x*freq*0.5, cy=0.01, cz=z*freq*0.5;
-        for (let i=0; i<steps; i++) {
-          const m0=-1.143, m1=-0.714, br=1;
-          const fx = m1*cx + 0.5*(m0-m1)*(Math.abs(cx+br)-Math.abs(cx-br));
-          const dx=alpha*(cy-cx-fx), dy=cx-cy+cz, dz=-beta*cy;
-          cx+=dx*dt; cy+=dy*dt; cz+=dz*dt;
+      // FIX(r6): the same defect as rossler above, and the same repair. Ten
+      // Euler steps of dt = 0.003 is T = 0.030: plane R² 0.999839, non-planar
+      // residual 6.3e-4 rms against a peak of 0.0118 — four thousandths of the
+      // frame. Chua does become non-planar if integrated far enough (R² 0.088
+      // at T = 1.5) but it costs 288 ms per 90-plate to get there, which is not
+      // a per-vertex budget on this hardware.
+      //
+      // The scroll is drawn in the (x, z) projection: y only spans ±0.389 on the
+      // attractor against ±2.263 and ±3.638 for x and z, so (x, y) would be a
+      // sliver. Measured: plane R² 0.999839 → 0.079, peak 0.0118 → 0.664 at the
+      // factory sliders, share of the mesh at the extreme unchanged at 0.012 %,
+      // cost per plate 0.39 → 1.00 ms at grid 90 and 2.02 → 2.98 ms at grid 200.
+      f: createCachedHeavySampler((t, {amp = 1, comp = 1}, res) => {
+        const alpha = 15.6, beta = 28, m0 = -1.143, m1 = -0.714, dt = 0.01;
+        const d = (p, q, r) => {
+          const fx = m1*p + 0.5*(m0-m1)*(Math.abs(p+1)-Math.abs(p-1));
+          return [alpha*(q - p - fx), p - q + r, -beta*q];
+        };
+        const step = v => {
+          const k1 = d(v[0], v[1], v[2]);
+          const k2 = d(v[0]+dt/2*k1[0], v[1]+dt/2*k1[1], v[2]+dt/2*k1[2]);
+          const k3 = d(v[0]+dt/2*k2[0], v[1]+dt/2*k2[1], v[2]+dt/2*k2[2]);
+          const k4 = d(v[0]+dt*k3[0], v[1]+dt*k3[1], v[2]+dt*k3[2]);
+          return [v[0]+dt/6*(k1[0]+2*k2[0]+2*k3[0]+k4[0]),
+                  v[1]+dt/6*(k1[1]+2*k2[1]+2*k3[1]+k4[1]),
+                  v[2]+dt/6*(k1[2]+2*k2[2]+2*k3[2]+k4[2])];
+        };
+        // Measured extents of the double scroll: x ±2.263, z ±3.638.
+        const X0 = -2.6, X1 = 2.6, Z0 = -4.1, Z1 = 4.1;
+        const acc = new Float32Array(res*res);
+        let v = [0.7, 0.01, -0.7];
+        const skip = 1500 + Math.floor((t*6) % 3000);
+        for (let i = 0; i < skip; i++) v = step(v);
+        for (let i = 0; i < 12000; i++) {
+          v = step(v);
+          const ix = Math.floor((v[0]-X0)/(X1-X0)*res), iz = Math.floor((v[2]-Z0)/(Z1-Z0)*res);
+          if (ix >= 0 && ix < res && iz >= 0 && iz < res) acc[iz*res+ix]++;
         }
-        return cy * 0.15 * amp;
-      }
+        let mx = 0; for (const q of acc) if (q > mx) mx = q;
+        const out = new Float32Array(res*res);
+        for (let i = 0; i < acc.length; i++) out[i] = Math.sqrt(acc[i]/(mx||1)) * amp;
+        return out;
+      }, 48),
     },
     cantorDust: {
       name: 'Cantor Dust',
@@ -844,16 +965,26 @@ const FRACTALS_AND_CHAOS = {
       name: 'Logistic Map Bifurcation',
       formula: 'x_{n+1} = r·x_n·(1−x_n)',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
+        // FIX(r6): one orbit point was lit, so in the period-2 window only one
+        // of the two branches appeared — the bifurcation the name promises was
+        // never on screen, and which branch showed depended on the parity of
+        // 40+floor(comp·40), so the picture jumped between branches as the
+        // slider moved (measured at r = 3.196: target 0.514 at comp 0.50 and
+        // 0.55, 0.799 at 0.525 and 0.575). Lighting the whole visited orbit is
+        // what a bifurcation diagram is. Nearest-iterate instead of a sum of
+        // Gaussians: identical picture, one exp() per vertex either way.
         const r=2.5+(x+3.5)/7*1.5, steps=40+Math.floor(comp*40);
         let xn=0.5;
         for (let i=0; i<steps; i++) xn=r*xn*(1-xn);
         const target=(z+3.5)/7;
-        return Math.exp(-50*(xn-target)**2) * amp * 0.5;
+        let d2=Infinity;
+        for (let i=0; i<24; i++) { xn=r*xn*(1-xn); const d=xn-target; if (d*d<d2) d2=d*d; }
+        return Math.exp(-50*d2) * amp * 0.5;
       }
     },
     duffing: {
       name: 'Duffing Oscillator',
-      formula: 'ẍ−x+x³=γcos(ωt)',
+      formula: 'ẍ + δẋ − x + x³ = γcos(ωt), δ = 0.15',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const gamma=0.3+comp*0.15, omega=1.2, delta=0.15;
         const dt=0.01, steps=15;
@@ -887,19 +1018,38 @@ const FRACTALS_AND_CHAOS = {
     },
     tinkerbell: {
       name: 'Tinkerbell Map',
-      formula: 'x_{n+1}=x_n²−y_n²+ax+by',
+      formula: 'x_{n+1}=x_n²−y_n²+ax_n+by_n, y_{n+1}=2x_ny_n+cx_n+dy_n',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         let px=x*0.3, py=z*0.3;
-        const a=-0.3, b=-0.6013, c=2.0, d=0.5;
+        // FIX(r6): a = −0.3 is in no published parameter set. The canonical
+        // Tinkerbell is a = 0.9 with these same b, c, d (the only other known
+        // set is a = 0.3, b = 0.6, c = 2.0, d = 0.27). At a = −0.3 the bounded
+        // invariant set measures x [−0.074, 0.062], y [−0.145, 0.113] — about a
+        // twentieth of the canonical attractor along each axis — and the plate
+        // carried sd 0.0127 against 0.1371 here. The caption above gained its
+        // second line at the same time: the height drawn is y_{n+1}, and y's
+        // recurrence was not written down anywhere.
+        const a=0.9, b=-0.6013, c=2.0, d=0.5;
         for (let i=0; i<12; i++) {
           const nx=px*px-py*py+a*px+b*py; py=2*px*py+c*px+d*py; px=nx;
           if (!isFinite(px)||!isFinite(py)) return 0;
           // Escape guard. Trajectories with magnitude > 10 are visually
           // meaningless and overflow Float32 downstream. Catch them early —
           // unguarded iteration can reach ~1e+267 within a few more steps.
-          if (Math.abs(px) > 10 || Math.abs(py) > 10) return 0;
+          // FIX(r6): the guard was |·| > 10, five times outside the canonical
+          // attractor (x [−1.23, 0.46], y [−1.55, 0.54]). Orbits between 1.6 and
+          // 10 are already escaping, so their twelfth iterate is arbitrary — and
+          // it is those that set the peak, which is why the peak depended on
+          // which vertices the mesh happened to put near one: ×1.84 across the
+          // grid sizes the app actually uses (60–200), and ×2.22 once a = 0.9
+          // made them bigger. At |·| > 3, twice the attractor's own extent, the
+          // spread is ×1.19 and the peak is the surface rather than the guard.
+          // 0.45 in place of 0.18 is the display constant that follows: the
+          // ceiling fell from 1.8·amp to 0.54·amp, and the factory peak lands at
+          // 0.810 with the top of both sliders at 2.604, inside a half-frame of 3.
+          if (Math.abs(px) > 3 || Math.abs(py) > 3) return 0;
         }
-        return py * 0.18 * amp;
+        return py * 0.45 * amp;
       }
     },
   }
@@ -1066,11 +1216,15 @@ const SPECIAL_FUNCTIONS = {
       //
       // Euler's transformation ₂F₁(a,b;c;z) = (1−z)^{c−a−b}·₂F₁(c−a,c−b;c;z)
       // does not change |z|, so the geometric rate is the same — what it changes
-      // is the algebraic factor: terms fall as zⁿ·n^{−1.5−comp} instead of
-      // zⁿ·n^{comp−1.5}, which is worth two to three orders by the hundredth
-      // term. With the cap at 120 and the exit tightened to a relative 10⁻¹²,
-      // the worst reachable point lands well inside tier B and everywhere else
-      // is at machine precision.
+      // is the algebraic factor: terms fall as zⁿ·n^{c−a−b−1} = zⁿ·n^{−0.5−comp}
+      // instead of zⁿ·n^{a+b−c−1} = zⁿ·n^{comp−1.5}. Measured at n = 120, z = 0.95:
+      // comp = 0.9 gains 2.4 orders (6.752e-5 → 2.419e-7), comp = 0.7 gains 1.1,
+      // and comp = 0.5 gains NOTHING — both exponents are −1.0 there and the two
+      // terms agree to three digits. That is also where the worst reachable point
+      // lies, so the 6.5e-5 the entry achieves is bought by the cap at 120, not
+      // by the transformation. The relative 10⁻¹² exit never fires at z = 0.95:
+      // the loop runs all 120 terms at every comp, i.e. the truncation is still
+      // hard, just later.
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const zv=clamp(x*freq*0.25,-0.95,0.95), a=0.5, b=0.5+comp, c=1.5;
         const A=c-a, B=c-b;
@@ -1213,7 +1367,7 @@ const PROBABILITY_STATISTICS = {
     },
     bivariate: {
       name: 'Bivariate Gaussian',
-      formula: 'f(x,z) = 1/(2πσ²) e^{−(x²+z²)/2σ²}',
+      formula: 'f = e^{−(x²−2ρxz+z²)/2σ²(1−ρ²)} / (2πσ²√(1−ρ²)), ρ = 0.4·comp·sin(0.4t)',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const s=0.8+comp*0.6, r=Math.sin(t*0.4)*comp*0.4;
         const det=1-r*r;
@@ -1250,21 +1404,28 @@ const PROBABILITY_STATISTICS = {
         const k=clamp(Math.round((x+3.5)/7*10), 0, 10), lam=2+comp*4+Math.sin(t*0.3)*1.5;
         let logP=-lam+k*Math.log(lam);
         for (let i=1; i<=k; i++) logP-=Math.log(i);
-        return Math.exp(logP) * amp * 0.5 * (k%2===0?1:-1)*Math.exp(-z*z*0.35)+0;
+        // FIX(r6): the (k%2===0?1:-1) below was a contrast trick, and it put
+        // 48.3 % of the surface under zero beneath a caption that reads
+        // "P(k;λ) = λᵏe^{−λ}/k!". A probability mass function is non-negative by
+        // definition; the magnitudes were already exact (1.9e-16 against an
+        // exact-rational reference), so dropping the sign costs nothing but the
+        // alternation. Peak |y| and the share of the mesh at the extreme are
+        // identical before and after — 0.0683 and 0.4 % at the factory sliders.
+        return Math.exp(logP) * amp * 0.5 * Math.exp(-z*z*0.35);
       }
     },
     randomWalk: {
       name: 'Brownian Motion (seeded)',
       formula: 'W(t) = Σ ξᵢ√dt',
       f(x, z, t, {amp=1, freq=1}) {
-        // Deterministic pseudo-random walk seeded by x
-        let v=0, seed=Math.round((x+3.5)*57.3);
-        const steps=16;
-        for (let i=0; i<steps; i++) {
-          seed=(seed*1664525+1013904223)&0xffffffff;
-          v+=(((seed>>>16)&0xff)/255-0.5)*0.15;
-        }
-        return v * amp * Math.exp(-z*z*0.35) * (1+Math.sin(t*0.3)*0.2);
+        // FIX(r6): the LCG was re-seeded at EVERY vertex from round((x+3.5)·57.3),
+        // so neighbouring vertices carried the endpoints of independent walks —
+        // white noise, not a path. Measured: Var[Δy]/(2·Var[y]) = 1.10 at the
+        // mesh lag 0.078 and 1.10 at lag 2, flat where a path needs it ∝ lag.
+        // One walk, accumulated along x and memoised, restores the increment
+        // law at no per-frame cost: the 410 partial sums are built once.
+        const m = Math.max(0, Math.min(WALK.length-1, Math.round((x+3.5)*57.3)));
+        return WALK[m] * 0.12 * amp * Math.exp(-z*z*0.35) * (1+Math.sin(t*0.3)*0.2);
       }
     },
     ornsteinUhlenbeck: {
@@ -1729,7 +1890,7 @@ const TRIGONOMETRY = {
       }
     },
     chebyshevTrig: {
-      name: 'Chebyshev via cos(n·arccos)',
+      name: 'Chebyshev Identity cos(nθ)',
       formula: 'T_n(cos θ) = cos(nθ)',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const n=Math.round(2+comp*5), theta=x*freq*Math.PI*0.9;
@@ -1760,7 +1921,7 @@ const TRIGONOMETRY = {
       }
     },
     circularFunctions: {
-      name: 'sec / csc / cot Landscape',
+      name: 'sec · csc Landscape',
       formula: 'sec=1/cos, csc=1/sin',
       f(x, z, t, {amp=1, freq=1}) {
         const xv=x*freq*2, zv=z*freq*2;
@@ -1778,8 +1939,8 @@ const TRIGONOMETRY = {
       }
     },
     inverseTrig: {
-      name: 'Arcsin / Arccos Surface',
-      formula: 'arcsin(x)+arccos(x) = π/2',
+      name: 'Arcsin Surface',
+      formula: 'y = arcsin(clamp(x·f)) · e^{−0.35z²}',
       f(x, z, t, {amp=1, freq=1}) {
         // FIX(r6): the argument was held off +/-1 by 1e-6 and then again by
         // 1e-9, and asin(+/-1) = +/-pi/2 needs neither. The saturated rim is not
@@ -1887,7 +2048,7 @@ const COMPLEX_NUMBERS = {
     },
     riemannSphere: {
       name: 'Riemann Sphere Projection',
-      formula: 'ξ = 2x/(x²+z²+1), η = (x²+z²−1)/(x²+z²+1)',
+      formula: 'ζ = (x²+z²−1)/(x²+z²+1) — the height of the stereographic image',
       f(x, z, t, {amp=1, freq=1}) {
         const r2=(x*freq)**2+(z*freq)**2;
         return (r2-1)/(r2+1) * amp * 0.5;
@@ -1911,8 +2072,8 @@ const COMPLEX_NUMBERS = {
       }
     },
     cauchyRiemann: {
-      name: 'Cauchy–Riemann Satisfaction',
-      formula: '∂u/∂x=∂v/∂z, ∂u/∂z=−∂v/∂x',
+      name: 'Re(z²) — Harmonic Saddle',
+      formula: 'u = Re(z²) = x²−z², harmonic, so CR hold identically',
       f(x, z, t, {amp=1, freq=1}) {
         // Re(z²) = x²-z² — analytic → CR satisfied
         return ((x*freq)**2-(z*freq)**2) * amp * 0.18 * (1+Math.sin(t*0.3)*0.2);
@@ -2159,8 +2320,16 @@ const FOURIER_SERIES = {
       formula: '‖f‖² = Σ |cₙ|² (Parseval)',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const n=clamp(Math.round((x+3.5)/7*14)+1, 1, 15);
-        const cn_sq=(n%2===1) ? 4/(n*n*Math.PI*Math.PI) : 0.01/(n*n);
-        return Math.sqrt(cn_sq) * amp * (4+comp*2) * Math.exp(-z*z*0.3) * (1+Math.sin(t*0.5)*0.15);
+        // FIX(r6): the sqrt made this the AMPLITUDE spectrum |cₙ|, not the energy
+        // spectrum the name and the caption both state — drawn/|cₙ| came out at
+        // exactly 1.000000 on every odd column. And the even columns, which are
+        // exactly zero for a square wave, were given an invented floor of
+        // 0.01/n²: 7.85 % of the fundamental at n = 2. With both gone the picture
+        // exhibits Parseval instead of merely naming it — the drawn heights sum
+        // to 0.9747 of the mean square of sgn(sin x), the remainder being the
+        // tail beyond n = 15.
+        const cn_sq=(n%2===1) ? 4/(n*n*Math.PI*Math.PI) : 0;
+        return cn_sq * amp * (4+comp*2) * Math.exp(-z*z*0.3) * (1+Math.sin(t*0.5)*0.15);
       }
     },
     wavelets: {
@@ -2173,7 +2342,14 @@ const FOURIER_SERIES = {
           const local=xv*scale-j;
           v+=(local>=0&&local<0.5)?1:(local>=0.5&&local<1)?-1:0;
         }
-        return (v/scale) * amp * 0.4 * Math.exp(-z*z*0.3);
+        // FIX(r6): the Haar function is ±1 — the caption says so — and the sum
+        // above already returns exactly one of {−1, 0, +1}, because the dyadic
+        // intervals are disjoint. Dividing by `scale` therefore did not average
+        // anything; it just flattened the surface by 2^round(4·comp), so raising
+        // the complexity slider added detail and squashed the plate at the same
+        // time: peak |y| ran 0.100 / 0.050 / 0.025 at comp 0.5 / 0.7 / 0.9 with
+        // amp = 1, against a catalogue median of 0.45.
+        return v * amp * 0.4 * Math.exp(-z*z*0.3);
       }
     },
     dct: {
@@ -2595,16 +2771,16 @@ const INTEGRAL_TRANSFORMS = {
       }
     },
     hankelTransform: {
-      name: 'Hankel Transform',
-      formula: 'F_ν(ρ) = ∫₀^∞ f(r)J_ν(ρr)r dr',
+      name: 'Hankel Kernel J₀(ρ)',
+      formula: 'J₀(ρ)·e^{−0.3ρ} — the kernel, not a transform',
       f(x, z, t, {amp=1, freq=1}) {
         const rho=Math.sqrt(x*x+z*z)*freq*2;
         return besselJ0(rho)*Math.exp(-rho*0.3) * amp * 0.55;
       }
     },
     mellinTransform: {
-      name: 'Mellin Transform',
-      formula: 'M{f}(s) = ∫₀^∞ x^{s−1}f(x)dx',
+      name: 'Mellin Integrand x^{s−1}e^{−x}',
+      formula: 'the integrand of M{e^{−x}}(s); the transform itself is Γ(s), one number per s',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         // Visualize Mellin kernel x^(s-1) for s = complex
         const s=1+comp*2, xv=clamp((x+3.5)/7*4+0.1, 0.1, 4.1);
@@ -2746,8 +2922,8 @@ const INTEGRAL_TRANSFORMS = {
       }
     },
     fourierSlice: {
-      name: 'Fourier Slice Theorem',
-      formula: 'Projection ↔ Slice of 2D FT',
+      name: 'Angle-Swept Sinusoid',
+      formula: 'sin(x·f·4·cos φ + 0.5 sin φ), φ = 0.5z + 0.3t',
       f(x, z, t, {amp=1, freq=1}) {
         const angle=z*0.5+t*0.3;
         const proj=Math.sin(Math.cos(angle)*x*freq*4+Math.sin(angle)*0.5);
@@ -2777,9 +2953,16 @@ const TOPOLOGY_GEOMETRY = {
       name: "Klein Bottle Cross-Section",
       formula: 'Immersion in ℝ³ — self-intersecting surface',
       f(x, z, t, {amp=1, freq=1}) {
+        // FIX(r6): the height had no half twist — the identification that is the
+        // whole difference between a Klein bottle and a torus. cos(u)/2 and
+        // sin(u)/2 are whole angles, so the surface was exactly 2π-periodic in u
+        // (torus gluing residual 1.0e-49) and CHANGED SIGN under the Klein gluing
+        // (u,v) ~ (u+2π, −v), residual 3.017 against its own sup 1.509 — i.e. on
+        // the Klein bottle it was two-valued and therefore not defined at all.
+        // These are the half-angles the figure-8 immersion actually carries, and
+        // this is its own z-coordinate.
         const u=x*freq*Math.PI, v=z*freq*Math.PI;
-        // Figure-8 Klein cross-section
-        const y=(1-Math.cos(u)/2)*Math.sin(v)-(Math.sin(u)/2)*Math.sin(2*v+t*0.2);
+        const y=Math.sin(u/2)*Math.sin(v)+Math.cos(u/2)*Math.sin(2*v+t*0.2);
         return y * amp * 0.4;
       }
     },
@@ -3225,7 +3408,7 @@ const CELLULAR_AUTOMATA = {
       }, 40),
     },
     voronoiCA: {
-      name: 'Voronoi Growth CA',
+      name: 'Voronoi Tessellation',
       formula: 'Nearest seed wins cell',
       f(x, z, t, {amp=1, comp=1}) {
         const N=5+Math.round(comp*8);
@@ -3495,8 +3678,24 @@ const QUANTUM_MECHANICS = {
         let Hm=1, H=2*xv;
         for (let k=1; k<n; k++) { const tmp=2*xv*H-2*k*Hm; Hm=H; H=tmp; }
         const H_n = n===0 ? 1 : H;
-        const psi=H_n*Math.exp(-xv*xv/2);
-        return psi*psi * 0.003 * amp * Math.exp(-z*z*0.3) * (0.8+Math.cos(n*t*0.02)*0.2);
+        // FIX(r6): the normalisation the caption writes, 1/√(2ⁿn!√π), was never
+        // applied — the code multiplied H_n²e^{−x²} by the constant 0.003. What
+        // was dropped depends on n, and n is driven by the mid band, so one
+        // sweep of the slider moved the height by ×74.2 and took it out of the
+        // frame at 6.78 (factory sliders, loud) and 11.27 (both sliders up)
+        // against a half-frame of about 3. This is not the studio's fixed-scale
+        // convention: that allows a CONSTANT factor, and this one is a function
+        // of a parameter.
+        //
+        // Putting it in is what stabilises the height rather than merely
+        // shrinking it: max|ψ_n|² is 0.3456, 0.3288, 0.3163 for the reachable
+        // n = 3, 4, 5 — a spread of 1.09 against 73.2 — so a single display
+        // constant now serves every n. 3.6 puts the factory peak at 0.859 and
+        // the top of both sliders at 1.99. (2ⁿ·n! = Π_{k≤n} 2k.)
+        let norm=Math.sqrt(Math.PI);
+        for (let k=1; k<=n; k++) norm*=2*k;
+        const psi=H_n*Math.exp(-xv*xv/2)/Math.sqrt(norm);
+        return psi*psi * 3.6 * amp * Math.exp(-z*z*0.3) * (0.8+Math.cos(n*t*0.02)*0.2);
       }
     },
     hydrogenS: {
@@ -3508,7 +3707,7 @@ const QUANTUM_MECHANICS = {
     },
     hydrogen2p: {
       name: 'Hydrogen 2p |ψ|²',
-      formula: '|ψ₂₁₀|² ∝ r²e^{−r}cos²θ',
+      formula: '|ψ_{2p}|² ∝ r²e^{−r}·cos²(φ − 0.3t) — a 2p lobe pair in the xz-plane, turning',
       f(x, z, t, {amp=1, freq=1}) {
         return hydrogenPsi(2, 1, x*freq*0.5, z*freq*0.5, t) * amp * 4;
       }
@@ -3517,13 +3716,29 @@ const QUANTUM_MECHANICS = {
       name: 'Quantum Tunneling',
       formula: 'T = e^{−2κL}, κ=√(2m(V₀−E))/ħ',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
-        const kappa=1+comp*2;
+        const kappa=1+comp*2, L=1;
         const xi=x*freq;
-        let psi;
-        if (xi < -0.5) psi=Math.cos(freq*xi*4+t);
-        else if (xi > 0.5) psi=Math.exp(-kappa*0.5)*Math.cos(freq*xi*4+t);
-        else psi=Math.exp(-kappa*Math.abs(xi))*0.7;
-        return psi * amp * 0.45 * Math.exp(-z*z*0.25);
+        // FIX(r6): inside the barrier the amplitude was e^{−κ|ξ|}·0.7 — a
+        // symmetric tent with its maximum at the CENTRE — so across the entry
+        // half the wave GREW by a factor of e instead of decaying: measured
+        // 1.000, 1.649, 2.718, 1.649, 1.000 across ξ = −0.5 … +0.5, where the
+        // exact 4×4 matching solution for the same κ gives 1.000, 0.613, 0.385,
+        // 0.261, 0.220. Both faces also carried a step (0.303 and 0.185 on the
+        // surface at amp = 1). And the transmitted amplitude e^{−κ·0.5} belonged
+        // to half the drawn barrier: |ψ|² came out 1.353e−1 where this entry's
+        // own caption, T = e^{−2κL} with the drawn L = 1, says 1.832e−2.
+        //
+        // The envelope is now the textbook one — 1 to the left, e^{−κ(ξ+L/2)}
+        // through the barrier, e^{−κL} beyond — monotone across the barrier as
+        // the exact solution is, continuous at both faces (steps 3.7e−6 and
+        // 3.9e−7, finite-difference residue), and transmitting exactly the
+        // e^{−2κL} the caption promises. It stays the schematic the document
+        // calls it: the left-hand side is drawn as a pure incident wave, with no
+        // interference from the reflected one.
+        const env = xi < -0.5 ? 1
+                  : xi >  0.5 ? Math.exp(-kappa*L)
+                  :             Math.exp(-kappa*(xi+0.5));
+        return env*Math.cos(freq*xi*4+t) * amp * 0.45 * Math.exp(-z*z*0.25);
       }
     },
     wavePacket: {
@@ -3548,8 +3763,14 @@ const QUANTUM_MECHANICS = {
       formula: '|ψ⟩ = cos(θ/2)|0⟩+e^{iφ}sin(θ/2)|1⟩',
       f(x, z, t, {amp=1, freq=1}) {
         const theta=Math.PI*(x*freq+1)*0.5, phi=z*freq*Math.PI+t*0.4;
-        const up=Math.cos(theta/2)**2, down=Math.sin(theta/2)**2;
-        return (up-down)*Math.cos(phi) * amp * 0.45;
+        // FIX(r6): cos²(θ/2) − sin²(θ/2) = cos θ is the population difference and
+        // does not depend on φ at all; multiplying it by cos φ produced a surface
+        // that is none of the three Bloch components (closest was ⟨σy⟩, off by
+        // 1.000 out of a range of 2). The worst of it is at the pole: at θ = 0
+        // the state is |0⟩ for every φ, and the old surface still swung over
+        // [−1.000, +0.999] along z. sinθ·cosφ IS a Bloch component — ⟨σx⟩ — and
+        // it costs the same arithmetic and the same peak.
+        return Math.sin(theta)*Math.cos(phi) * amp * 0.45;
       }
     },
     doubleSlitProbability: {
@@ -3590,7 +3811,7 @@ const QUANTUM_MECHANICS = {
     },
     landauLevels: {
       name: 'Landau Level (2D magnetic)',
-      formula: 'E_n = ħωc(n+½), |ψ_n|² = L_n^0(r²)·e^(−r²)',
+      formula: 'E_n = ħω_c(n+½); drawn: [L_n(r²)]²·e^{−r²}·cos²(nθ + ω_c t/10) — the m = ±n pair, turning',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const n=Math.round(comp*5), omega_c=2+comp;
         const r2=(x*freq)**2+(z*freq)**2;
@@ -3610,8 +3831,14 @@ const QUANTUM_MECHANICS = {
         // by five. 24 is one pass of the domain, after which the next soliton
         // enters from the left; see replayTime.
         const xi=x*freq-v*replayTime(t, 24)*0.3;
+        // FIX(r6): |ψ|² of an NLS soliton is A²sech²(Aξ) — height A², width 1/A,
+        // and the two are tied, which is what makes it a soliton. The A² was
+        // missing, so the width followed `comp` and the height did not: measured
+        // peak was 0.500·amp at comp 0.5, 0.7 and 0.9 alike, where A² asks for a
+        // ratio of 1.604 between the ends of the slider. The display constant
+        // halves with it so the surface stays where it was in frame.
         const sech=1/Math.cosh(A*xi);
-        return sech*sech * amp * 0.5 * Math.exp(-z*z*0.25);
+        return A*A*sech*sech * amp * 0.25 * Math.exp(-z*z*0.25);
       }
     },
     coherentState: {
@@ -3635,7 +3862,13 @@ const QUANTUM_MECHANICS = {
         // so this routine is restricted to sp².
         const r=Math.sqrt(x*x+z*z)*freq+1e-6, theta=Math.atan2(z,x);
         const phi=comp*Math.PI*2 + t*0.05;
-        const psi_s = Math.exp(-r) / Math.sqrt(Math.PI);
+        // FIX(r6): sp² mixes orbitals of ONE shell — 2s with 2p — and this took
+        // 1s. The difference is visible, not formal: the real hybrid inherits
+        // the 2s radial node, so the front lobe gives way to the back one past
+        // r ≈ 2.4. Measured front/back at φ = π — with 1s: 5.77 / 43.15 / 3.41 /
+        // 1.72 at r = 1/2/3/4, never inverting; with 2s: 33.97 / 1.00 / 0.383 /
+        // 0.228, inverting at the node exactly where it should.
+        const psi_s = (2-r)*Math.exp(-r/2) / Math.sqrt(32*Math.PI);
         const psi_px= r*Math.exp(-r/2)*Math.cos(theta) / Math.sqrt(32*Math.PI);
         const psi_pz= r*Math.exp(-r/2)*Math.sin(theta) / Math.sqrt(32*Math.PI);
         const psi = (psi_s + Math.SQRT2*(psi_px*Math.cos(phi) + psi_pz*Math.sin(phi))) / Math.sqrt(3);
@@ -3644,7 +3877,7 @@ const QUANTUM_MECHANICS = {
     },
     bellState: {
       name: 'Bell State Correlations',
-      formula: '|Φ⁺⟩ = (|00⟩+|11⟩)/√2',
+      formula: '|Ψ⁻⟩ = (|01⟩−|10⟩)/√2, E(a,b) = −cos(a−b)',
       f(x, z, t, {amp=1, freq=1}) {
         const phi1=x*freq*Math.PI, phi2=z*freq*Math.PI;
         // Simulate E(a,b) = -cos(a-b)

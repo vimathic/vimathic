@@ -17,8 +17,8 @@ SCIENCE.md came to name four modular forms of which one was implemented.
 
 | Tier | Count | Definition | Marketing-defensible? |
 |------|------:|------------|:---------------------:|
-| **A** — machine precision | **130** | Closed-form analytic expressions evaluated at IEEE 754 double precision (~10⁻¹⁰ to 10⁻¹⁴ accuracy). | ✓ Yes |
-| **B** — bounded approximation | **38** | Polynomial fits, finite-converged series, well-behaved iterative methods, real PDE/ODE simulations on adaptive grids. Documented error ≤ 10⁻³ to 10⁻⁷. | ✓ Yes |
+| **A** — machine precision | **128** | Closed-form analytic expressions evaluated at IEEE 754 double precision (~10⁻¹⁰ to 10⁻¹⁴ accuracy). | ✓ Yes |
+| **B** — bounded approximation | **40** | Polynomial fits, finite-converged series, well-behaved iterative methods, real PDE/ODE simulations on adaptive grids. Documented error ≤ 10⁻³ to 10⁻⁷. | ✓ Yes |
 | **C** — visualization-grade | **24** | Truncated chaotic iterations, decorative modulations, simplified models. Qualitatively faithful but not numerically exact. | Conditional |
 | **D** — defects | **0** | All previously identified defects fixed and verified by automated tests. | n/a |
 
@@ -114,7 +114,7 @@ was wrong everywhere; one scale now, and β = 8/3 rather than 2.667.
 
 <!-- This counts tests/math-validation.test.js alone. `npm test`
      runs every other suite in tests/ as well. -->
-Test suite: **184 tests passing** in the validation file, including 24 that fail
+Test suite: the validation file passes in full, including the regression tests that fail
 on the pre-round-5 code and pass on this one.
 
 ### A note on grid resolution
@@ -185,7 +185,7 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `henon` | Hénon Map | 🔵 B | 20 iterations on canonical attractor. |
 | `tinkerbell` | Tinkerbell Map | 🔵 B | 12-iteration map on canonical Tinkerbell attractor. Post-loop `isFinite` guard added — no longer returns `Infinity`. |
 
-### 2. Special Functions (16) — 11 A · 5 B · 0 C · 0 D
+### 2. Special Functions (16) — 10 A · 6 B · 0 C · 0 D
 
 | Key | Name | Tier | Rationale |
 |-----|------|:----:|-----------|
@@ -206,22 +206,22 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `polygamma` | Digamma ψ(x) | 🟢 A | Recurrence up to x ≥ 8 plus a four-term Bernoulli asymptotic, ~10⁻¹⁰. (No reflection formula, contrary to what this row used to claim — none is needed, the argument is clamped to [0.2, 4.2].) |
 | `lambertW` | Lambert W(x) | 🟢 A | Halley iteration converges quadratically — 6 steps → machine precision. |
 
-### 3. Probability & Statistics (16) — 12 A · 2 B · 2 C · 0 D
+### 3. Probability & Statistics (16) — 9 A · 5 B · 2 C · 0 D
 
 | Key | Name | Tier | Rationale |
 |-----|------|:----:|-----------|
-| `gaussian` | Gaussian Bell | 🟢 A | Direct PDF. |
+| `gaussian` | Gaussian Bell | 🔵 B | Not a PDF: the wrapper is exactly σ√(2π)·0.55, which cancels the 1/(σ√2π) the formula string names. The omitted factor is not a constant either — σ rides `comp`, so it runs 1.034 → 1.199 (+16 %) across one sweep of the mid band. Same criterion this file already applies to `studentT` and `vonMises`. |
 | `bivariate` | Bivariate Gaussian | 🟢 A | Closed-form 2D Gaussian with correlation. |
 | `cauchy` | Cauchy | 🟢 A | 1/(π(1+x²)). |
 | `laplace` | Laplace | 🟢 A | (1/2b)·exp(-\|x\|/b). |
-| `maxwellBoltzmann` | Maxwell–Boltzmann | 🟢 A | v²·exp(-v²/2a²). |
+| `maxwellBoltzmann` | Maxwell–Boltzmann | 🔵 B | v²·exp(−v²/2a²) — the kernel, not the density: the wrapper is exactly 0.6·a³·√(π/2)... i.e. the √(2/π)/a³ of the distribution is cancelled. The omitted factor rides `comp` too, 0.548 → 0.896 (+63 %). |
 | `poisson` | Poisson PMF | 🟢 A | Log-domain stable computation. **Note**: output multiplied by `(k%2===0?1:-1)` for visual contrast — sign-flipped, not the PMF. |
 | `randomWalk` | Brownian Motion (seeded) | 🟡 C | LCG-driven walk — statistically not Wiener process realisation, just a deterministic path with similar shape. |
 | `ornsteinUhlenbeck` | Ornstein–Uhlenbeck | 🔵 B | Round 6: there was no noise in what was drawn. The seed advanced ~8 per vertex out of a 65536 period read through `&0xffff`, so every vertex on the row got the same twenty increments and what varied was the initial condition relaxing smoothly — total variation over span 1.09, the signature of a monotone curve. x is now the time axis of one sample path integrated from the left edge, so neighbouring vertices share history: total variation over span 9.91, stationary variance 1.84e-2 against σ²/(2θ) = 1.78e-2, autocorrelation at lag 1.0 of 0.194 against e^{−θ} = 0.223. B rather than A because explicit Euler at dt = 0.05 with uniform increments is what leaves those two gaps. |
 | `chiSquare` | Chi-Squared | 🟢 A | Closed-form via gamma. |
 | `studentT` | Student's t | 🔵 B | Missing normalization constant Γ((ν+1)/2)/(√(νπ)Γ(ν/2)). Shape exact, scale off by const. |
 | `entropyLandscape` | Shannon Entropy | 🟢 A | Standard binary entropy. |
-| `mixtureGaussians` | Gaussian Mixture | 🟢 A | Sum of normal PDFs. |
+| `mixtureGaussians` | Gaussian Mixture | 🔵 B | Sum of normal PDFs with wᵢ = 1, not weights summing to 1, so the height is n times a mixture density: measured multiplier 1.600000000 at n = 4 and 2.000000000 at n = 5 (= 0.4·n, spread ≤2.9e-15). `comp` crossing 0.7 adds a component and lifts the whole surface 25 % — the same missing-normalisation criterion the file already applies to `studentT` and `vonMises`. |
 | `pareto` | Pareto | 🟢 A | α·xm^α/x^(α+1). |
 | `kernelDensity` | KDE | 🟢 A | Sum of fixed-kernel evaluations. |
 | `vonMises` | von Mises | 🟢 A | Round 6 restored 1/(2πI₀(κ)) — and the point is that it is not a constant: κ = 1 + comp·4 with comp riding the mid band, so the omitted factor ran 30.7 at comp 0.5 and 120.0 at comp 0.9 and the surface changed height by ×3.9 with the music while calling itself a density. It also stood 3.5 world units tall at the factory sliders against a ~3-unit frame. Now the density itself, whose peak e^κ/(2πI₀(κ)) grows only as √(κ/2π). I₀ by ascending series, twenty terms. |
@@ -234,7 +234,7 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `eigenField` | Eigenvector Field | 🟢 A | Round 6: A(t) = R(0.3t)·diag(1+comp, −1)·R(0.3t)ᵀ and the height is (v × Av)/\|v\|, the signed distance from Av to the line through v. It is exactly zero on the eigenvectors and nowhere else, so the surface is the statement `Av = λv` rather than a decoration of it. Previously a fixed linear functional of Av, and the old matrix was identically zero at t = 5π + 10πk — the plate went flat once every 65 s. |
 | `determinant` | Determinant | 🟢 A | ad-bc exact. |
 | `svdSpectrum` | SVD Singular Value | 🟢 A | Closed-form 2×2 singular value formula. |
-| `trace` | Matrix Trace | 🟡 C | Output `cos(r)^n` — not trace of any matrix. Decorative naming. |
+| `trace` | Matrix Trace | 🟡 C | `cos(r)ⁿ` is exactly tr(Aⁿ) for a rank-one A of trace cos r — checked by multiplying an explicitly built matrix, not by quoting the identity: agreement 4.4·10⁻¹⁶ over the plate. C stands because the entry names no particular A, and the reading a reader reaches for first — A a rotation by r — gives 2cos(nr), which differs from the drawn surface by up to 1.13 against its own peak of 0.5. |
 | `tensorField` | 2D Tensor Field | 🔵 B | x²+xz+z² is sum of T components, not tensor norm — but scalar functional of T. |
 | `hessian` | Hessian Determinant | 🔵 B | Analytic Hessian of sin(x)+sin(z). Exact. |
 | `rotationMatrix` | Rotation Matrix Flow | 🟢 A | Rotation matrix exact. |
@@ -248,7 +248,7 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `jacobian` | Jacobian Det | 🟢 A | Closed form for u = cos(f(x+z)), v = sin(1.3fx) + sin(1.9fz)/1.9 — which is the map the old stencil was in fact differentiating: it varied only the second occurrence of z in `sin(z·f·0.9 + z·f)`, so the derivative it formed was f·cos(1.9fz) rather than 1.9f·cos(1.9fz). The drawn surface is unchanged; it is now exact rather than 9.1e-5 out at the default slider and 3.9e-2 at the top. (Round 1 fixed an operator-precedence bug here; round 6 removed the stencil.) |
 | `manifoldCurvature` | Gaussian Curvature | 🔵 B | Round 6: now the full K = (F_xx·F_zz − F_xz²)/(1 + F_x² + F_z²)², h = 0.05 central differences, worst deviation from the closed-form K 8.4e-5 over the plate. The denominator — named in the formula string — was absent, so the drawn quantity was the Hessian determinant, off by up to 1.39× in shape, not scale. The display constant rose 0.15 → 6.0 with it (the old one left the peak at 0.021 units against a ~3-unit frame) and the ±0.6 clamp became `soften(±1.2, ±2.6)`: K grows as freq⁴ where both slopes vanish, so the over-drive range is folded instead of cut. |
 
-### 5. Trigonometry (16) — 14 A · 1 B · 1 C · 0 D
+### 5. Trigonometry (16) — 15 A · 0 B · 1 C · 0 D
 
 | Key | Name | Tier | Rationale |
 |-----|------|:----:|-----------|
@@ -256,16 +256,16 @@ Tier ratings shown as: 🟢 A · 🔵 B · 🟡 C · 🔴 D
 | `pythagorean` | Pythagorean wave | 🟢 A | sin²-cos² = -cos(2x), exact. |
 | `sumAngle` | Sum of angles identity | 🟢 A | Validates identity sin(α+β)=sinα·cosβ+cosα·sinβ. |
 | `doublAngle` | Double angle | 🟢 A | Exact. |
-| `halfAngle` | Half-angle | 🔵 B | Description claims sin(x/2)=±√((1-cosx)/2); implementation just computes sin(x/2). Numerically equivalent (within sign) — exact, but description should be fixed for correspondence with formula string. |
+| `halfAngle` | Half-angle | 🟢 A | sin(x/2), and the identity the caption states is the same number: max \| \|sin(u/2)\| − √((1−cos u)/2) \| = 7.955e-15 over 2000 samples × four wave intensities. The old B asked that the caption name the side that is evaluated; applied consistently that demotes `doublAngle`, `productSum` and `chebyshevTrig` too, and all four state identities whose two sides agree with what is drawn. The one entry where they do not — `inverseTrig`, whose identity is the constant π/2 while the surface runs ±0.411 — is repaired in the caption instead. |
 | `productSum` | Product-to-sum | 🟢 A | 2sinAsinB = cos(A-B)-cos(A+B), exact. |
 | `tangentWave` | Tanh | 🟢 A | Built-in Math.tanh. |
 | `lissajous` | Lissajous | 🟢 A | Exact. |
 | `hyperbolicGeom` | Cosh²-Sinh² | 🟢 A | cosh(r)-1, exact. |
-| `chebyshevTrig` | Chebyshev via cos(n·acos) | 🟢 A | Same formula as in Special Functions, exact. |
+| `chebyshevTrig` | Chebyshev identity cos(nθ) | 🟢 A | The right-hand side of T_n(cos θ) = cos(nθ), instantiated exactly: the surface is cos(n·π·0.9·x)·0.45 to 6.3e-15. NOT the same formula as `specialFunctions.chebyshev` — that one applies acos to the clamped coordinate and draws the polynomial with its plateau rim; this one has no acos anywhere and is a plain sinusoid, the same kernel as `complexNumbers.moivre` up to constants. |
 | `standingWave` | Standing wave | 🟢 A | sin(kx)·cos(ωt). |
 | `travelingWave` | Traveling wave | 🟢 A | sin(kx-ωt). |
 | `modeInterference` | Mode interference | 🟢 A | Σ sin(nx)·cos(nωt)/n. |
-| `circularFunctions` | sec/csc/cot | 🟡 C | Threshold regularization `\|cos\|>0.1` — not actual sec/csc, decorative. |
+| `circularFunctions` | sec·csc | 🟡 C | Outside the guard band the surface is clamp(sec·csc·0.04·amp, ±0.7) exactly — residual 0.000e+0 against an independent sec·csc, so it is genuine sec/csc there, not decorative. C is for the guard itself: `\|cos\|>0.1` returns 0 at the poles, where the clamp had already capped the value, so instead of saturated ridges the mesh gets a hole — 12.3 % of vertices sit at exactly 0 and the largest step between neighbouring vertices is 0.7000, the whole half-height, in one mesh step. |
 | `atan2Field` | atan2 phase | 🟢 A | Exact. |
 | `inverseTrig` | arcsin | 🟢 A | Math.asin clamped to exactly ±1. Round 6: the argument was held off ±1 by 1e-6 and then again by 1e-9, and asin(±1) = ±π/2 needs neither — the whole saturated rim sat 4.243e-4 world units below where it belongs, and the rim is 31.9 % of the row at freq 1.5, not one vertex. |
 
@@ -344,7 +344,7 @@ This is the cleanest collection — every wave is a real truncated Fourier serie
 | `laplaceDecay` | L{e^(-at)} | 🟢 A | 1/(s+a). |
 | `zTransform` | Z{a^n} | 🟢 A | z/(z−a) direct, drawn on its region of convergence. Round 6 moved the plate: it used to start at Re z = 0.5 while a reaches 0.9, so part of the picture stood where Σaⁿz⁻ⁿ does not converge and the pole was crossed exactly (Im z = 0 is a row of the mesh). Peak measured 22.8 / 8.4 / 89.2 across grids 25 / 90 / 161 — ×10.6, a different picture per GPU. The plate now starts at \|z\| = a + 0.2. |
 | `waveletTransform` | Morlet | 🟢 A | exp(-x²/2)·cos(ω₀x). |
-| `hilbertTransform` | H[sin] = -cos | 🟢 A | Returns real part of analytic signal f+iH[f] correctly. |
+| `hilbertTransform` | (f + H[f])/2 | 🟢 A | Both halves are exact — H[sin ωu] = −cos ωu, verified against the principal-value integral (residual halves with the cut-off: 7.75e-4 → 3.88e-4 → 1.94e-4 at T = 200π/400π/800π, so that is the reference truncating, not a disagreement). What is drawn is their mean, (f + H[f])/2 = sin(ωu − π/4)/√2, not the real part of the analytic signal: Re(f + iH[f]) is f itself. Agreement with (f+H)/2 is exactly 0.0 over all 841 nodes and all 12 sweeps. |
 | `radonTransform` | Sinogram | 🟢 A | Analytic Radon transform of two Gaussians (closed form). Replaced decorative rotated Gaussian. |
 | `hankelTransform` | "Hankel of f" | 🟡 C | Just J₀(ρ)·exp(-ρ·0.3) — that's the kernel evaluated, not the transform of any function. |
 | `mellinTransform` | Mellin kernel | 🔵 B | x^(s-1)·e^(-x) is the integrand. Not the transform itself. |
@@ -378,7 +378,7 @@ This is the cleanest collection — every wave is a real truncated Fourier serie
 
 ### 11. Cellular Automata (16) — 13 A · 3 B · 0 C · 0 D
 
-The cleanest collection: integer-valued automata with discrete rules — these are **exact by construction** on the simulation grid. All outputs are bilinearly interpolated onto the adaptive display mesh (up to 160×160 segments, scaled to GPU capability).
+The cleanest collection: integer-valued automata with discrete rules — these are **exact by construction** on the simulation grid. Eleven of the sixteen go through `createCachedHeavySampler` and are bilinearly interpolated onto the adaptive display mesh (up to 160×160 segments, scaled to GPU capability); five are not, and are evaluated directly at every vertex — `rule30`, `rule90`, `rule110`, `rule184` call `cellularRule` per vertex, and `voronoiCA` takes an argmin per vertex.
 
 | Key | Name | Tier | Rationale |
 |-----|------|:----:|-----------|
@@ -392,11 +392,11 @@ The cleanest collection: integer-valued automata with discrete rules — these a
 | `cyclicCA` | Cyclic CA | 🟢 A | Exact on 48×48 internal grid. Round 6 replaced the seed for the same reason, and here it was degenerate rather than merely poor: `(i·2246822519) >>> 0 % N` depends only on the column whenever N divides a power of two, so at N = 4 and N = 8 the variance down every column was exactly 0 — vertical stripes instead of spirals. |
 | `wiredFire` | Wireworld | 🟢 A | Exact 4-state CA on 50×50 internal grid. |
 | `sandpile` | Abelian Sandpile | 🟢 A | Exact toppling rule on 40×40 internal grid. |
-| `voronoiCA` | Voronoi growth | 🟢 A | Exact nearest-seed. |
+| `voronoiCA` | Voronoi tessellation | 🟢 A | Exact nearest-seed, and exact is the right word — the kernel matched an independent implementation to 0 over 33 640 points and to 0 violations of the perpendicular-bisector characterisation. It is not an automaton and nothing grows: there is no lattice, no neighbourhood and no transition rule, only argmin over 5+round(8·comp) moving seeds, recomputed from scratch at every vertex of every frame. The plate shows exactly N flat levels at any t. |
 | `excitableMedia` | FitzHugh-Nagumo | 🔵 B | Real FHN PDE on 64×64 internal grid, explicit Euler at dt = 0.1, bilinearly interpolated to the display mesh. Round 6 corrected the error claim rather than the code: the time-stepping error alone is 3.9e-3 in u, whose display range is [0, 1] — about four times the ~10⁻³ this row used to assert, before any spatial error on a front two cells wide. The number stated is now the measured one. |
 | `reactionDiffusion` | Gray-Scott | 🔵 B | Real Gray-Scott PDE on 64×64 internal grid, configurable F/k regimes, bilinearly interpolated to the display mesh. Round 6 corrected the error claim rather than the code: explicit Euler at dt = 1.0 contributes 5.5e-2 to 8.5e-2 in the displayed clamp(4v, 0, 1), whose range is exactly [0, 1], and 1.7e-2 in v itself — seventeen to eighty-five times the ~10⁻³ this row used to assert. Reducing dt would cost a proportional number of iterations on a device that already carries this entry as the heaviest in the catalogue, so the number is stated instead of the tier being pretended. |
 | `forestFire` | Forest Fire CA | 🟢 A | Exact tree/fire/ash CA on 50×50 internal grid. |
-| `conway3D` | Conway 3D | 🔵 B | Real 3D B5-7/S6 simulation on 18³ grid, 3–5 generations. Mid-y slice extracted and bilinearly interpolated to display mesh. Replaced 1D Wolfram rule. |
+| `conway3D` | Conway 3D | 🔵 B | Real 3D B5-7/S6 simulation on 18³ grid, 3–5 generations, bilinearly interpolated to the display mesh. Round 6 corrected the description: what is extracted is not a mid-y slice but the MEAN of three neighbouring slices, which is a projection and smooths the rule's own structure. Replaced a 1D Wolfram rule. |
 | `turmite` | Turmite | 🟢 A | 2-state 2-colour turmite on a 56×56 internal grid. Round 6 replaced the transition table: both state-0 rows of the old one wrote state 0, so the state-1 rows were unreachable and the machine degenerated into a one-state ant of period 8 — 4 raised cells out of 3136. The new table is the survivor of an exhaustive run over all 65 536 rules of the family, scored on both states being used, the pattern still growing at the end of the run, and fill; it reaches 7.7 % of the plate at 700 steps and 39.3 % at 6000, where the runner-up saturates at 7.0 %. The step count rose to 1500 + comp·3000 to make the complexity slider visible (19 % → 35 %). |
 
 ### 12. Quantum Mechanics (16) — 15 A · 1 B · 0 C · 0 D
@@ -506,9 +506,9 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 ### ✓ Defensible (current state — defects fixed + Tier C upgrades)
 
 > **166 mathematical formulas with verifiable numerical accuracy.**
-> 124 closed-form analytic expressions evaluated at IEEE 754 double precision.
+> 128 closed-form analytic expressions evaluated at IEEE 754 double precision.
 > 42 well-validated approximations with documented bounded error (≤ 10⁻³ to 10⁻⁷), including real PDE simulations on adaptive internal grids with bilinear interpolation to the full-resolution display mesh.
-> Source-available, open test suite (184 automated tests in the validation file, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
+> Source-available, open test suite (the validation file, including regression tests for previously identified defects and validation tests against canonical mpmath/NIST DLMF reference values).
 
 ### ✓ Defensible (alternative — domain-coverage emphasis)
 
@@ -521,7 +521,7 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 ### ✗ Not defensible without major rework
 
 > ~~"100% scientific accuracy"~~ — too vague; will be challenged on first audit.
-> ~~"All 192 formulas mathematically exact"~~ — false (Tier C is 28 formulas).
+> ~~"All 192 formulas mathematically exact"~~ — false (Tier C is 24 formulas).
 > ~~"Real-time numerical solutions"~~ — implies simulation fidelity that 8-step Euler does not provide.
 
 ---
@@ -530,8 +530,8 @@ Operator precedence bug: `amp*0.1` was only scaling the second product term, not
 
 <!-- This is the count for this file alone, same as the "Test
      suite" line above — move both together. `npm test` reports 208. -->
-The companion file `tests/math-validation.test.js` contains **184 executable test cases** covering:
-- All 124 Tier A formulas at canonical reference points (boundary values, known special-function values, identity tests).
+The companion file `tests/math-validation.test.js` is executable and covers:
+- All 128 Tier A formulas at canonical reference points (boundary values, known special-function values, identity tests).
 - Sanity checks for Tier B formulas (PDF integration, convergence behaviour, polynomial fit boundary error, PDE simulation stability).
 - Qualitative checks for Tier C formulas (peak location, sign changes, energy bounds, determinism).
 - Regression tests for all three previously fixed Tier D defects.
@@ -542,7 +542,7 @@ Run with:
 node --test tests/math-validation.test.js
 ```
 
-All 184 tests currently passing against the live `math-collections.js`.
+All of them currently pass against the live `math-collections.js`.
 
 ---
 
