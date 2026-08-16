@@ -343,13 +343,15 @@ describe('Tier A — Quantum Mechanics', () => {
     near(evalAt('quantumMechanics', 'particleBox1D', 0, 0, 0, params), 1.0, 1e-12);
   });
 
-  test('hydrogenS at r=0: |ψ|² near origin (with ε=0.01 reg)', () => {
-    // Implementation has r = sqrt(x²+z²) + 0.01 to avoid the singularity.
-    // R = 2·exp(-0.01) ≈ 1.98010, R² ≈ 3.9208
-    // Y = cos(0 + 0·t) = 1, Y² = 1
-    // hydrogenPsi returns R²·Y²·0.6 ≈ 2.3525; then · amp · 2 ≈ 4.7050
-    const expected = 4 * Math.exp(-0.02) * 0.6 * 2;
-    near(evalAt('quantumMechanics', 'hydrogenS', 0, 0, 0), expected, 1e-6);
+  test('hydrogenS at r=0: |ψ|² is R₁₀(0)²·0.6, with no regulariser', () => {
+    // Round 8 removed the r = sqrt(x²+z²) + 0.01 that used to stand here: the
+    // radial factor is a polynomial times e^{−r} and θ comes from atan2, so
+    // nothing in the helper was ever divided by r. This test asserted the
+    // regulariser by name and so held it in place.
+    // R₁₀(0) = 2, R² = 4; Y = cos(0) = 1; hydrogenPsi returns R²·Y²·0.6 = 2.4;
+    // then · amp · 1.7 = 4.08.
+    const expected = 4 * 0.6 * 1.7;
+    near(evalAt('quantumMechanics', 'hydrogenS', 0, 0, 0), expected, 1e-13);
   });
 
   test('quantumZeno: P(T=0) = 1 (no decay yet)', () => {
@@ -3451,6 +3453,1311 @@ describe('Round 7 — repairs that cost more than they bought (#R7)', () => {
       }
       assert.ok(hi - lo > floor,
         `mode ${n} spans only ${(hi - lo).toFixed(3)} in silence — the plate is nearly flat before the music starts`);
+    }
+  });
+});
+
+describe('Round 8 — what the whole catalogue said against what an oracle says (#R8)', () => {
+  const FACTORY = { amp: 0.7, freq: 1, comp: 0.5 };
+  const EULER_GAMMA = 0.5772156649015328606;
+
+  test('no entry in the catalogue is an affine plane', () => {
+    // Round 6 repaired rossler and chua, whose ODEs were integrated for a
+    // two-hundredth of one loop, so the flow map was indistinguishable from its
+    // own linearisation. It repaired them by name, and lorenz and duffing —
+    // sitting in the same collection with the same defect — went another two
+    // rounds untouched at plane R² 0.998 and 0.999905. That is the fourth time a
+    // handwritten list has missed the thing it was written for, so this one
+    // asks all 192 and names nobody.
+    //
+    // 0.95 sits between the two populations with room on each side: after the
+    // repairs the most plane-like entry in the catalogue is predatorPrey at
+    // 0.833, and the defects measured 0.998 and 0.999905.
+    const G = 45;
+    const planeR2 = hf => {
+      let sx = 0, sz = 0, sy = 0, sxx = 0, szz = 0, sxz = 0, sxy = 0, szy = 0, n = 0;
+      for (let zi = 0; zi < G; zi++) for (let xi = 0; xi < G; xi++) {
+        const v = hf[zi * G + xi];
+        if (!Number.isFinite(v)) continue;
+        const x = -3.5 + xi * 7 / (G - 1), z = -3.5 + zi * 7 / (G - 1);
+        sx += x; sz += z; sy += v; sxx += x * x; szz += z * z; sxz += x * z; sxy += x * v; szy += z * v; n++;
+      }
+      if (n < 10) return 0;
+      // Gaussian elimination on the 3×3 normal equations for y = a·x + b·z + c.
+      const M = [[sxx, sxz, sx], [sxz, szz, sz], [sx, sz, n]], B = [sxy, szy, sy];
+      for (let i = 0; i < 3; i++) {
+        let p = i;
+        for (let r = i + 1; r < 3; r++) if (Math.abs(M[r][i]) > Math.abs(M[p][i])) p = r;
+        [M[i], M[p]] = [M[p], M[i]]; [B[i], B[p]] = [B[p], B[i]];
+        if (Math.abs(M[i][i]) < 1e-12) return 0;
+        for (let r = 0; r < 3; r++) {
+          if (r === i) continue;
+          const f = M[r][i] / M[i][i];
+          for (let c = i; c < 3; c++) M[r][c] -= f * M[i][c];
+          B[r] -= f * B[i];
+        }
+      }
+      const a = B[0] / M[0][0], b = B[1] / M[1][1], c = B[2] / M[2][2];
+      const mean = sy / n;
+      let tot = 0, res = 0;
+      for (let zi = 0; zi < G; zi++) for (let xi = 0; xi < G; xi++) {
+        const v = hf[zi * G + xi];
+        if (!Number.isFinite(v)) continue;
+        const x = -3.5 + xi * 7 / (G - 1), z = -3.5 + zi * 7 / (G - 1);
+        tot += (v - mean) ** 2; res += (v - (a * x + b * z + c)) ** 2;
+      }
+      return tot > 1e-24 ? 1 - res / tot : 0;
+    };
+    const offenders = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        let hf;
+        try { hf = generateSurfaceFromFormula(entry.f, FACTORY, G, 3.5, 0); } catch { continue; }
+        let peak = 0;
+        for (const v of hf) if (Number.isFinite(v)) peak = Math.max(peak, Math.abs(v));
+        if (peak < 1e-9) continue;               // a dead entry is another test's business
+        const r2 = planeR2(hf);
+        if (r2 > 0.95) offenders.push(`${colId}/${key} is a plane to R² ${r2.toFixed(6)}`);
+      }
+    }
+    assert.deepEqual(offenders, [],
+      `an entry whose ODE is integrated too briefly draws its own linearisation:\n  ${offenders.join('\n  ')}`);
+  });
+
+  test('polygamma reproduces the closed forms of ψ, not a tier-B number under a tier-A letter', () => {
+    // ψ(1) = −γ, ψ(½) = −γ − 2ln2, ψ(2) = 1 − γ, ψ(3) = 3/2 − γ. Closed forms
+    // are the right oracle inside a test suite: no dependency, and they cannot
+    // drift with the implementation they are checking.
+    const f = MATH_COLLECTIONS.specialFunctions.formulas.polygamma.f;
+    // The entry maps x ∈ [−3.5, 3.5] onto xv ∈ [0.2, 4.2] and scales by 0.2.
+    const at = xv => f((xv - 0.2) / 4 * 7 - 3.5, 0, 0, { amp: 1, freq: 1 }) / 0.2;
+    const cases = [[1, -EULER_GAMMA], [0.5, -EULER_GAMMA - 2 * Math.log(2)],
+                   [2, 1 - EULER_GAMMA], [3, 1.5 - EULER_GAMMA]];
+    for (const [xv, want] of cases) {
+      const got = at(xv);
+      assert.ok(Math.abs(got - want) < 1e-13,
+        `ψ(${xv}) = ${got} against the closed form ${want} (Δ ${Math.abs(got - want).toExponential(2)})`);
+    }
+  });
+
+  test('complexLog is the logarithm outside its disc, not a smoothed stand-in', () => {
+    // Round 6 replaced a +1e-9 regulariser with ln√(r²+0.08²), which is not
+    // ln|z| anywhere: the bias ½ln(1+ε²/r²) is small but never zero, so the row
+    // promising "ln|z| outside a disc of radius 0.08" was false on every vertex.
+    const f = MATH_COLLECTIONS.complexNumbers.formulas.complexLog.f;
+    let worst = 0;
+    for (let i = 1; i <= 400; i++) {
+      const r = 0.08 + (3.5 - 0.08) * i / 400;
+      const got = f(r, 0, 0, { amp: 1, freq: 1 });
+      worst = Math.max(worst, Math.abs(got - Math.log(r) * 0.2));
+    }
+    assert.ok(worst < 1e-14, `outside the disc the surface is off ln|z| by ${worst.toExponential(2)}`);
+    // Inside it stays finite and monotone, which is the whole point of the disc.
+    const inside = [0, 0.02, 0.05, 0.079].map(r => f(r, 0, 0, { amp: 1, freq: 1 }));
+    assert.ok(inside.every(Number.isFinite), 'the disc no longer bounds the pole');
+    for (let i = 1; i < inside.length; i++) {
+      assert.ok(inside[i] > inside[i - 1], 'the patch inside the disc is not monotone');
+    }
+  });
+
+  test('scherkSurface is minimal, which is the one thing its name promises', () => {
+    // y = k·ln(cos(a·x)/cos(a·z)) is Scherk's surface only for k = 1/a. The
+    // prefactor was a flat 0.25 against a = 2·freq. Mean curvature of a graph
+    // vanishes iff (1+y_z²)y_xx − 2y_x·y_z·y_xz + (1+y_x²)y_zz = 0; measured by
+    // central differences well away from the asymptotic walls.
+    const f = MATH_COLLECTIONS.topology.formulas.scherkSurface.f;
+    const P = { amp: 1, freq: 1 };
+    const h = 1e-4;
+    let worst = 0;
+    for (const x of [-0.5, -0.2, 0.2, 0.5]) for (const z of [-0.5, -0.2, 0.2, 0.5]) {
+      const y = (u, v) => f(u, v, 0, P);
+      const yx = (y(x + h, z) - y(x - h, z)) / (2 * h);
+      const yz = (y(x, z + h) - y(x, z - h)) / (2 * h);
+      const yxx = (y(x + h, z) - 2 * y(x, z) + y(x - h, z)) / (h * h);
+      const yzz = (y(x, z + h) - 2 * y(x, z) + y(x, z - h)) / (h * h);
+      const yxz = (y(x + h, z + h) - y(x + h, z - h) - y(x - h, z + h) + y(x - h, z - h)) / (4 * h * h);
+      const H2 = (1 + yz * yz) * yxx - 2 * yx * yz * yxz + (1 + yx * yx) * yzz;
+      worst = Math.max(worst, Math.abs(H2));
+    }
+    assert.ok(worst < 1e-3, `mean curvature is ${worst.toExponential(2)} where a minimal surface requires 0`);
+  });
+
+  test('pseudosphere draws the tractrix profile its row quotes', () => {
+    // The profile was ln tan(T/2) + sech T. The tractrix is ln tan(T/2) + cos T;
+    // the two agree to first order at T = 0 and part company by 0.571 over the
+    // drawn range, so the difference is the curve, not a rounding.
+    const f = MATH_COLLECTIONS.topology.formulas.pseudosphere.f;
+    let worst = 0, control = 0;
+    for (let i = 1; i < 400; i++) {
+      const rho = 3.5 * i / 399;
+      const T = Math.PI * rho / (rho + 2.5);
+      const want = (Math.log(Math.tan(T / 2)) + Math.cos(T)) * 0.35;
+      control = Math.max(control, Math.abs(Math.cos(T) - 1 / Math.cosh(T)));
+      if (Math.abs(want) > 0.35) continue;                 // above the knee the fold takes over
+      worst = Math.max(worst, Math.abs(f(rho, 0, 0, { amp: 1, freq: 1 }) - want));
+    }
+    assert.ok(worst < 1e-12, `the drawn profile is off the tractrix by ${worst.toExponential(2)}`);
+    assert.ok(control > 0.5,
+      'cos and sech barely differ over this range — this test could not tell the two profiles apart');
+  });
+
+  test('airy hands over between its two branches on the side that needs it', () => {
+    // One threshold served both signs and they fail in opposite directions: the
+    // alternating series loses everything to cancellation where Ai decays, and
+    // holds where Ai oscillates. Ai(0) and the published zeros are closed-form
+    // oracles that no implementation can drift away from.
+    const f = MATH_COLLECTIONS.specialFunctions.formulas.airy.f;
+    // The entry draws 0.7·Ai(ξ) at z = 0, ξ = x·freq·1.5, so ξ is reachable
+    // through x and the scale comes back out by division.
+    const ai = xi => f(xi / 1.5, 0, 0, { amp: 1, freq: 1 }) / 0.7;
+    assert.ok(Math.abs(ai(0) - 0.3550280538878172) < 1e-15,
+      `Ai(0) = ${ai(0)} against the closed form 3^(−2/3)/Γ(2/3)`);
+    for (const zero of [-2.33810741045976704, -4.08794944413097062, -5.52055982809555106]) {
+      assert.ok(Math.abs(ai(zero)) < 1e-13, `Ai(${zero}) = ${ai(zero)}, and it is a zero of Ai`);
+    }
+    // A handover between two series is discontinuous or it is not, and the way
+    // to see it is against the function's own slope: over the same width, a
+    // seam that steps moves further than the smooth neighbourhood beside it.
+    // Scanning the whole reachable ξ finds a seam wherever it was put, which a
+    // list of thresholds copied out of the kernel would not.
+    const d = 1e-6;
+    const seam = g => {
+      let worst = -Infinity, at = 0;
+      for (let xi = -24; xi <= 24; xi += 0.05) {
+        const jump = Math.abs(g(xi + d) - g(xi - d));
+        const smooth = Math.max(Math.abs(g(xi - d) - g(xi - 3 * d)), Math.abs(g(xi + 3 * d) - g(xi + d)));
+        if (jump - smooth > worst) { worst = jump - smooth; at = xi; }
+      }
+      return { worst, at };
+    };
+    const got = seam(ai);
+    assert.ok(got.worst < 1e-7,
+      `Ai steps by ${got.worst.toExponential(2)} beyond its own slope near ξ = ${got.at.toFixed(2)}`);
+    // Control: the same scan against the same kernel with one step of 1e-6
+    // injected at ξ = 6 must fail, or it could not have seen a real seam either.
+    const control = seam(xi => ai(xi) + (xi > 6 ? 1e-6 : 0));
+    assert.ok(control.worst > 1e-7,
+      'the scan cannot see a 1e-6 step, so its silence on the real handovers means nothing');
+  });
+
+  // ── guard epsilons, swept across all 192 ─────────────────
+  test('sinc draws the sinc of the argument its caption names, not of the argument plus 1e-8', () => {
+    // Reference: mpmath.sincpi at 40 dps, times the entry's own 0.6 display
+    // scale. The old kernel read r = sqrt(x²+z²)·freq·2 + 1e-8, which is the
+    // whole error of a tier-A row: 8.22e-9 at amp 1 near r = 0.66, and −6.0e-9
+    // on the ring r = 1 where sinc is exactly zero.
+    const f = MATH_COLLECTIONS.specialFunctions.formulas.sinc.f;
+    const P = { amp: 1, freq: 1, comp: 0.5 };
+    const cases = [
+      [0.33, 0.25357916326077971516],  // r = 0.66, where |d sinc/dr| is largest
+      [1.25, 0.07639437268410976117],  // r = 2.5
+    ];
+    for (const [x, want] of cases) {
+      const got = f(x, 0, 0, P);
+      assert.ok(Math.abs(got - want) <= 1e-14,
+        `sinc at x=${x}: got ${got}, mpmath says ${want} (diff ${Math.abs(got - want)})`);
+    }
+    // r = 1 is a zero of sinc. The guard put -6.0e-9 there.
+    for (const [x, z] of [[0.5, 0], [0, 0.5], [0.5 / Math.SQRT2, 0.5 / Math.SQRT2]]) {
+      assert.ok(Math.abs(f(x, z, 0, P)) <= 1e-15,
+        `sinc must vanish on the ring r=1, got ${f(x, z, 0, P)} at (${x},${z})`);
+    }
+    // r = 0 is the one point that needs a special case, and its value is 1.
+    assert.equal(f(0, 0, 0, P), 0.6, 'sinc(0)·0.6 must be exactly 0.6, not 0.5999999999999999');
+  });
+
+  test('fourierInverse draws sin(u)/u of u itself, and its caption says which sinc that is', () => {
+    // sin(u)/u with u = 4·x·freq. u = π at x = π/4 with freq 1, a true zero;
+    // the old +1e-9 on u put -1.59e-10 there.
+    const e = MATH_COLLECTIONS.integralTransforms.formulas.fourierInverse.f;
+    const P = { amp: 1, freq: 1, comp: 0.5 };
+    for (const k of [1, 2, 3]) {
+      const x = k * Math.PI / 4;
+      assert.ok(Math.abs(e(x, 0, 0, P)) <= 1e-15,
+        `sin(u)/u must vanish at u=${k}π, got ${e(x, 0, 0, P)}`);
+    }
+    assert.equal(e(0, 0, 0, P), 0.5, 'sin(u)/u → 1 at u = 0, times the 0.5 display scale');
+
+    // Two sinc conventions live in this catalogue under one word. A reader must
+    // be able to tell from the caption which one is on screen.
+    const capInv = MATH_COLLECTIONS.integralTransforms.formulas.fourierInverse.formula;
+    const capSinc = MATH_COLLECTIONS.specialFunctions.formulas.sinc.formula;
+    assert.ok(capInv.includes('sin(u)/u'), `unnormalised sinc must be named as such: ${capInv}`);
+    assert.ok(capInv.includes('W'), `the rect's half-width must appear in the caption: ${capInv}`);
+    assert.ok(capSinc.includes('sin(πr)/(πr)'), `normalised sinc must be named as such: ${capSinc}`);
+    assert.notEqual(capInv, capSinc);
+  });
+
+  test('pythagorean is -cos(2(r+t)) with no epsilon on r', () => {
+    // sin²A − cos²A = −cos 2A is an identity, so cos is an independent
+    // expression, not the kernel re-typed. The old +1e-9 on r cost 2.03e-9.
+    const f = MATH_COLLECTIONS.trigonometry.formulas.pythagorean.f;
+    for (const [x, z, t, amp, freq] of [[0, 0, 0, 1, 1], [1.3, -0.7, 3.7, 2.25, 1],
+                                        [0.08, 0.08, 3.7, 2.25, 1], [-3.5, 2.1, 41.3, 0.7, 4.55]]) {
+      const r = Math.sqrt(x * x + z * z) * freq * 2;
+      const want = -Math.cos(2 * (r + t)) * amp * 0.45;
+      const got = f(x, z, t, { amp, freq, comp: 0.5 });
+      assert.ok(Math.abs(got - want) <= 1e-13,
+        `pythagorean at (${x},${z},t=${t}): got ${got}, −cos(2(r+t))·amp·0.45 = ${want}`);
+    }
+  });
+
+  test('gram normalises by |v1| and not by |v1| + 1e-9', () => {
+    // |e2| is the perpendicular distance from v to the line through e1, i.e.
+    // |v × e1| — a cross product, which is not the projection the kernel runs.
+    // v1 = (cos 0.3t, sin 0.3t) is already a unit vector, so the guard could
+    // never fire; all it did was cost 1.79e-8.
+    const f = MATH_COLLECTIONS.linearAlgebra.formulas.gram.f;
+    for (const [x, z, t, amp, freq] of [[3.5, 0, 0, 2.25, 4.55], [-1.2, 2.4, 3.7, 1, 1],
+                                        [0, 0, 41.3, 0.7, 0.3], [3.5, -3.5, 5.1, 2.25, 2]]) {
+      const want = Math.abs(x * freq * Math.sin(t * 0.3) - z * freq * Math.cos(t * 0.3)) * amp * 0.25;
+      const got = f(x, z, t, { amp, freq, comp: 0.5 });
+      assert.ok(Math.abs(got - want) <= 1e-13,
+        `gram at (${x},${z},t=${t}): got ${got}, |v × e1|·amp·0.25 = ${want}`);
+    }
+  });
+
+  test('the Fejér and Dirichlet kernels match their defining sums, singular point included', () => {
+    // Both kernels used to shift x by +1e-6 to step around sin(x/2) = 0, which
+    // cost 9.3e-6 and 2.5e-5 under rows rated A. The singularities are
+    // removable: F_N(2πk) = N and D_N(2πk) = 2N+1. Reference here is the
+    // DEFINING sum in each case, not the closed form the kernel evaluates.
+    const fej = MATH_COLLECTIONS.fourierSeries.formulas.fejerKernel.f;
+    const dir = MATH_COLLECTIONS.fourierSeries.formulas.dirichletKernel.f;
+    for (const comp of [0, 0.5, 1]) {
+      const NF = 2 + Math.round(comp * 14), ND = 2 + Math.round(comp * 12);
+      for (const [x, amp, freq] of [[0, 1, 1], [-0.018, 2.25, 4.55], [-0.072, 2.25, 1],
+                                    [1.7, 0.7, 1], [Math.PI, 1, 1], [-2.9, 2.25, 0.3]]) {
+        const xv = x * freq * 2;
+        let re = 0, im = 0;
+        for (let k = 0; k < NF; k++) { re += Math.cos(k * xv); im += Math.sin(k * xv); }
+        const wantF = (re * re + im * im) / NF * amp * 0.06;
+        const gotF = fej(x, 0, 0, { amp, freq, comp });
+        assert.ok(Math.abs(gotF - wantF) <= 1e-12,
+          `Fejér N=${NF} at x=${x}: got ${gotF}, (1/N)|Σe^{ikx}|² = ${wantF}`);
+
+        let s = 1;
+        for (let k = 1; k <= ND; k++) s += 2 * Math.cos(k * xv);
+        const wantD = s * amp * 0.06;
+        const gotD = dir(x, 0, 0, { amp, freq, comp });
+        assert.ok(Math.abs(gotD - wantD) <= 1e-12,
+          `Dirichlet N=${ND} at x=${x}: got ${gotD}, 1+2Σcos kx = ${wantD}`);
+      }
+    }
+  });
+
+  // complexLog is covered above, by the test that pairs "exact outside the disc"
+  // with "monotone inside it". The sweep for guard epsilons arrived at this entry
+  // independently and proposed ln max(r, 0.08) — a flat floor — which measures the
+  // same outside the disc and differs inside. The repair already in this round is
+  // the quadratic that meets the logarithm in value and slope at the rim, so the
+  // sweep's version was not taken and its test with it.
+
+  test('hydrogen 1s is 4e^{-2r} at r, not at r + 0.01', () => {
+    // Height is R₁₀(r)²·0.6·amp·1.7 = 4e^{−2r}·1.02·amp, so f(0,0) = 4.08·amp
+    // and f(r)/f(0) = e^{−2r} exactly. The +0.01 in the shared helper scaled the
+    // first by e^{−0.02} = 0.9802 and left the second alone, which is how a 2 %
+    // error hides under a free amplitude slider. (The display constant is 1.7
+    // rather than 2 because the true peak, once the offset was gone, stood on
+    // the frame limit — see the note on the entry.)
+    const f = MATH_COLLECTIONS.quantumMechanics.formulas.hydrogenS.f;
+    assert.ok(Math.abs(f(0, 0, 0, { amp: 1, freq: 1, comp: 0.5 }) - 4.08) <= 1e-14,
+      `1s peak must be 4·0.6·1.7 = 4.08 at amp 1, got ${f(0, 0, 0, { amp: 1, freq: 1, comp: 0.5 })}`);
+    for (const [x, z, freq] of [[1, 0, 1], [-2, 1.5, 0.3], [0.5, -0.5, 4.55]]) {
+      const r = Math.hypot(x, z) * freq;
+      const want = 4.08 * Math.exp(-2 * r);
+      const got = f(x, z, 3.7, { amp: 1, freq, comp: 0.5 });
+      assert.ok(Math.abs(got - want) <= 1e-13,
+        `1s at r=${r}: got ${got}, 4.08·e^{−2r} = ${want}`);
+    }
+  });
+
+  test('the sp² hybrid has its exact value at the origin', () => {
+    // At r = 0 both p lobes vanish and psi = psi_s/√3 = 2/(√(32π)·√3), so the
+    // height is 4·amp·psi² = amp/(6π) — a number, not the kernel re-typed. The
+    // +1e-6 on r moved it by 6e-8.
+    const f = MATH_COLLECTIONS.quantumMechanics.formulas.atomicOrbitals.f;
+    for (const amp of [0.7, 1, 2.25]) {
+      for (const comp of [0, 0.5, 1]) {
+        const got = f(0, 0, 0, { amp, freq: 1, comp });
+        assert.ok(Math.abs(got - amp / (6 * Math.PI)) <= 1e-14,
+          `sp² at the origin, amp=${amp}: got ${got}, amp/(6π) = ${amp / (6 * Math.PI)}`);
+      }
+    }
+  });
+
+  test('binary entropy reaches its endpoints, where H is 0 and defined', () => {
+    // p was clamped to [0.001, 0.999], so the two end columns drew H(0.001) =
+    // 0.0114 bits. H(0) = H(1) = 0 — the endpoints are in the domain; only the
+    // NaN from 0·log 0 needed handling.
+    const f = MATH_COLLECTIONS.probability.formulas.entropyLandscape.f;
+    for (const amp of [0.7, 1, 2.25]) {
+      const P = { amp, freq: 1, comp: 0.5 };
+      assert.equal(f(-3.5, 0, 0, P), 0, 'H(0) must be exactly 0 at the left edge');
+      assert.equal(f(3.5, 0, 0, P), 0, 'H(1) must be exactly 0 at the right edge');
+      // H(1/2) = 1 bit, at x = 0
+      assert.ok(Math.abs(f(0, 0, 0, P) - amp * 0.45) <= 1e-15,
+        `H(1/2) = 1 bit, so the height is amp·0.45; got ${f(0, 0, 0, P)}`);
+      // H(1/4) = 2 − (3/4)log₂3 = 0.8112781244591328 (published)
+      const want = 0.8112781244591328 * amp * 0.45;
+      assert.ok(Math.abs(f(-1.75, 0, 0, P) - want) <= 1e-14,
+        `H(1/4) height: got ${f(-1.75, 0, 0, P)}, want ${want}`);
+    }
+  });
+
+  test('every entry touched in round 8 stays finite and in frame across grids 25/90/161', () => {
+    // The finiteness half deliberately calls the kernel rather than
+    // generateSurfaceFromFormula: that function ends with
+    // `out[i] = isFinite(y) ? y : 0`, so a NaN check run through it can never
+    // fail. Checked — with the r === 0 branch taken out of sinc, so that the
+    // origin returns 0/0, the plate still reads all-finite. The peak half does
+    // go through it, because a peak is what actually reaches the buffer and
+    // the zero substitution cannot hide one.
+    const targets = [
+      ['specialFunctions', 'sinc'], ['integralTransforms', 'fourierInverse'],
+      ['trigonometry', 'pythagorean'], ['linearAlgebra', 'gram'],
+      ['fourierSeries', 'fejerKernel'], ['fourierSeries', 'dirichletKernel'],
+      ['complexNumbers', 'complexLog'], ['quantumMechanics', 'hydrogenS'],
+      ['quantumMechanics', 'hydrogen2p'], ['quantumMechanics', 'atomicOrbitals'],
+      ['probability', 'entropyLandscape'],
+    ];
+    for (const [col, key] of targets) {
+      const f = MATH_COLLECTIONS[col].formulas[key].f;
+      for (const grid of [25, 90, 161]) {
+        const step = 7 / (grid - 1);
+        for (const amp of [0.7, 2.25]) {
+          for (const freq of [0.3, 4.55]) {
+            for (const comp of [0, 1]) {
+              for (let zi = 0; zi < grid; zi++) {
+                for (let xi = 0; xi < grid; xi++) {
+                  const y = f(-3.5 + xi * step, -3.5 + zi * step, 3.7, { amp, freq, comp });
+                  assert.ok(Number.isFinite(y),
+                    `${col}/${key} returned ${y} at grid ${grid}, amp ${amp}, freq ${freq}, comp ${comp}`);
+                }
+              }
+              const h = generateSurfaceFromFormula(f, { amp, freq, comp }, grid, 3.5, 3.7);
+              let peak = 0;
+              for (let i = 0; i < h.length; i++) peak = Math.max(peak, Math.abs(h[i]));
+              assert.ok(peak > 1e-3 && peak < 25,
+                `${col}/${key} peak ${peak} at grid ${grid}, amp ${amp}, freq ${freq}, comp ${comp}`);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // ── the complex trio: epsilons and what the fold is allowed to claim ─────────────────
+  test('complexPower: |z^z| exact once the guard epsilon is gone (#R8)', () => {
+    // The kernel carried `r = |z|·freq + 1e-9` under a tier-A row, and that
+    // constant WAS the entry's whole residual: against mpmath's
+    // abs(mpc(x,z)**mpc(x,z)) at 50 dps the drawn value was out by 4.77e-10,
+    // while against the same expression with the epsilon put back it agreed to
+    // 1.29e-16. mpmath's control points are |i^i| = e^{−π/2} =
+    // 0.20787957635076190855 and |(1+i)^{1+i}| = exp(ln√2 − π/4), both
+    // reproduced to 1e-51 and cross-checked in PARI/GP.
+    //
+    // Factory sliders: amp 0.7, freq 1. drawn = 0.1·amp·|w^w| and every point
+    // below sits under the fold knee (0.5), so soften() is the identity there.
+    const P = { amp: 0.7, freq: 1, comp: 0.5 };
+    const REF = [
+      [1,    0.5,  0.0620687854745680828],
+      [-1.2, 0.8,  0.00584860087392065372],
+      [0.4,  -1.5, 0.0116946291450614525],
+      [2.0,  1.0,  0.220144807445025933],
+      [-2.5, -0.3, 0.0028101775410455395],
+    ];
+    for (const [x, z, want] of REF) {
+      near(evalAt('complexNumbers', 'complexPower', x, z, 0, P), want, 1e-14,
+        `|z^z| at (${x}, ${z})`);
+    }
+  });
+
+  test('complexPower: r = 0 is removable, so the origin carries the limit (#R8)', () => {
+    // |z^z| = exp(x·ln r − y·arg z) and both terms vanish with r (|x| ≤ r,
+    // |y·arg z| ≤ πr), so the limit is 1 from every direction — mpmath over
+    // eight directions gives a spread of 9.2e-2 at |z| = 1e-2 falling to
+    // 1.4e-28 at |z| = 1e-30. Handing the origin the display bound instead
+    // would put back the grid-parity needle round 6 removed from complexLog,
+    // and dropping the guard altogether gives 0·(−Infinity) = NaN.
+    for (const amp of [0.2, 0.7, 1, 2.25]) {
+      const y = evalAt('complexNumbers', 'complexPower', 0, 0, 0, { amp, freq: 1, comp: 0.5 });
+      assert.ok(Number.isFinite(y), `origin is ${y} at amp ${amp}`);
+      near(y, 0.1 * amp, 1e-15, `|z^z| → 1 at the origin, amp ${amp}`);
+    }
+    // Every odd mesh has a vertex exactly at the origin; the app's grid floats
+    // 60–200, so this must not depend on parity.
+    for (const g of [25, 91, 161]) {
+      const hf = generateSurfaceFromFormula(
+        MATH_COLLECTIONS.complexNumbers.formulas.complexPower.f,
+        { amp: 0.7, freq: 1, comp: 0.5 }, g, 3.5, 0);
+      const c = ((g - 1) / 2) * g + (g - 1) / 2;
+      near(hf[c], 0.07, 1e-6, `centre vertex at grid ${g}`);
+    }
+  });
+
+  test('mobiusTransform: complex division exact once the guard epsilon is gone (#R8)', () => {
+    // The +1e-9 on |cz+d|² was the whole residual here too: 1.45e-9 against
+    // mpmath complex division at 50 dps outside the fold, 4.52e-17 against the
+    // same division with the epsilon restored. mpmath's controls are
+    // f(0) = b/d exactly and the invariance of the cross-ratio of four points
+    // under the map, held to 3.3e-51.
+    // Factory sliders; b = sin(0.4t)·comp, c = cos(0.3t)·comp, a = d = 1.
+    const P = { amp: 0.7, freq: 1, comp: 0.5 };
+    const REF = {                      // t → [x, z, Re((w+b)/(cw+1))·amp·0.35]
+      0: [
+        [1,    0.5,  0.172162162162162162],
+        [-1.2, 0.8,  -0.1225],
+        [0.4,  -1.5, 0.196367041198501873],
+        [2.0,  1.0,  0.259411764705882353],
+      ],
+      2.5: [                            // b = 0.420735492403948253, c = 0.365844434436910443
+        [1,    0.5,  0.262155651941268464],
+        [-1.2, 0.8,  -0.124234276027834364],
+        [0.4,  -1.5, 0.267563254658907423],
+        [2.0,  1.0,  0.356466310072501948],
+      ],
+    };
+    for (const [t, rows] of Object.entries(REF)) {
+      for (const [x, z, want] of rows) {
+        near(evalAt('complexNumbers', 'mobiusTransform', x, z, +t, P), want, 1e-14,
+          `Möbius at (${x}, ${z}), t = ${t}`);
+      }
+    }
+  });
+
+  test('mobiusTransform: the exact pole draws the display bound, not a hole (#R8)', () => {
+    // At t = 0 the map is (z)/(comp·z + 1), so the pole sits at
+    // x = −1/(comp·freq); at the FACTORY sliders that is x = −2, and
+    // 0.5·(−2) + 1 is exactly 0 in IEEE double. It is a lattice point of every
+    // mesh whose spacing divides 1.5 — grid 15 has it at xi = 3 — and the app's
+    // grid floats 60–200.
+    //
+    // With the epsilon the numerator was 0 and the denominator 1e-9, so the
+    // pole vertex was drawn at exactly 0: a hole punched through a ridge whose
+    // two sides are ±0.85. |Re f| → ∞ from both sides, so the bound is the
+    // honest height; the sign is not determined by the map.
+    const P = { amp: 0.7, freq: 1, comp: 0.5 };
+    const at = x => evalAt('complexNumbers', 'mobiusTransform', x, 0, 0, P);
+    assert.equal(at(-2), 0.85, 'the pole vertex must sit at the fold ceiling');
+    assert.equal(at(-2.01), 0.85, 'left of the pole is saturated');
+    assert.equal(at(-1.99), -0.85, 'right of the pole is saturated with the other sign');
+    const hf = generateSurfaceFromFormula(
+      MATH_COLLECTIONS.complexNumbers.formulas.mobiusTransform.f, P, 15, 3.5, 0);
+    near(hf[7 * 15 + 3], 0.85, 1e-6, 'the pole lands on the grid-15 mesh at (xi 3, zi 7)');
+  });
+
+  test('blaschke: |B| = 1 on the unit circle, so the height there is exactly amp·0.45 − 0.2 (#R8)', () => {
+    // This reference needs no implementation at all. For |a_k| < 1 each factor
+    // (z − a_k)/(1 − ā_k z) has modulus 1 on |z| = 1, because there
+    // |1 − ā_k z| = |z|·|z̄ − ā_k| = |z − a_k|. So the drawn height on the unit
+    // circle is soften(amp·0.45 − 0.2) with no arithmetic left in it. The
+    // +1e-9 in the denominator showed up here as a 3.65e-9 deviation at amp 1 —
+    // exactly the size of the guard, under a row claiming 1e-14.
+    // At amp 1.5 the circle value 0.475 is just past the knee, so the expected
+    // number is soften(0.475, 0.45, 0.85) = 0.45 + 0.4·tanh(0.0625) — the fold
+    // is not being undone here, only accounted for.
+    for (const [amp, want] of [[0.7, 0.115], [1, 0.25], [1.5, 0.4749674986990050058]]) {
+      for (const comp of [0, 0.5, 1]) {                 // n = 2, 4, 5 factors
+        for (const t of [0, 2.5]) {
+          for (let j = 0; j < 17; j++) {
+            const th = (2 * Math.PI * j) / 17;
+            near(evalAt('complexNumbers', 'blaschke', Math.cos(th), Math.sin(th), t,
+                        { amp, freq: 1, comp }), want, 1e-14,
+              `|B| on the unit circle, amp ${amp}, comp ${comp}, t ${t}, j ${j}`);
+          }
+        }
+      }
+    }
+  });
+
+  test('blaschke: interior values exact against mpmath (#R8)', () => {
+    // Inside the disc |B| < 1, so these all sit under the knee (0.45) and
+    // soften() is the identity. Reference: mpmath at 50 dps, n = round(2+comp·3).
+    const P = { amp: 0.7, freq: 1, comp: 0.5 };         // n = 4
+    const REF = {
+      0: [
+        [0.3,  0.2,   -0.15533644032877818],
+        [-0.5, 0.4,   -0.11024377859902077],
+        [0.1,  -0.7,  -0.149156064630656426],
+        [0.62, 0.05,  -0.18429098296789095],
+      ],
+      2.5: [
+        [0.3,  0.2,   -0.16405218848971736],
+        [-0.5, 0.4,   -0.132741485322984907],
+        [0.1,  -0.7,  -0.116114786675961175],
+        [0.62, 0.05,  -0.134555672574715787],
+      ],
+    };
+    for (const [t, rows] of Object.entries(REF)) {
+      for (const [x, z, want] of rows) {
+        near(evalAt('complexNumbers', 'blaschke', x, z, +t, P), want, 1e-14,
+          `|B| at (${x}, ${z}), t = ${t}`);
+      }
+    }
+  });
+
+  test('blaschke: the pole at z = 1/ā_k draws the display bound and stays finite (#R8)', () => {
+    // 1 − ā_k z vanishes at |z| = 1/0.6 = 1.667, inside the plate at every
+    // reachable freq, and 1 − 0.6·(1/0.6) is exactly 0 in IEEE double. No other
+    // factor can be zero there (|a_j| = 0.6 ≠ 1.667), so |B| really is infinite
+    // and the fold ceiling is the honest height.
+    //
+    // With the epsilon the quotient came out 0, which zeroed the whole product
+    // and drew −0.2 — a pit at the one point where the surface is highest.
+    const P = { amp: 0.7, freq: 1, comp: 0.5 };
+    const xp = 1 / 0.6;
+    assert.equal(1 - 0.6 * xp, 0, 'the exact-zero branch is reachable in double arithmetic');
+    for (const dx of [0, -1e-4, 1e-4, -1e-2, 1e-2]) {
+      const y = evalAt('complexNumbers', 'blaschke', xp + dx, 0, 0, P);
+      assert.ok(Number.isFinite(y), `blaschke is ${y} at x = ${xp + dx}`);
+      near(y, 0.85, 1e-12, `blaschke at the pole + ${dx}`);
+    }
+  });
+
+  test('the complex trio stays finite and in frame across the reachable slider box (#R8)', () => {
+    // Removing a guard constant is exactly the change that can put a NaN into
+    // the vertex buffer, and generateSurfaceFromFormula's isFinite() net would
+    // hide it as a zero. So the raw kernel is swept too, not just the mesh.
+    // amp/freq are the slider ranges in src/params.js widened to what the audio
+    // path can push them to; comp is taken over its whole 0..1.
+    const KEYS = ['complexPower', 'mobiusTransform', 'blaschke'];
+    const bad = [];
+    for (const key of KEYS) {
+      const f = MATH_COLLECTIONS.complexNumbers.formulas[key].f;
+      for (const amp of [0.2, 0.7, 1.5, 2.25]) {
+        for (const freq of [0.3, 1, 3.5, 4.55]) {
+          for (const comp of [0, 0.5, 1]) {
+            for (const t of [0, 3.1, 47.3]) {
+              const N = 41, ext = 3.5, step = (ext * 2) / (N - 1);
+              for (let zi = 0; zi < N; zi++) for (let xi = 0; xi < N; xi++) {
+                const y = f(-ext + xi * step, -ext + zi * step, t, { amp, freq, comp });
+                if (!Number.isFinite(y) && bad.length < 6) {
+                  bad.push(`${key} = ${y} @ amp ${amp} freq ${freq} comp ${comp} t ${t}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    assert.deepEqual(bad, [], bad.join('\n  '));
+
+    // In frame, and the same frame at every resolution the app can ask for.
+    for (const key of KEYS) {
+      for (const p of [{ amp: 0.7, freq: 1, comp: 0.5 }, { amp: 2.25, freq: 4.55, comp: 1 }]) {
+        let prev = null;
+        for (const g of [25, 90, 161]) {
+          const hf = generateSurfaceFromFormula(
+            MATH_COLLECTIONS.complexNumbers.formulas[key].f, p, g, 3.5, 0);
+          let peak = 0;
+          for (const v of hf) {
+            assert.ok(Number.isFinite(v), `${key} put ${v} in the buffer at grid ${g}`);
+            peak = Math.max(peak, Math.abs(v));
+          }
+          assert.ok(peak >= 0.1 && peak <= 2.5,
+            `${key} peak ${peak} out of frame at grid ${g}, amp ${p.amp}`);
+          if (prev !== null) {
+            assert.ok(Math.abs(peak - prev) < 1e-5,
+              `${key} peak moves with grid density: ${prev} → ${peak}`);
+          }
+          prev = peak;
+        }
+      }
+    }
+  });
+
+  test('the complex trio rows state the tier their measured fold coverage allows (#R8)', () => {
+    // The fold is a monotone tanh rescaling, so inside it the drawn height is
+    // not the computed value — the deviation runs to whole world units. The
+    // rule this round applied: keep the letter and disclose the measured
+    // coverage while the fold stays a minority of the plate everywhere the
+    // sliders reach; move to C, on this document's own "output is decorated by
+    // an envelope … that breaks direct correspondence" bullet, when the fold
+    // takes the plate somewhere reachable. Measured at grid 90, factory sliders
+    // → slider maxima: complexPower 12.4 % → 36.8 % (and eulerIm, which round 8
+    // already ruled keeps A, 24.4 % → 48.2 %); mobiusTransform 22.6 % → 99.4 %;
+    // blaschke 90.9 % → 99.8 %.
+    const doc = readFileSync(new URL('../MATHEMATICAL_ACCURACY.md', import.meta.url), 'utf8');
+    const rowOf = key => doc.split('\n').find(l => l.startsWith(`| \`${key}\` |`));
+    for (const [key, tier, coverage] of [['complexPower', '🟢 A', '12.4'],
+                                         ['mobiusTransform', '🟡 C', '22.6'],
+                                         ['blaschke', '🟡 C', '90.9']]) {
+      const row = rowOf(key);
+      assert.ok(row, `no row for ${key}`);
+      assert.ok(row.includes(`| ${tier} |`), `${key} should be rated ${tier}: ${row.slice(0, 120)}`);
+      assert.ok(row.includes(`${coverage} %`),
+        `${key} must state its measured factory fold coverage (${coverage} %)`);
+    }
+  });
+
+  // ── the beam that drew a flat plate ─────────────────
+    // ── differentialEqs/beamBending — a flat plate that was mathematically right ──
+    //
+    // Round 8. The kernel drew the exact modal deflection of a simply-supported
+    // beam under q(ξ) = 0.8·sin(nπξ) and nobody could see it: the modal
+    // denominator (nπ/L)⁴ was never compensated, and comp = 0.5 + mid·0.4 reaches
+    // n = 3..5, i.e. 7.9e3..6.1e4. Measured before the repair, on grid 90 over the
+    // reachable slider box: the tallest point on the whole plate was 5.54e-2 world
+    // units (and 6.8e-4 anywhere inside the comp window the audio can actually
+    // reach), against 0.42..2.28 for twelve of the other fifteen entries in this
+    // collection — the other three peak at 8.7, 114 and 539, which is a separate
+    // complaint and not this one.
+    //
+    // The repair is in the load, not in a display gain the row hides: the load
+    // amplitude is scaled with the mode, q̂ₙ = EI·(nπ/L)⁴·δ, so the exact
+    // deflection q̂ₙ·sin(nπξ)/(EI·(nπ/L)⁴) is δ·sin(nπξ) for every n. Verified
+    // against two independent solvers of EI·y'''' = q with y(0)=y(L)=y''(0)=
+    // y''(L)=0 — sympy dsolve with the four conditions fitted symbolically, and a
+    // finite-difference BVP solved as two tridiagonal systems in numpy — both
+    // first shown to reproduce the textbook 5qL⁴/384EI for a uniform load
+    // (0.013020833333, error 0 and 2.6e-9). Drawn row against sympy: max
+    // difference 5.7e-16 to 2.1e-15, i.e. 2e-15 of the peak.
+
+    test('beamBending is visible: its peak sits in the same band as its collection (#R8)', () => {
+      // The reachable slider box. src/params.js: amp 0.2..1.5 (extendedMax 2.0),
+      // waveInt 0.3..3.5 (extendedMax 5.0); src/math-visualizer.js multiplies amp
+      // by (1 + bass·0.5) and waveInt by (1 + treble·0.3), and sets
+      // comp = 0.5 + mid·0.4 — so comp 0..1 here is wider than the app can reach.
+      const AMP = [0.7, 1.0, 1.5, 2.25];
+      const FREQ = [0.3, 0.7, 1.0, 1.3, 2.0, 3.5, 4.55];
+      const COMP = [0, 0.2, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+      const peak = (f, p) => {
+        const hf = generateSurfaceFromFormula(f, p, 90, 3.5, 0);
+        let m = 0;
+        for (let i = 0; i < hf.length; i++) m = Math.max(m, Math.abs(hf[i]));
+        return m;
+      };
+      const boxPeaks = f => {
+        let hi = 0, lo = Infinity;
+        for (const amp of AMP) for (const freq of FREQ) for (const comp of COMP) {
+          const v = peak(f, { amp, freq, comp });
+          hi = Math.max(hi, v); lo = Math.min(lo, v);
+        }
+        return { hi, lo };
+      };
+
+      const beam = MATH_COLLECTIONS.differentialEqs.formulas.beamBending;
+      const { hi, lo } = boxPeaks(beam.f);
+      // Measured after the repair: hi 1.0120 (1.0125 on grids 25 and 161),
+      // lo 0.2547 at amp 0.7, freq 0.3, comp 0.2 — that lowest corner is n = 2
+      // seen through the freq-0.3 window ξ ∈ [0.35, 0.65], which excludes the
+      // crests at ξ = 0.25 and 0.75, so the visible maximum is sin(0.7π)·0.315.
+      // Before the repair hi was 0.0554.
+      assert.ok(hi > 0.30 && hi < 2.5, `beamBending peaks at ${hi} over the slider box`);
+      assert.ok(lo > 0.15, `beamBending falls to ${lo} somewhere in the slider box`);
+
+      // …and in the band of the fifteen entries it is drawn next to. The median
+      // is used rather than the extremes because three entries in this collection
+      // (dampedOscillator, laplacePDE, predatorPrey) run to 8.7, 114 and 539 and
+      // would widen any min/max window to uselessness.
+      const others = Object.entries(MATH_COLLECTIONS.differentialEqs.formulas)
+        .filter(([k]) => k !== 'beamBending')
+        .map(([, e]) => boxPeaks(e.f).hi)
+        .sort((a, b) => a - b);
+      const median = others[Math.floor(others.length / 2)];
+      // Measured: median 1.20, ratio 0.84. Before the repair the ratio was 0.046.
+      assert.ok(hi / median > 0.1 && hi / median < 10,
+        `beamBending peaks at ${hi} against a collection median of ${median}`);
+    });
+
+    test('beamBending draws a single beam mode, so it still solves EI·y⁗ = q̂·sin(nπξ) (#R8)', () => {
+      // The drawn row is put back into the beam equation instead of being compared
+      // with a second copy of the kernel. sin(mπξ) is the eigenbasis of the
+      // simply-supported operator — EI·y⁗ = q is diagonal there with eigenvalue
+      // (mπ/L)⁴ — so projecting the drawn deflection onto it and multiplying by
+      // (mπ)⁴ reads off the load that deflection implies. If that load is one
+      // pure sine, the drawn shape is the exact solution for it; energy in any
+      // other mode is the residual of the equation.
+      const beam = MATH_COLLECTIONS.differentialEqs.formulas.beamBending;
+      const N = 2001, MMAX = 40;
+      // The kernel maps ξ = clamp((x·freq + 3.5)/7, 0, 1), so x = (7ξ − 3.5)/freq
+      // samples the beam coordinate uniformly between the two supports.
+      const row = (p, z) => {
+        const y = new Float64Array(N);
+        for (let i = 0; i < N; i++) y[i] = beam.f((7 * (i / (N - 1)) - 3.5) / p.freq, z, 0, p);
+        return y;
+      };
+      const load = y => {
+        const h = 1 / (y.length - 1), Q = [];
+        for (let m = 1; m <= MMAX; m++) {
+          let s = 0;
+          for (let i = 0; i < y.length; i++) s += y[i] * Math.sin(m * Math.PI * i * h);
+          Q.push(2 * h * s * Math.pow(m * Math.PI, 4));   // trapezoid; y = 0 at both ends
+        }
+        return Q;
+      };
+
+      for (const [p, z] of [[{ amp: 0.7, freq: 1, comp: 0.5 }, 0], [{ amp: 2.25, freq: 1, comp: 0.9 }, 0],
+                            [{ amp: 0.7, freq: 1, comp: 0 }, 0], [{ amp: 1.5, freq: 0.3, comp: 0.7 }, 0.8],
+                            [{ amp: 1.0, freq: 4.55, comp: 1.0 }, -1.2]]) {
+        const y = row(p, z), Q = load(y);
+        let n = 0;
+        for (let m = 0; m < Q.length; m++) if (Math.abs(Q[m]) > Math.abs(Q[n])) n = m;
+        let off = 0;
+        for (let m = 0; m < Q.length; m++) if (m !== n) off += Q[m] * Q[m];
+        const rel = Math.sqrt(off) / Math.abs(Q[n]);
+        // Measured 6.5e-13 to 2.1e-10 (the n = 1 corner is the loosest, because
+        // the projection's round-off is weighted by (mπ)⁴ against the smallest
+        // q̂). A 2 % second harmonic added to the shape scores 3.2e-1 here.
+        assert.ok(rel < 1e-8, `beamBending at ${JSON.stringify(p)}: load energy ${rel} outside mode ${n + 1}`);
+        // Simply-supported: zero deflection at both supports. Measured ≤ 6.2e-16.
+        assert.ok(Math.abs(y[0]) < 1e-12 && Math.abs(y[N - 1]) < 1e-12,
+          `beamBending does not vanish at the supports: ${y[0]}, ${y[N - 1]}`);
+      }
+    });
+
+    test('beamBending scales the load with the mode, q̂ₙ ∝ (nπ)⁴, at constant deflection (#R8)', () => {
+      // This is the row's claim, and it is the whole reason the entry is visible:
+      // each mode is drawn under the load that gives it the same peak deflection,
+      // so the picture shows mode shape and not the 1/n⁴ softening. If anyone
+      // puts a fixed load back, the deflections stop matching and the ratio of
+      // recovered loads collapses to 1.
+      const beam = MATH_COLLECTIONS.differentialEqs.formulas.beamBending;
+      const N = 2001;
+      const row = p => {
+        const y = new Float64Array(N);
+        for (let i = 0; i < N; i++) y[i] = beam.f((7 * (i / (N - 1)) - 3.5) / p.freq, 0, 0, p);
+        return y;
+      };
+      const coeff = (y, m) => {
+        const h = 1 / (y.length - 1);
+        let s = 0;
+        for (let i = 0; i < y.length; i++) s += y[i] * Math.sin(m * Math.PI * i * h);
+        return 2 * h * s * Math.pow(m * Math.PI, 4);
+      };
+      const peakOf = y => { let d = 0; for (const v of y) d = Math.max(d, Math.abs(v)); return d; };
+
+      // comp → n = round(1 + comp·4): 0 → 1, 0.5 → 3, 0.9 → 5.
+      const y1 = row({ amp: 0.7, freq: 1, comp: 0 });
+      const y3 = row({ amp: 0.7, freq: 1, comp: 0.5 });
+      const y5 = row({ amp: 0.7, freq: 1, comp: 0.9 });
+      // Recovered loads: 30.6839, 2485.39, 19177.4 — ratios (3/1)⁴ = 81 and
+      // (5/3)⁴ = 7.716049382716. Measured 7.7160493827160455, error 7e-16.
+      assert.ok(Math.abs(coeff(y5, 5) / coeff(y3, 3) / Math.pow(5 / 3, 4) - 1) < 1e-9,
+        `q̂₅/q̂₃ = ${coeff(y5, 5) / coeff(y3, 3)}, expected ${Math.pow(5 / 3, 4)}`);
+      assert.ok(Math.abs(coeff(y3, 3) / coeff(y1, 1) / Math.pow(3, 4) - 1) < 1e-9,
+        `q̂₃/q̂₁ = ${coeff(y3, 3) / coeff(y1, 1)}, expected 81`);
+      // …and the deflection those loads produce is the same for every mode:
+      // 0.315 = 0.45·amp at amp 0.7. Under the fixed load this entry used to
+      // carry, the three peaks were 2.46e-2, 3.04e-4 and 3.94e-5.
+      const d = [y1, y3, y5].map(peakOf);
+      assert.ok(Math.abs(d[1] / d[0] - 1) < 1e-12 && Math.abs(d[2] / d[0] - 1) < 1e-12,
+        `beamBending peak deflection varies with the mode: ${d.join(', ')}`);
+    });
+
+    test('beamBending is finite and grid-independent across 25 / 90 / 161 (#R8)', () => {
+      const beam = MATH_COLLECTIONS.differentialEqs.formulas.beamBending;
+      const AMP = [0.7, 1.0, 1.5, 2.25];
+      const FREQ = [0.3, 0.7, 1.0, 1.3, 2.0, 3.5, 4.55];
+      const COMP = [0, 0.2, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+      const peak = (p, g) => {
+        const hf = generateSurfaceFromFormula(beam.f, p, g, 3.5, 0);
+        let m = 0;
+        for (let i = 0; i < hf.length; i++) m = Math.max(m, Math.abs(hf[i]));
+        return m;
+      };
+      // Finiteness has to be read off the KERNEL, not off the height field:
+      // generateSurfaceFromFormula ends with `isFinite(y) ? y : 0`, so a NaN
+      // arrives as a flat 0 and an assertion on its output can never fail.
+      // Checked: injecting `NaN` for freq > 4 leaves this test green when the
+      // check is written against the height field, and red when it is written
+      // against beam.f.
+      for (const amp of AMP) for (const freq of FREQ) for (const comp of COMP) {
+        for (let i = 0; i < 41; i++) for (let j = 0; j < 41; j++) {
+          const x = -3.5 + 7 * i / 40, z = -3.5 + 7 * j / 40;
+          const v = beam.f(x, z, 0, { amp, freq, comp });
+          assert.ok(Number.isFinite(v),
+            `beamBending returns ${v} at x=${x}, z=${z}, ${JSON.stringify({ amp, freq, comp })}`);
+        }
+      }
+      let worst = 1, at = null;
+      for (const amp of AMP) for (const freq of FREQ) for (const comp of COMP) {
+        const v = [25, 90, 161].map(g => peak({ amp, freq, comp }, g));
+        const r = Math.max(...v) / Math.min(...v);
+        if (r > worst) { worst = r; at = { amp, freq, comp, v }; }
+      }
+      // Measured 1.1547, at freq 2 / comp 0.7 (n = 4 squeezed into half the
+      // plate: grid 25 has 24 intervals over 7 world units and simply misses the
+      // crest). This is sampling of a fixed smooth shape, not a grid-dependent
+      // formula — the same 1.1547 was measured before the repair, since the
+      // change is a per-mode constant.
+      assert.ok(worst < 1.25, `beamBending peak moves by ×${worst} across grids at ${JSON.stringify(at)}`);
+    });
+
+    test('beamBending is static in the clock and moves only through the sliders (#R8)', () => {
+      // A static load on a static beam has a time-independent deflection, so the
+      // absence of t is correct rather than an omission — nothing was added to
+      // make it move. What the audio moves is the load (amp, from bass) and the
+      // mode (comp = 0.5 + mid·0.4, from mid), so the surface is not frozen in
+      // the app even though the kernel ignores the clock.
+      const beam = MATH_COLLECTIONS.differentialEqs.formulas.beamBending;
+      const p = { amp: 1.2, freq: 1.0, comp: 0.6 };
+      const base = generateSurfaceFromFormula(beam.f, p, 61, 3.5, 0);
+      for (const t of [1, 60, 3600]) {
+        const hf = generateSurfaceFromFormula(beam.f, p, 61, 3.5, t);
+        for (let i = 0; i < hf.length; i++) {
+          assert.equal(hf[i] === base[i], true,
+            `beamBending moved with the clock at t=${t}: ${hf[i]} vs ${base[i]}`);
+        }
+      }
+      const rel = (a, b) => {
+        let num = 0, den = 0;
+        for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; num += d * d; den += a[i] * a[i]; }
+        return Math.sqrt(num / den);
+      };
+      // Measured against the plate's own norm: mid 0 → comp 0.5 (n = 3) against
+      // mid 1 → comp 0.9 (n = 5) changes it by 1.414 (two modes that share no
+      // crest), and bass 0 → amp 0.7 against bass 1 → amp 1.05 by 0.333 (the
+      // deflection is linear in the load). A static kernel is not a still picture.
+      const midLo = generateSurfaceFromFormula(beam.f, { amp: 0.7, freq: 1, comp: 0.5 }, 61, 3.5, 0);
+      const midHi = generateSurfaceFromFormula(beam.f, { amp: 0.7, freq: 1, comp: 0.9 }, 61, 3.5, 0);
+      const bassHi = generateSurfaceFromFormula(beam.f, { amp: 1.05, freq: 1, comp: 0.5 }, 61, 3.5, 0);
+      assert.ok(rel(midHi, midLo) > 0.2, `mid does not move beamBending: ${rel(midHi, midLo)}`);
+      assert.ok(rel(bassHi, midLo) > 0.2, `bass does not move beamBending: ${rel(bassHi, midLo)}`);
+    });
+
+    test('beamBending is flat exactly where there is no beam, and that is most of the plate at high freq (#R8)', () => {
+      // ξ = clamp((x·freq + 3.5)/7, 0, 1) puts the two supports at x = ±3.5/freq,
+      // so above freq = 1 the beam occupies only 1/freq of the plate and the rest
+      // is flat — zero deflection, which is the right height for "no beam here",
+      // but it is a large part of the picture and the row has to say so. This is
+      // measured rather than repaired: the same clamp is the collection's idiom
+      // (schrodingerBox is identical), and freq has nothing else to mean for a
+      // static deflection. Recorded so a future change to the mapping is a
+      // decision and not an accident.
+      const beam = MATH_COLLECTIONS.differentialEqs.formulas.beamBending;
+      const N = 1401;
+      for (const [freq, want] of [[1.0, 0], [1.3, 1 - 1 / 1.3], [2.0, 0.5], [3.5, 1 - 1 / 3.5], [4.55, 1 - 1 / 4.55]]) {
+        let flat = 0;
+        for (let i = 0; i < N; i++) {
+          const x = -3.5 + 7 * i / (N - 1);
+          if (Math.abs(beam.f(x, 0, 0, { amp: 2.25, freq, comp: 0.5 })) < 1e-15) flat++;
+        }
+        // Measured 0.002 / 0.232 / 0.503 / 0.716 / 0.782 against 1 − 1/freq.
+        assert.ok(Math.abs(flat / N - want) < 0.02,
+          `beamBending flat fraction at freq ${freq} is ${flat / N}, expected ${want}`);
+      }
+    });
+
+  // ── a word that was not measured, and a degenerate plate edge ─────────────────
+  test('densityMatrix draws geometric weights, not Boltzmann weights of the box spectrum', () => {
+    // The row used to say "thermal". The states are particle-in-a-box states,
+    // whose energies go as k² (sympy on −ħ²/2m ψ″ = Eψ over [0, L] gives
+    // Eₙ = π²ħ²n²/2mL²), so a thermal mixture of them would weight them
+    // e^{−βk²} — ratios pₖ₊₁/pₖ = e^{−β(2k+1)}, falling with k. What is drawn
+    // is e^{−k/2}: a constant ratio. This test reads the weights back out of the
+    // kernel rather than trusting the source line.
+    //
+    // comp sets n = round(1 + 4·comp), so comp = (n−1)/4 adds exactly one state.
+    // At z = 0, freq = 1, amp = 1 the kernel is 0.3·Σ pₖ sin²(kπ(x + ½)), so the
+    // difference between consecutive comps, read at x = 1/(2n) − ½ where
+    // sin²(nπ(x + ½)) = 1, is 0.3·pₙ.
+    const f = MATH_COLLECTIONS.quantumMechanics.formulas.densityMatrix.f;
+    const at = (n, comp) => f(1 / (2 * n) - 0.5, 0, 0, { amp: 1, freq: 1, comp });
+    const p = [];
+    for (let n = 1; n <= 5; n++) {
+      const here = at(n, (n - 1) / 4);
+      const before = n === 1 ? 0 : at(n, (n - 2) / 4);
+      p.push((here - before) / 0.3);
+    }
+    for (let k = 1; k <= 5; k++) {
+      assert.ok(Math.abs(p[k - 1] - Math.exp(-k / 2)) < 1e-12,
+        `p_${k} is ${p[k - 1]}, the kernel's stated e^{-k/2} is ${Math.exp(-k / 2)}`);
+    }
+    // constant ratio ⇒ geometric ⇒ Boltzmann for a ladder LINEAR in k
+    for (let k = 0; k < 4; k++) {
+      assert.ok(Math.abs(p[k + 1] / p[k] - Math.exp(-0.5)) < 1e-12,
+        `ratio p_${k + 2}/p_${k + 1} is ${p[k + 1] / p[k]}, not the constant e^{-1/2}`);
+    }
+    // and NOT box-thermal: β fitted to the drawn p₂/p₁ is 1/6, and then the
+    // box ratio p₃/p₂ would be e^{−5/6} = 0.434598, a long way from 0.606531.
+    const boxRatio = Math.exp(-5 / 6);
+    assert.ok(Math.abs(p[2] / p[1] - boxRatio) > 0.1,
+      'the drawn ratio p₃/p₂ has become the box-thermal one — the row says geometric');
+  });
+
+  test('densityMatrix stays clear of its 0.7 ceiling over the whole slider box', () => {
+    // This is the measurement that decided round 8 to fix the word rather than
+    // the weights: e^{−k²/6} would pin 5.5–5.8 % of the plate at the ceiling,
+    // while e^{−k/2} peaks at 0.6154 and never touches it.
+    const f = MATH_COLLECTIONS.quantumMechanics.formulas.densityMatrix.f;
+    let peak = 0;
+    for (const amp of [0.7, 1.5, 2.25])
+      for (const freq of [0, 1, 2.5, 4.55])
+        for (const comp of [0, 0.25, 0.5, 0.75, 1]) {
+          const hf = generateSurfaceFromFormula(f, { amp, freq, comp }, 45, 3.5, 0);
+          for (const v of hf) {
+            assert.ok(Number.isFinite(v), `non-finite height at amp ${amp} freq ${freq} comp ${comp}`);
+            if (v > peak) peak = v;
+          }
+        }
+    assert.ok(peak < 0.68, `peak ${peak} is at or against the 0.7 ceiling`);
+    assert.ok(peak > 0.1, `peak ${peak} has fallen out of frame`);
+  });
+
+  test('densityMatrix tiles the well rather than showing it once', () => {
+    // ψₖ = sin(kπ(x·freq + ½)): the well is x·freq ∈ [−½, ½], length 1, so the
+    // plate's 7 units of x carry 7·freq wells — 7.00 at freq 1, 31.85 at 4.55.
+    // The claim is checked as a periodicity, which is what tiling means.
+    const f = MATH_COLLECTIONS.quantumMechanics.formulas.densityMatrix.f;
+    for (const freq of [1, 2.5, 4.55])
+      for (const x of [-2.3, -0.7, 0.11, 1.9])
+        for (const z of [0, 0.3, -1.2]) {
+          const a = f(x, z, 0, { amp: 0.7, freq, comp: 1 });
+          const b = f(x + 1 / freq, z, 0, { amp: 0.7, freq, comp: 1 });
+          assert.ok(Math.abs(a - b) < 1e-12,
+            `period 1/freq broken at x ${x} freq ${freq}: ${a} vs ${b}`);
+        }
+    assert.equal(Math.round(7 * 1 * 100) / 100, 7);
+    assert.equal(Math.round(7 * 4.55 * 100) / 100, 31.85);
+  });
+
+  test('lyapunov: the a = 4 edge is no longer the degenerate fixed-point value', () => {
+    // With x₀ = 0.5 and a = 4 the orbit lands on the repelling fixed point 0 and
+    // stays: 4·½·½ = 1, r·1·(1−1) = 0. Every |f′| is then exactly r, so λ becomes
+    // the closed form ½(ln a + ln b) — a value that has nothing to do with the
+    // attractor. That closed form is what this test forbids.
+    const f = MATH_COLLECTIONS.fractals.formulas.lyapunov.f;
+    const amp = 0.7, n = 21, step = 7 / (n - 1);
+    for (const comp of [0, 0.5, 1]) {
+      let minGap = Infinity;
+      for (let i = 0; i < n; i++) {
+        const z = -3.5 + i * step;
+        const b = ((z + 3.5) / 7) * 1.4 + 2.6;
+        const lam = f(3.5, z, 0, { amp, freq: 1, comp }) / (0.25 * amp);
+        const degenerate = 0.5 * (Math.log(4) + Math.log(b));
+        minGap = Math.min(minGap, Math.abs(lam - degenerate));
+      }
+      assert.ok(minGap > 0.5,
+        `some vertex of the a = 4 edge sits on ½(ln a + ln b) (closest gap ${minGap}) at comp ${comp}`);
+    }
+  });
+
+  test('lyapunov reproduces the published closed forms along a = b, r = 4 included', () => {
+    // On x = z the driving sequence is constant, so the exponent has a closed
+    // form: ln|2 − r| on the stable fixed point, ½ln|4 + 2r − r²| in the period-2
+    // window, and ln 2 at r = 4 by the tent-map conjugacy. The tolerances are the
+    // measured sampling scatter of 48–96 iterates, not a hope: the first four
+    // land within 1.3e-5, and r = 4 within 0.03 at comp 0 and 0.0009 at comp 1.
+    const f = MATH_COLLECTIONS.fractals.formulas.lyapunov.f;
+    const amp = 0.7;
+    const cases = [
+      [-3.5, 2.6, Math.log(Math.abs(2 - 2.6)), 1e-9],
+      [-2.5, 2.8, Math.log(Math.abs(2 - 2.8)), 1e-5],
+      [-0.5, 3.2, 0.5 * Math.log(Math.abs(4 + 2 * 3.2 - 3.2 * 3.2)), 1e-9],
+      [0.5, 3.4, 0.5 * Math.log(Math.abs(4 + 2 * 3.4 - 3.4 * 3.4)), 1e-3],
+      [3.5, 4.0, Math.log(2), 0.05],
+    ];
+    for (const comp of [0, 0.5, 1])
+      for (const [x, r, want, tol] of cases) {
+        const got = f(x, x, 0, { amp, freq: 1, comp }) / (0.25 * amp);
+        assert.ok(Math.abs(got - want) < tol,
+          `r = ${r} at comp ${comp}: λ = ${got}, closed form ${want}, tolerance ${tol}`);
+      }
+    // and the corner is not the old ln 4
+    const corner = f(3.5, 3.5, 0, { amp, freq: 1, comp: 1 }) / (0.25 * amp);
+    assert.ok(Math.abs(corner - Math.log(4)) > 0.5,
+      `the corner still reads ln 4 = ${Math.log(4)} (got ${corner})`);
+  });
+
+  test('lyapunov stays in frame, finite and grid-stable after the seed change', () => {
+    const f = MATH_COLLECTIONS.fractals.formulas.lyapunov.f;
+    let peak = 0;
+    for (const amp of [0.7, 1.5, 2.25])
+      for (const freq of [0, 1, 4.55])
+        for (const comp of [0, 0.5, 1]) {
+          const hf = generateSurfaceFromFormula(f, { amp, freq, comp }, 45, 3.5, 0);
+          for (const v of hf) {
+            assert.ok(Number.isFinite(v), `non-finite height at amp ${amp} freq ${freq} comp ${comp}`);
+            if (Math.abs(v) > peak) peak = Math.abs(v);
+          }
+        }
+    assert.ok(peak > 0.1 && peak < 2.5, `peak ${peak} is out of frame`);
+    // the mean of |y| is the grid-stable statistic here — the peak of a fractal
+    // rises as the mesh resolves more of it, and did so before this change too.
+    const means = [25, 90, 161].map(g => {
+      const hf = generateSurfaceFromFormula(f, { amp: 0.7, freq: 1, comp: 0.5 }, g, 3.5, 0);
+      let s = 0;
+      for (const v of hf) s += Math.abs(v);
+      return s / hf.length;
+    });
+    const ratio = Math.max(...means) / Math.min(...means);
+    assert.ok(ratio < 1.1, `mean |y| moves by ×${ratio} across grids 25/90/161`);
+  });
+
+  // ── the two kernels replaced wholesale, now with tests ─────────────────
+  // Round 8 — topology/romanSurface and topology/boysSurface.
+  //
+  // Both entries were replaced wholesale and neither had a test. Every check below
+  // is a property recovered FROM THE DRAWING: no test reads a constant out of the
+  // kernel it is testing, so none of them would survive the entry being swapped
+  // back for its predecessor. Verified by mutation — see
+  // ~/notes/audits/vimathic-round8-2026-08-16/roman-boys.md for which mutation each
+  // assertion catches, and for the mpmath/sympy work that fixed the tolerances.
+  //
+  // Helpers are inlined per test on purpose: this fragment shares a describe block
+  // with other round-8 fragments and must not claim any names at block scope.
+
+  test('romanSurface: every drawn point satisfies x²y²+y²z²+z²x² = r²xyz, with r² recovered from the drawing', () => {
+    // Divide the entry's own equation by xyz and the left side becomes
+    // xy/z + yz/x + zx/y, which is also a1²+a2²+a3² of the sphere preimage under
+    // (a1,a2,a3) ↦ (a2a3, a3a1, a1a2). One quantity therefore carries both the
+    // equation and the preimage, and on the surface it is the constant r² — so the
+    // test can recover r² from the picture instead of being told it.
+    // sympy solves the equation (it is quadratic in y, not quartic) and its lower
+    // root is the shipped expression exactly; mpmath at 30 digits puts the kernel
+    // 3.7e-16 from that root, and the worst residual below is 5.9e-16 of its own
+    // scale over the slider box. 1e-12 leaves three decades of headroom and still
+    // catches a kernel one part in 1e9 off the root.
+    const f = MATH_COLLECTIONS.topology.formulas.romanSurface.f;
+    const lattice = (n, rng = 3.5) => {
+      const step = (2 * rng) / (n - 1), out = [];
+      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) out.push([-rng + i * step, -rng + j * step]);
+      return out;
+    };
+    for (const [amp, freq, t] of [[0.7, 1, 0], [1.5, 1, 3.7], [1, 2, 9.1], [0.35, 1.7, 20]]) {
+      const q = [], pts = [];
+      for (const [x, z] of lattice(61)) {
+        if (Math.abs(x) < 1e-9 || Math.abs(z) < 1e-9) continue;   // the double lines: y ≡ 0
+        const y = f(x, z, t, { amp, freq, comp: 0.5 });
+        assert.ok(Number.isFinite(y), `non-finite at ${x},${z}`);
+        if (y === 0) continue;                                    // outside the surface's own disc
+        q.push((x * y) / z + (y * z) / x + (z * x) / y);
+        pts.push([x, y, z]);
+      }
+      assert.ok(q.length > 100, `only ${q.length} drawn points at amp=${amp} freq=${freq}`);
+      const mean = q.reduce((a, b) => a + b, 0) / q.length;
+      const spread = Math.max(...q) - Math.min(...q);
+      assert.ok(mean > 0, `recovered r² is ${mean}, must be positive`);
+      assert.ok(spread / mean < 1e-11,
+        `r² recovered from the drawing is not constant: spread ${spread} on mean ${mean} ` +
+        `(${(spread / mean).toExponential(3)} relative) at amp=${amp} freq=${freq} t=${t}`);
+      // and the equation itself, in its own units, against that one recovered r²
+      let worst = 0;
+      for (const [x, y, z] of pts) {
+        const t1 = x * x * y * y, t2 = y * y * z * z, t3 = z * z * x * x;
+        const rhs = mean * x * y * z;
+        worst = Math.max(worst, Math.abs(t1 + t2 + t3 - rhs) / Math.max(t1, t2, t3, Math.abs(rhs)));
+      }
+      assert.ok(worst < 1e-12,
+        `quartic residual ${worst.toExponential(3)} of its own scale at amp=${amp} freq=${freq}`);
+    }
+  });
+
+  test('romanSurface is compact: the drawn set is a disc, and its rim is finite', () => {
+    // Steiner's surface is the image of a sphere, so it ends at the fold circle
+    // ρ = r²/2 where the two sheets meet vertically. At the factory sliders that
+    // circle is the plate's inscribed circle, so part of the mesh has no height to
+    // carry — 23.70 % of it at grid 90, 23.78 % at 161. A kernel that draws
+    // something everywhere is not this surface.
+    const f = MATH_COLLECTIONS.topology.formulas.romanSurface.f;
+    const lattice = (n, rng = 3.5) => {
+      const step = (2 * rng) / (n - 1), out = [];
+      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) out.push([-rng + i * step, -rng + j * step]);
+      return out;
+    };
+    const plate = generateSurfaceFromFormula(f, { amp: 0.7, freq: 1, comp: 0.5 }, 90, 3.5, 0);
+    let empty = 0;
+    for (const v of plate) {
+      assert.ok(Number.isFinite(v), 'non-finite value reached the vertex buffer');
+      if (v === 0) empty++;
+    }
+    const frac = empty / plate.length;
+    assert.ok(frac > 0.15 && frac < 0.35,
+      `${(100 * frac).toFixed(1)} % of the factory plate is empty; the fold circle is the ` +
+      "plate's inscribed circle there, so it should be about 23.7 %");
+
+    // drawn-ness depends on the radius alone: nothing beyond the outermost drawn
+    // point, nothing missing inside it. The tolerance is one part in 1e9 because at
+    // the factory sliders the fold circle passes exactly through lattice points,
+    // where hypot and x*x+z*z disagree in the last bit.
+    let rIn = 0, rOut = Infinity;
+    for (const [x, z] of lattice(61)) {
+      if (Math.abs(x) < 1e-9 || Math.abs(z) < 1e-9) continue;
+      const y = f(x, z, 0, { amp: 0.7, freq: 1, comp: 0.5 });
+      const r = Math.hypot(x, z);
+      if (y === 0) rOut = Math.min(rOut, r); else rIn = Math.max(rIn, r);
+    }
+    assert.ok(rIn <= rOut * (1 + 1e-9),
+      `drawn out to ${rIn} but empty already at ${rOut}: the drawn set is not a disc`);
+
+    // the rim is a fold, not a singularity: 2xz/(r²+√…) never divides by the √, so
+    // a fine radial scan across it stays finite and in frame
+    for (const th of [0.3, Math.PI / 4, 1.1, 2.0]) {
+      for (let k = 0; k <= 2000; k++) {
+        const r = 3.3 + (0.4 * k) / 2000;
+        const y = f(r * Math.cos(th), r * Math.sin(th), 0, { amp: 0.7, freq: 1, comp: 0.5 });
+        assert.ok(Number.isFinite(y), `non-finite at radius ${r}, angle ${th}`);
+        assert.ok(Math.abs(y) <= 2.5, `|y| = ${y} at the rim, out of frame`);
+      }
+    }
+  });
+
+  test('romanSurface: the drawn point has a real sphere preimage, and amp/freq move r² not the height', () => {
+    // The preimage is what makes this Steiner's surface and not just a solution of
+    // the quartic: a2² = xz/y must be positive, and the parametrisation
+    // (a1,a2,a3) ↦ (a2a3, a3a1, a1a2) must give the drawn height back. The sphere's
+    // radius then has to be one number per plate — and, because the entry grows the
+    // surface rather than stretching it, r²·freq/amp has to be one number for the
+    // whole slider box.
+    const f = MATH_COLLECTIONS.topology.formulas.romanSurface.f;
+    const lattice = (n, rng = 3.5) => {
+      const step = (2 * rng) / (n - 1), out = [];
+      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) out.push([-rng + i * step, -rng + j * step]);
+      return out;
+    };
+    const recovered = [];
+    for (const [amp, freq] of [[0.7, 1], [1.5, 1], [0.7, 2], [2.25, 1.4], [0.2, 0.3], [1, 1]]) {
+      const rs = [];
+      for (const [x, z] of lattice(41)) {
+        if (Math.abs(x) < 1e-9 || Math.abs(z) < 1e-9) continue;
+        const y = f(x, z, 0, { amp, freq, comp: 0.5 });
+        if (y === 0) continue;
+        const a2sq = (x * z) / y;
+        assert.ok(a2sq > 0, `no real preimage: a2² = ${a2sq} at ${x},${z}`);
+        const a2 = Math.sqrt(a2sq), a3 = x / a2, a1 = z / a2;
+        assert.ok(Math.abs(a1 * a3 - y) <= 1e-12 * (Math.abs(y) + 1),
+          `the parametrisation does not return the drawn height: a3a1 = ${a1 * a3}, y = ${y}`);
+        rs.push(a1 * a1 + a2 * a2 + a3 * a3);
+      }
+      assert.ok(rs.length > 100, `only ${rs.length} drawn points at amp=${amp} freq=${freq}`);
+      const mean = rs.reduce((a, b) => a + b, 0) / rs.length;
+      assert.ok((Math.max(...rs) - Math.min(...rs)) / mean < 1e-11,
+        `the preimage sphere has no single radius at amp=${amp} freq=${freq}`);
+      recovered.push([amp, freq, mean]);
+    }
+    const ks = recovered.map(([amp, freq, r2]) => (r2 * freq) / amp);
+    for (let i = 0; i < ks.length; i++) {
+      assert.ok(Math.abs(ks[i] - ks[0]) <= 1e-12 * ks[0],
+        `r²·freq/amp is ${ks[i]} at amp=${recovered[i][0]} freq=${recovered[i][1]}, ` +
+        `but ${ks[0]} at the factory sliders — the sliders are stretching the height`);
+    }
+  });
+
+  test('boysSurface is a function on RP², not on a torus: the antipodal glide moves nothing', () => {
+    // The plate is the sphere — θ across x, φ down z — so RP²'s antipodal map is the
+    // glide (x, z) → (x + 3.5/freq, −z), and a height field on RP² cannot move under
+    // it. Measured on the shipped kernel the residual is 5.6e-16 to 1.7e-15 on sups
+    // of 0.34 to 1.51, i.e. about 1.2e-15 relative and exactly 0 once the plate is
+    // rounded into the Float32 vertex buffer. The entry this replaced was invariant
+    // under the torus's group instead and moved 0.5643 on a sup of 0.4928; it is
+    // kept below as the negative control, so this guard cannot quietly stop working.
+    const f = MATH_COLLECTIONS.topology.formulas.boysSurface.f;
+    const torusStandIn = (x, z, t, { amp = 1, freq = 1 }) => {
+      const u = x * freq * 2, v = z * freq * 2;
+      const y = (Math.sin(u) * Math.cos(v / 2) + Math.sin(2 * u) * Math.cos(v / 2) ** 2) * 0.4;
+      return y * amp * (1 + Math.sin(t * 0.3) * 0.15);
+    };
+    const glide = (fn, amp, freq, t) => {
+      const dx = 3.5 / freq, step = 7 / 60;
+      let res = 0, sup = 0;
+      for (let j = 0; j <= 60; j++) {
+        for (let i = 0; i <= 60; i++) {
+          const x = -3.5 + i * step, z = -3.5 + j * step;
+          const y = fn(x, z, t, { amp, freq, comp: 0.5 });
+          assert.ok(Number.isFinite(y), `non-finite at ${x},${z}`);
+          sup = Math.max(sup, Math.abs(y));
+          if (x + dx > 3.5 + 1e-12) continue;
+          res = Math.max(res, Math.abs(y - fn(x + dx, -z, t, { amp, freq, comp: 0.5 })));
+        }
+      }
+      return { res, sup, ratio: res / sup };
+    };
+    for (const [amp, freq, t] of [[0.7, 1, 0], [1, 1, 0], [2.25, 1, 11.3], [1, 2, 0], [0.5, 0.7, 4]]) {
+      const { res, sup, ratio } = glide(f, amp, freq, t);
+      assert.ok(sup > 0.05, `nothing is drawn at amp=${amp} freq=${freq}`);
+      assert.ok(ratio < 1e-11,
+        `the height moves by ${res.toExponential(3)} on a sup of ${sup.toFixed(4)} under the ` +
+        `antipodal identification at amp=${amp} freq=${freq} t=${t}: two-valued on RP²`);
+    }
+    const bad = glide(torusStandIn, 0.7, 1, 0);
+    assert.ok(bad.ratio > 0.5,
+      'the negative control did not fire: the doubly periodic stand-in moved only ' +
+      `${bad.res.toExponential(3)} on a sup of ${bad.sup.toFixed(4)}`);
+  });
+
+  test('boysSurface: both edges of the plate are the single point where RP² closes', () => {
+    // z = ∓3.5 is φ = 0 and φ = π, i.e. w = 0 and w = ∞ — antipodal on the sphere and
+    // therefore ONE point of RP². The Bryant–Kusner immersion sends it to (0,0,−2)
+    // in closed form (g = (0,0,−1/2), so g/|g|² = (0,0,−2)), which is also the lowest
+    // point the immersion reaches; mpmath at 50 digits gives −2 to every digit and
+    // the shipped kernel returns the two edges bit-identical.
+    const f = MATH_COLLECTIONS.topology.formulas.boysSurface.f;
+    const torusStandIn = (x, z, t, { amp = 1, freq = 1 }) => {
+      const u = x * freq * 2, v = z * freq * 2;
+      const y = (Math.sin(u) * Math.cos(v / 2) + Math.sin(2 * u) * Math.cos(v / 2) ** 2) * 0.4;
+      return y * amp * (1 + Math.sin(t * 0.3) * 0.15);
+    };
+    for (const amp of [0.7, 1, 2.25]) {
+      const p = { amp, freq: 1, comp: 0.5 };
+      const lo = [], hi = [];
+      for (let k = 0; k <= 40; k++) {
+        const x = -3.5 + (7 * k) / 40;
+        lo.push(f(x, -3.5, 0, p));
+        hi.push(f(x, 3.5, 0, p));
+      }
+      const all = lo.concat(hi);
+      const spread = Math.max(...all) - Math.min(...all);
+      assert.ok(spread <= 1e-14,
+        'the two z edges are φ = 0 and φ = π — one point of RP² — but the height ' +
+        `spreads by ${spread.toExponential(3)} across them at amp=${amp}`);
+      const plate = generateSurfaceFromFormula(f, p, 90, 3.5, 0);
+      let min = Infinity;
+      for (const v of plate) {
+        assert.ok(Number.isFinite(v), 'non-finite value reached the vertex buffer');
+        min = Math.min(min, v);
+      }
+      assert.ok(Math.abs(min - lo[0]) <= 1e-6 * Math.abs(lo[0]),
+        `the edge sits at ${lo[0]} but the plate reaches ${min}: the edge is not the ` +
+        'lowest point of the immersion');
+    }
+    const bad = [];
+    for (let k = 0; k <= 40; k++) {
+      bad.push(torusStandIn(-3.5 + (7 * k) / 40, -3.5, 0, { amp: 0.7, freq: 1 }));
+    }
+    assert.ok(Math.max(...bad) - Math.min(...bad) > 0.1,
+      'the negative control did not fire: the stand-in was already constant along the edge');
+  });
+
+  test('romanSurface and boysSurface stay finite and in frame across the slider box and the grids', () => {
+    // Both kernels are new and both have a branch the old ones did not: roman
+    // returns a literal 0 where its discriminant goes negative, boys divides by a
+    // denominator that vanishes at the triple point. Neither produces a non-finite
+    // anywhere in the reachable box (amp 0.2..2.25, freq 0.3..4.55), and the peaks
+    // measured there are 2.4504 for roman — against the closed-form ceiling r²/4 at
+    // r² = 2√2·3.5, i.e. 2.4749 — and 1.5129 for boys, whose height is bounded by
+    // (2 + 0.78)·amp·0.55 for every slider. The predecessor of romanSurface reached
+    // 5.0939 at amp 0.7, freq 4.55 and would fail this.
+    for (const key of ['romanSurface', 'boysSurface']) {
+      const f = MATH_COLLECTIONS.topology.formulas[key].f;
+      let worst = 0;
+      for (const amp of [0.2, 0.7, 1.5, 2.25]) {
+        for (const freq of [0.3, 1, 2, 4.55]) {
+          for (const t of [0, 5.236, 10.472]) {
+            for (const g of [25, 90, 161]) {
+              const plate = generateSurfaceFromFormula(f, { amp, freq, comp: 0.5 }, g, 3.5, t);
+              let peak = 0;
+              for (const v of plate) {
+                assert.ok(Number.isFinite(v),
+                  `${key}: non-finite at amp=${amp} freq=${freq} t=${t} grid=${g}`);
+                peak = Math.max(peak, Math.abs(v));
+              }
+              assert.ok(peak <= 2.5,
+                `${key}: peak ${peak} out of frame at amp=${amp} freq=${freq} grid=${g}`);
+              worst = Math.max(worst, peak);
+            }
+          }
+        }
+      }
+      assert.ok(worst > 0.1, `${key}: nothing anywhere in the slider box reaches 0.1`);
+      for (const g of [25, 90, 161]) {
+        const factory = generateSurfaceFromFormula(f, { amp: 0.7, freq: 1, comp: 0.5 }, g, 3.5, 0);
+        const pk = Math.max(...Array.from(factory, Math.abs));
+        assert.ok(pk > 0.1 && pk < 2.5,
+          `${key}: factory peak ${pk} at grid ${g} is outside the band its neighbours occupy`);
+        assert.ok(Array.from(factory).some(v => v !== 0), `${key}: blank plate at grid ${g}`);
+      }
     }
   });
 });
