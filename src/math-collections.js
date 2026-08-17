@@ -1027,7 +1027,25 @@ const FRACTALS_AND_CHAOS = {
           }
           v += Math.exp(-4*(px*px+pz*pz)) * 0.15;
         }
-        return clamp(v * amp, 0, 0.9);
+        // FIX(r8): `clamp(v*amp, 0, 0.9)` cut the top off the density it draws,
+        // and the cut moved with the amplitude slider, so raising amp erased the
+        // picture instead of amplifying it: 0.05 % of the mesh sat exactly on
+        // 0.9 at the factory sliders, 40.5 % at amp max with the sliders
+        // otherwise at rest, and 92.6 % at the worst reachable point (amp 2.25,
+        // freq 0.3, comp 0.9 — comp is audio-driven and only reaches 0.9). The
+        // lower bound was never binding: v is a sum of Gaussians, so v ≥ 0.
+        // Folding is meaningful here even though the quantity is a density: it
+        // is a density with no normalisation, the dense core IS the dragon, and
+        // the cut fell exactly there. Against the uncut field, correlation goes
+        // 0.661 → 0.974 at amp max with comp at its audio ceiling and 0.352 →
+        // 0.952 at the worst reachable point, and the share of interior
+        // vertices whose four neighbours are bit-equal to them — a flat normal,
+        // which is what a tabletop looks like to the renderer — goes 19.3 % → 0
+        // and 71.2 % → 0. `soften` keeps the ordering, so denser still draws
+        // higher, and is bit-identical below the old bound, which is where the
+        // factory picture lives (there the two agree on every vertex but nine
+        // in 42 888, none of them by more than 0.163).
+        return soften(v * amp, 0.9, 1.8);
       }
     },
     chua: {
@@ -1684,6 +1702,17 @@ const PROBABILITY_STATISTICS = {
         // lag 1.0 of 0.194 against e^{−θ} = 0.223, both within what explicit
         // Euler at dt = 0.05 gives up.
         //
+        // FIX(r8, docs): those two references are the continuum ones, and the
+        // path drawn here is not the continuum process. Measured against the
+        // AR(1) values an explicit-Euler path actually has, the row in
+        // MATHEMATICAL_ACCURACY.md gives stationary variance 2.17e-2 against
+        // 1.85e-2 and lag-1 autocorrelation 0.246 against 0.210 — about 17 %
+        // out, and it is the discretisation rather than the noise: the hash32
+        // increments pass a KS test against U(−1,1) at p = 0.86. This comment
+        // stated only the round-6 pair, so the two files disagreed about the
+        // same two quantities; the numbers here are the row's, not a fresh
+        // measurement.
+        //
         // The wave-intensity slider now selects how long a stretch of the path
         // is on screen; it used to do nothing at all here.
         //
@@ -2082,7 +2111,7 @@ const TRIGONOMETRY = {
     },
     pythagorean: {
       name: 'Pythagorean Identity Wave',
-      formula: 'sin²+cos²=1 → height = sin²(rx)−½',
+      formula: 'sin²(r+t) − cos²(r+t) = −cos(2(r+t)), r = 2·freq·√(x²+z²)',
       // FIX(r8): the +1e-9 on r guarded nothing — sin²−cos² = −cos(2r) is
       // analytic at the origin and there is no division here — and it cost
       // |d(−cos 2r)/dr|·1e-9·amp·0.45 = up to 2.03e-9, measured against mpmath,
@@ -2379,7 +2408,24 @@ const COMPLEX_NUMBERS = {
       name: 'Complex sin(z) Real Part',
       formula: 'Re(sin(x+iz)) = sin(x)cosh(z)',
       f(x, z, t, {amp=1, freq=1}) {
-        return clamp(Math.sin(x*freq+t*0.3)*Math.cosh(z*freq*0.5) * amp * 0.3,-0.7,0.7);
+        // FIX(r8): the same repair round 6 gave catenoid, applied to the clamp
+        // it missed. cosh grows, so the ±0.7 cut was not a safety net but the
+        // picture over most of the slider: 84.2 % of the mesh sat bit-exactly
+        // on the bound at the slider maxima (the quantity being cut reaches 969
+        // world units there), 51.8 % at the FACTORY amplitude once freq passes
+        // 3.0, 40.8 % at amp max with freq left at 1. Round 6 measured its
+        // one-third criterion at the factory sliders alone, where this entry
+        // peaks at 0.622 and the clamp never bites, which is why it survived.
+        //
+        // The knee is the old bound, so `soften` is the identity exactly where
+        // the clamp was not biting: 400 000 random points over the reachable
+        // box are bit-identical to the old kernel wherever |value| ≤ 0.7, and
+        // the factory picture is unchanged to the last bit. Above it the excess
+        // is folded instead of cut, so the tabletop keeps its ordering and its
+        // gradient. It does not make cosh gentle — at the maxima most of the
+        // plate still sits within a hair of the ceiling — but nothing is
+        // bit-equal to its neighbour any more, and the shoulder is real.
+        return soften(Math.sin(x*freq+t*0.3)*Math.cosh(z*freq*0.5) * amp * 0.3, 0.7, 1.4);
       }
     },
     juliaPotential: {
@@ -3372,12 +3418,28 @@ const TOPOLOGY_GEOMETRY = {
       // value and not a hole.
       //
       // The plate is the sphere: θ across x, φ down z, so the antipodal map of
-      // RP² is the glide (x,z) → (x+3.5, −z), and the drawn height is invariant
-      // under it to 0.0 exactly where the old one moved 0.5625 on a sup of
-      // 0.4928. The three roots of p⁶+√5p³q³−q⁶ are the three points of RP² that
-      // meet at the triple point — the feature that tells Boy's surface from
-      // Steiner's Roman surface below. Against the immersion at 50 digits the
-      // height is exact to 4.6·10⁻¹⁶, and |B| ≤ 2 bounds it for every slider, so
+      // RP² is the glide (x,z) → (x + 3.5/freq, −z). The shift has to follow
+      // freq, because θ = x·freq·(2π/7) and the half turn needs Δx·freq = 3.5;
+      // the literal +3.5 this comment used to prescribe is the freq = 1 case
+      // alone, and applying it at freq 1.5, 2, 3.36 or 4.55 moves the drawn
+      // height, at grid 81 at t = 0, by 0.3805, 0.4130, 0.4220 and 0.4095
+      // against a sup of 0.47 — by most of the surface. Written correctly the
+      // height is invariant to 6.4·10⁻¹⁶ in double at the factory sliders on a
+      // grid-81 plate (5.0·10⁻¹⁶…1.9·10⁻¹⁵ over one turn of the clock), and to
+      // 0.0 once rounded to the Float32 the vertex buffer stores — at every
+      // setting tried but one: after a day of uptime a single antipodal pair of
+      // 13 041 at grid 161 differs, by 3.6·10⁻¹², the row's own exception; the
+      // old height moved 0.5625 on a sup of 0.4928.
+      // The three roots of p⁶+√5p³q³−q⁶ are
+      // the three points of RP² that meet at the triple point — the feature
+      // that tells Boy's surface from Steiner's Roman surface below. Against
+      // the immersion at 50 digits the height is exact to 4.8, 5.5 and
+      // 6.2·10⁻¹⁶ on grids 41, 81 and 161 at the factory sliders at t = 0, the
+      // immersion being evaluated at the same double abscissa the kernel is
+      // handed. One figure per grid, because the sup is monotone in the lattice
+      // (41 ⊂ 81 ⊂ 161 bitwise) and the 4.6·10⁻¹⁶ this comment used to give was
+      // a single grid's; and one per instant, because θ carries 0.2t — over one
+      // turn of the clock the grid-41 figure runs 4.1·10⁻¹⁶…1.9·10⁻¹⁵. |B| ≤ 2 bounds it for every slider, so
       // unlike `catenoid` this one cannot leave frame and needs no fold. t turns
       // the immersion about its own 3-fold axis, once every 10.5 s, instead of
       // pulsing the amplitude — a motion the surface actually has.
@@ -3413,16 +3475,40 @@ const TOPOLOGY_GEOMETRY = {
       // near the axis costs exactly the digits the picture is made of. It is
       // the sheet through the origin, the one carrying the double lines (y ≡ 0
       // on both axes), and its small limit xz/r² is what the old guess was
-      // reaching for. Against mpmath's roots at 30 digits it is exact to
-      // 5.8e-16, and the drawn point's preimage on the sphere closes to r²
-      // within 3e-15 — the check that says the point is on Steiner's surface
-      // and not merely on the quartic that contains it.
+      // reaching for. Against mpmath's roots the accuracy is a function of how
+      // close to the rim you look, not a single number: with σ = √(r⁴−4ρ²)/r²
+      // the relative error runs at ≈ 4.4·10⁻¹⁶/σ, the measured worst × σ
+      // staying between 0.7 and 4.0 ulp across every decade of σ from 8·10⁻³
+      // to 1. Under the away-from-the-fold filter the row uses, σ > 0.05, the
+      // worst of 205 328 drawn vertices over ten settings on grids 41/81/161
+      // is 2.6·10⁻¹⁵; the 5.8e-16 this comment used to give is below what a
+      // vertex at σ = 0.05 can reach, and a vertex ON the rim pays what a
+      // double root costs — 2.8·10⁻⁹ relative at (−2.8, 2.1) on the grid-41
+      // lattice at the factory sliders at t = 0, measured against the root at
+      // the same double abscissa the kernel is handed.
+      //
+      // The drawn point's preimage on the sphere closes to r² to exactly 2 ulp
+      // of r² — 1.78e-15 at the factory sliders, 2.84e-14 wherever r² passes
+      // 64 — so that quantity carries the scale of r² and is not the 3e-15
+      // bound this comment used to claim; divided by r² it is ≤ 4.2e-16 over
+      // the whole box. Nor is it a second check. sympy simplifies
+      // (yz/x + zx/y + xy/z − r²) − (x²y²+y²z²+z²x² − r²xyz)/(xyz) to 0
+      // identically: the preimage form IS the quartic divided by xyz, term for
+      // term, so it cannot separate "on Steiner's surface" from "on the quartic
+      // that contains it". The quartic residual is the whole of the evidence.
       //
       // Where the root turns complex nothing is drawn, because nothing is
       // there: the fold circle ρ = r²/2 is the surface's own edge, where the
       // two sheets meet vertically and this one peaks at exactly r²/4. At the
-      // factory sliders that circle is the plate's inscribed circle, so 23.7 %
-      // of the mesh is honestly empty (7 % to 49 % as r breathes), and the wall
+      // factory sliders that circle is the plate's inscribed circle, so the
+      // vertices outside it — the ones with no surface above them — are 23.5 %
+      // of the mesh at grid 81 and 22.6 % at 161. Count instead every vertex
+      // the kernel leaves at exactly 0 and it is 25.9 % and 23.8 %; the
+      // difference is the two double lines, which only an odd grid carries at
+      // all (the even grid 90 reads 23.7 % under both countings). Over one turn
+      // of the clock the outside-the-circle share runs 5.8…51.1 % at grid 81
+      // and 5.3…50.4 % at 161, against a continuum band of 4.9…49.7 % — the
+      // 7 % to 49 % this comment used to give is neither of them. The wall
       // at the rim is the fold seen edge-on — four petals, not a ring, since
       // the sheet is zero along both axes.
       //
@@ -3433,8 +3519,21 @@ const TOPOLOGY_GEOMETRY = {
       // scale. So amp grows the surface, freq zooms out of it, t breathes it,
       // and every frame at every slider setting is exactly the named surface.
       // That is also what frames it without a clamp: the sheet peaks at r²/4
-      // until the plate corner cuts the fold off, which bounds peak |y| by
-      // 2.475 over the whole reachable range — 1.52 at the factory sliders.
+      // until the plate corner cuts the fold off, which bounds peak |y| by the
+      // continuum sup 2.475, attained at r² = 7√2 where the rim reaches the
+      // plate's corner diagonal (a 13 230-setting sweep at grid 81 gets to
+      // 2.4712). Every mesh figure below that needs its grid and its instant:
+      // at the factory sliders the peak is 1.68 at grid 81 and 1.71 at 161 at
+      // t = 0, and 1.19…2.07 and 1.27…2.09 over one turn of the clock. Those
+      // two tops are attained at an isolated instant — the one where a
+      // near-diagonal rim vertex has d → 0⁺ — so re-sampling the turn will not
+      // find them: 4 000 instants reach 2.0559 at grid 81, 20 000 reach 2.0591
+      // and 100 000 reach 2.0669, still climbing. They are solved per vertex
+      // instead — |y| at a fixed vertex falls as r² grows, so the optimum is
+      // the smallest r² that still draws it, max(5.6, 2ρ) — and running this
+      // kernel at the t realising that r² draws exactly 2.0720 at grid 81 and
+      // 2.0880 at 161. The 1.52 this comment used to give is the grid-90
+      // reading at t = 0, and 90 is not a lattice the app lays down.
       f(x, z, t, {amp=1, freq=1}) {
         const r2=10*amp/freq*(1+Math.sin(t*0.3)*0.2);
         const d=r2*r2-4*(x*x+z*z);
@@ -3461,8 +3560,28 @@ const TOPOLOGY_GEOMETRY = {
         // a row claiming machine precision. k = 0.5/freq is the same expression
         // at the one scale that satisfies the equation, verified symbolically:
         // 2H·(1+|∇y|²)^{3/2} vanishes identically.
+        //
+        // FIX(r8): the 1e-3 guard band around the asymptotic walls was not
+        // protecting anything, it was deleting the crest of the ridge. At an
+        // exact zero of cz the unguarded expression is +Infinity and
+        // soften(+Inf, 0.7, 1.6) is a finite +1.6 — the true limit, and the
+        // value the neighbouring vertices already read; at an exact zero of cx
+        // it is -Infinity and lands on -1.6 the same way. Only the SIMULTANEOUS
+        // zero gives 0/0, and that is the one case worth a branch (Math.cos
+        // never returns exactly 0 for a double argument, so it is unreachable
+        // in practice — it is here so the kernel, not just the height field,
+        // is total). Meanwhile the band was 2e-3 rad wide while the phase 0.2·t
+        // advances 0.0016 rad per rendered frame, so it swept a whole mesh row
+        // to exactly 0 on 455 of 8000 consecutive frames at grid 90 (5.7 %, one
+        // flicker every 0.29 s at 60 fps) and on 817 of 8000 at grid 161, each
+        // one dropping that row by up to 1.60 world units — the entire half
+        // height — below the value the formula gives there. The static half,
+        // cos(2·freq·x), left a permanently dead COLUMN, no clock involved, for
+        // 2.5 % of the freq slider at grid 90 and 4.5 % at grid 161; measured
+        // over 2001 freq values, it is 0 % at every grid now.
+        // Same branch shape as sinc, fejerKernel, dirichletKernel and blaschke.
         const cx=Math.cos(x*freq*2), cz=Math.cos(z*freq*2+t*0.2);
-        if (Math.abs(cx)<1e-3||Math.abs(cz)<1e-3) return 0;
+        if (cx===0 && cz===0) return 0;
         return soften(Math.log(Math.abs(cx/cz))*(0.5/freq)*amp, 0.7, 1.6);
       }
     },
@@ -3593,8 +3712,19 @@ const TOPOLOGY_GEOMETRY = {
       name: 'Cross-Cap (RP²)',
       formula: 'Hemi-sphere with antipodal gluing',
       f(x, z, t, {amp=1, freq=1}) {
+        // FIX(r8): the only entry in the catalogue that left the 3-unit frame at
+        // the factory sliders, and it did it away from t = 0, where the frame
+        // guard could not see it. The height is largest at the plate corner
+        // (|u·v| = 12.25 at freq 1), which every grid samples, so the peak was
+        // 12.25·0.7·gain·(1+0.2·sin 0.3t) = 3.087 at the top of the breathing,
+        // bit-identical at grids 25…201. The gain 0.30 → 0.27 is the smallest
+        // change that fixes it: a pure scale, so every level set, the saddle and
+        // the breathing are the object that was there before, 10 % shorter. The
+        // peak over the whole breathing period is now 2.778, which is inside the
+        // conservative half-frame of 2.90 and in the band of the tallest entries
+        // in the catalogue (hydrogenS 2.856, determinant 2.755).
         const u=x*freq, v=z*freq;
-        return u*v * amp * 0.3 * (1+Math.sin(t*0.3)*0.2);
+        return u*v * amp * 0.27 * (1+Math.sin(t*0.3)*0.2);
       }
     },
     alexanderHorned: {
@@ -4360,7 +4490,7 @@ const QUANTUM_MECHANICS = {
     },
     atomicOrbitals: {
       name: 'sp² Hybrid (xz-plane projection)',
-      formula: 'sp² = (1/√3)(s + √2·(p_x cosφ + p_z sinφ))',
+      formula: '|ψ_sp²|², ψ_sp² = (1/√3)(2s + √2·(p_x cosφ + p_z sinφ))',
       f(x, z, t, {amp=1, freq=1, comp=0.5}) {
         // Genuine sp² hybridization (3 lobes at 120°) is expressible in the
         // xz-plane: |sp²⟩ = (s + √2·(p_x cosφ + p_z sinφ)) / √3.
