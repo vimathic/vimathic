@@ -18,12 +18,13 @@ Drop in a track — 192 mathematical formulas come to life on screen, driven by 
 ---
 
 <!-- Tier split is summed from the 12 per-collection headings in
-     MATHEMATICAL_ACCURACY.md — keep the two in step (128 + 40 + 24 = 192). -->
-> **168 of 192 formulas at verifiable accuracy. Open tests.**
+     MATHEMATICAL_ACCURACY.md — keep the two in step (122 + 35 + 35 = 192). -->
+> **157 of 192 formulas at verifiable accuracy. Open tests.**
 >
-> 128 closed-form expressions at IEEE 754 double precision (~10⁻¹⁴).
-> 40 validated approximations with bounded error ≤ 10⁻³ to 10⁻⁷.
-> 24 visualisation-grade (qualitatively faithful, not numerically verified).
+> 122 closed-form expressions at IEEE 754 double precision (~10⁻¹⁴).
+> 35 validated approximations with bounded error ≤ 10⁻³ to 10⁻⁷ — documented per
+> formula, read at the factory sliders, and stated in the row where it is larger.
+> 35 visualisation-grade (qualitatively faithful, not numerically verified).
 > Cross-checked against mpmath, scipy.special, and NIST DLMF.
 > `node --test tests/math-validation.test.js`
 
@@ -129,9 +130,9 @@ Integral Transforms · Topology & Geometry · Cellular Automata · Quantum Mecha
 <!-- Tier counts come from MATHEMATICAL_ACCURACY.md. -->
 | Tier | Count | What it means |
 |------|-------|---------------|
-| 🟢 A | 128 | IEEE 754 double precision — machine accuracy |
-| 🔵 B | 40 | Bounded approximation, error ≤ 10⁻³ to 10⁻⁷ |
-| 🟡 C | 24 | Visualization-grade — qualitatively faithful, not numerically exact |
+| 🟢 A | 122 | IEEE 754 double precision — machine accuracy |
+| 🔵 B | 35 | Bounded approximation, error ≤ 10⁻³ to 10⁻⁷ — documented per formula and read at the factory sliders (amp 0.7, freq 1, comp 0.5), not as one ceiling over the whole tier. Two entries exceed it and say so in their rows: `dragon` reaches 1.8×10⁻³ at a single vertex there, and `manifoldCurvature` 3.24 world units over a third of the plate at the loudest the audio path drives it unaided. |
+| 🟡 C | 35 | Visualization-grade — qualitatively faithful, not numerically exact |
 
 This is not "math-flavoured visuals". These are canonical implementations —
 Bessel J₁ from Numerical Recipes, Gamma via Lanczos g=7, Dawson F via Rybicki's lattice sum,
