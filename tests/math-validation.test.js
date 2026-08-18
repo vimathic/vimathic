@@ -4321,8 +4321,14 @@ describe('Round 8 — what the whole catalogue said against what an oracle says 
       assert.ok(Number.isFinite(y), `origin is ${y} at amp ${amp}`);
       near(y, 0.1 * amp, 1e-15, `|z^z| → 1 at the origin, amp ${amp}`);
     }
-    // Every odd mesh has a vertex exactly at the origin; the app's grid floats
-    // 60–200, so this must not depend on parity.
+    // Nearly every odd mesh has a vertex exactly at the origin — 13 of the 100
+    // odd grids in 3…201 do not, grid 83 among them, because the app's own
+    // `-extent + xi*step` makes the centre column 4.44e-16 rather than 0 — and
+    // the grid is round(sqrt(vertexCount)) of the SELECTED SHAPE, 24 discrete
+    // values from 3 to 198, not planeSegs, which is only ever 80 or 160. So
+    // this must not depend on parity. complexPower reads 0.07 at grid 83 too,
+    // measured; the grids below stay as they are because 25 and 91 are the
+    // corners this test was written against.
     for (const g of [25, 91, 161]) {
       const hf = generateSurfaceFromFormula(
         MATH_COLLECTIONS.complexNumbers.formulas.complexPower.f,
@@ -4366,8 +4372,11 @@ describe('Round 8 — what the whole catalogue said against what an oracle says 
     // At t = 0 the map is (z)/(comp·z + 1), so the pole sits at
     // x = −1/(comp·freq); at the FACTORY sliders that is x = −2, and
     // 0.5·(−2) + 1 is exactly 0 in IEEE double. It is a lattice point of every
-    // mesh whose spacing divides 1.5 — grid 15 has it at xi = 3 — and the app's
-    // grid floats 60–200.
+    // mesh whose spacing divides 1.5 — grid 15 has it at xi = 3 — and of the 24
+    // grids the app can reach (3…198, set by the selected shape, not by
+    // planeSegs, which is only ever 80 or 160) exactly two land on it: 15
+    // (pyramid and icosahedron-smooth on mobile) and 43 (cylinder and disc on
+    // mobile). The plane's own 81 and 161 miss by 0.0125.
     //
     // With the epsilon the numerator was 0 and the denominator 1e-9, so the
     // pole vertex was drawn at exactly 0: a hole punched through a ridge whose
@@ -6102,5 +6111,102 @@ describe('Round 8 — what the whole catalogue said against what an oracle says 
     const a = generateSurfaceFromFormula(frozen, { amp: 0.7, freq: 1, comp: 0.5 }, 90, 3.5, 0);
     const b = generateSurfaceFromFormula(frozen, { amp: 0.7, freq: 1, comp: 0.5 }, 90, 3.5, 5.236);
     assert.equal(relL2(a, b), 0, 'the control moved, so this statistic is not measuring the clock');
+  });
+});
+
+describe('The display contract, clause 1 — the amplitude slider is the instrument (#R9)', () => {
+  // MATHEMATICAL_ACCURACY.md, "What a caption is allowed to leave unsaid":
+  // a caption may omit a factor iff `drawn ÷ named` is ONE POSITIVE CONSTANT
+  // over the whole plate and over the whole reachable slider box, and — the
+  // same section, spelling out which factors those are — "a fixed display scale
+  // and the amplitude gain are part of the instrument, while a cancelled
+  // normalisation and a comp-dependent gain are part of the mathematics".
+  //
+  // `named` is prose, so the clause as a whole needs an oracle and cannot run
+  // in CI. Its second half does not: whether amp ACTS as one positive constant
+  // is a property of two plates. Where it does not, the picture changes SHAPE
+  // with a slider, and that is the thing a caption may not leave unsaid.
+  //
+  // This is a tripwire on the catalogue, not a reading of the captions: it says
+  // which entries are ALLOWED to omit the slider. An entry joining the list is
+  // a failure — measure what amp does to it and say so in its row. An entry
+  // leaving the list is silence, because repairing one must not redden a suite.
+  //
+  // Measured 2026-08-18 at grid 41, factory 0.70/1.00/0.50 against the
+  // over-drive amp 2.25 with freq and comp held: 175 of the 192 entries scale,
+  // every one of them by the same 2.25/0.70 = 3.214286 at every vertex above a
+  // thousandth of the plate's peak, and these 17 do not. At amp 1.00 the list
+  // is 14 entries and a subset of this one; at grid 81 both lists come back
+  // identical, so it is a property of the kernels and not of the mesh.
+  //
+  // Where the threshold comes from, because it is not zero: the buffer that
+  // reaches the vertex shader is Float32, so a ratio of two of its entries
+  // carries about 10⁻⁷ of rounding. The worst spread among the 175 that scale
+  // is 1.53×10⁻⁷ (fractals/duffing); the smallest spread among the 17 that do
+  // not is 5.13×10⁻² (specialFunctions/airy). 10⁻⁶ sits between them with six
+  // times the headroom above the rounding and five orders of magnitude below
+  // the nearest offender, so nothing here is decided by the tolerance.
+  const RECORD = new Set([
+    'fractals/lyapunov', 'fractals/dragon', 'specialFunctions/airy',
+    'specialFunctions/laguerre', 'specialFunctions/polygamma',
+    'linearAlgebra/manifoldCurvature', 'trigonometry/circularFunctions',
+    'complexNumbers/eulerIm', 'complexNumbers/complexPower',
+    'complexNumbers/mobiusTransform', 'complexNumbers/complexSin',
+    'complexNumbers/blaschke', 'topology/romanSurface', 'topology/scherkSurface',
+    'topology/catenoid', 'topology/breatherSurface', 'topology/pseudosphere',
+  ]);
+  const FACTORY = { amp: 0.7, freq: 1, comp: 0.5 };
+  const LOUD = { amp: 2.25, freq: 1, comp: 0.5 };
+
+  /** Is amp one positive constant on this kernel's drawing? */
+  const ampGain = f => {
+    const a = generateSurfaceFromFormula(f, FACTORY, 41, 3.5, 0);
+    const b = generateSurfaceFromFormula(f, LOUD, 41, 3.5, 0);
+    let peak = 0;
+    for (const v of a) peak = Math.max(peak, Math.abs(v));
+    if (!(peak > 0)) return { gain: 0, spread: Infinity };   // a blank plate is not a gain
+    const rs = [];
+    for (let i = 0; i < a.length; i++) if (Math.abs(a[i]) > 1e-3 * peak) rs.push(b[i] / a[i]);
+    if (!rs.length) return { gain: 0, spread: Infinity };
+    rs.sort((x, y) => x - y);
+    const gain = rs[rs.length >> 1];
+    let spread = 0;
+    for (const r of rs) spread = Math.max(spread, Math.abs(r - gain) / Math.abs(gain));
+    return { gain, spread };
+  };
+  const pure = g => g.gain > 0 && g.spread <= 1e-6;
+
+  test('no entry has started changing shape with the amplitude slider without its row being told', () => {
+    const news = [], stillThere = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        const id = `${colId}/${key}`;
+        const g = ampGain(entry.f);
+        if (pure(g)) continue;
+        (RECORD.has(id) ? stillThere : news).push(
+          `${id}: amp is not a gain — median ${g.gain.toFixed(4)}, spread ${g.spread.toExponential(2)}`);
+      }
+    }
+    assert.deepEqual(news, [],
+      'the amplitude slider changes the SHAPE of these plates, so it is not the instrument gain the ' +
+      'display contract lets a caption leave unsaid. Measure what it does, say so in the row, and add ' +
+      `the entry here:\n  ${news.join('\n  ')}`);
+    // Control one: the detector has not gone blind. 17 were on the list when
+    // this was written; a rewrite that quietly stopped measuring would report
+    // none and pass every comparison it never made.
+    assert.ok(stillThere.length >= 12,
+      `only ${stillThere.length} of the 17 recorded entries still read as amp-dependent — the ` +
+      `measurement has stopped working:\n  ${stillThere.join('\n  ')}`);
+    // Control two, watched rather than assumed: the same detector on two
+    // one-line kernels. amp·sin(x) reads gain 3.2142857 with spread 9.3×10⁻⁸;
+    // the same kernel behind a ±0.3 clamp reads spread 2.2. That is the whole
+    // difference between an instrument and a fold, and it is what makes a green
+    // above a statement about the catalogue rather than about the detector.
+    const clean = ampGain((x, z, t, { amp = 1, freq = 1 }) => Math.sin(x * freq) * amp);
+    const clamped = ampGain((x, z, t, { amp = 1, freq = 1 }) => Math.max(-0.3, Math.min(0.3, Math.sin(x * freq) * amp)));
+    assert.ok(pure(clean) && Math.abs(clean.gain - 2.25 / 0.7) < 1e-6,
+      `the control kernel reads gain ${clean.gain} spread ${clean.spread}, and it is amp·sin(x)`);
+    assert.ok(!pure(clamped),
+      `a clamp at ±0.3 reads as a pure gain (${clamped.gain}, spread ${clamped.spread}) — this test cannot fail`);
   });
 });
