@@ -534,3 +534,122 @@ describe('the research pages put each formula on the engine that runs it', () =>
     }
   });
 });
+
+describe('MATHEMATICAL_ACCURACY.md survives its own arithmetic (#R9)', () => {
+  // Round 8 left a guard whose only hold on the numbers it cannot re-measure is
+  // a COUNT: math-validation.test.js keeps a per-row floor (FIGURE_FLOOR) on how
+  // many figures its SHAPES could read back out of a row. A count catches a
+  // figure moved BETWEEN rows — that is the mutation it was built for, and it
+  // still fails on it — and cannot catch two numbers exchanged WITHIN one row,
+  // because the count does not move. Measured on 2026-08-18 over the twelve
+  // rows that state a fold coverage: 1087 numeric tokens, 75 of them re-measured
+  // by a shape, 1012 read by nobody. Exchanging two of the 1012 left the fold
+  // guard green, math-validation.test.js at 283/283 and this file at 27/27.
+  //
+  // The demonstration, which is the control at the foot of this block: in
+  // `eulerIm`'s row, exchange the top of the clock range with the mean quoted
+  // beside it — "runs 24.30…27.10 % at grid 81 (mean 26.1)" becomes
+  // "runs 24.30…26.1 % at grid 81 (mean 27.10)". Every count is unchanged; the
+  // sentence now puts the mean of a set outside the range of the same set.
+  //
+  // So this guard is a threshold on the SHAPE of the sentence rather than on a
+  // count of its digits. It re-measures nothing — it asks the arithmetic a
+  // sentence carries in its own shape:
+  //   * a range reads low-first;
+  //   * a mean quoted with a range lies inside it;
+  //   * a t = 0 figure quoted with a range lies inside it;
+  //   * "N of M vertices" has N ≤ M, and M is a mesh the app lays down.
+  // It costs one pass over one file and calls no kernel.
+  //
+  // What it deliberately does NOT do is require a row to CARRY any of those
+  // shapes. A guard that fires on ordinary rewording gets deleted, and deletion
+  // is already the count's job. The floors below are controls on the walk, not
+  // a house style imposed on the prose.
+
+  // a…b with plain decimals on both sides. The lookarounds keep scientific
+  // ranges out: "1e-3…1e-7" is legitimately decreasing, and its "3…1" is not a
+  // range at all.
+  const RANGE = /(?<![\w.−-])(\d+(?:\.\d+)?)…(\d+(?:\.\d+)?)(?![\w.])/g;
+  // the meshes the app lays down (src/main.js 81/161, src/render.js 41/81),
+  // the suite's 90, and their vertex counts
+  const LATTICE = new Set([41, 81, 90, 161, 1681, 6561, 8100, 25921]);
+
+  /** Every self-contradiction the shape of a sentence can be asked for. */
+  const scan = text => {
+    const bad = [];
+    let ranges = 0, quoted = 0, counts = 0;
+    text.split('\n').forEach((line, i) => {
+      const found = [...line.matchAll(RANGE)];
+      found.forEach((m, k) => {
+        ranges++;
+        const lo = +m[1], hi = +m[2];
+        if (!(lo < hi)) bad.push(`line ${i + 1}: the range "${m[0]}" reads high-first`);
+        // The window a figure has to sit in to be quoted ABOUT this range: up to
+        // the next range, the end of the clause, or 80 characters, whichever
+        // comes first. Short on purpose — a wider window picks up figures about
+        // something else. At 80 it reads the five sites in the file today and
+        // stops before romanSurface's "r² = 75 at t = 0", which is 150
+        // characters and one dash away from the range it would have been
+        // attached to.
+        const from = m.index + m[0].length;
+        const cut = s => { const j = line.indexOf(s, from); return j < 0 ? line.length : j; };
+        const clause = line.slice(from, Math.min(cut(';'), cut('. '), cut('—'),
+          found[k + 1] ? found[k + 1].index : line.length, from + 80));
+        for (const [what, re] of [['mean', /\(mean (\d+(?:\.\d+)?)/],
+                                  ['t = 0 figure', /(\d+(?:\.\d+)?) at t = 0/]]) {
+          const q = re.exec(clause);
+          if (!q) continue;
+          quoted++;
+          if (+q[1] < lo || +q[1] > hi) {
+            bad.push(`line ${i + 1}: the ${what} ${q[1]} is outside the range ${m[0]} it is quoted with`);
+          }
+        }
+      });
+      for (const m of line.matchAll(/(?<![\w.])(\d+) of (?:the )?(\d+) vertices/g)) {
+        counts++;
+        if (+m[1] > +m[2]) bad.push(`line ${i + 1}: "${m[0]}" counts more vertices than the mesh has`);
+        if (!LATTICE.has(+m[2])) {
+          bad.push(`line ${i + 1}: "${m[0]}" counts out of ${m[2]}, which is no mesh the app lays down`);
+        }
+      }
+    });
+    return { bad, ranges, quoted, counts };
+  };
+
+  test('no sentence in it contradicts its own numbers', () => {
+    const r = scan(read('MATHEMATICAL_ACCURACY.md'));
+    assert.deepEqual(r.bad, [],
+      'a sentence states numbers that cannot all be true of the same measurement — two of them have ' +
+      `most likely been exchanged inside the line, which no count can see:\n  ${r.bad.join('\n  ')}`);
+    // Controls on the walk, not a shape asked of the prose: 47 ranges, 5 figures
+    // quoted with one and 5 vertex counts were read on 2026-08-18. They are set
+    // well below those so that an editor who drops a parenthetical mean does not
+    // turn this red — the relations are the guard, and these only catch the walk
+    // going quiet, which is how the last three versions of the fold guard failed.
+    assert.ok(r.ranges >= 40 && r.quoted >= 2 && r.counts >= 3,
+      `the walk read ${r.ranges} ranges, ${r.quoted} figures quoted with one and ${r.counts} vertex ` +
+      'counts, against 47/5/5 when this was written — it has stopped reading the document');
+  });
+
+  test('control — the scan goes red on the swap that motivated it, and stays quiet on a rewrite', () => {
+    // the exact mutation: eulerIm's mean and the top of its own range exchanged
+    const swapped = 'the factory figure runs 24.30…26.1 % at grid 81 (mean 27.10) and 24.30…26.94 % at 161';
+    assert.equal(scan(swapped).bad.length, 1, `the mean-outside-its-range swap reads clean: ${swapped}`);
+    assert.match(scan(swapped).bad[0], /mean 27\.10 is outside/);
+    // the other three shapes, each with the smallest edit that breaks it
+    assert.equal(scan('the coverage runs 27.10…24.30 % over one turn').bad.length, 1, 'a backwards range reads clean');
+    assert.equal(scan('runs 15.79…42.72 % (mean 25.4, and 92.73 at t = 0)').bad.length, 1, 'a t = 0 figure outside its range reads clean');
+    assert.equal(scan('8100 of 4 vertices move at grid 90').bad.length, 2, 'an impossible vertex count reads clean');
+    // …and the same sentences, said differently and still true, are silent —
+    // a guard that fires on rewording is a guard that gets deleted
+    for (const ok of [
+      'the factory figure runs 24.30…27.10 % at grid 81 (mean 26.1) and 24.30…26.94 % at 161',
+      'over one turn of the clock it spans 24.30…27.10 % of the plate, averaging 26.1 %, at grid 81',
+      'runs 15.79…42.72 % (mean 25.4, and 22.73 at t = 0), so the boot instant is under half the mean',
+      'the fold covers 24.30 % at grid 81 and 24.30 % at 161, both read at t = 0',
+      '4 of 8100 vertices move at grid 90, and 1341 of 6561 at grid 81',
+      'tier B asserts a bounded 1e-3…1e-7 approximation',            // decreasing on purpose
+      'r² runs 0.35…90 over the reachable box — amp 2.25 / freq 0.3 gives r² = 75 at t = 0',
+    ]) assert.deepEqual(scan(ok).bad, [], `a legitimate sentence was flagged: ${ok}`);
+  });
+});
