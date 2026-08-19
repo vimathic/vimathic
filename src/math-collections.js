@@ -4845,16 +4845,36 @@ export function getAllFormulasList() {
 }
 
 /**
+ * Half-width of the height-field lattice in world units — the domain every
+ * surface formula is evaluated over, and the domain applyHeightField samples
+ * back out of.
+ *
+ * It is a named export because the two must AGREE and they live in different
+ * modules: generateSurfaceFromFormula writes the lattice
+ * x = −extent + xi·step, and sampleHeightField recovers xi from x with the
+ * same arithmetic. Two literals that happen to match is not agreement — it is
+ * a coincidence with a name. Before round 10's tidy-up there were four such
+ * literals in the chain (math-visualizer.js posts one to the worker and passes
+ * another on the sync path, math-worker.js defaults a third, and this file
+ * defaulted a fourth), any one of which could have been edited alone; a
+ * mismatch does not throw, it silently rescales the drawn surface against the
+ * mesh it is drawn on.
+ *
+ * The value itself is the plate: PlaneGeometry(7, 7, …) spans ±3.5.
+ */
+export const FIELD_EXTENT = 3.5;
+
+/**
  * Generate a Three.js-compatible height field from a formula.
  *
  * @param {Function}  fn       — formula.f(x, z, time, params) → y
  * @param {object}    params   — { amp, freq, comp }
  * @param {number}    gridSize — number of vertices per side (default 90)
- * @param {number}    extent   — half-width of grid in world units (default 3.5)
+ * @param {number}    extent   — half-width of grid in world units (FIELD_EXTENT)
  * @param {number}    time     — current animation time
  * @returns {Float32Array}     — flat array of Y values [gridSize²], row-major
  */
-export function generateSurfaceFromFormula(fn, params = {}, gridSize = 90, extent = 3.5, time = 0) {
+export function generateSurfaceFromFormula(fn, params = {}, gridSize = 90, extent = FIELD_EXTENT, time = 0) {
   const { amp = 1, freq = 1, comp = 0.5 } = params;
   const out = new Float32Array(gridSize * gridSize);
   const step = (extent * 2) / (gridSize - 1);
@@ -4871,16 +4891,108 @@ export function generateSurfaceFromFormula(fn, params = {}, gridSize = 90, exten
 }
 
 /**
+ * Bilinear sample of a row-major gridSize² height field at world (x, z), on the
+ * same lattice generateSurfaceFromFormula wrote it on: x = -extent + xi*step,
+ * z = -extent + zi*step, step = 2*extent/(gridSize-1). Outside the domain the
+ * value is clamped to the edge of the lattice, so a vertex beyond ±extent
+ * carries the boundary value rather than a hole.
+ *
+ * The lattice index is recovered EXACTLY when the vertex sits on a lattice
+ * line: `Math.fround(-extent + k*step) === v` is the same arithmetic, in the
+ * same order, that produced the coordinate, so a mesh whose vertices ARE the
+ * lattice (the rotated PlaneGeometry) is read straight out of the array with
+ * no interpolation at all. That is what keeps the fix a no-op on the one shape
+ * the old index-identity was right for.
+ */
+function sampleHeightField(heightField, grid, extent, step, x, z) {
+  // Kept deliberately, and it is not the grid-1 lattice it looks like it is
+  // guarding. `grid` is Math.max(1, floor(sqrt(length))), so grid < 2 means a
+  // field of 0 or 1 values, and the case that matters is the EMPTY one: step
+  // is then (extent*2)/0 = Infinity, fx = (x+extent)/Infinity = 0, and the
+  // interpolation below reads heightField[0] — undefined — so every vertex
+  // gets NaN and the mesh disappears. Measured by deleting this line in a
+  // sandbox copy: an empty field gives [NaN, NaN, NaN, NaN] without it and
+  // [0, 0, 0, 0] with it, while a length-1 field and a normal grid-3 field are
+  // bit-identical either way (wave2/numbers/m9-grid-guard.txt). No catalogue
+  // shape reaches it — the smallest grid the app produces is 3, for the
+  // 12-vertex tetrahedron — so it is a boundary against a caller handing over
+  // a field that was never filled, not a live path.
+  if (grid < 2) return heightField[0] ?? 0;
+  const last = grid - 1;
+
+  let fx = (x + extent) / step;
+  const kx = Math.round(fx);
+  if (kx >= 0 && kx <= last && Math.fround(-extent + kx * step) === x) fx = kx;
+  else if (!(fx > 0)) fx = 0;              // below the domain, or NaN
+  else if (fx > last) fx = last;           // past it
+
+  let fz = (z + extent) / step;
+  const kz = Math.round(fz);
+  if (kz >= 0 && kz <= last && Math.fround(-extent + kz * step) === z) fz = kz;
+  else if (!(fz > 0)) fz = 0;
+  else if (fz > last) fz = last;
+
+  const x0 = Math.floor(fx), z0 = Math.floor(fz);
+  const tx = fx - x0,        tz = fz - z0;
+  const x1 = tx === 0 ? x0 : x0 + 1;
+  const r0 = z0 * grid,      r1 = (tz === 0 ? z0 : z0 + 1) * grid;
+
+  const a = heightField[r0 + x0] + (heightField[r0 + x1] - heightField[r0 + x0]) * tx;
+  const b = heightField[r1 + x0] + (heightField[r1 + x1] - heightField[r1 + x0]) * tx;
+  return a + (b - a) * tz;
+}
+
+/**
  * Apply a height field (from generateSurfaceFromFormula) to an existing
  * Three.js BufferGeometry's position attribute (Y channel only).
  *
+ * The field is a DISPLACEMENT along Y from the shape's pristine position,
+ * sampled at each vertex's own (x, z):  y_i = baseY_i + f(x_i, z_i).
+ *
+ * FIX(r10 §1.3/§1.4/§1.6): it used to hand heightField[i] to vertex i. That
+ * identity holds for exactly one geometry in the catalogue — the rotated
+ * PlaneGeometry, whose vertices ARE this lattice in this order. On the other
+ * nineteen it drew a PERMUTATION of the function. Pearson r between drawn
+ * height and f at the vertex's own (x,z), probe field
+ * f = sin(1.3x) + cos(0.9z) + 0.2xz: ≤ 0.191 on all nineteen — star, the best
+ * of them, reads 0.191 — and negative on FOUR: sphere −0.362,
+ * tetrahedron −0.361, dodecahedron −0.113, solar −0.113. It also tore the five
+ * PolyhedronGeometry solids apart, because their coincident corner vertices
+ * carry different indices and so took different heights: on the probe f = x,
+ * whose range over the domain is 7.000, the spread inside a group of
+ * coincident vertices reaches 7.000 — the WHOLE range — on every one of the
+ * five, on a body of radius 3.5. And the
+ * `heightField[i] ?? 0` tail pinned every vertex past gridSize² flat at y = 0
+ * (321 vertices over the catalogue, contiguous, e.g. two whole rows of box's
+ * −Z face). Sampling at the vertex's own (x, z) removes all three at once:
+ * coincident vertices sample the same point, and no vertex is unfed.
+ *
+ * gridSize is not a parameter: the field is gridSize² by construction, so it
+ * is read back off the field's own length — a caller cannot pass one that
+ * disagrees with the array it also passes.
+ *
  * @param {THREE.BufferGeometry} geometry
- * @param {Float32Array}         heightField — gridSize² values
+ * @param {Float32Array}         heightField   — gridSize² values, row-major (z outer)
+ * @param {Float32Array|null}    basePositions — pristine [x,y,z,…] of this geometry;
+ *                                  the Y it displaces from. Null (or a stale
+ *                                  length) falls back to y = 0, i.e. the surface
+ *                                  alone — never to the old index identity.
+ * @param {number}               extent        — half-width of the lattice, as passed
+ *                                  to generateSurfaceFromFormula. Defaults to the
+ *                                  same FIELD_EXTENT that function defaults to, so
+ *                                  a caller that passes neither cannot mismatch
+ *                                  them; a caller that passes one must pass both.
  */
-export function applyHeightField(geometry, heightField) {
-  const pos = geometry.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    pos.setY(i, heightField[i] ?? 0);
+export function applyHeightField(geometry, heightField, basePositions = null, extent = FIELD_EXTENT) {
+  const pos  = geometry.attributes.position;
+  const n    = pos.count;
+  const grid = Math.max(1, Math.floor(Math.sqrt(heightField.length)));
+  const step = grid > 1 ? (extent * 2) / (grid - 1) : 0;
+  const base = (basePositions && basePositions.length === n * 3) ? basePositions : null;
+
+  for (let i = 0; i < n; i++) {
+    const y0 = base ? base[i * 3 + 1] : 0;
+    pos.setY(i, y0 + sampleHeightField(heightField, grid, extent, step, pos.getX(i), pos.getZ(i)));
   }
   pos.needsUpdate = true;
   geometry.computeVertexNormals();

@@ -211,16 +211,86 @@ describe('generateSurfaceFromFormula — the mapping from formula to grid', () =
 
 describe('applyHeightField — the height field reaching the mesh', () => {
 
-  test('vertex i takes heightField[i] on Y and keeps its X and Z', () => {
+  // Until round 10 this file asserted the opposite: vertex i takes
+  // heightField[i]. That identity is true of exactly one geometry in the
+  // catalogue — the rotated PlaneGeometry, whose vertices ARE the lattice in
+  // this order — and the test used a mock in that same order, so it could
+  // never see that the other nineteen shapes were being handed a PERMUTATION
+  // of the function. The contract is now stated in terms a mesh cannot
+  // accidentally satisfy: a vertex takes the field at the point where the
+  // vertex actually is.
+  test('a vertex takes the field sampled at its own (x,z), whatever its index', () => {
+    // A 2×2 lattice over extent 1: x and z run over {−1, +1}, row-major with
+    // z outer — the layout generateSurfaceFromFormula writes.
+    const hf = new Float32Array([10, 20,     // z = −1 :  x = −1 , x = +1
+                                 30, 40]);   // z = +1 :  x = −1 , x = +1
     const geo = makeMockGeo(4);
-    for (let i = 0; i < 4; i++) geo.attributes.position.setXYZ(i, i + 1, -99, (i + 1) * 10);
-    applyHeightField(geo, new Float32Array([0.5, 1.5, 2.5, 3.5]));
+    const p   = geo.attributes.position;
+    // Index order and lattice order deliberately disagree. Under the old rule
+    // vertex 0 would take 10; it sits at (+1, +1), so it must take 40.
+    p.setXYZ(0, +1, -99, +1);
+    p.setXYZ(1, -1, -99, -1);
+    p.setXYZ(2, +1, -99, -1);
+    p.setXYZ(3, -1, -99, +1);
+    applyHeightField(geo, hf, null, 1);
 
-    for (let i = 0; i < 4; i++) {
-      assert.equal(geo.attributes.position.getY(i), 0.5 + i, `vertex ${i} took the wrong height`);
-      assert.equal(geo.attributes.position.getX(i), i + 1, 'X must not move — this is a height field');
-      assert.equal(geo.attributes.position.getZ(i), (i + 1) * 10, 'Z must not move');
-    }
+    assert.equal(p.getY(0), 40, 'vertex 0 sits at (+1,+1)');
+    assert.equal(p.getY(1), 10, 'vertex 1 sits at (−1,−1)');
+    assert.equal(p.getY(2), 20, 'vertex 2 sits at (+1,−1)');
+    assert.equal(p.getY(3), 30, 'vertex 3 sits at (−1,+1)');
+    assert.equal(p.getX(0), +1, 'X must not move — this is a height field');
+    assert.equal(p.getZ(0), +1, 'Z must not move');
+  });
+
+  test('control — on a mesh that IS the lattice in order, this is the old index identity', () => {
+    // The one arrangement the old rule was right for. It must still hold, or
+    // the fix would have moved the plane, which is the shape the whole app is
+    // built around.
+    const hf  = new Float32Array([10, 20, 30, 40]);
+    const geo = makeMockGeo(4);
+    const p   = geo.attributes.position;
+    p.setXYZ(0, -1, -99, -1);
+    p.setXYZ(1, +1, -99, -1);
+    p.setXYZ(2, -1, -99, +1);
+    p.setXYZ(3, +1, -99, +1);
+    applyHeightField(geo, hf, null, 1);
+    for (let i = 0; i < 4; i++) assert.equal(p.getY(i), hf[i]);
+  });
+
+  test('the field is a displacement from the base, not a replacement of it', () => {
+    // Why it must be: on every shape but the plane the vertex has a height of
+    // its own, and overwriting it deleted the shape — a sphere became the
+    // graph of f over the sphere's shadow. basePositions is the pristine
+    // geometry; the plane's is zero, which is what makes this a no-op there.
+    const hf   = new Float32Array([10, 20, 30, 40]);
+    const geo  = makeMockGeo(4);
+    const p    = geo.attributes.position;
+    p.setXYZ(0, -1, -99, -1);
+    p.setXYZ(1, +1, -99, -1);
+    p.setXYZ(2, -1, -99, +1);
+    p.setXYZ(3, +1, -99, +1);
+    const base = new Float32Array([-1, 5, -1,  +1, 6, -1,  -1, 7, +1,  +1, 8, +1]);
+    applyHeightField(geo, hf, base, 1);
+    assert.equal(p.getY(0), 15);
+    assert.equal(p.getY(1), 26);
+    assert.equal(p.getY(2), 37);
+    assert.equal(p.getY(3), 48);
+  });
+
+  test('two vertices at the same point get the same height — nothing is torn', () => {
+    // The five PolyhedronGeometry solids carry each corner three to seven
+    // times over, with different indices. Under the old rule those copies took
+    // different heights and the solid came apart: measured spread up to 7.0
+    // world units on a body of radius 3.5.
+    const hf  = new Float32Array([10, 20, 30, 40]);
+    const geo = makeMockGeo(3);
+    const p   = geo.attributes.position;
+    p.setXYZ(0, +1, -99, -1);
+    p.setXYZ(1, +1, -99, -1);   // same point, different index
+    p.setXYZ(2, +1, -99, -1);   // and again
+    applyHeightField(geo, hf, null, 1);
+    assert.equal(p.getY(0), p.getY(1));
+    assert.equal(p.getY(1), p.getY(2));
   });
 
   test('the buffer is flagged for upload, or the surface freezes on frame one', () => {
@@ -236,11 +306,35 @@ describe('applyHeightField — the height field reaching the mesh', () => {
     assert.equal(geo.normalsComputed, 1);
   });
 
-  test('a short height field leaves the rest of the mesh flat rather than NaN', () => {
-    const geo = makeMockGeo(4);
-    applyHeightField(geo, new Float32Array([7, 8]));
-    assert.equal(geo.attributes.position.getY(2), 0);
-    assert.equal(geo.attributes.position.getY(3), 0);
+  test('a field that is not gridSize² still writes a number, never NaN', () => {
+    // The app cannot produce one — generateSurfaceFromFormula returns exactly
+    // gridSize² — but the old code's `heightField[i] ?? 0` was the guard here,
+    // and dropping it must not open a hole. The grid is read off the field's
+    // own length, so a length below 4 degenerates to a single sample and
+    // anything longer is sampled on the largest lattice that fits.
+    for (const len of [0, 1, 2, 3, 5, 7]) {
+      const geo = makeMockGeo(4);
+      const p   = geo.attributes.position;
+      p.setXYZ(0, -1, -99, -1);
+      p.setXYZ(1, +1, -99, -1);
+      p.setXYZ(2, -1, -99, +1);
+      p.setXYZ(3, +9, -99, -9);          // far outside the domain, clamps
+      applyHeightField(geo, new Float32Array(len).fill(7), null, 1);
+      for (let i = 0; i < 4; i++) {
+        assert.ok(Number.isFinite(p.getY(i)), `len ${len}, vertex ${i} is not finite`);
+      }
+    }
+  });
+
+  test('a vertex outside the domain takes the edge value, not a hole', () => {
+    const hf  = new Float32Array([10, 20, 30, 40]);
+    const geo = makeMockGeo(2);
+    const p   = geo.attributes.position;
+    p.setXYZ(0, -50, -99, -50);   // beyond the −1 corner
+    p.setXYZ(1, +50, -99, +50);   // beyond the +1 corner
+    applyHeightField(geo, hf, null, 1);
+    assert.equal(p.getY(0), 10);
+    assert.equal(p.getY(1), 40);
   });
 });
 

@@ -383,7 +383,31 @@ describe('an editor vertex program still morphs', () => {
     document._els.clear();
   });
 
-  const yWrites = src => src.split('\n').filter(l => /pos\.y\s*=/.test(l));
+  // Statements, not lines, and comments out first. Both halves are repairs of
+  // a measured defect, not tidying:
+  //
+  //   • LINES. `src.split('\n').filter(l => /pos\.y\s*=/.test(l))` reads a
+  //     write reflowed across two lines as a line that has lost
+  //     uMorphProgress. Row C1 of the round-10 matrix is exactly that — the VS
+  //     write wrapped after `(pos.y + f)`, arithmetic untouched — and it turned
+  //     the CONTROL below red. A control that fires on a behaviour-preserving
+  //     edit is not measuring what it claims to; this one was measuring source
+  //     layout.
+  //   • COMMENTS. The same line read prose as code (blind spot D3 of the
+  //     round-10 matrix). Its live cost was already paid: the agent that wrote
+  //     the FIX note in src/shaders.js reports spelling an example out in
+  //     English instead of GLSL to keep this test green — prose shaped to fit a
+  //     regexp, which is the habit that produces guards like this one.
+  //
+  // Verified both ways in wave 2: C1 and a comment carrying an unscaled write
+  // (row C7) both leave this file green now, and the defect the file exists for
+  // (row A11, the CPU write losing uMorphProgress) still turns it red.
+  const yWrites = src => src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ')
+    .split(';')
+    .map(s => s.trim())
+    .filter(s => /(^|[^A-Za-z0-9_.])pos\.y\s*[+\-*/]?=(?!=)/.test(s));
 
   test('every pos.y it writes is scaled by uMorphProgress', () => {
     se._tab = 'vert';
@@ -392,16 +416,43 @@ describe('an editor vertex program still morphs', () => {
 
     const writes = yWrites(se.customVS);
     assert.ok(writes.length, 'precondition: the template writes pos.y at all');
-    for (const line of writes) {
-      assert.match(line, /uMorphProgress/,
-        `a shape swap deflates through this uniform; unscaled, the morph is a cut: ${line.trim()}`);
+    for (const stmt of writes) {
+      assert.match(stmt, /uMorphProgress/,
+        `a shape swap deflates through this uniform; unscaled, the morph is a cut: ${stmt}`);
     }
   });
 
   test('control — the built-in VS it mirrors satisfies the same rule', () => {
     const writes = yWrites(VS);
     assert.ok(writes.length);
-    for (const line of writes) assert.match(line, /uMorphProgress/);
+    for (const stmt of writes) assert.match(stmt, /uMorphProgress/);
+  });
+
+  test('the reader behind those two: statements, and no prose', () => {
+    // Without this the rule above is only as good as a regexp nobody measured.
+    // Four cases on text this test owns.
+    const reflowed = 'vec3 pos = position;\npos.y = (pos.y + f)\n    * uMorphProgress;';
+    assert.deepEqual(yWrites(reflowed), ['pos.y = (pos.y + f)\n    * uMorphProgress'],
+      'a write reflowed across two lines still reads as one write — this is row C1, the ' +
+      'behaviour-preserving edit that used to turn the control above red');
+
+    const commented = 'void main(){\n  // before round 10 this was pos.y = f;\n' +
+      '  /* and once pos.y += f; */\n  pos.y = (pos.y + f) * uMorphProgress;\n}';
+    assert.equal(yWrites(commented).length, 1,
+      'the reader is counting comments as writes; it would report a defect in a file that ' +
+      'only DESCRIBES one, which is what taught an author to reword src/shaders.js');
+
+    // It must still see the thing it is for: an unscaled write is one write,
+    // and it is the one that fails the rule.
+    const unscaled = 'vec3 pos = position;pos.y = pos.y;';
+    assert.deepEqual(yWrites(unscaled), ['pos.y = pos.y']);
+    assert.doesNotMatch(yWrites(unscaled)[0], /uMorphProgress/);
+
+    // …and a READ of pos.y is not a write. `vH = (pos.y - aBaseY) * p` is the
+    // CPU branch's colour line and must not be dragged in.
+    assert.deepEqual(
+      yWrites('vH = (uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress : pos.y * uMorphProgress;'),
+      []);
   });
 });
 

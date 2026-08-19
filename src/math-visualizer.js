@@ -7,8 +7,14 @@
 // single uniform and reads whatever the CPU wrote into the geometry.
 //
 //   uMathMode = 0 → GPU shader owns pos.y (default path).
-//   uMathMode = 1 → CPU writes pos.y / position attribute; shader leaves
-//                   it untouched and only uses vH = pos.y for coloring.
+//   uMathMode = 1 → CPU writes pos.y / position attribute; the shader scales
+//                   it by uMorphProgress and colours by it.
+//
+// Colour is a second, narrower question, and uMathMode cannot answer it: it is
+// 1 for all three CPU modes. The ramp wants the audio displacement alone, and
+// in Surface mode the attribute holds base + field (round 10 made the shape
+// keep its own y), so the base has to come back out. uVHField carries that one
+// bit to the shader and _syncColourSource is the only thing that writes it.
 //
 // Three deformation modes share this surface:
 //   surface  — Y-only height field on a grid. Default, worker-accelerated.
@@ -217,6 +223,14 @@ export class MathVisualizer {
     this._prevHF        = null;
     this._blendBuf      = null;
     this._hfBuffer      = null;
+    // The last field actually APPLIED, kept because the blend works in grid
+    // space while the mesh now carries vertex space — see _applyHF. Null means
+    // "the mesh is not carrying a field", which is the state every pristine
+    // restore puts it in. _lastHFBuf is the storage behind it: _applyHF copies
+    // into it rather than aliasing the caller's array, so nulling _lastHF
+    // costs no allocation on the way back.
+    this._lastHF        = null;
+    this._lastHFBuf     = null;
     this._blendActive   = false;
     this._blendStart    = 0;
     this._blendDuration = render.isMobile ? 400 : 800;
@@ -323,10 +337,14 @@ export class MathVisualizer {
 
     this._generation++;
 
-    // Snapshot the current heights so the blend has a "from" state.
-    // We read from the live geometry rather than _hfBuffer because the
-    // user may have been in a different mode (volume/collapse) where the
-    // hf buffer is stale.
+    // Snapshot the field the mesh is carrying, so the blend has a "from"
+    // state. That field is _lastHF — the one _applyHF wrote — and NOT the live
+    // geometry: see the FIX(r10) note below for why reading Y back is wrong
+    // now. _lastHF means "the field the mesh currently carries", so every path
+    // that takes the field OFF the mesh has to clear it, or this line starts
+    // the next blend from something the user is no longer looking at:
+    // _restorePristineToMesh() (setMode, setVolumeFormula, setVolumeFn,
+    // deactivate all go through it) and onShapeChange() both null it.
     if (this.active && this._gridSize) {
       const pos   = this.render.gpuMesh.geometry.attributes.position;
       const count = pos.count;
@@ -341,13 +359,15 @@ export class MathVisualizer {
         this._prevHF   = new Float32Array(hfLen);
         this._blendBuf = new Float32Array(hfLen);
       }
-      // applyHeightField maps hf[i] → vertex i, so the "from" state is read
-      // index-wise as well. When rounding lands hfLen above count, the tail
-      // has no vertex behind it and stays zeroed — those slots are never
-      // written back to geometry anyway.
-      const n = Math.min(count, hfLen);
-      for (let i = 0; i < n; i++)     this._prevHF[i] = pos.getY(i);
-      for (let i = n; i < hfLen; i++) this._prevHF[i] = 0;
+      // FIX(r10): the "from" state is the last field APPLIED, not the mesh's
+      // Y read index-wise. applyHeightField now samples the field at each
+      // vertex's own (x,z), so mesh Y is vertex space and hf is grid space;
+      // on the plane the two are the same array, which is why the old read
+      // worked there, but on the other nineteen shapes it would start every
+      // formula transition from a permutation of the outgoing field. With no
+      // field applied yet, blend up from flat — the state the shape is in.
+      if (this._lastHF && this._lastHF.length === hfLen) this._prevHF.set(this._lastHF);
+      else this._prevHF.fill(0);
       this._blendActive = true;
       this._blendStart  = performance.now();
     }
@@ -367,6 +387,7 @@ export class MathVisualizer {
     }
 
     this.render.U.uMathMode.value = 1;
+    this._syncColourSource();
   }
 
   /**
@@ -396,6 +417,7 @@ export class MathVisualizer {
     this.active     = true;
     this._pendingHF = null;
     this.render.U.uMathMode.value = 1;
+    this._syncColourSource();
   }
 
   /**
@@ -416,6 +438,7 @@ export class MathVisualizer {
     this.active    = true;
     this._pendingHF = null;
     this.render.U.uMathMode.value = 1;
+    this._syncColourSource();
   }
 
   /**
@@ -481,6 +504,7 @@ export class MathVisualizer {
       this._snapshotBasePositions();
     }
     this._mode = mode;
+    this._syncColourSource();
   }
 
   /**
@@ -503,6 +527,7 @@ export class MathVisualizer {
     // partially) to the new geometry.
     this._generation++;
     this._pendingHF    = null;
+    this._lastHF       = null;   // belongs to the geometry that just went away
     this._workerBusy   = false;
     this._blendActive  = false;
     this._lastTickTime = null;
@@ -516,6 +541,13 @@ export class MathVisualizer {
     if (this._mode === 'volume' || this._mode === 'collapse') {
       this._snapshotBasePositions();
     }
+
+    // The pristine snapshot the colour ramp subtracts is the one just taken,
+    // so re-state which value the ramp should read. This is the call that
+    // matters when a formula was armed before any shape had been announced:
+    // until this point there was no base to subtract and the ramp had to
+    // colour by pos.y.
+    this._syncColourSource();
 
     // Re-arm the worker with the current formula so it knows about the
     // (possibly) new grid size. If no formula is active, nothing to do.
@@ -576,6 +608,7 @@ export class MathVisualizer {
     }
 
     this.render.U.uMathMode.value = 0;
+    this._syncColourSource();
 
     if (this._pristinePositions) {
       this._restorePristineToMesh();
@@ -584,6 +617,11 @@ export class MathVisualizer {
 
     // No snapshot yet — nothing has announced a shape. Y is all this path can
     // have touched, and it is what the old code did in every case.
+    // Same invariant as the restore above: the field is off the mesh. Nothing
+    // observes it on this branch today — deactivate leaves active === false, so
+    // setFormula skips the snapshot entirely — so this is here to keep "_lastHF
+    // is what the mesh carries" true by construction rather than by luck.
+    this._lastHF = null;
     const pos = this.render.gpuMesh.geometry.attributes.position;
     for (let i = 0; i < pos.count; i++) pos.setY(i, 0);
     pos.needsUpdate = true;
@@ -634,6 +672,11 @@ export class MathVisualizer {
       if (this._worker && this._workerReady && this._collId) {
         this._worker.postMessage({ type: 'setFormula', collectionId: this._collId, formulaKey: this._formulaKey });
       }
+      // The snapshot the ramp subtracts is now the wrong length for this
+      // geometry, and applyHeightField will ignore it for exactly that reason
+      // — so the ramp must stop subtracting too, or it would take the old
+      // shape's body out of a field that no longer has it in.
+      this._syncColourSource();
     }
 
     if (this._mode === 'volume') {
@@ -863,6 +906,38 @@ export class MathVisualizer {
     );
   }
 
+  /**
+   * Tell the vertex program which value the colour ramp should read.
+   *
+   * The ramp's window is the size of the audio displacement and nothing wider
+   * (t = clamp((vH+.8)*.6,.03,.97) — see the note at the top of VS), so it has
+   * to be handed the FIELD, not the absolute height. Surface mode is the only
+   * mode where the two differ: applyHeightField writes base + field, and the
+   * base comes back out as pos.y - aBaseY. Volume and Collapse have always
+   * written base + displacement and have always coloured by the sum; this
+   * method is what keeps them bit-identical rather than "close".
+   *
+   * The condition is not "are we in Surface mode" but the exact condition
+   * applyHeightField uses to decide whether it added a base at all:
+   *
+   *     base = (basePositions && basePositions.length === n*3) ? basePositions : null
+   *
+   * With no usable snapshot the field is written alone, and subtracting aBaseY
+   * would then take out a body that is not in there. Keeping the two tests
+   * identical is what makes every fallback path agree instead of disagree.
+   *
+   * uVHField is absent only from the hand-built render stubs in the tests; the
+   * app's uniform block always declares it.
+   */
+  _syncColourSource() {
+    const u = this.render.U?.uVHField;
+    if (!u) return;
+    const pos    = this.render.gpuMesh?.geometry?.attributes?.position;
+    const based  = !!(this._pristinePositions && pos &&
+                      this._pristinePositions.length === pos.count * 3);
+    u.value = (this.active && this._mode === 'surface' && based) ? 1 : 0;
+  }
+
   // ── Private — volume / collapse helpers ──────────────────────────────────
 
   /**
@@ -952,6 +1027,17 @@ export class MathVisualizer {
         this.render.gpuPtsProxy.geometry.computeVertexNormals();
       }
     }
+
+    // The mesh no longer carries a height field, so the blend has nothing to
+    // start FROM: the next setFormula must blend up from the restored shape.
+    // Set here rather than in each of the four callers (setMode,
+    // setVolumeFormula, setVolumeFn, deactivate) because this is the line that
+    // makes it true — and because the two early returns above deliberately do
+    // NOT clear it: if the restore did not happen, the field is still on the
+    // mesh. Measured: without this, Surface → Collapse → Surface → new formula
+    // put the OLD formula's plate on screen for the first frame and blended
+    // away from it (0.98 world units on the plane, 0.96 on the sphere).
+    this._lastHF = null;
   }
 
   /**
@@ -1067,9 +1153,54 @@ export class MathVisualizer {
     if (rawT >= 1) this._blendActive = false;
   }
 
-  /** Push a height field into both the main mesh and the points proxy. */
+  /**
+   * Push a height field into the mesh — and into the points proxy only when
+   * that is a DIFFERENT geometry object.
+   *
+   * FIX(r10 §1.3/§1.4/§1.6): the pristine snapshot is the Y the field
+   * displaces from; without it applyHeightField falls back to a bare graph and
+   * the shape's own height is lost. It is captured by onShapeChange() before
+   * any tick can run (main.js wires it to RenderEngine.setShape and calls it
+   * once at boot), and Surface ticks never write X or Z, so it stays the
+   * shape's true position for as long as the shape lives.
+   *
+   * FIX(r10 §1.8): the proxy deliberately BORROWS gpuMesh.geometry — render.js
+   * builds it with that very object and setShape assigns one newGeo to both —
+   * so the two calls wrote the same Y values into the same buffer twice and
+   * ran computeVertexNormals twice, every frame in PTS mode. Measured here:
+   * box 9.78 ms per _applyHF against a 16.7 ms budget, 4.85 ms once. The
+   * identity TEST rather than dropping the second call outright: if a proxy
+   * ever does get a geometry of its own it is still filled exactly as before,
+   * so this is a no-op on every arrangement that was already correct.
+   *
+   * _lastHF is the field a formula change blends away FROM: the blend works in
+   * grid space, and reading it back off the mesh would read vertex space.
+   *
+   * FIX(r10, wave 2): copy into _lastHFBuf instead of keeping the caller's
+   * array. Every array that reaches here is one somebody else keeps writing:
+   * on the worker path `hf` IS _hfBuffer, which the next reply overwrites in
+   * place, and during a blend it IS _blendBuf, rewritten every frame. Aliasing
+   * made _lastHF mean "whatever those buffers hold now". Measured with a stub
+   * Worker driving the real onmessage handler: with a reply landing between an
+   * apply and the next tick, the blend's from-state was the field that had NOT
+   * reached the mesh. Size of the error = one frame of the formula's own
+   * motion, which over the catalogue is 0 for 100 of 192 formulas and 0.71
+   * world units (200 % of its own peak) for topology/helicoid. The copy is one
+   * Float32Array.set of gridSize² per frame — the same buffer discipline
+   * _prevHF and _blendBuf already keep, and no steady-state allocation. Cost
+   * measured on the largest geometry the app builds (plane 161×161, 25921
+   * floats): 0.0011 ms against applyHeightField's own 3.20 ms on the same
+   * array, i.e. 0.03 % of the call it rides along with.
+   */
   _applyHF(hf) {
-    applyHeightField(this.render.gpuMesh.geometry, hf);
-    if (this.render.gpuPtsProxy) applyHeightField(this.render.gpuPtsProxy.geometry, hf);
+    if (!this._lastHFBuf || this._lastHFBuf.length !== hf.length) {
+      this._lastHFBuf = new Float32Array(hf.length);
+    }
+    this._lastHFBuf.set(hf);
+    this._lastHF = this._lastHFBuf;
+    const geo = this.render.gpuMesh.geometry;
+    applyHeightField(geo, hf, this._pristinePositions);
+    const ptsGeo = this.render.gpuPtsProxy?.geometry;
+    if (ptsGeo && ptsGeo !== geo) applyHeightField(ptsGeo, hf, this._pristinePtsPositions);
   }
 }
