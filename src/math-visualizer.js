@@ -1034,9 +1034,13 @@ export class MathVisualizer {
     // setVolumeFormula, setVolumeFn, deactivate) because this is the line that
     // makes it true — and because the two early returns above deliberately do
     // NOT clear it: if the restore did not happen, the field is still on the
-    // mesh. Measured: without this, Surface → Collapse → Surface → new formula
-    // put the OLD formula's plate on screen for the first frame and blended
-    // away from it (0.98 world units on the plane, 0.96 on the sphere).
+    // mesh. Without this line, Surface → Collapse → Surface → new formula puts
+    // the OLD formula's plate on screen for the first frame and blends away
+    // from it. `tests/blend-from-state.test.js` is where that is measured and
+    // where the numbers live: delete this line and it prints 0.9795 world units
+    // on the plane and 0.9640 on the sphere, in its own failure messages, on
+    // the desktop geometry it builds. Its third test walks every path that
+    // reaches this method, so a partial fix fails it too.
     this._lastHF = null;
   }
 
@@ -1167,11 +1171,19 @@ export class MathVisualizer {
    * FIX(r10 §1.8): the proxy deliberately BORROWS gpuMesh.geometry — render.js
    * builds it with that very object and setShape assigns one newGeo to both —
    * so the two calls wrote the same Y values into the same buffer twice and
-   * ran computeVertexNormals twice, every frame in PTS mode. Measured here:
-   * box 9.78 ms per _applyHF against a 16.7 ms budget, 4.85 ms once. The
-   * identity TEST rather than dropping the second call outright: if a proxy
-   * ever does get a geometry of its own it is still filled exactly as before,
-   * so this is a no-op on every arrangement that was already correct.
+   * ran computeVertexNormals twice, every frame in PTS mode. It cost a second
+   * full applyHeightField per frame: on the box, the largest geometry the app
+   * builds a shape from (39 366 vertices, grid 198), the doubled call is
+   * measured at almost exactly twice the single one, and the single one is
+   * already about a third of a 60 fps frame. Absolute readings on this
+   * developer's device — an ARM64 Debian guest, node 24 — were 4.85 and 9.78 ms
+   * in one session and 5.22 and 10.41 ms in another, which is why the durable
+   * statement here is the RATIO and the fraction of the budget, not the
+   * milliseconds: re-derive with two calls against one on the box's geometry,
+   * on whatever machine is asking. The identity TEST rather than dropping the
+   * second call outright: if a proxy ever does get a geometry of its own it is
+   * still filled exactly as before, so this is a no-op on every arrangement
+   * that was already correct.
    *
    * _lastHF is the field a formula change blends away FROM: the blend works in
    * grid space, and reading it back off the mesh would read vertex space.
@@ -1183,14 +1195,32 @@ export class MathVisualizer {
    * made _lastHF mean "whatever those buffers hold now". Measured with a stub
    * Worker driving the real onmessage handler: with a reply landing between an
    * apply and the next tick, the blend's from-state was the field that had NOT
-   * reached the mesh. Size of the error = one frame of the formula's own
-   * motion, which over the catalogue is 0 for 100 of 192 formulas and 0.71
-   * world units (200 % of its own peak) for topology/helicoid. The copy is one
-   * Float32Array.set of gridSize² per frame — the same buffer discipline
-   * _prevHF and _blendBuf already keep, and no steady-state allocation. Cost
-   * measured on the largest geometry the app builds (plane 161×161, 25921
-   * floats): 0.0011 ms against applyHeightField's own 3.20 ms on the same
-   * array, i.e. 0.03 % of the call it rides along with.
+   * reached the mesh.
+   *
+   * Size of the error = one frame of the formula's own motion, max over the
+   * lattice of |f(t + 0.008) − f(t)| at t = 0. That count depends on the grid
+   * and on the amplitude, so both have to be named: over the 192 catalogue
+   * formulas it is exactly 0 for 100 of them at grids 21, 83, 90 and 198, and
+   * for 99 at 43, 81 and 161 — and 43 and 83 are the boot grids while 81 and
+   * 161 are the plane's own, so the count differs between two grids the app
+   * boots on. "About a hundred of 192 take no clock" is the form that does not
+   * depend on which lattice is asking. The largest single reading is
+   * topology/helicoid, 0.70659 world units at the validation baseline amp 1.00
+   * (0.49461 at the factory 0.70), which is 199.9 % of its own peak at the
+   * same setting — and even that is grid-conditioned: it holds at 3, 5, 21,
+   * 43, 81, 83 and 161 and collapses to 0.00027 at 90 and 198. Grid 90 is not
+   * a lattice this app lays down; 43 and 83 are the boot grids. CONTROL for
+   * that count: at dt = 0 all 192 read exactly 0, and 88 of the 192 move at
+   * every grid tested — so a formula reading 0 is standing still, not the
+   * comparator being blind.
+   *
+   * The copy is one Float32Array.set of gridSize² per frame — the same buffer
+   * discipline _prevHF and _blendBuf already keep, and no steady-state
+   * allocation. Its cost is a memcpy of 25 921 floats against a per-vertex
+   * sample-and-normals pass over the same plate: on this developer's device the
+   * two read 0.0044 ms and 3.29 ms, so the copy is a fraction of a percent of
+   * the call it rides along with. Both are machine numbers; the durable claim
+   * is the ratio, and it is the reason this fix costs nothing to take.
    */
   _applyHF(hf) {
     if (!this._lastHFBuf || this._lastHFBuf.length !== hf.length) {

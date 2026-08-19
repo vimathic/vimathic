@@ -287,6 +287,78 @@ describe('the paths the app takes and the guards above do not', () => {
       `the no-base path is not drawing the field it was given: ${weak.join(', ')}`);
   });
 
+  test('the census MATHEMATICAL_ACCURACY.md publishes is the census this tree produces', () => {
+    // A number in that document had been written three ways across this round —
+    // "ten and eight", then "eight and ten", then back — because each revision
+    // was measured in a private sandbox and none of them had a home here. This
+    // is the home. Per the document's own rule for numbers in comments, the
+    // conditions are named and they are the ones the sentence names:
+    //
+    //   geometry   the real RenderEngine.setShape, desktop planeSegs 160
+    //   grid       round(sqrt(vertexCount)) — the shape's own grid
+    //   field      f = sin(1.3x) + cos(0.9z) + 0.2xz via generateSurfaceFromFormula
+    //   vertices   ALL of them, including those outside the domain. The two
+    //              tests above deliberately drop those, because they ask a
+    //              different question; the document does not, so neither does
+    //              this. Measuring the same shapes on the two bases gives two
+    //              different tables, which is exactly how a number ends up
+    //              unreproducible.
+    //   threshold  "1.000000" means r >= 0.9999995, i.e. what rounds to six
+    //              nines. Only plane and octahedron read a bit-exact 1.
+    let ones = 0, near = 0;
+    const below = [];
+    for (const shape of SHAPE_NAMES) {
+      const g    = build(shape);
+      const pos  = g.attributes.position;
+      const base = pristineOf(g);
+      const { hf } = fieldFor(pos.count);
+      applyHeightField(g, hf, base, EXTENT);
+
+      const drawn = [], wanted = [];
+      for (let i = 0; i < pos.count; i++) {
+        drawn.push(pos.getY(i) - base[i * 3 + 1]);
+        wanted.push(F(base[i * 3], base[i * 3 + 2]));
+      }
+      const r = pearson(drawn, wanted);
+      if (r >= 0.9999995) ones++;
+      else if (r >= 0.997) near++;
+      else below.push(`${shape} ${Number(r).toFixed(3)}`);
+      g.dispose();
+    }
+    assert.equal(ones, 8, `the document says eight shapes round to 1.000000; this tree gives ${ones}`);
+    assert.equal(near, 10, `the document says ten more clear 0.997; this tree gives ${near}`);
+    assert.deepEqual(below, ['tetrahedron 0.407', 'star 0.954'],
+      'the document names exactly these two as falling short, with these values');
+  });
+
+  test('CONTROL — that census is not something every rule produces', () => {
+    // Without this the census above could be read as "any sane implementation
+    // scores like that". It cannot: the rule this round replaced scores nothing
+    // like it, on the identical basis.
+    let ones = 0, near = 0, belowCount = 0;
+    for (const shape of SHAPE_NAMES) {
+      const g    = build(shape);
+      const pos  = g.attributes.position;
+      const base = pristineOf(g);
+      const { hf } = fieldFor(pos.count);
+      for (let i = 0; i < pos.count; i++) pos.setY(i, hf[i] ?? 0);   // the old index identity
+
+      const drawn = [], wanted = [];
+      for (let i = 0; i < pos.count; i++) {
+        drawn.push(pos.getY(i));
+        wanted.push(F(base[i * 3], base[i * 3 + 2]));
+      }
+      const r = pearson(drawn, wanted);
+      if (r >= 0.9999995) ones++;
+      else if (r >= 0.997) near++;
+      else belowCount++;
+      g.dispose();
+    }
+    assert.ok(belowCount >= 15,
+      `the index identity should fail almost every shape on this basis; only ${belowCount} of ` +
+      `${SHAPE_NAMES.length} fell short (${ones} at 1.000000, ${near} above 0.997)`);
+  });
+
   test('CONTROL — the same stencil DOES report the index identity', () => {
     // Sensitivity, on the same shape and the same measurement: if this stops
     // failing, the test above has stopped meaning anything. 'box' because
@@ -344,10 +416,15 @@ describe('the paths the app takes and the guards above do not', () => {
       sites.push({ where: `${file}: ${what}`, token: m[1] });
     };
     const vis = read('math-visualizer.js');
-    take('math-visualizer.js', vis, /extent:\s*([A-Za-z_0-9.]+)\s*,/,
+    // Whitespace carries nothing in JavaScript, so it must carry nothing here
+    // either: `extent : 3.5,` and `…, (t))` are the same code, and the first
+    // draft of these two patterns went red on both while reporting that the
+    // guard had "gone stale". A guard that fails on a space and blames the
+    // source is how source ends up written for the guard.
+    take('math-visualizer.js', vis, /extent\s*:\s*([A-Za-z_0-9.]+)\s*,/,
       'the extent posted to the worker');
     take('math-visualizer.js', vis,
-      /generateSurfaceFromFormula\([^)]*?,\s*([A-Za-z_0-9.]+),\s*t\)/,
+      /generateSurfaceFromFormula\([^;]*?,\s*([A-Za-z_0-9.]+)\s*,\s*\(?\s*t\s*\)?\s*\)/,
       'the extent of the synchronous fallback');
     // The worker's destructuring default is OPTIONAL. Dropping it is the
     // stronger fix — a message that omits the extent would then fail loudly

@@ -126,7 +126,8 @@ on the pre-round-5 code and pass on this one.
 Formulas labelled as running "on a 64×64 grid" or similar in this document refer to the **internal simulation grid** used by heavy CPU formulas (cellular automata, reaction-diffusion PDEs, etc.). These internal grids are bilinearly interpolated onto the main display mesh, whose resolution is adaptive:
 
 - The plane carries `planeSegs` 80 on mobile and 160 on desktop
-  (`src/main.js:32`) — **81 and 161 vertices per side, and no other value.** The
+  (`src/main.js`, `planeSegs: isMobile ? 80 : 160` in the CFG literal) — **81 and
+  161 vertices per side, and no other value.** The
   tier bump in `RenderEngine`'s constructor raises `planeSegs` to
   `max(planeSegs, 160)` on tier `high`/`ultra`, which is a no-op on desktop and
   never fires on mobile, where `_detectPerformanceTier()` returns `low` on its
@@ -159,10 +160,17 @@ Formulas labelled as running "on a 64×64 grid" or similar in this document refe
   into whatever buffer the shape laid down — value *i* to vertex *i* — which is
   the lattice only for the rotated plane. It is now sampled at each vertex's own
   (x, z) and added to the vertex's pristine Y, so the plate is a plate over the
-  domain on all twenty. Measured through the real `setShape` and the real
-  `applyHeightField` with f = sin(1.3x) + cos(0.9z) + 0.2xz, the drawn
-  displacement correlates **1.000000** with f(x, z) on eight of the twenty and
-  **≥ 0.997** on ten more. Two fall short: `star` reads **0.954** and
+  domain on all twenty. Measured through the real `setShape` at desktop
+  `planeSegs` 160 and the real `applyHeightField`, probe field
+  f = sin(1.3x) + cos(0.9z) + 0.2xz on each shape's own grid, the drawn
+  displacement correlates **1.000000** with f(x, z) — that is, r ≥ 0.9999995,
+  which is what rounds to six nines; only `plane` and `octahedron` read a bit-
+  exact 1.000000000 — on **eight** of the twenty, and **≥ 0.997** on **ten**
+  more. (Two earlier revisions of this bullet disagreed about which count was
+  which, because each was measured in a sandbox and none of them had a home in
+  the repository. This one does: `tests/surface-field-on-shapes.test.js`, "the
+  census MATHEMATICAL_ACCURACY.md publishes is the census this tree produces",
+  which fails if either count moves.) Two fall short: `star` reads **0.954** and
   `tetrahedron` **0.407**. Neither is a surviving permutation — it is the
   field's own lattice, because those two draw at grid 5 and grid 3 and what the
   correlation measures there is the bilinear interpolant. Holding the shape
@@ -170,9 +178,16 @@ Formulas labelled as running "on a 64×64 grid" or similar in this document refe
   21 and to 1.000000 at grid 81; the old index identity does not converge that
   way at all — on `tetrahedron` it reads −0.361, 0.055, 0.204, 0.206, 0.197,
   0.182 at grids 3, 21, 41, 81, 161, 641 — which is what separates an
-  interpolation error from a permutation. Coincident vertices take equal
-  heights, and no vertex past gridSize² is left pinned at zero. `gridSize` still sets the *resolution* of
-  the sampled field, which is why the grid list above still matters.
+  interpolation error from a permutation. `tests/surface-field-on-shapes.test.js`
+  is where these are re-derived: its "the drawn displacement is the field at the
+  vertex own (x,z)" test drives the same `setShape` and the same probe field and
+  fails on any shape that drops below 0.99 — `star` and `tetrahedron` excepted by
+  name, since 26 and 12 sampled vertices cannot support a correlation, and both
+  are covered instead by the tearing and coverage stencils in the same file — and
+  its CONTROL replays the old identity so the stencil is shown able to fail.
+  Coincident vertices take equal heights, and no vertex past gridSize² is left
+  pinned at zero. `gridSize` still sets the *resolution* of the sampled field,
+  which is why the grid list above still matters.
 - The boot shape is `pyramid-smooth` (`RenderEngine`'s constructor), so the
   first plate any formula draws is grid **43 on mobile and 83 on desktop** —
   both odd since round 10, where both were even before it. Grid 43 carries a
@@ -231,7 +246,8 @@ general baseline is `{amp: 1, freq: 1, comp: 0.5}` (`tests/math-validation.test.
 amp **1** rather than the app's 0.7, and a few rows quote that corner by name.
 Amp is a linear scale on most kernels, so the two differ by more than rounding
 wherever a fold, a clamp or a threshold is involved. The plate is
-laid down at `planeSegs` 80 on mobile and 160 on desktop (`src/main.js:32`),
+laid down at `planeSegs` 80 on mobile and 160 on desktop (`src/main.js`,
+`planeSegs: isMobile ? 80 : 160`),
 that is **81 and 161 vertices per side**, while the validation suite counts fold
 coverage at **90** — a lattice the app never draws. That is why every percentage
 below names its grid, and why the same entry legitimately reads two different
@@ -337,6 +353,105 @@ over a named function that does not require one to be still; under clause 3 they
 are clean, and under a strict contract they would each need a sentence. The
 catalogue is an instrument that is watched as much as it is read, and a rule
 that made every entry recite its envelope would be honest and unusable.
+
+### What a number in a comment has to carry
+
+The rule above governs the strings a viewer reads. This one governs the numbers
+the *next author* reads, and it exists for the same reason: the catalogue had
+no rule, and drifted into disagreeing with itself in a way no reader could have
+caught by eye.
+
+Round 10 put dozens of specific measurements into source comments —
+correlations, coverage percentages, world-unit jumps, millisecond costs.
+Eleven turned out to be false when someone re-measured them. The pass that
+corrected those eleven introduced seven more while doing it. Not through
+carelessness: each figure had been read in a private sandbox, under conditions
+the comment did not record, by an author who was no longer there to be asked,
+so every re-measurement was a fresh guess at what had been measured. A number
+whose conditions are unwritten cannot be checked, only re-taken — and a re-take
+under different conditions is indistinguishable from a correction.
+
+> **A number in a comment must be re-derivable by a reader who has only this
+> repository. It states the conditions it was read under, and it is either
+> produced by a committed test or probe, or it is not written as a number at
+> all.**
+
+Conditions, concretely. Every row below has silently moved a number in this
+repository at least once:
+
+| condition | why it moves the number | measured example |
+|---|---|---|
+| **which tree** | a claim about what the code *used to* do is a claim about the code *and the geometry* of that commit | the old index identity reads **four** negative correlations on the pre-round-10 catalogue (`c629b53`) and **eight** on the repaired one — same rule, same probe, different bodies |
+| **which shape** | the twenty geometries differ in vertex count, vertex order and coincident corners | on the same probe field the drawn/named correlation runs 1.000000 on `plane` and 0.407047 on `tetrahedron` |
+| **which grid** | `gridSize = round(√vertexCount)`, so the lattice follows the shape *and* the platform, and its parity decides whether x = 0 is sampled at all | "0 for 100 of 192 formulas" reads 100 at grids 21, 83, 90 and 198 and 99 at 43, 81 and 161 |
+| **which sliders** | amp, freq, comp — and the factory 0.70 and the validation suite's 1.00 are different corners, not rounding | the same per-frame drift is 0.49461 at amp 0.70 and 0.70659 at amp 1.00 |
+| **which probe field** | a mechanism can only be measured with a field that has no symmetry the defect could hide in | `sin(1.3x) + cos(0.9z) + 0.2xz` for correlation, `f = x` for tearing, a constant for coverage |
+| **which machine** | wall-clock cost, and nothing else | 4.85 ms and 5.22 ms for the same call on the same device, in two sessions |
+
+**A number needs a home.** "Produced by a committed test or probe" means a
+reader can run one command in a fresh clone and watch the figure appear. A path
+into a reviewer's notes directory is not a home — `wave2/numbers/m9-grid-guard.txt`
+was cited from `sampleHeightField` and is not in this repository and never was.
+The three habitable forms are: a test that prints the number in its own failure
+message, a test whose name states the property the number quantifies, and a
+comment that gives the recipe in enough detail to be re-run by hand.
+
+**What to do when a number cannot meet the bar.** Deleting it is usually wrong:
+"the double write was expensive" tells the next author less than a wrong
+millisecond does, because it does not even say what to measure. In descending
+order of preference:
+
+1. **Give it a home.** If a figure is worth stating it is usually worth a test,
+   and the test then carries the conditions in its own setup where they cannot
+   drift away from the number. The plane-and-sphere jump quoted in
+   `_restorePristineToMesh` is printed verbatim — 0.9795 and 0.9640 — by
+   `tests/blend-from-state.test.js` the moment the clear it documents is removed.
+2. **Name the conditions inline**, where a test would be disproportionate, and
+   name them completely enough to rebuild the measurement: tree, shape, grid,
+   sliders, probe field.
+3. **Quote the ratio rather than the reading**, where the absolute value belongs
+   to the machine and the ratio belongs to the code. A fraction of the call it
+   rides along with survives a change of device; a millisecond does not.
+4. **Say the shape of the thing without a digit** — "one frame of the formula's
+   own motion", "the whole range of the field", "inside the unchanged tree's own
+   spread" — when even the conditions are not stable. A qualitative claim that is
+   true beats a quantitative one that is true only in a sandbox nobody kept.
+
+**Never replace a vague statement with a crisp false one.** That trade reads as
+progress in a diff and is the most expensive mistake this document has recorded.
+Where a figure will not resolve, the honest edit is the one that says which
+question is still open.
+
+**Cite by symbol, not by line.** `src/render.js:1116` was right when it was
+written and pointed at unrelated code one round later. Round 10 displaced eight
+such citations in the grid bullets of this file alone — four into `render.js`,
+four into `math-visualizer.js` — and replaced them with symbol names for exactly
+this reason; repairing a rotted citation by writing a fresh line number only
+resets the clock. Name the function, the method, the `case`, the test —
+`RenderEngine`'s constructor, `_buildShapeGeo`'s
+`case 'plane'`, `tests/surface-plumbing.test.js`'s "a field that is not
+gridSize² still writes a number, never NaN" — or give the grep that finds it
+(`grep -n 'Math.round(Math.sqrt' src/math-visualizer.js`). A line number is
+acceptable only where nothing else identifies the site, and then it is written
+together with the text it points at, so a reader can see at a glance that it has
+moved.
+
+**What the rule costs.** Three things, paid knowingly.
+
+Comments get longer, and the longest are on the smallest functions — the
+`grid < 2` guard in `sampleHeightField` is one line of code under a paragraph
+of conditions. That is the right ratio when the line exists because of a
+measurement, and it would be absurd on a line that does not.
+
+It discourages cheap measurement. A figure taken in five minutes now has to
+earn either a test or a paragraph, and the honest consequence is that some true
+things go unquoted. Clause 4 is there so that the alternative to a homeless
+number is a true sentence rather than silence.
+
+And it cannot be enforced mechanically. No test can tell a conditioned number
+from an unconditioned one, so this section is read by people, like the caption
+contract above it — which is why both are written as rules a reviewer can apply
+rather than as taste.
 
 ### Tier A — Machine Precision (Exact)
 

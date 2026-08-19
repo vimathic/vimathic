@@ -30,6 +30,7 @@
 
 import { test, describe, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import * as G from './helpers/glsl.js';
 
 globalThis.document = {
   _els: new Map(),
@@ -383,8 +384,9 @@ describe('an editor vertex program still morphs', () => {
     document._els.clear();
   });
 
-  // Statements, not lines, and comments out first. Both halves are repairs of
-  // a measured defect, not tidying:
+  // Statements, not lines; comments out first; and both the statement and the
+  // uniform it must name are read as TOKENS rather than matched as text. Each
+  // of those is a repair of a measured defect, not tidying:
   //
   //   • LINES. `src.split('\n').filter(l => /pos\.y\s*=/.test(l))` reads a
   //     write reflowed across two lines as a line that has lost
@@ -397,17 +399,21 @@ describe('an editor vertex program still morphs', () => {
   //     round-10 matrix). Its live cost was already paid: the agent that wrote
   //     the FIX note in src/shaders.js reports spelling an example out in
   //     English instead of GLSL to keep this test green — prose shaped to fit a
-  //     regexp, which is the habit that produces guards like this one.
+  //     regexp, which is the habit that produces guards like this one. The
+  //     example is back in GLSL in shaders.js and stays green because of the
+  //     stripping here; narrowing it puts that file red.
+  //   • TOKENS. `assert.match(stmt, /uMorphProgress/)` is a substring search: a
+  //     local called `uMorphProgressScale`, or the name inside a string, would
+  //     satisfy it. tests/helpers/glsl.js tokenises, so the rule is that the
+  //     statement READS that uniform.
   //
   // Verified both ways in wave 2: C1 and a comment carrying an unscaled write
   // (row C7) both leave this file green now, and the defect the file exists for
   // (row A11, the CPU write losing uMorphProgress) still turns it red.
-  const yWrites = src => src
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\n]*/g, ' ')
-    .split(';')
-    .map(s => s.trim())
-    .filter(s => /(^|[^A-Za-z0-9_.])pos\.y\s*[+\-*/]?=(?!=)/.test(s));
+  const yWrites = src =>
+    G.splitStatements(src).filter(s => G.assignsTo(s, ['pos', 'y']));
+  const names = stmt => new Set(stmt.filter(t => t.t === 'id').map(t => t.v));
+  const show = stmt => G.text(stmt);
 
   test('every pos.y it writes is scaled by uMorphProgress', () => {
     se._tab = 'vert';
@@ -417,24 +423,35 @@ describe('an editor vertex program still morphs', () => {
     const writes = yWrites(se.customVS);
     assert.ok(writes.length, 'precondition: the template writes pos.y at all');
     for (const stmt of writes) {
-      assert.match(stmt, /uMorphProgress/,
-        `a shape swap deflates through this uniform; unscaled, the morph is a cut: ${stmt}`);
+      assert.ok(names(stmt).has('uMorphProgress'),
+        `a shape swap deflates through this uniform; unscaled, the morph is a cut: ${show(stmt)}`);
     }
   });
 
   test('control — the built-in VS it mirrors satisfies the same rule', () => {
     const writes = yWrites(VS);
     assert.ok(writes.length);
-    for (const stmt of writes) assert.match(stmt, /uMorphProgress/);
+    for (const stmt of writes) assert.ok(names(stmt).has('uMorphProgress'), show(stmt));
   });
 
   test('the reader behind those two: statements, and no prose', () => {
-    // Without this the rule above is only as good as a regexp nobody measured.
-    // Four cases on text this test owns.
+    // Without this the rule above is only as good as a reader nobody measured.
     const reflowed = 'vec3 pos = position;\npos.y = (pos.y + f)\n    * uMorphProgress;';
-    assert.deepEqual(yWrites(reflowed), ['pos.y = (pos.y + f)\n    * uMorphProgress'],
+    assert.deepEqual(yWrites(reflowed).map(show), ['pos.y=(pos.y+f)*uMorphProgress'],
       'a write reflowed across two lines still reads as one write — this is row C1, the ' +
       'behaviour-preserving edit that used to turn the control above red');
+    // …and the same write typed six other ways is the same one write. Every
+    // one of these turned a guard red in wave 2 while changing nothing.
+    for (const src of ['pos.y=(pos.y+f)*uMorphProgress;',
+                       'pos.y = ( pos.y + f ) * uMorphProgress ;',
+                       'pos.y=(f+pos.y)*uMorphProgress;',
+                       'pos.y=uMorphProgress*(pos.y+f);',
+                       'pos.y=((pos.y+f))*(uMorphProgress);',
+                       'pos.y\n=\n(pos.y\n+\nf)\n*\nuMorphProgress;']) {
+      const w = yWrites(src);
+      assert.equal(w.length, 1, `${src} read as ${w.length} writes`);
+      assert.ok(names(w[0]).has('uMorphProgress'), src);
+    }
 
     const commented = 'void main(){\n  // before round 10 this was pos.y = f;\n' +
       '  /* and once pos.y += f; */\n  pos.y = (pos.y + f) * uMorphProgress;\n}';
@@ -445,14 +462,33 @@ describe('an editor vertex program still morphs', () => {
     // It must still see the thing it is for: an unscaled write is one write,
     // and it is the one that fails the rule.
     const unscaled = 'vec3 pos = position;pos.y = pos.y;';
-    assert.deepEqual(yWrites(unscaled), ['pos.y = pos.y']);
-    assert.doesNotMatch(yWrites(unscaled)[0], /uMorphProgress/);
+    assert.deepEqual(yWrites(unscaled).map(show), ['pos.y=pos.y']);
+    assert.ok(!names(yWrites(unscaled)[0]).has('uMorphProgress'));
 
     // …and a READ of pos.y is not a write. `vH = (pos.y - aBaseY) * p` is the
-    // CPU branch's colour line and must not be dragged in.
-    assert.deepEqual(
-      yWrites('vH = (uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress : pos.y * uMorphProgress;'),
-      []);
+    // CPU branch's colour line and must not be dragged in. Nor is a comparison,
+    // nor a member of something else.
+    for (const src of ['vH = (uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress : pos.y * uMorphProgress;',
+                       'if (pos.y == 0.0) { }',
+                       'other.pos.y = 1.0;',
+                       'mypos.y = 1.0;']) {
+      assert.deepEqual(yWrites(src).map(show), [], src);
+    }
+
+    // A write wrapped in a conditional or a bare block is still a write, and
+    // this reader must not step over it — that evasion put the pre-round-10
+    // defect back past every guard in the repo (wave-2 rows A1, A1b).
+    for (const src of ['if(uMathMode==0)pos.y=f;', '{pos.y=f;}']) {
+      const w = yWrites(src);
+      assert.equal(w.length, 1, src);
+      assert.ok(!names(w[0]).has('uMorphProgress'), src);
+    }
+
+    // The uniform is read as a NAME, not as a substring of the text.
+    const lookalike = 'pos.y = (pos.y + f) * uMorphProgressScale;';
+    assert.equal(yWrites(lookalike).length, 1);
+    assert.ok(!names(yWrites(lookalike)[0]).has('uMorphProgress'),
+      'a longer identifier containing uMorphProgress satisfied the rule');
   });
 });
 

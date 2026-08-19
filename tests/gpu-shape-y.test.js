@@ -23,28 +23,41 @@
 // glslc, no headless-gl), so nothing here executes the shipped shader. What it
 // does instead:
 //
-//   1. reads the pos.y write out of the shipped source — comments of BOTH
-//      kinds removed first, and the branch must contain exactly ONE such write,
-//      so a second one cannot hide behind the first;
-//   2. refuses to proceed on a write it does not have an arithmetic model for,
-//      and refuses on a local whose definition it does not recognise (a
-//      `float f = 0.0;` above `pos.y = (pos.y + f) * …` would otherwise read as
-//      the fixed form);
+//   1. PARSES the pos.y write out of the shipped source with tests/helpers/
+//      glsl.js — comments of both kinds gone, whitespace and line breaks
+//      meaningless, numeric literals canonical, redundant parentheses dropped,
+//      `+` and `*` matched in either operand order, and every local resolved to
+//      its DEFINITION rather than trusted by its name;
+//   2. classifies that tree against five forms, and refuses anything else —
+//      including a write whose shape is right but whose displacement is not the
+//      blended mode field (a `float f = 0.0;` under the expected name);
 //   3. models exactly that arithmetic in float32, per operation, the way a
 //      GLSL highp float rounds;
 //   4. runs the geometry RenderEngine.setShape really builds through it and
 //      measures the picture — degenerate triangles, Y extent, the gap between
 //      the box's two faces.
 //
-// So it is a text stencil for WHICH statement ships and a measurement for what
-// that statement DOES. The stencil is the weak half: a program that computed
-// the same thing in a spelling not in the table below is a hard failure rather
-// than a false pass, which is the right direction to be wrong in, but it is
-// still a table. It cannot see a linkage error, a precision qualifier, or a
-// driver bug. A browser smoke test is the only thing that can.
+// So it is a MEANING stencil for which statement ships and a measurement for
+// what that statement does. The stencil is still the weak half — a program that
+// computed the same thing in a form not among the five is a hard failure rather
+// than a false pass, which is the right direction to be wrong in — but it is no
+// longer a table of spellings. It cannot see a linkage error, a precision
+// qualifier, or a driver bug. A browser smoke test is the only thing that can.
+//
+// Why that rewrite happened: wave 2 of round 10's review ran thirty edits that
+// change nothing at all through the old readers, and eleven turned a guard red
+// — a space in `if (uMathMode == 0) {`, addends commuted, a redundant pair of
+// parentheses, a local renamed. Four of them fired this file's or colour-ramp's
+// OWN control assertions, and the message printed on the first was "the vertex
+// program still branches on uMathMode", which was false: it did. A guard that
+// fires on a line break teaches people to shape source to fit a regexp, and
+// that had already happened once here (see the note in src/shaders.js about an
+// example rewritten into English to keep a guard green).
 //
 // Two controls are in here on purpose, and neither may fire:
-//   • the plane the app boots on must not move by one float32 ulp — after
+//   • the plane — not the boot shape, which is pyramid-smooth, but the one
+//     geometry the pre-round assignment was RIGHT for — must not move by one
+//     float32 ulp — after
 //     setShape its y is exactly 0, so the fix has to be a bit-exact no-op
 //     there. This control is run on the geometry setShape PRODUCES, not on a
 //     hand-built one: the earlier version of this file built its own plate,
@@ -70,6 +83,7 @@ import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import * as G from './helpers/glsl.js';
 
 // setShape() schedules its geometry dispose in a rAF. Queue the callbacks
 // without running them: nothing here needs the dispose, and running it would
@@ -85,206 +99,98 @@ before(async () => {
   SRC   = readFileSync(fileURLToPath(new URL('../src/shaders.js', import.meta.url)), 'utf8');
 });
 
-// ── reading GLSL ────────────────────────────────────────────────────────────
-// Comments out first, both kinds, in ONE pass so neither can hide the other:
-// a `//` inside a block and a `/*` inside a line comment both resolve the way
-// the GLSL preprocessor resolves them, by whichever opener comes first.
-//
-// This is not a style point. Mutation D3 of the round-10 matrix put the CORRECT
-// statement inside a `/* */` block directly above the broken one; the earlier
-// version of this file stripped only `//` lines and then took the FIRST match,
-// so it read the comment, modelled the fix, and passed a tree that shipped the
-// defect. Stripping is half the repair; requiring exactly one write is the
-// other half.
-const stripComments = s =>
-  s.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, m => m.replace(/[^\n]/g, ' '));
-
-/**
- * True when a statement writes pos.y ANYWHERE in it, not only at its start.
- *
- * The anchored form this file shipped with — the same operator alternation as
- * below, but pinned to the start of the statement with ^ — read only a
- * statement's first characters, and statements here are produced by
- * `split(';')`, so one level of syntactic wrapping put the write out of view:
- * `if(uMathMode==0)pos.y=…` is one statement beginning `if(`, and so is
- * `{pos.y=…`. Four mutations that restore the exact pre-round-10 defect passed
- * every guard in the repo that way (wave-2 rows A1, A1b, A1c, A12; PRE-matrix.txt
- * in notes/audits/vimathic-round10-2026-08-19/wave2/guards/, all four RED=NONE).
- * The bare form WAS caught, so the check was real and only anchored wrong.
- *
- * The leading `(^|[^A-Za-z0-9_.])` keeps `foo.pos.y` and `mypos.y` out; the
- * trailing `(?!=)` keeps the comparison `pos.y==` out. Reads and multiplies —
- * `pos.y-aBaseY`, `pos.y*uMorphProgress` inside a vH write — do not match,
- * because an operator here has to be followed by `=`.
- */
-const touchesY = s => /(^|[^A-Za-z0-9_.])pos\.y\s*[+\-*/]?=(?!=)/.test(s);
-
-/**
- * The body of `if(uMathMode==0){…}`, the body of the matching `else` block, and
- * everything after it, with comments gone and whitespace squeezed out, split
- * into statements.
- *
- * The `else` body was thrown away until wave 2. That is the CPU branch — the
- * one applyHeightField and the volume writers feed — and its `pos.y =
- * pos.y * uMorphProgress` is what makes a shape swap a fade rather than a cut,
- * which is the failure this file's own header names. Breaking it left this file
- * 16/16 green (row A11).
- *
- * @param {string} src   a vertex program's source text
- * @param {string} label for failure messages
- */
-function branches(src, label) {
-  const clean = stripComments(src);
-  const head = clean.indexOf('if(uMathMode==0){');
-  assert.ok(head >= 0, `${label}: no if(uMathMode==0) branch — this file has nothing to measure`);
-  const close = i => {                       // i points at the opening brace
-    let d = 0;
-    for (let k = i; k < clean.length; k++) {
-      if (clean[k] === '{') d++;
-      else if (clean[k] === '}') { d--; if (d === 0) return k; }
-    }
-    return assert.fail(`${label}: unbalanced braces in the vertex program`);
-  };
-  const gpuOpen = clean.indexOf('{', head), gpuClose = close(gpuOpen);
-  const elseM = clean.slice(gpuClose + 1).match(/^\s*else\s*\{/);
-  assert.ok(elseM, `${label}: the uMathMode branch has no else`);
-  const cpuOpen  = gpuClose + elseM[0].length;   // points AT the else's '{'
-  const cpuClose = close(cpuOpen);
-  const gpuText = clean.slice(gpuOpen + 1, gpuClose);
-  const cpuText = clean.slice(cpuOpen + 1, cpuClose);
-  // Splitting on ';' is only sound while the branch has no for-loop header.
-  for (const [what, text] of [['GPU', gpuText], ['CPU', cpuText]]) {
-    assert.ok(!/\bfor\s*\(/.test(text),
-      `${label}: the ${what} branch grew a for-loop; splitting on ';' no longer yields statements`);
-  }
-  const stmts = t => t.replace(/\s+/g, '').split(';').filter(Boolean);
-  return { gpu: stmts(gpuText), cpu: stmts(cpuText), tail: stmts(clean.slice(cpuClose + 1)) };
-}
-
-// ── what the guard is willing to believe about a local ──────────────────────
-// If the pos.y write names a local, the guard resolves it. Anything not listed
-// here is a hard stop: `float f = 0.0;` above `pos.y = (pos.y + f) * …` reads
-// as the fixed form to a table that only looks at the write.
-const LOCAL_MEANINGS = {
-  f:    ['mix(y,yNxt,uModeBlend)'],                            // the blended displacement
-  y:    ['computeMode(uMode,pos.xz,b,t,m,bt,a,wi,T)'],         // this frame's mode
-  yNxt: ['computeMode(uModeNext,pos.xz,b,t,m,bt,a,wi,T)'],     // the mode being blended to
-};
-
-/** Every identifier in `stmt`, with `pos.y` / `pos.xz` removed first. */
-const identsOf = stmt =>
-  [...stmt.replace(/pos\.[a-z]+/g, ' ').matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].map(m => m[0]);
-
-/**
- * Walk every local the write depends on and refuse anything unrecognised.
- * Names the branch does not assign are left alone — in the editor template `y`
- * is written by the interpolated user body, above the branch.
- */
-function checkLocals(stmts, stmt, label) {
-  const assigned = new Map();
-  for (const s of stmts) {
-    const m = s.match(/^(?:float)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (m && !s.startsWith('pos.') && !s.startsWith('vH')) assigned.set(m[1], m[2]);
-  }
-  const seen = new Set();
-  const walk = from => {
-    for (const id of identsOf(from)) {
-      if (seen.has(id) || !assigned.has(id)) continue;
-      seen.add(id);
-      const rhs = assigned.get(id);
-      const allowed = LOCAL_MEANINGS[id];
-      assert.ok(allowed,
-        `${label}: the pos.y write depends on a local '${id}' this guard has no meaning for ` +
-        `(it holds "${rhs}") — refusing to certify a program it cannot read`);
-      assert.ok(allowed.includes(rhs),
-        `${label}: '${id}' is "${rhs}", not ${allowed.map(a => `"${a}"`).join(' or ')} — ` +
-        `the write looks right only because the guard trusted the name`);
-      walk(rhs);
-    }
-  };
-  walk(stmt);
-}
-
-// ── the arithmetic of every write this file knows ───────────────────────────
+// ── the arithmetic of every form the reader knows ───────────────────────────
 //   y0  the shape's own y, as setShape built it
-//   d   the displacement (VS: mix(y,yNxt,uModeBlend) or the local it is hoisted
-//       into; SE_VS_TEMPLATE: the `y` the user body wrote)
+//   d   the displacement (VS: the blended mode field; SE_VS_TEMPLATE: the `y`
+//       the interpolated user body wrote)
 //   p   uMorphProgress
+//
+// The FORMS live in tests/helpers/glsl.js, written once as GLSL and turned into
+// patterns by the same parser that reads the shipped file. Here is only what
+// each one computes.
 const F = Math.fround;
-const KEEPS     = (y0, d, p) => F(F(y0 + F(d)) * p);   // round 10's fix
-const KEEPS_OUT = (y0, d, p) => F(F(y0 * p) + F(F(d) * p)); // same, distributed
-const REPLACES  = (y0, d, p) => F(F(d) * p);           // pre-round-10: the shape is gone
-const NO_DEFLATE = (y0, d, p) => F(y0 + F(F(d) * p));  // keeps it, never flattens
-const POS_FORMS = {
-  'pos.y=(pos.y+mix(y,yNxt,uModeBlend))*uMorphProgress': KEEPS,
-  'pos.y=(pos.y+f)*uMorphProgress':                      KEEPS,
-  'pos.y=(pos.y+y)*uMorphProgress':                      KEEPS,
-  'pos.y=pos.y*uMorphProgress+mix(y,yNxt,uModeBlend)*uMorphProgress': KEEPS_OUT,
-  'pos.y=pos.y*uMorphProgress+f*uMorphProgress':         KEEPS_OUT,
-  'pos.y=pos.y*uMorphProgress+y*uMorphProgress':         KEEPS_OUT,
-  'pos.y=mix(y,yNxt,uModeBlend)*uMorphProgress':         REPLACES,
-  'pos.y=f*uMorphProgress':                              REPLACES,
-  'pos.y=y*uMorphProgress':                              REPLACES,
-  'pos.y+=mix(y,yNxt,uModeBlend)*uMorphProgress':        NO_DEFLATE,
-  'pos.y+=f*uMorphProgress':                             NO_DEFLATE,
-  'pos.y+=y*uMorphProgress':                             NO_DEFLATE,
+const MODEL = {
+  'keeps':      (y0, d, p) => F(F(y0 + F(d)) * p),         // round 10's fix
+  'keeps-out':  (y0, d, p) => F(F(y0 * p) + F(F(d) * p)),  // the same, distributed
+  'replaces':   (y0, d, p) => F(F(d) * p),                 // pre-round-10: the shape is gone
+  'no-deflate': (y0, d, p) => F(y0 + F(F(d) * p)),         // keeps it, never flattens
 };
+// The CPU (else) branch has exactly one job: pos.y already holds base +
+// displacement (applyHeightField for Surface, the volume/collapse writers
+// otherwise) and the branch scales it by uMorphProgress so the deflate → swap →
+// inflate still hides the geometry swap. Anything else is a hard stop.
+const CPU_MODEL = { 'scale': (attrY, p) => F(attrY * p) };
 
-// ── the CPU branch's write ──────────────────────────────────────────────────
-// One accepted form, because there is only one thing the else branch may do:
-// pos.y already holds base + displacement (applyHeightField for Surface, the
-// volume/collapse writers otherwise) and the branch's whole job is to scale it
-// by uMorphProgress so the deflate → swap → inflate still hides the geometry
-// swap. Anything else is a hard stop rather than a guess.
-const CPU_FORMS = {
-  'pos.y=pos.y*uMorphProgress': (attrY, p) => F(attrY * p),
-};
+const UNKNOWN =
+  'This guard models five forms of the write and refuses the rest. If the line above is ' +
+  'arithmetically right, it is the FORM list in tests/helpers/glsl.js that needs the new ' +
+  'form and a model for it here — spelling, spacing, parentheses, operand order and the ' +
+  'name of a local are already irrelevant to the reader.';
 
-/** The pos.y writes of one vertex program, as float32 models. */
+/**
+ * Read one vertex program into the two models this file measures with.
+ * Every refusal below names what was read and what would have been accepted.
+ */
 function gpuWrite(src, label) {
-  const { gpu, cpu, tail } = branches(src, label);
-  const writes = gpu.filter(touchesY);
-  assert.equal(writes.length, 1,
-    `${label}: expected exactly one pos.y write in the GPU branch, found ${writes.length}` +
-    (writes.length ? ` — ${writes.join(' | ')}` : '') +
+  const P = G.readVertexProgram(src);
+
+  assert.equal(P.gpu.pos.count, 1,
+    `${label}: expected exactly one pos.y write in the GPU branch, found ${P.gpu.pos.count}` +
+    (P.gpu.pos.count ? ` — ${(P.gpu.pos.writes || [P.gpu.pos.stmt]).join(' | ')}` : '') +
     '; with more than one the last is what ships and the first is what a reader sees');
-  const after = tail.filter(touchesY);
-  assert.deepEqual(after, [],
-    `${label}: pos.y is written again after the uMathMode branch (${after.join(' | ')}), ` +
+  assert.deepEqual(P.tail.pos, [],
+    `${label}: pos.y is written again after the uMathMode branch (${P.tail.pos.join(' | ')}), ` +
     'which overrides everything both branches did');
 
-  // The CPU half, by the same rules. Read here rather than in its own function
-  // so that every caller of gpuWrite — including the four self-tests below —
-  // pays for it, and a program can never be certified on one branch alone.
-  const cpuWrites = cpu.filter(touchesY);
-  assert.equal(cpuWrites.length, 1,
-    `${label}: expected exactly one pos.y write in the CPU (else) branch, found ` +
-    `${cpuWrites.length}${cpuWrites.length ? ` — ${cpuWrites.join(' | ')}` : ''}`);
-  const cpuStmt = cpuWrites[0];
-  const cpuApply = CPU_FORMS[cpuStmt];
-  assert.ok(cpuApply,
-    `${label}: the CPU branch's pos.y write is "${cpuStmt};", which this guard has no ` +
-    'arithmetic for. The only accepted form is pos.y=pos.y*uMorphProgress — unscaled, the ' +
-    'flat frame setShapeAnimated swaps the geometry at is not flat and every shape change ' +
-    'is a visible cut between two solids');
+  assert.ok(!P.gpu.pos.badDisplacement,
+    `${label}: the GPU branch's write has the right shape ('${P.gpu.pos.shape}') but the thing it ` +
+    `adds is not the field — that operand resolves to ${P.gpu.pos.badDisplacement}, from ` +
+    `"${P.gpu.pos.stmt};". A displacement has to be the blend of computeMode(uMode, pos.xz, …) and ` +
+    'computeMode(uModeNext, pos.xz, …), or the interpolated body\'s own y in the editor template; ' +
+    'anything else (a local holding 0.0, or pos.y itself) makes the measurements below meaningless');
+  assert.ok(P.gpu.pos.kind,
+    `${label}: the GPU branch's pos.y write reads as "${P.gpu.pos.stmt ?? P.gpu.pos.writes?.[0]};"` +
+    (P.gpu.pos.wrapped
+      ? ` — and it is WRAPPED (the statement's left side is "${P.gpu.pos.wrapped}"), so it is ` +
+        'conditional or nested. This guard models unconditional writes; when one runs is not ' +
+        'something it will guess at.'
+      : (P.gpu.pos.canon ? `, which resolves to ${P.gpu.pos.canon}` : '') + '. ' + UNKNOWN));
+  const apply = MODEL[P.gpu.pos.kind];
+  assert.ok(apply, `${label}: no float32 model here for the form '${P.gpu.pos.kind}'`);
+  assert.ok(P.gpu.pos.displacement,
+    `${label}: the write is '${P.gpu.pos.kind}' but nothing identified its displacement — ${P.gpu.pos.canon}`);
 
-  const stmt = writes[0];
-  checkLocals(gpu, stmt, label);
-  const apply = POS_FORMS[stmt];
-  assert.ok(apply, `${label}: unrecognised pos.y write, refusing to guess what it means: ${stmt};`);
-  return { apply, stmt, cpuApply, cpuStmt };
+  // The CPU half, read by the same code so that a program can never be
+  // certified on one branch alone. Until wave 2 the else block was discarded
+  // entirely and dropping uMorphProgress from this write left the file green.
+  assert.equal(P.cpu.pos.count, 1,
+    `${label}: expected exactly one pos.y write in the CPU (else) branch, found ` +
+    `${P.cpu.pos.count}${P.cpu.pos.count ? ` — ${(P.cpu.pos.writes || [P.cpu.pos.stmt]).join(' | ')}` : ''}`);
+  const cpuApply = CPU_MODEL[P.cpu.pos.kind];
+  assert.ok(cpuApply,
+    `${label}: the CPU branch's pos.y write is "${P.cpu.pos.stmt ?? P.cpu.pos.writes?.[0]};", which ` +
+    'this guard has no arithmetic for. The only accepted form is pos.y = pos.y * uMorphProgress ' +
+    '(however it is spelled) — unscaled, the flat frame setShapeAnimated swaps the geometry at is ' +
+    'not flat and every shape change is a visible cut between two solids');
+
+  return { apply, stmt: P.gpu.pos.stmt, cpuApply, cpuStmt: P.cpu.pos.stmt, program: P };
 }
 
 /** The two shipped vertex programs. */
 function programs() {
-  const editorAt = SRC.lastIndexOf('const SE_VS_TEMPLATE');
-  assert.ok(editorAt >= 0, 'precondition: SE_VS_TEMPLATE is gone from shaders.js');
-  // …and it is still the text the editor compiles, not a leftover. Read out of
-  // the source because the template is module-private; if ShaderEditor stopped
-  // calling it, everything measured below would be about dead text.
-  assert.ok(/SE_VS_TEMPLATE\s*\(/.test(SRC.slice(editorAt + 20)),
+  // Read by exact declaration name and bounded by the template literal's own
+  // backticks. `lastIndexOf('const SE_VS_TEMPLATE')` prefix-matched any longer
+  // identifier and sliced to end of file: wave 2 reverted the real branch to the
+  // pre-round-10 form, appended a decoy `const SE_VS_TEMPLATE_REFERENCE` holding
+  // the correct text, and this file went 21/0 green on a tree shipping the
+  // defect.
+  const editor = G.templateLiteral(SRC, 'SE_VS_TEMPLATE');
+  // …and it is still the text the editor compiles, not a leftover. If
+  // ShaderEditor stopped calling it, everything measured below would be about
+  // dead text.
+  assert.ok(/\bSE_VS_TEMPLATE\s*\(/.test(G.stripComments(SRC)),
     'precondition: nothing calls SE_VS_TEMPLATE any more — the editor program measured here is dead text');
-  return [['VS', VS], ['SE_VS_TEMPLATE', SRC.slice(editorAt)]];
+  return [['VS', VS], ['SE_VS_TEMPLATE', editor]];
 }
 
 // ── the field ───────────────────────────────────────────────────────────────
@@ -456,9 +362,8 @@ for (const label of ['VS', 'SE_VS_TEMPLATE']) {
     // ── the CPU branch, measured the same way ───────────────────────────────
     // Surface, Volume and Collapse all arrive here with base + displacement
     // already in pos.y (applyHeightField writes it on the CPU), so the branch
-    // has exactly one job. Until wave 2 branches() discarded the else block
-    // entirely and dropping uMorphProgress from this write left the file
-    // 16/16 green (row A11 of the round-10 matrix).
+    // has exactly one job. Until wave 2 the else block was discarded entirely
+    // and dropping uMorphProgress from this write left the file green.
     test('the CPU branch deflates too — at the flat frame every shape is exactly y = 0', () => {
       const { cpuApply, cpuStmt } = write();
       for (const name of ['plane', 'cylinder', 'box', 'sphere']) {
@@ -487,24 +392,23 @@ for (const label of ['VS', 'SE_VS_TEMPLATE']) {
 
 describe('the stencil that reads those writes can report a defect', () => {
   // Every assertion above is only worth what the reader underneath it is worth.
-  // These four cases feed the reader text it must refuse or classify correctly;
-  // without them the reader could be returning KEEPS unconditionally and the
+  // These cases feed the reader text it must refuse or classify correctly;
+  // without them the reader could be returning 'keeps' unconditionally and the
   // whole file would be green on any tree.
   const wrap = body => `void main(){vec3 pos=position;
   if(uMathMode==0){${body}} else { pos.y=pos.y*uMorphProgress; }
   gl_Position=vec4(pos,1.);}`;
+  const MODES = 'float y=computeMode(uMode,pos.xz,b,t,m,bt,a,wi,T);' +
+                'float yNxt=computeMode(uModeNext,pos.xz,b,t,m,bt,a,wi,T);';
+  const FIXED = MODES + 'float f=mix(y,yNxt,uModeBlend);pos.y=(pos.y+f)*uMorphProgress;';
 
-  test('the pre-round-10 assignment is classified as REPLACES, not accepted', () => {
-    const { apply } = gpuWrite(wrap('float y=computeMode(uMode,pos.xz,b,t,m,bt,a,wi,T);' +
-      'float yNxt=computeMode(uModeNext,pos.xz,b,t,m,bt,a,wi,T);' +
-      'pos.y=mix(y,yNxt,uModeBlend)*uMorphProgress;'), 'probe');
+  test('the pre-round-10 assignment is classified as a replacement, not accepted', () => {
+    const { apply } = gpuWrite(wrap(MODES + 'pos.y=mix(y,yNxt,uModeBlend)*uMorphProgress;'), 'probe');
     assert.equal(apply(3, 0.1, 1), F(0.1), 'the reader did not model the assignment as a replacement');
   });
 
   test('D3: a block comment quoting the fixed form does not hide the broken one', () => {
-    const src = wrap(
-      'float y=computeMode(uMode,pos.xz,b,t,m,bt,a,wi,T);' +
-      'float yNxt=computeMode(uModeNext,pos.xz,b,t,m,bt,a,wi,T);' +
+    const src = wrap(MODES +
       '/* pos.y = (pos.y + mix(y, yNxt, uModeBlend)) * uMorphProgress; */' +
       'pos.y=mix(y,yNxt,uModeBlend)*uMorphProgress;');
     const { apply, stmt } = gpuWrite(src, 'probe');
@@ -514,73 +418,134 @@ describe('the stencil that reads those writes can report a defect', () => {
   });
 
   test('two writes in one branch are refused rather than silently resolved', () => {
-    assert.throws(() => gpuWrite(wrap(
-      'float y=computeMode(uMode,pos.xz,b,t,m,bt,a,wi,T);' +
-      'float yNxt=computeMode(uModeNext,pos.xz,b,t,m,bt,a,wi,T);' +
-      'float f=mix(y,yNxt,uModeBlend);' +
-      'pos.y=(pos.y+f)*uMorphProgress;' +
-      'pos.y=f*uMorphProgress;'), 'probe'),
+    assert.throws(() => gpuWrite(wrap(FIXED + 'pos.y=f*uMorphProgress;'), 'probe'),
       /exactly one pos\.y write/);
   });
 
   test('a tail override WRAPPED in an if is refused, not stepped over', () => {
-    // The hole this suite was missing. `t.replace(/\s+/g,'').split(';')` makes
-    // `if(uMathMode==0)pos.y=…` ONE statement whose first characters are `if(`,
-    // so the anchored filter this file shipped with saw a tail of length 0 and
-    // certified a program that puts the pre-round-10 assignment back after the
-    // branch (rows A1 and A12).
-    const body = 'float y=computeMode(uMode,pos.xz,b,t,m,bt,a,wi,T);' +
-      'float yNxt=computeMode(uModeNext,pos.xz,b,t,m,bt,a,wi,T);' +
-      'float f=mix(y,yNxt,uModeBlend);pos.y=(pos.y+f)*uMorphProgress;';
+    // The hole this suite was missing. Statements are split on every `;`, at any
+    // depth, precisely so that `if(uMathMode==0)pos.y=…` and `{pos.y=…}` stay
+    // VISIBLE as statements that write pos.y — an anchored, depth-aware filter
+    // saw a tail of length 0 and certified a program that puts the pre-round-10
+    // assignment back after the branch (rows A1 and A12).
     const tail = 'if(uMathMode==0)pos.y=mix(y,yNxt,uModeBlend)*uMorphProgress;';
-    assert.throws(() => gpuWrite(wrap(body).replace('gl_Position', tail + 'gl_Position'), 'probe'),
+    assert.throws(() => gpuWrite(wrap(FIXED).replace('gl_Position', tail + 'gl_Position'), 'probe'),
       /pos\.y is written again after the uMathMode branch/);
     // …and in a bare block, which is the same evasion without the condition
     // (row A1b).
     assert.throws(() => gpuWrite(
-      wrap(body).replace('gl_Position', '{pos.y=mix(y,yNxt,uModeBlend)*uMorphProgress;}gl_Position'),
+      wrap(FIXED).replace('gl_Position', '{pos.y=mix(y,yNxt,uModeBlend)*uMorphProgress;}gl_Position'),
       'probe'), /pos\.y is written again after the uMathMode branch/);
     // CONTROL — the same program without the tail is accepted, so the two
     // refusals above are about the tail and not about the wrapper text.
-    assert.equal(gpuWrite(wrap(body), 'probe').stmt, 'pos.y=(pos.y+f)*uMorphProgress');
+    assert.equal(gpuWrite(wrap(FIXED), 'probe').stmt, 'pos.y=(pos.y+f)*uMorphProgress');
   });
 
   test('a second write hidden inside the GPU branch by an if is counted', () => {
     // Row A1c: the correct write stays and a conditional one after it in the
     // SAME branch overrides it. Anchored, the count stayed 1.
-    assert.throws(() => gpuWrite(wrap(
-      'float y=computeMode(uMode,pos.xz,b,t,m,bt,a,wi,T);' +
-      'float yNxt=computeMode(uModeNext,pos.xz,b,t,m,bt,a,wi,T);' +
-      'float f=mix(y,yNxt,uModeBlend);' +
-      'pos.y=(pos.y+f)*uMorphProgress;' +
-      'if(uMorphProgress>-1.0)pos.y=f*uMorphProgress;'), 'probe'),
+    assert.throws(() => gpuWrite(wrap(FIXED + 'if(uMorphProgress>-1.0)pos.y=f*uMorphProgress;'), 'probe'),
       /expected exactly one pos\.y write in the GPU branch, found 2/);
+  });
+
+  test('the one write there IS, wrapped in an if, is refused rather than modelled', () => {
+    // Not the same case as above: here there is exactly one write and it is
+    // conditional, so the count says nothing. The reader reports that the
+    // statement's left side is not pos.y and refuses.
+    assert.throws(() => gpuWrite(wrap(MODES + 'float f=mix(y,yNxt,uModeBlend);' +
+      'if(uMorphProgress>-1.0)pos.y=(pos.y+f)*uMorphProgress;'), 'probe'),
+      /WRAPPED/);
   });
 
   test('an unscaled CPU write is refused, not ignored', () => {
     // The else block was not read at all until wave 2 (row A11).
     assert.throws(() => gpuWrite(
-      wrap('float y=computeMode(uMode,pos.xz,b,t,m,bt,a,wi,T);' +
-        'float yNxt=computeMode(uModeNext,pos.xz,b,t,m,bt,a,wi,T);' +
-        'float f=mix(y,yNxt,uModeBlend);pos.y=(pos.y+f)*uMorphProgress;')
-        .replace('pos.y=pos.y*uMorphProgress;', 'pos.y=pos.y;'), 'probe'),
+      wrap(FIXED).replace('pos.y=pos.y*uMorphProgress;', 'pos.y=pos.y;'), 'probe'),
       /the CPU branch's pos\.y write is "pos\.y=pos\.y;"/);
   });
 
   test('a hoisted local with the wrong contents is refused, not trusted by name', () => {
-    assert.throws(() => gpuWrite(wrap(
-      'float f=0.0;' +
-      'pos.y=(pos.y+f)*uMorphProgress;'), 'probe'),
-      /'f' is "0\.0"/);
+    // The old reader kept a table of local NAMES, so this was caught only
+    // because somebody listed `f`, and renaming `f` to `disp` broke the guard on
+    // a tree that had changed nothing. Now the name is irrelevant and the
+    // DEFINITION is what is read: both spellings of the fixed form pass, and
+    // both spellings of this one are refused.
+    for (const name of ['f', 'disp']) {
+      assert.throws(() => gpuWrite(wrap(`float ${name}=0.0;pos.y=(pos.y+${name})*uMorphProgress;`), 'probe'),
+        /the thing it adds is not the field/,
+        `a local named ${name} holding 0.0 was accepted as the displacement`);
+      assert.throws(() => gpuWrite(wrap(`float ${name}=pos.y;pos.y=(pos.y+${name})*uMorphProgress;`), 'probe'),
+        /the thing it adds is not the field/);
+    }
+  });
+
+  test('renaming the local, commuting, or adding parentheses changes nothing', () => {
+    // The eleven behaviour-preserving edits of wave 2, in their smallest form.
+    // Each of these turned this file red before the reader was rewritten.
+    const same = [
+      ['shipped',        FIXED],
+      ['renamed local',  MODES + 'float disp=mix(y,yNxt,uModeBlend);pos.y=(pos.y+disp)*uMorphProgress;'],
+      ['addends commuted', MODES + 'float f=mix(y,yNxt,uModeBlend);pos.y=(f+pos.y)*uMorphProgress;'],
+      ['product commuted', MODES + 'float f=mix(y,yNxt,uModeBlend);pos.y=uMorphProgress*(pos.y+f);'],
+      ['extra parentheses', MODES + 'float f=mix(y,yNxt,uModeBlend);pos.y=(((pos.y)+(f))*(uMorphProgress));'],
+      ['inlined local',  MODES + 'pos.y=(pos.y+mix(y,yNxt,uModeBlend))*uMorphProgress;'],
+      ['reflowed',       MODES + 'float f = mix( y , yNxt , uModeBlend );\n  pos.y = ( pos.y + f )\n     * uMorphProgress;'],
+    ];
+    for (const [what, body] of same) {
+      const { apply } = gpuWrite(wrap(body), `probe (${what})`);
+      assert.equal(apply(3, 0.1, 1), F(F(3 + F(0.1)) * 1),
+        `${what}: the reader no longer models this as "keep the shape and deflate", though it is ` +
+        'the shipped arithmetic written another way');
+    }
+    // …and the branch header itself, spelled four ways.
+    for (const header of ['if (uMathMode == 0) {', 'if( uMathMode==0 ){', 'if(0==uMathMode){',
+                          'if\n(uMathMode\n==\n0)\n{']) {
+      const src = wrap(FIXED).replace('if(uMathMode==0){', header);
+      assert.equal(gpuWrite(src, 'probe').apply(3, 0.1, 1), F(F(3 + F(0.1)) * 1),
+        `the reader lost the branch when its header was written "${header}"`);
+    }
   });
 
   test('CONTROL — the same reader passes the shipped VS unchanged', () => {
-    // If the four cases above fired on everything, they would prove nothing.
+    // If the cases above fired on everything, they would prove nothing.
     for (const [label, src] of programs()) {
       const { apply } = gpuWrite(src, label);
       assert.equal(apply(3, 0.1, 1), F(F(3 + F(0.1)) * 1),
         `${label}: the reader no longer models the shipped write as "keep the shape and deflate"`);
     }
+  });
+});
+
+describe('the program measured here is the program that ships', () => {
+  test('shaders.js declares SE_VS_TEMPLATE exactly once, and the reader takes THAT one', () => {
+    // Wave 2's decoy: revert the real template to the pre-round-10 form and
+    // append `const SE_VS_TEMPLATE_REFERENCE = \`…correct text…\`` after it.
+    // `lastIndexOf('const SE_VS_TEMPLATE')` prefix-matches the longer name and
+    // the old slice ran to end of file, so this file read the decoy and went
+    // 21/0 green on a tree that shipped the defect.
+    const decoyed = SRC + '\nconst SE_VS_TEMPLATE_REFERENCE = `' +
+      G.templateLiteral(SRC, 'SE_VS_TEMPLATE') + '`;\n';
+    assert.equal(G.templateLiteral(decoyed, 'SE_VS_TEMPLATE'),
+                 G.templateLiteral(SRC, 'SE_VS_TEMPLATE'),
+      'a longer identifier beginning with SE_VS_TEMPLATE moved the reader off the shipped program');
+    // CONTROL — the reader does find the decoy when asked for it by its own
+    // name, so the equality above is about which declaration was chosen and not
+    // about the reader failing to see anything.
+    assert.ok(G.templateLiteral(decoyed, 'SE_VS_TEMPLATE_REFERENCE').includes('uMathMode'));
+    // …and two declarations of the SAME name are a refusal, not a guess.
+    assert.throws(() => G.templateLiteral(SRC + '\nconst SE_VS_TEMPLATE = `x`;\n', 'SE_VS_TEMPLATE'),
+      /exactly one declaration/);
+  });
+
+  test('there are exactly two uMathMode branches in shaders.js', () => {
+    // The census colour-ramp also keeps, duplicated on purpose so neither guard
+    // depends on the other: a third vertex program with this branch is either a
+    // decoy or a program nothing here measures.
+    const n = G.findIfs(SRC, 'uMathMode == 0').length;
+    assert.equal(n, 2,
+      `expected exactly two if (uMathMode == 0) branches — the built-in VS and the editor ` +
+      `template — and found ${n}. This counts branches, not text: spacing, line breaks and ` +
+      `the order of the comparison do not affect it, and comments are stripped first`);
   });
 });
 
@@ -594,12 +559,12 @@ describe('the editor snippets displace from pos.xz, which is what makes the coll
     const from = SRC.indexOf('const SE_DEFAULT_VERT');
     const to   = SRC.indexOf('export class ShaderEditor');
     assert.ok(from >= 0 && to > from, 'precondition: SE_DEFAULT_VERT / ShaderEditor moved');
-    const snippets = SRC.slice(from, to);
-    assert.ok(!/pos\.y/.test(stripComments(snippets)),
+    const snippets = G.normalise(SRC.slice(from, to));
+    assert.ok(!/pos\.y/.test(snippets),
       'a shipped vertex snippet reads pos.y; the displacement is no longer a function of pos.xz alone');
     // CONTROL — the same search finds pos.xz, which those snippets DO use, so
     // the silence above is a fact about the text and not about the regexp.
-    assert.ok(/pos\.xz/.test(stripComments(snippets)),
+    assert.ok(/pos\.xz/.test(snippets),
       'the search that reported no pos.y cannot find pos.xz either, so it proves nothing');
   });
 });

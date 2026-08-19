@@ -1025,21 +1025,46 @@ export class TransitionManager {
  * OBJ/GLTF meshes are the real case, since they get the vertex program without
  * ever going through setShape. three then takes neither the buffer path nor the
  * vertexAttrib path for it and the location keeps whatever GENERIC value was
- * last left there by some other program (three.module.js:15588 — the
- * defaultAttributeValues arm — and :15540ff for the branch that is skipped).
- * The GL spec's initial generic value is (0,0,0,1), but "initial" is not
- * "current": three's own Material default table sets `color` to [1,1,1], and a
- * location index reused between programs carries that over.
+ * last left there by some other program (three 0.169.0, three.module.js:15589
+ * — the `materialDefaultAttributeValues !== undefined` arm, whose default case
+ * calls gl.vertexAttrib1fv at :15610 — and :15480, the
+ * `geometryAttribute !== undefined` branch that is skipped). The GL spec's
+ * initial generic value is (0,0,0,1), but "initial" is not "current": three's
+ * own Material default table (:12325) sets `color` to [1,1,1], and a location
+ * index reused between programs carries that over.
  *
- * So every material built here declares `defaultAttributeValues.aBaseY = [0]`,
- * which makes three call vertexAttrib1fv(loc, [0]) on exactly the geometries
- * that lack the attribute. Zero is the value that makes `pos.y - aBaseY` a
- * no-op, i.e. the pre-round-10 behaviour, and it is the same fallback
- * applyHeightField takes when it has no base positions — so the two agree
- * instead of disagreeing, and the agreement is the app's choice rather than the
- * driver's leftovers. Nothing in this VM links GLSL, so the declaration is
- * checked by tests/blend-from-state.test.js reading it off the materials; the
- * generic-value behaviour itself is three's code, quoted above, not a guess.
+ * So every material that installs a program reading `aBaseY` declares
+ * `defaultAttributeValues.aBaseY = [0]`, which makes three call
+ * vertexAttrib1fv(loc, [0]) on exactly the geometries that lack the attribute.
+ * Zero is the value that makes `pos.y - aBaseY` a no-op, i.e. the pre-round-10
+ * behaviour, and it is the same fallback applyHeightField takes when it has no
+ * base positions — so the two agree instead of disagreeing, and the agreement
+ * is the app's choice rather than the driver's leftovers.
+ *
+ * There are four such materials, and only two of them live in this file. Named
+ * rather than numbered on purpose — the round's own rule for citations, written
+ * after four line references in MATHEMATICAL_ACCURACY.md rotted the same day
+ * they were added, and after this very table shipped with all four numbers
+ * eight to twelve lines stale:
+ *   render.js    RenderEngine's constructor, `this.gpuMat`      — VS
+ *   render.js    RenderEngine#setVizModeGPU, `ptsMat`           — this.activeVS
+ *   shaders.js   ShaderEditor#compileAndApply, `tMat`           — SE_VS_TEMPLATE(body)
+ *   shaders.js   ModelLoader#_applyShader, `mat`                — vs || VS  ← the imported case
+ * All four are built and inspected by tests/model-abasey-default.test.js, which
+ * is what keeps this list from drifting again: it constructs each material
+ * through the shipped code path rather than grepping for the declaration.
+ * FIX(r10 wave 3): the last two were missed. The docblock said "every material
+ * built here", which was true and beside the point: the materials that ever
+ * carry a MODEL mesh are built in shaders.js, and neither declared anything —
+ * so the one case named above as "the real case" was the one left open.
+ * applyShaderSource (:1779) mutates .vertexShader in place rather than
+ * rebuilding, so the declaration survives an editor swap on all four.
+ * Solar-system materials (_atmosphere at :610 and the ring/planet programs
+ * below it) are NOT on this list: their vertex programs never mention aBaseY.
+ *
+ * Nothing in this VM links GLSL, so the declaration is checked by reading it
+ * off the four real material objects (tests/model-abasey-default.test.js);
+ * the generic-value behaviour itself is three's code, cited above, not a guess.
  *
  * @param {THREE.BufferGeometry} geo
  */
@@ -2036,14 +2061,28 @@ export class RenderEngine {
     if (['plane','circle'].includes(shape)) {
       newGeo.rotateX(-Math.PI/2);
       // cos(-PI/2) is 6.12e-17, not 0, so the turn leaves the plate's own Y at
-      // up to 2.14e-16 instead of flat. That was invisible while the height
-      // field REPLACED Y; since round 10 it is ADDED to Y, so those vertices
-      // would carry the residue wherever the field is exactly zero — measured
-      // 174 of 25921 vertices on `pseudosphere`, 168 on `landauLevels`. The
-      // amount is fifteen orders below anything a viewer can see; the point is
-      // the exactness of the claim, not the size of the number. A plate laid
-      // down in XZ has y = 0, and the field is then the only thing that moves
-      // it — which is what makes round 10 a provable no-op on the plane.
+      // up to 2.14e-16 instead of flat (25760 of the 25921 vertices are off
+      // zero). That was invisible while the height field REPLACED Y; since
+      // round 10 it is ADDED to Y, so those vertices keep the residue wherever
+      // the field is too small to round it away — measured at the factory
+      // sliders, grid 161, t = 0: 174 of 25921 vertices on `pseudosphere` and
+      // 168 on `landauLevels` come out with a different float32 Y if this loop
+      // is skipped.
+      // FIX(r10 wave 3): the condition used to read "wherever the field is
+      // exactly zero", which is not what those two counts measure — NEITHER
+      // formula has a single exactly-zero value anywhere on the 161x161
+      // lattice. The vertices that keep the residue are the ones where the
+      // field is small enough that 2.14e-16 is still half a float32 ULP of it,
+      // i.e. |field| below roughly 3.6e-9: the differing vertices run
+      // 4.1e-15 … 3.6e-9 on pseudosphere and 1.4e-36 … 1.0e-9 on landauLevels.
+      // Exact zeros do exist elsewhere in the catalogue, and there the old
+      // wording is right: `mandelbrot` has 2939 of them and every one of its
+      // 2850 differing vertices sits on one.
+      // The amount is fifteen orders below anything a viewer can see; the
+      // point is the exactness of the claim, not the size of the number. A
+      // plate laid down in XZ has y = 0, and the field is then the only thing
+      // that moves it — which is what makes round 10 a provable no-op on the
+      // plane.
       const py = newGeo.attributes.position;
       for (let i = 0; i < py.count; i++) py.setY(i, 0);
       py.needsUpdate = true;

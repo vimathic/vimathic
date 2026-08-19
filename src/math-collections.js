@@ -4853,12 +4853,30 @@ export function getAllFormulasList() {
  * modules: generateSurfaceFromFormula writes the lattice
  * x = −extent + xi·step, and sampleHeightField recovers xi from x with the
  * same arithmetic. Two literals that happen to match is not agreement — it is
- * a coincidence with a name. Before round 10's tidy-up there were four such
- * literals in the chain (math-visualizer.js posts one to the worker and passes
- * another on the sync path, math-worker.js defaults a third, and this file
- * defaulted a fourth), any one of which could have been edited alone; a
- * mismatch does not throw, it silently rescales the drawn surface against the
- * mesh it is drawn on.
+ * a coincidence with a name. There are four such sites in the surface chain:
+ * math-visualizer.js posts one extent to the worker and passes another on the
+ * sync fallback, math-worker.js defaults a third, and this file defaulted a
+ * fourth. A mismatch does not throw — it silently rescales the drawn surface
+ * against the mesh it is drawn on.
+ *
+ * ROUND 10 CONVERTED ONE OF THE FOUR, NOT ALL FOUR. This constant is that one.
+ * The other three are still the literal 3.5. Nothing stops them importing this
+ * name — math-worker.js already imports generateSurfaceFromFormula from here —
+ * so the remaining work is small and has simply not been done. What keeps them
+ * from drifting meanwhile is not the constant, it is
+ * a test: `tests/surface-field-on-shapes.test.js`, "every extent in the chain
+ * is the same number, or the surface is silently rescaled", reads all three
+ * sites out of the source text and fails if any of them is neither
+ * FIELD_EXTENT nor a number equal to it. Measured: changing any one of the
+ * three to 3.4 takes that file from 9 pass / 0 fail to 8 / 1, and each of the
+ * three fails it alone. The test carries its own precondition assertions, so a
+ * site that moves out from under its pattern fails loudly rather than silently
+ * going unchecked.
+ *
+ * Two further 3.5s exist on the VOLUME path — generateVolumeFromFormula's own
+ * default here and the argument math-visualizer's volume tick passes it. They
+ * are the same distance and are not covered by that test; the surface chain is
+ * what the guard reads.
  *
  * The value itself is the plate: PlaneGeometry(7, 7, …) spans ±3.5.
  */
@@ -4910,13 +4928,17 @@ function sampleHeightField(heightField, grid, extent, step, x, z) {
   // field of 0 or 1 values, and the case that matters is the EMPTY one: step
   // is then (extent*2)/0 = Infinity, fx = (x+extent)/Infinity = 0, and the
   // interpolation below reads heightField[0] — undefined — so every vertex
-  // gets NaN and the mesh disappears. Measured by deleting this line in a
-  // sandbox copy: an empty field gives [NaN, NaN, NaN, NaN] without it and
-  // [0, 0, 0, 0] with it, while a length-1 field and a normal grid-3 field are
-  // bit-identical either way (wave2/numbers/m9-grid-guard.txt). No catalogue
-  // shape reaches it — the smallest grid the app produces is 3, for the
-  // 12-vertex tetrahedron — so it is a boundary against a caller handing over
-  // a field that was never filled, not a live path.
+  // gets NaN and the mesh disappears. Deleting this line in a sandbox copy
+  // gives an empty field [NaN, NaN, NaN, NaN] on a 4-vertex plate where it
+  // gives [0, 0, 0, 0] with the line, while a length-1 field and a normal
+  // grid-3 field come out bit-identical either way. That is committed, not a
+  // note: `tests/surface-plumbing.test.js`, "a field that is not gridSize²
+  // still writes a number, never NaN", is the test this line has to keep
+  // green, and it is the one test in the suite that goes red when the line is
+  // removed. No catalogue shape reaches the branch — the smallest grid the app
+  // produces is 3, for the 12-vertex tetrahedron, measured over all twenty
+  // shapes at both planeSegs — so it is a boundary against a caller handing
+  // over a field that was never filled, not a live path.
   if (grid < 2) return heightField[0] ?? 0;
   const last = grid - 1;
 
@@ -4952,20 +4974,39 @@ function sampleHeightField(heightField, grid, extent, step, x, z) {
  * FIX(r10 §1.3/§1.4/§1.6): it used to hand heightField[i] to vertex i. That
  * identity holds for exactly one geometry in the catalogue — the rotated
  * PlaneGeometry, whose vertices ARE this lattice in this order. On the other
- * nineteen it drew a PERMUTATION of the function. Pearson r between drawn
- * height and f at the vertex's own (x,z), probe field
- * f = sin(1.3x) + cos(0.9z) + 0.2xz: ≤ 0.191 on all nineteen — star, the best
- * of them, reads 0.191 — and negative on FOUR: sphere −0.362,
- * tetrahedron −0.361, dodecahedron −0.113, solar −0.113. It also tore the five
- * PolyhedronGeometry solids apart, because their coincident corner vertices
- * carry different indices and so took different heights: on the probe f = x,
- * whose range over the domain is 7.000, the spread inside a group of
- * coincident vertices reaches 7.000 — the WHOLE range — on every one of the
- * five, on a body of radius 3.5. And the
- * `heightField[i] ?? 0` tail pinned every vertex past gridSize² flat at y = 0
- * (321 vertices over the catalogue, contiguous, e.g. two whole rows of box's
- * −Z face). Sampling at the vertex's own (x, z) removes all three at once:
- * coincident vertices sample the same point, and no vertex is unfed.
+ * nineteen it drew a PERMUTATION of the function.
+ *
+ * THE THREE FIGURES BELOW ARE READ ON THE PRE-ROUND-10 TREE — `git archive
+ * c629b53` — at desktop planeSegs 160, each shape on its own
+ * grid = round(√vertexCount). The tree matters as much as the rule: round 10
+ * also rebuilt cone, pyramid and pyramid-smooth, so replaying the old
+ * assignment on TODAY's geometry answers a different question and reads eight
+ * negatives rather than four. Anyone re-deriving these must check out c629b53
+ * first.
+ *
+ *   • Pearson r between drawn height and f at the vertex's own (x, z), probe
+ *     field f = sin(1.3x) + cos(0.9z) + 0.2xz: ≤ 0.191 on all nineteen — star,
+ *     the best of them, reads 0.191 — and negative on FOUR: sphere −0.362,
+ *     tetrahedron −0.361, dodecahedron −0.113, solar −0.113.
+ *   • It tore the five PolyhedronGeometry solids apart, because their
+ *     coincident corner vertices carry different indices and so took different
+ *     heights: on the probe f = x, whose range over the domain is 7.000, the
+ *     spread inside a group of coincident vertices reaches 7.000 — the WHOLE
+ *     range — on every one of the five, on a body of radius 3.5. (6.914 is the
+ *     cone / pyramid-smooth figure on that tree, not a polyhedron one, and
+ *     torusknot's is 5.562; the five really are at the ceiling.)
+ *   • The `heightField[i] ?? 0` tail pinned every vertex past gridSize² flat at
+ *     y = 0 — 321 over the catalogue, contiguous because three's vertex order is
+ *     per-face: box 162 (all at z = −2.5, two whole rows of its −Z face), ring
+ *     56, torus 45, hex 17, icosahedron-smooth 15, pyramid 14, dodecahedron 8,
+ *     tetrahedron 3, star 1.
+ *
+ * Sampling at the vertex's own (x, z) removes all three at once: coincident
+ * vertices sample the same point, and no vertex is unfed. Each of the three has
+ * a live stencil in `tests/surface-field-on-shapes.test.js` — the correlation,
+ * tearing and "every vertex is fed" tests — and each of those carries a CONTROL
+ * that replays the old rule and must keep reporting the defect, so the numbers
+ * above stay measurable from the repository rather than only from history.
  *
  * gridSize is not a parameter: the field is gridSize² by construction, so it
  * is read back off the field's own length — a caller cannot pass one that

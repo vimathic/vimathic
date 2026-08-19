@@ -330,8 +330,18 @@ describe('aBaseY falls back to a value the app chose', () => {
     assert.equal(decls.length, 2,
       `expected exactly two materials built from the shipped VS, found ${decls.length} ` +
       '— the scan below would miss the others');
-    const defaults = [...src.matchAll(/defaultAttributeValues\.aBaseY\s*=\s*\[\s*0\s*\]/g)];
+    // Both spellings of the same thing. The first draft accepted only the
+    // property set, so writing it as Object.assign — which produces a
+    // byte-identical material — turned this red under a message saying the
+    // default was missing when it was present. A guard that fails on a no-op
+    // and then explains itself falsely is worse than one that is merely narrow.
+    const ABASEY_DEFAULT =
+      /defaultAttributeValues(?:\.aBaseY\s*=\s*\[\s*0\s*\]|\s*,\s*\{[^}]*\baBaseY\s*:\s*\[\s*0\s*\])/g;
+    const defaults = [...src.matchAll(ABASEY_DEFAULT)];
     assert.equal(defaults.length, 2,
-      'each of those two materials needs its own aBaseY default; see attachBaseY for why');
+      `each of those two materials needs its own aBaseY default; found ${defaults.length} ` +
+      'declaration(s). If the default IS there in a spelling this pattern does not know, ' +
+      'widen the pattern — do not respell the source to suit it. See attachBaseY for why ' +
+      'the default is needed at all.');
   });
 });

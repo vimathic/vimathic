@@ -6,19 +6,30 @@
 //
 // so the palette's live window is vH in [-0.75, +0.8167] — 1.567 units wide, the
 // size of the audio-driven displacement and nothing wider. That is what makes
-// the palette the app's AUDIO channel: measured on mode 0, the field spans
-// ±0.14 in silence and reaches -1.49..+2.00 with uAmp 1.5 and bass 1.0, and the
-// sweep a viewer sees is the music moving it. (At that loud end the ramp clips
-// 64 % of the plane, and did before round 10 too — not this change's business.)
+// the palette the app's AUDIO channel: measured on GPU mode 0 over the desktop
+// plane (planeSize 7, planeSegs 160), the field spans ±0.1400 at the boot
+// uniforms in silence (uAmp 0.7, bass = mid = treble = 0, uWI 1, uTime 0) and
+// -1.4933..+1.9900 with uAmp 1.5 and bass 1.0; the sweep a viewer sees is the
+// music moving it. (At that loud end the ramp clips 64.4 % of the plane's area,
+// and did before round 10 too — not this change's business. Probe:
+// notes/audits/.../wave3/glsl/probes/P5-window.txt.)
 //
 // Round 10 correctly gave the shape its own y back — pos.y = (shape + field) —
 // and vH was still pos.y, so the ramp was suddenly being handed a body that
-// spans ±3.5. Measured on the catalogue as render.js builds it, at boot uniforms
-// with nothing playing (probe: notes/audits/.../close/colour-ramp/P0-*.txt,
-// which reproduces all 80 numbers of L-colour-banding.txt digit for digit):
-// the triangle area landing on a CLAMPED, flat colour went from 0.0 % on every
-// one of the twenty shapes to 73-100 % on fifteen of them — 81.5 % of the boot
-// shape, 100 % of the octahedron, on the first frame.
+// spans ±3.5. Measured on the catalogue as render.js builds it (desktop, the
+// same uniforms in silence, uMorphProgress 1), the triangle area landing on a
+// CLAMPED, flat colour went from 0.0 % on every one of the twenty shapes to
+// 73-100 % on FOURTEEN of them, on the first frame: from 73.6 % (torusknot) to
+// 100 % (octahedron), with solar at 37.7 % and the five flat shapes — plane,
+// disc, circle, hex, tetrahedron — at 0.0 %. 14 + 1 + 5 = 20, and the count is
+// re-derivable: notes/audits/.../wave3/glsl/probes/P4-clamped-count.txt prints
+// the whole table, and the CONTROL below re-measures the same fourteen.
+// (The header used to say "fifteen of them — 81.5 % of the boot shape". The
+// count was wrong and the second half was right: fourteen shapes clear 73 %,
+// and 81.5 % is pyramid-smooth, which IS the boot shape — src/shapes.js's
+// DEFAULT_SHAPE, `selected` in index.html's picker. A first correction of this
+// note claimed the boot shape was the plane; it is not, and the plane reads
+// 0.0 % in both columns because it has no body of its own to colour by.)
 //
 // The fix: colour by the DISPLACEMENT on the two paths round 10 touched (GPU
 // math mode, and Surface mode), and leave Volume and Collapse alone, which have
@@ -53,6 +64,7 @@ import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import * as G from './helpers/glsl.js';
 
 const F = Math.fround;
 const SRC_PATH = fileURLToPath(new URL('../src/shaders.js', import.meta.url));
@@ -82,15 +94,19 @@ before(async () => {
 });
 
 // ── Reading the shipped vertex program ───────────────────────────────────────
-
-/** Line AND block comments out; a guard that reads prose reports the prose. */
-function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, ' ')
-            .split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
-}
+//
+// Every piece of GLSL reading here goes through tests/helpers/glsl.js, which
+// parses rather than matches: comments of both kinds gone, whitespace and line
+// breaks meaningless, numeric literals canonical, redundant parentheses dropped,
+// `+` and `*` compared in either operand order, and locals resolved to their
+// DEFINITION rather than trusted by name. Wave 2 of round 10's review turned
+// this file 11 tests red with edits that change nothing — a space in the branch
+// header, `(f + pos.y)`, a local renamed from `f` to `disp`, `.6` respelled
+// `0.6` — and four of those reds were this file's own CONTROL assertions.
 
 /**
- * SE_VS_TEMPLATE's whole text, bounded by the template literal's own delimiters.
+ * SE_VS_TEMPLATE's whole text, bounded by the template literal's own delimiters
+ * and found by its EXACT declaration name.
  *
  * It used to be read as `src.slice(marks[1].index - 400, marks[1].index + 400)`
  * — a fixed character window around the second `if(uMathMode==0){`. Measured on
@@ -102,17 +118,12 @@ function stripComments(src) {
  * the identical mutation in the built-in VS, which is handed whole, is caught,
  * row A13). Same window, same blindness for pos.y: row A12.
  *
- * Bounding by the template's own text is what tests/gpu-shape-y.test.js already
- * does, minus the truncation.
+ * Its replacement, `lastIndexOf('const SE_VS_TEMPLATE')`, prefix-matched any
+ * longer identifier and sliced to end of file, which a decoy
+ * `const SE_VS_TEMPLATE_REFERENCE` walked straight through.
  */
 function editorTemplate(src) {
-  const at = src.lastIndexOf('const SE_VS_TEMPLATE');
-  assert.ok(at >= 0, 'precondition: SE_VS_TEMPLATE is gone from shaders.js');
-  const end = src.indexOf('`;', at);
-  assert.ok(end > at,
-    'precondition: SE_VS_TEMPLATE is no longer one template literal ending in `; — ' +
-    'this reader cannot find its end, and a truncated read is how the tail check went blind');
-  const text = src.slice(at, end + 2);
+  const text = G.templateLiteral(src, 'SE_VS_TEMPLATE');
   // The tail is the point of reading the whole thing, so say out loud that it
   // is in here: gl_Position is the last statement of main(), after the branch.
   assert.ok(/gl_Position/.test(text),
@@ -121,142 +132,107 @@ function editorTemplate(src) {
   return text;
 }
 
-/** Statements of a GLSL block, normalised to whitespace-free text. */
-function statements(block) {
-  return block.split(';').map(s => s.replace(/\s+/g, '')).filter(Boolean).map(s => s + ';');
-}
-
-// Does the statement WRITE this varying, anywhere in it? `pos.y-aBaseY` and
-// `pos.y*uMorphProgress` inside a vH write are reads and do not match: an
-// operator here has to be followed by '='. `pos.y==` is a comparison and does
-// not match either.
-const writesTo = name =>
-  new RegExp(`(^|[^A-Za-z0-9_.])${name.replace('.', '\\.')}\\s*[+\\-*/]?=(?!=)`);
-const touchesPosY = s => writesTo('pos.y').test(s);
-const touchesVH   = s => writesTo('vH').test(s);
-
-/**
- * Split a main() body at `if(uMathMode==0){ … } else { … }` by matching braces,
- * so neither an added statement nor a reflow can slip a branch past the reader.
- * @returns {{gpu: string, cpu: string, tail: string}}
- */
-function splitBranches(src) {
-  const clean = stripComments(src);
-  const head = clean.indexOf('if(uMathMode==0){');
-  assert.ok(head >= 0, 'precondition: the vertex program still branches on uMathMode');
-  const matchFrom = i => {                      // i points at the opening brace
-    let depth = 0;
-    for (let k = i; k < clean.length; k++) {
-      if (clean[k] === '{') depth++;
-      else if (clean[k] === '}') { depth--; if (depth === 0) return k; }
-    }
-    assert.fail('unbalanced braces in the vertex program');
-  };
-  const gpuOpen  = clean.indexOf('{', head);
-  const gpuClose = matchFrom(gpuOpen);
-  const after    = clean.slice(gpuClose + 1);
-  const elseM    = after.match(/^\s*else\s*\{/);
-  assert.ok(elseM, 'precondition: the uMathMode branch still has an else');
-  const cpuOpen  = gpuClose + 1 + elseM[0].length - 1;
-  const cpuClose = matchFrom(cpuOpen);
-  return {
-    gpu:  clean.slice(gpuOpen + 1, gpuClose),
-    cpu:  clean.slice(cpuOpen + 1, cpuClose),
-    tail: clean.slice(cpuClose + 1),
-  };
-}
-
-// The arithmetic of every write this file knows how to read. Anything else is a
-// hard stop: guessing at an unrecognised line is how a guard comes to pass on a
-// program it never modelled.
+// The arithmetic of every FORM the reader knows, keyed by what that form MEANS.
+// The forms themselves — which GLSL counts as which meaning — live in
+// tests/helpers/glsl.js, written once as GLSL and turned into patterns by the
+// same parser that reads the shipped file, so this table cannot be a list of
+// spellings. Anything the reader cannot name is a hard stop: guessing at an
+// unrecognised line is how a guard comes to pass on a program it never modelled.
 //
 //   y0    the shape's own y, as the geometry was built
-//   f     the displacement (GPU: mix(y,yNxt,uModeBlend); editor: the body's y)
+//   f     the displacement (GPU: the blended mode field; editor: the body's y)
 //   p     uMorphProgress
-const POS_FORMS = {
-  'pos.y=(pos.y+f)*uMorphProgress;':                      (y0, f, p) => F(F(y0 + F(f)) * p),
-  'pos.y=(pos.y+mix(y,yNxt,uModeBlend))*uMorphProgress;': (y0, f, p) => F(F(y0 + F(f)) * p),
-  'pos.y=(pos.y+y)*uMorphProgress;':                      (y0, f, p) => F(F(y0 + F(f)) * p),
-  // pre-round-10 (c629b53) — the shape's own y thrown away
-  'pos.y=mix(y,yNxt,uModeBlend)*uMorphProgress;':         (y0, f, p) => F(F(f) * p),
-  'pos.y=y*uMorphProgress;':                              (y0, f, p) => F(F(f) * p),
-  'pos.y=pos.y*uMorphProgress;':                          (attrY, _f, p) => F(attrY * p),
+//   posY  what the pos.y write left behind, when vH is read after it
+const POS_MODEL = {
+  'keeps':     (y0, f, p) => F(F(y0 + F(f)) * p),
+  'keeps-out': (y0, f, p) => F(F(y0 * p) + F(F(f) * p)),
+  'replaces':  (y0, f, p) => F(F(f) * p),        // pre-round-10: the shape's own y thrown away
+  'no-deflate': (y0, f, p) => F(y0 + F(F(f) * p)),
+  'scale':     (attrY, _f, p) => F(attrY * p),
 };
-const GPU_VH_FORMS = {
-  'vH=f*uMorphProgress;':                      (y0, f, p, posY) => F(F(f) * p),
-  'vH=y*uMorphProgress;':                      (y0, f, p, posY) => F(F(f) * p),
-  'vH=mix(y,yNxt,uModeBlend)*uMorphProgress;': (y0, f, p, posY) => F(F(f) * p),
-  // round 10 as shipped: the ramp is handed the body plus the field
-  'vH=pos.y;':                                 (y0, f, p, posY) => posY,
+// `first` is true when the vH write comes BEFORE the pos.y write in the same
+// branch, which decides what `pos.y` means inside it. The shipped CPU branch
+// writes vH first and the shipped GPU branch writes it second; a model that
+// ignored the order would be describing a program nobody ships.
+const GPU_VH_MODEL = {
+  'field':          (y0, f, p, posY) => F(F(f) * p),
+  'height':         (y0, f, p, posY, first) => (first ? y0 : posY),
+  'height-scaled':  (y0, f, p, posY, first) => F((first ? y0 : posY) * p),
 };
-const CPU_VH_FORMS = {
-  'vH=(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;':
-    (attrY, base, p, field) => (field ? F(F(attrY - base) * p) : F(attrY * p)),
+const CPU_VH_MODEL = {
+  'field-cpu':      (attrY, base, p, field) => (field ? F(F(attrY - base) * p) : F(attrY * p)),
   // the same subtraction taken after the scaling instead of before — 3 ulps
   // rather than 1, measured, so it is modelled rather than refused
-  'vH=(uVHField==1)?(pos.y-aBaseY*uMorphProgress):pos.y;':
-    (attrY, base, p, field) => (field ? F(F(attrY * p) - F(base * p)) : F(attrY * p)),
-  // three ways of getting it wrong, modelled so the failure says WHICH:
+  'field-cpu-late': (attrY, base, p, field) => (field ? F(F(attrY * p) - F(base * p)) : F(attrY * p)),
+  // ways of getting it wrong, modelled so the failure says WHICH:
   //   no subtraction at all (round 10), subtraction in every CPU mode
   //   (Volume and Collapse change too), subtraction without the morph scale
-  'vH=pos.y;':                (attrY, base, p) => F(attrY * p),
-  'vH=pos.y*uMorphProgress;': (attrY, base, p) => F(attrY * p),
-  'vH=(pos.y-aBaseY)*uMorphProgress;': (attrY, base, p) => F(F(attrY - base) * p),
-  'vH=(uVHField==1)?(pos.y-aBaseY):pos.y*uMorphProgress;':
-    (attrY, base, p, field) => (field ? F(attrY - base) : F(attrY * p)),
+  'height':               (attrY, base, p, field, first) => (first ? F(attrY) : F(attrY * p)),
+  'height-scaled':        (attrY, base, p, field, first) => (first ? F(attrY * p) : F(F(attrY * p) * p)),
+  'field-unconditional':  (attrY, base, p) => F(F(attrY - base) * p),
+  'field-cpu-unscaled':   (attrY, base, p, field) => (field ? F(attrY - base) : F(attrY * p)),
 };
 
-function pick(table, stmt, what) {
-  const fn = table[stmt];
-  assert.ok(fn, `${what}: unrecognised write, refusing to guess what it means — ${stmt}`);
-  return fn;
+function pick(table, write, what) {
+  assert.equal(write.count, 1,
+    `${what}: expected exactly one write, found ${write.count}` +
+    (write.writes ? ` — ${write.writes.join(' | ')}` : ''));
+  assert.ok(!write.badDisplacement,
+    `${what}: the write has the right shape ('${write.shape}') but what it carries is not the ` +
+    `displacement — that operand resolves to ${write.badDisplacement}, from "${write.stmt};"`);
+  assert.ok(write.kind && table[write.kind],
+    `${what}: this reader cannot say what "${write.stmt ?? write.writes?.[0]};" means` +
+    (write.wrapped
+      ? ` — it is WRAPPED (the statement's left side is "${write.wrapped}"), so it is conditional ` +
+        'or nested. This reader models unconditional writes; when one runs is not something it ' +
+        'will guess at.'
+      : (write.canon ? `, which resolves to ${write.canon}` : '') +
+        '. Spelling, spacing, parentheses, operand order and the name of a local are all ' +
+        'irrelevant here, so this is a form the guard has never been told the meaning of: add it ' +
+        'to the FORMS in tests/helpers/glsl.js and a model for it beside this table.'));
+  return table[write.kind];
 }
 
 /** Model the two branches of a vertex program. */
 function readProgram(src, label) {
-  const { gpu, cpu, tail } = splitBranches(src);
-  const gpuS = statements(gpu), cpuS = statements(cpu), tailS = statements(tail);
+  const P = G.readVertexProgram(src);
 
-  // Containment, not `^`. A statement here is whatever `split(';')` produced,
-  // so `if(uMathMode==0)vH=pos.y` and `{vH=pos.y` are single statements that an
-  // anchored filter steps straight over — the same evasion measured on the
-  // sibling guard in wave 2 (rows A1, A1b, A1c, A12). A wrapped write found this
-  // way will not be a key of the tables below, and `pick` then refuses to guess
-  // rather than certifying it, which is the direction to be wrong in.
-  const gpuPosAll = gpuS.filter(touchesPosY);
-  const cpuPosAll = cpuS.filter(touchesPosY);
-  assert.equal(gpuPosAll.length, 1,
-    `${label}: expected exactly one pos.y write in the GPU branch, found ${gpuPosAll.length}` +
-    (gpuPosAll.length ? ` — ${gpuPosAll.join(' ')}` : ''));
-  assert.equal(cpuPosAll.length, 1,
-    `${label}: expected exactly one pos.y write in the CPU branch, found ${cpuPosAll.length}` +
-    (cpuPosAll.length ? ` — ${cpuPosAll.join(' ')}` : ''));
-  const gpuPosStmt = gpuPosAll[0];
-  const cpuPosStmt = cpuPosAll[0];
+  const gpuPos = pick(POS_MODEL, P.gpu.pos, `${label} GPU pos.y`);
+  const cpuPos = pick(POS_MODEL, P.cpu.pos, `${label} CPU pos.y`);
 
   // A vH write after the branch overrides whatever either branch wrote — that
   // is exactly the shape of the round-10 defect, so it must not be invisible.
-  const tailVH = tailS.filter(touchesVH).pop();
-  const gpuVHStmt = tailVH ?? gpuS.filter(touchesVH).pop();
-  const cpuVHStmt = tailVH ?? cpuS.filter(touchesVH).pop();
-  assert.ok(gpuVHStmt, `${label}: nothing writes vH on the GPU path`);
-  assert.ok(cpuVHStmt, `${label}: nothing writes vH on the CPU path`);
-
-  const gpuPos = pick(POS_FORMS,    gpuPosStmt, `${label} GPU pos.y`);
-  const cpuPos = pick(POS_FORMS,    cpuPosStmt, `${label} CPU pos.y`);
-  const gpuVH  = pick(GPU_VH_FORMS, gpuVHStmt,  `${label} GPU vH`);
-  const cpuVH  = pick(CPU_VH_FORMS, cpuVHStmt,  `${label} CPU vH`);
+  const tailVH = P.tail.vhWrite;
+  const gpuVHw = tailVH ?? P.gpu.vh;
+  const cpuVHw = tailVH ?? P.cpu.vh;
+  assert.ok(gpuVHw.count === 1, `${label}: ${gpuVHw.count} writes to vH on the GPU path, expected one`);
+  assert.ok(cpuVHw.count === 1, `${label}: ${cpuVHw.count} writes to vH on the CPU path, expected one`);
+  const gpuVH = pick(GPU_VH_MODEL, gpuVHw, `${label} GPU vH`);
+  const cpuVH = pick(CPU_VH_MODEL, cpuVHw, `${label} CPU vH`);
+  // Order inside the branch: a vH write that reads pos.y means something
+  // different depending on whether it runs before or after the pos.y write.
+  const gpuFirst = !tailVH && P.gpu.vh.at < P.gpu.pos.at;
+  const cpuFirst = !tailVH && P.cpu.vh.at < P.cpu.pos.at;
 
   return {
     label,
     gpuPosY: (y0, f, p) => gpuPos(y0, f, p),
-    gpuVH:   (y0, f, p) => gpuVH(y0, f, p, gpuPos(y0, f, p)),
-    cpuVH:   (attrY, base, p, field) => cpuVH(attrY, base, p, field),
-    text: { gpuPosStmt, gpuVHStmt, cpuPosStmt, cpuVHStmt },
+    gpuVH:   (y0, f, p) => gpuVH(y0, f, p, gpuPos(y0, f, p), gpuFirst),
+    cpuVH:   (attrY, base, p, field) => cpuVH(attrY, base, p, field, cpuFirst),
+    text: {
+      gpuPosStmt: P.gpu.pos.stmt, gpuVHStmt: gpuVHw.stmt,
+      cpuPosStmt: P.cpu.pos.stmt, cpuVHStmt: cpuVHw.stmt,
+    },
+    kinds: { gpuPos: P.gpu.pos.kind, gpuVH: gpuVHw.kind, cpuPos: P.cpu.pos.kind, cpuVH: cpuVHw.kind },
+    // Canonical text of each write: comments gone, spacing gone, parentheses
+    // that change nothing gone, commutative operands in a fixed order, locals
+    // resolved to their definitions. Two programs that compute the same thing
+    // have the same canonical text however they are typed.
+    canon: { gpuPos: P.gpu.pos.canon, gpuVH: gpuVHw.canon, cpuPos: P.cpu.pos.canon, cpuVH: cpuVHw.canon },
     // The statements AFTER the branch. Exposed so a test can assert this is
     // not empty: for SE_VS_TEMPLATE it was, because the program was read
     // through a +-400-character window that stopped inside the comment block.
-    tailStmts: tailS,
+    tailStmts: P.tail.stmts,
   };
 }
 
@@ -323,31 +299,41 @@ function tris(g) {
 
 /** The FS ramp, in float32. */
 //
-// Read out of src/shaders.js rather than copied into this file. Until wave 2
-// the model below was a HAND-WRITTEN copy — `F(F(vH + 0.8) * 0.6)` clamped to
+// PARSED out of src/shaders.js, never copied into this file. Until wave 2 the
+// model below was a HAND-WRITTEN copy — `F(F(vH + 0.8) * 0.6)` clamped to
 // 0.03/0.97 — that no test ever compared to the shipped statement, so widening
 // the window tenfold in either fragment shader passed all 15 guard files
 // (wave-2 rows D10a and D10b, both RED=NONE). That is the same failure class as
 // round 9's hand-built geometry, which is the reason round 10 exists: a model
 // of the code is only worth what its link to the code is worth.
 //
+// Its first replacement matched a regexp against the whitespace-squeezed file,
+// which is a copy of the SPELLING instead of a copy of the numbers: respelling
+// `.6` as `0.6` — the same number — fired this file's own control. G.colourRamps
+// parses each fragment program's main(), resolves its locals first (so splitting
+// the expression across two statements changes nothing), and reads the four
+// numbers off the tree.
+//
 // Both fragment shaders must carry the SAME ramp — a user shader that fell out
 // of step with the built-in would recolour the scene the moment the editor was
 // opened — so two live matches that disagree is itself the failure.
-const RAMP_RE = /clamp\(\(vH\+([\d.]+)\)\*([\d.]+),([\d.]+),([\d.]+)\)/g;
 let _ramp = null;
 function shippedRamp() {
   if (_ramp) return _ramp;
-  const clean = stripComments(readFileSync(SRC_PATH, 'utf8')).replace(/\s+/g, '');
-  const found = [...clean.matchAll(RAMP_RE)].map(m => m.slice(1, 5).map(Number));
+  const found = G.colourRamps(readFileSync(SRC_PATH, 'utf8'));
   assert.equal(found.length, 2,
-    `expected the ramp clamp((vH+off)*gain,lo,hi) in exactly two live places — the built-in FS ` +
-    `and SE_FS_TEMPLATE — found ${found.length}. Comments are stripped first, so this counts ` +
-    `shipped statements, not prose about them`);
-  assert.deepEqual(found[0], found[1],
-    `the two fragment shaders ramp differently: built-in ${JSON.stringify(found[0])} vs editor ` +
-    `${JSON.stringify(found[1])}. Opening the shader editor would change every colour on screen`);
-  const [off, gain, lo, hi] = found[0];
+    `expected the ramp clamp((vH+off)*gain,lo,hi) in exactly two shipped programs — the built-in ` +
+    `FS and SE_FS_TEMPLATE — found ${found.length}` +
+    (found.length ? ` (${found.map(r => r.program).join(', ')})` : '') +
+    `. Comments are stripped before anything is read, so this counts programs, not prose about them`);
+  assert.deepEqual(found.map(r => r.program), ['FS', 'SE_FS_TEMPLATE'],
+    `the ramp was found in ${found.map(r => r.program).join(' and ')}, which are not the two ` +
+    `fragment programs this file is about`);
+  const key = r => [r.off, r.gain, r.lo, r.hi];
+  assert.deepEqual(key(found[0]), key(found[1]),
+    `the two fragment shaders ramp differently: built-in ${JSON.stringify(key(found[0]))} vs editor ` +
+    `${JSON.stringify(key(found[1]))}. Opening the shader editor would change every colour on screen`);
+  const { off, gain, lo, hi } = found[0];
   _ramp = { off, gain, lo, hi };
   return _ramp;
 }
@@ -390,7 +376,10 @@ describe('the built-in vertex program hands the ramp a displacement', () => {
 
   test('GPU math mode reproduces the pre-round-10 vH bit for bit', () => {
     const P = readProgram(VS, 'VS');
-    let checked = 0, differing = 0, worst = null;
+    // -0 prints as "0", so a message quoting the first difference has to say
+    // which zero it means or it reads as "these two identical numbers differ".
+    const fmt = v => (Object.is(v, -0) ? '-0' : String(v));
+    let checked = 0, differing = 0, signedZeroOnly = 0, worst = null;
     for (const name of SHAPE_NAMES) {
       const g = buildShape(name);
       const pos = g.attributes.position;
@@ -400,7 +389,10 @@ describe('the built-in vertex program hands the ramp a displacement', () => {
             const y0 = pos.getY(i), f = mode0(pos.getX(i), pos.getZ(i), U);
             const now = P.gpuVH(y0, f, p), was = PRE_R10.gpuVH(y0, f, p);
             checked++;
-            if (!Object.is(now, was)) { differing++; worst ??= `${name} vertex ${i} ${U.name} progress ${p}: ${now} vs ${was}`; }
+            if (Object.is(now, was)) continue;
+            differing++;
+            if (now === was) signedZeroOnly++;      // +0 against -0: same colour
+            else worst ??= `${name} vertex ${i} ${U.name} progress ${p}: ${fmt(now)} vs ${fmt(was)}`;
           }
         }
       }
@@ -411,8 +403,10 @@ describe('the built-in vertex program hands the ramp a displacement', () => {
     // silently stopped building shapes cannot pass by comparing nothing.
     assert.ok(checked > 1.4e6, `precondition: the sweep is the whole catalogue, checked only ${checked}`);
     assert.equal(differing, 0,
-      `${differing} of ${checked} float32 words differ from the pre-round-10 colour value — first: ${worst}. ` +
-      `The write is: ${P.text.gpuPosStmt} ${P.text.gpuVHStmt}`);
+      `${differing} of ${checked} float32 words differ from the pre-round-10 colour value` +
+      (worst ? ` — first one that differs in VALUE: ${worst}` : '') +
+      (signedZeroOnly ? ` (${signedZeroOnly} of them are a +0 against a -0, which is the same colour)` : '') +
+      `. The write is: ${P.text.gpuPosStmt}; ${P.text.gpuVHStmt};`);
   });
 
   test('CONTROL — the same comparison DOES fire on round 10, and not on the flat shapes', () => {
@@ -475,6 +469,12 @@ describe('the ramp is back inside its window on the whole catalogue', () => {
   test('CONTROL — the same metric reads 73-100 % when fed the absolute height', () => {
     // If this ever comes back quiet, the reading above proves nothing.
     const solid = SHAPE_NAMES.filter(n => !FLAT.includes(n) && n !== 'solar');
+    // The count in this file's header, pinned here so the two cannot drift:
+    // fourteen shapes clear 73 %, solar reads 37.7 %, the five flat ones 0.0 %.
+    assert.equal(solid.length, 14,
+      `the header says fourteen shapes saturate the ramp under absolute-height colouring; this ` +
+      `control measures ${solid.length} of them (${SHAPE_NAMES.length} shapes, minus ${FLAT.length} ` +
+      `flat ones, minus solar)`);
     for (const name of solid) {
       const g = buildShape(name);
       const frac = clampedArea(g, ROUND10.gpuVH, SILENCE);
@@ -675,22 +675,15 @@ describe('both programs declare what they read', () => {
   // Comments out FIRST. Mutation M11 commented the declaration out and this
   // check stayed green until it did: `// uniform int uVHField;` matched the
   // pattern happily, and a commented-out declaration is exactly the link
-  // failure the check is for.
-  const declares = (src, name) =>
-    new RegExp(`(uniform|attribute|varying)\\s+[a-zA-Z0-9_]+\\s+[^;]*\\b${name}\\b`)
-      .test(stripComments(src));
+  // failure the check is for. It now reads the program's DECLARATIONS rather
+  // than searching for a shape of words near the name, so a mention of aBaseY
+  // in an unrelated statement cannot stand in for declaring it either.
+  const declares = (src, name) => G.declarations(src).has(name);
 
-  const programs = () => {
-    const src = readFileSync(SRC_PATH, 'utf8');
-    const marks = [...src.matchAll(/if\(uMathMode==0\)\{/g)];
-    // SE_VS_TEMPLATE runs from the template literal's start; take a generous
-    // slice back from its branch, bounded by the previous program's end.
-    const editorStart = src.lastIndexOf('const SE_VS_TEMPLATE');
-    return [
-      ['VS', VS],
-      ['SE_VS_TEMPLATE', src.slice(editorStart, marks[1].index + 400)],
-    ];
-  };
+  const programs = () => [
+    ['VS', VS],
+    ['SE_VS_TEMPLATE', editorTemplate(readFileSync(SRC_PATH, 'utf8'))],
+  ];
 
   test('uVHField and aBaseY are declared in both vertex programs', () => {
     for (const [label, src] of programs()) {
@@ -723,9 +716,11 @@ describe('the editor template gets the same two channels', () => {
     // the real ShaderEditor over it. Here it is read out of the source, which is
     // the same text the template interpolates the user body into.
     const src = readFileSync(SRC_PATH, 'utf8');
-    const marks = [...src.matchAll(/if\(uMathMode==0\)\{/g)];
+    const marks = G.findIfs(src, 'uMathMode == 0');
     assert.equal(marks.length, 2,
-      `expected exactly two uMathMode branches (built-in VS and the editor template), found ${marks.length}`);
+      `expected exactly two uMathMode branches (built-in VS and the editor template), found ` +
+      `${marks.length}. This counts branches rather than a string: spacing, line breaks and the ` +
+      `order of the comparison do not affect it, and comments are stripped first`);
     const P = readProgram(editorTemplate(src), 'SE_VS_TEMPLATE');
 
     // GPU branch: bit-for-bit c629b53's `pos.y=y*uMorphProgress; vH=pos.y;`
@@ -751,13 +746,22 @@ describe('the editor template gets the same two channels', () => {
       'the editor template is back to flattening the shape into the graph of the body');
   });
 
-  test('CONTROL — the editor CPU branch is the built-in\'s, statement for statement', () => {
+  test('CONTROL — the editor CPU branch is the built-in\'s, meaning for meaning', () => {
+    // Compared as MEANINGS, not as text. This assertion used to compare the two
+    // statements character for character, so putting redundant parentheses on
+    // one of them — `pos.y = (pos.y * uMorphProgress);`, wave-2 row C06 — turned
+    // this control red while changing nothing whatsoever about either program.
     const src = readFileSync(SRC_PATH, 'utf8');
     const editor = readProgram(editorTemplate(src), 'SE_VS_TEMPLATE');
     const builtin = readProgram(VS, 'VS');
-    assert.equal(editor.text.cpuVHStmt, builtin.text.cpuVHStmt,
-      'the two programs colour CPU modes differently; a preset that switches between them would change colour');
-    assert.equal(editor.text.cpuPosStmt, builtin.text.cpuPosStmt);
+    assert.equal(editor.canon.cpuVH, builtin.canon.cpuVH,
+      `the two programs colour CPU modes differently — editor ${editor.canon.cpuVH} against ` +
+      `built-in ${builtin.canon.cpuVH}; a preset that switches between them would change colour`);
+    assert.equal(editor.canon.cpuPos, builtin.canon.cpuPos,
+      `the two programs deflate differently — editor ${editor.canon.cpuPos} against built-in ` +
+      `${builtin.canon.cpuPos}`);
+    assert.equal(editor.kinds.cpuVH, builtin.kinds.cpuVH);
+    assert.equal(editor.kinds.cpuPos, builtin.kinds.cpuPos);
   });
 });
 
@@ -787,19 +791,73 @@ describe('the ramp this file models is the ramp that ships', () => {
 
   test('CONTROL — the parser moves when the ramp moves', () => {
     // Without this the equality above could be reading a constant it invented.
-    // Same parser, same source, one character changed the way row D10a changes
-    // it: the gain a tenth of what it is, i.e. a window ten times as wide.
-    const clean = stripComments(readFileSync(SRC_PATH, 'utf8')).replace(/\s+/g, '');
-    const widened = clean.replace('clamp((vH+.8)*.6,.03,.97)', 'clamp((vH+.8)*.06,.03,.97)');
-    assert.notEqual(widened, clean, 'precondition: the shipped statement is not where it was');
-    const found = [...widened.matchAll(RAMP_RE)].map(m => m.slice(1, 5).map(Number));
-    assert.equal(found.length, 2);
-    assert.deepEqual(found[0], [0.8, 0.06, 0.03, 0.97],
-      'the parser reports the shipped numbers even when they are not the shipped numbers');
-    assert.notDeepEqual(found[0], found[1],
-      'a one-sided change leaves the two fragment shaders disagreeing, and the parser must see it');
-    const w = (found[0][3] - found[0][2]) / found[0][1];
-    assert.equal(w.toFixed(3), '15.667', `the widened window is ${w}, not ten times 1.5667`);
+    // Same parser, same file, one number changed the way row D10a changes it:
+    // the gain a tenth of what it is, i.e. a window ten times as wide.
+    //
+    // The edit is DERIVED, not typed. Its predecessor did
+    // `clean.replace('clamp((vH+.8)*.6,.03,.97)', …)`, a literal copy of one
+    // spelling of the statement, and when `.6` was respelled `0.6` — the same
+    // number — the replace silently matched nothing and this control failed
+    // saying the parser invents numbers. Here the four numbers come out of the
+    // parse, one is divided by ten, and the statement is written back over its
+    // own span; nothing in it is a copy of how the source happens to be typed.
+    const src   = readFileSync(SRC_PATH, 'utf8');
+    const clean = G.stripComments(src);
+    const first = G.colourRamps(src)[0];
+    const [s, e] = first.span;
+    const rewritten = `${first.lhs}=clamp((vH+${first.off})*${first.gain / 10},${first.lo},${first.hi})`;
+    const widened = clean.slice(0, s) + rewritten + clean.slice(e);
+    assert.notEqual(widened, clean, 'precondition: the rewrite changed nothing, so it tests nothing');
+    const found = G.colourRamps(widened);
+    assert.equal(found.length, 2, 'the rewrite broke one of the two programs rather than editing it');
+    // Expected values derived from what was read, not typed: with the gain
+    // hardcoded here, moving the shipped ramp for a real reason would fire this
+    // CONTROL as well as the assertion above — two failures, one of them saying
+    // something false about the reader.
+    assert.deepEqual([found[0].off, found[0].gain, found[0].lo, found[0].hi],
+                     [first.off, first.gain / 10, first.lo, first.hi],
+      'the reader reports the numbers it read before, not the numbers in the text it was given');
+    // "It moved" is the whole claim, and it is stated against what this reader
+    // itself read a moment ago. Comparing the two programs to each other here
+    // instead was wrong in one case that matters: if the OTHER fragment shader
+    // has already been widened — which is the tree row D10b produces — the
+    // rewrite makes them agree, and the control failed saying a one-sided change
+    // must leave them disagreeing. That sentence was false of that tree.
+    assert.notEqual(found[0].gain, first.gain,
+      'the reader reports the same gain for text that no longer carries that number');
+    const w = (found[0].hi - found[0].lo) / found[0].gain;
+    const wantW = 10 * (first.hi - first.lo) / first.gain;
+    assert.equal(w.toFixed(3), wantW.toFixed(3),
+      `the widened window is ${w}, not ten times the shipped ${((first.hi - first.lo) / first.gain).toFixed(4)}`);
+  });
+
+  test('CONTROL — the same numbers survive being respelled, and a split statement', () => {
+    // The other direction, and the one that mattered: an edit that changes no
+    // number must change no reading. Both of these turned this file red before
+    // the reader was rewritten (wave-2 rows C04 and C17).
+    const r = shippedRamp();
+    const prog = body => `const A = \`void main(){${body}}\`;`;
+    // The four numbers are the SHIPPED ones, spelled several ways — not typed
+    // in. Hardcoding `.6` here would make this control fail the day the ramp
+    // moves for a good reason, saying the reader misread text that it read
+    // perfectly well; that is the same mistake its predecessor made.
+    const bare = v => String(v).replace(/^(-?)0\./, '$1.');   // 0.6 -> .6
+    const pad  = v => v.toFixed(4);                           // 0.6 -> 0.6000
+    const { off, gain, lo, hi } = r;
+    const cases = {
+      'as shipped':        `float t=clamp((vH+${bare(off)})*${bare(gain)},${bare(lo)},${bare(hi)});`,
+      'leading zeros':     `float t=clamp((vH+${off})*${gain},${lo},${hi});`,
+      'trailing zeros':    `float t=clamp((vH+${pad(off)})*${pad(gain)},${pad(lo)},${pad(hi)});`,
+      'reflowed':          `float t = clamp( (vH + ${bare(off)}) * ${bare(gain)} ,\n   ${bare(lo)} , ${bare(hi)} );`,
+      'operands commuted': `float t=clamp(${bare(gain)}*(${bare(off)}+vH),${bare(lo)},${bare(hi)});`,
+      'split in two':      `float u=(vH+${bare(off)})*${bare(gain)};float t=clamp(u,${bare(lo)},${bare(hi)});`,
+    };
+    for (const [what, body] of Object.entries(cases)) {
+      const got = G.colourRamps(prog(body));
+      assert.equal(got.length, 1, `${what}: the reader found ${got.length} ramps, not one`);
+      assert.deepEqual({ off: got[0].off, gain: got[0].gain, lo: got[0].lo, hi: got[0].hi }, r,
+        `${what}: the same ramp written another way read as a different ramp`);
+    }
   });
 
   test('both programs have statements AFTER the branch for the tail check to read', () => {
@@ -820,20 +878,24 @@ describe('the ramp this file models is the ramp that ships', () => {
   test('a vH write after the branch overrides both branches, and the reader says so', () => {
     // Self-test of the tail rule, on text this test owns, so it holds whatever
     // the shipped programs happen to look like.
-    const prog = body => `void main(){vec3 pos=position;float y=0.;
+    const prog = body => `void main(){vec3 pos=position;
+      float y=mix(computeMode(uMode,pos.xz,b,t,m,bt,a,wi,T),computeMode(uModeNext,pos.xz,b,t,m,bt,a,wi,T),uModeBlend);
       if(uMathMode==0){pos.y=(pos.y+y)*uMorphProgress;vH=y*uMorphProgress;}
       else{vH=(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
       ${body}gl_Position=vec4(pos,1.);}`;
     // CONTROL — with nothing in the tail the branch's own write is what is read.
-    assert.equal(readProgram(prog(''), 'probe').text.gpuVHStmt, 'vH=y*uMorphProgress;');
+    assert.equal(readProgram(prog(''), 'probe').kinds.gpuVH, 'field');
     // The regression, appended: it must be what the reader reports for BOTH paths.
     const over = readProgram(prog('vH=pos.y;'), 'probe');
-    assert.equal(over.text.gpuVHStmt, 'vH=pos.y;');
-    assert.equal(over.text.cpuVHStmt, 'vH=pos.y;');
+    assert.equal(over.text.gpuVHStmt, 'vH=pos.y');
+    assert.equal(over.text.cpuVHStmt, 'vH=pos.y');
+    assert.equal(over.kinds.gpuVH, 'height');
     // …and wrapped, which is how the anchored filter used to be evaded: the
     // statement is not a form this file has arithmetic for, so it is refused
     // rather than stepped over.
     assert.throws(() => readProgram(prog('if(uMathMode==0)vH=pos.y;'), 'probe'),
-      /unrecognised write, refusing to guess/);
+      /this reader cannot say what/);
+    assert.throws(() => readProgram(prog('{vH=pos.y;}'), 'probe'),
+      /this reader cannot say what/);
   });
 });
