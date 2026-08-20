@@ -83,7 +83,18 @@ export class AudioEngine {
     // Beat detector
     this.lastBeatTime    = 0;
     this.BEAT_COOLDOWN   = 190;   // ms — refractory period; sets BPM ceiling
-    this.BEAT_THRESHOLD  = 0.65;
+    // FIX(r11): kept as the near-silence floor and nothing else. It used to be
+    // the whole detector — an absolute level a mixed track never drops below —
+    // and the relative test in _detectBeat replaced that job.
+    // Linear power, so this is a level in dB rather than a fraction of the
+    // byte scale: −60 dBFS is quiet enough that nothing musical lives below it.
+    this.BEAT_FLOOR      = Math.pow(10, -60 / 10);
+    // The relative margins the surge has to clear: 30 % over the running mean
+    // AND 1.6 deviations above it. Two conditions rather than one because a
+    // steady loud passage has a high mean with a tiny deviation, while a quiet
+    // passage has the opposite.
+    this.BEAT_RISE       = 1.80;
+    this.BEAT_SIGMAS     = 1.4;
 
     // Multi-band detectors — energy/timestamp pairs for kick/snare/hihat.
     // Used for BPM accuracy; band UI was removed but the data path is kept.
@@ -124,6 +135,18 @@ export class AudioEngine {
         this.audioCtx = new AudioContext();
         this.analyser = this.audioCtx.createAnalyser();
         this.analyser.fftSize = 1024;
+        // FIX(r11): the dB window the byte spectrum is stretched over was left
+        // at the Web Audio defaults, -100 dB to -30 dB. getByteFrequencyData
+        // maps that window onto 0…255, so every bin at or above -30 dBFS reads
+        // 255 — and on any mixed material the bass bins are far above it. The
+        // band energies below were therefore pinned at their ceiling whatever
+        // the track did. Measured on a simulated analyser: a plain mix peaking
+        // near -12 dBFS read bass = 1.000 constantly, and even white noise at
+        // -20 dBFS read 0.863. A -85…-10 window spans the range music actually
+        // occupies, and the band multipliers that used to force the issue are
+        // gone with it.
+        this.analyser.minDecibels = -85;
+        this.analyser.maxDecibels = -10;
         this.fftData  = new Uint8Array(this.analyser.frequencyBinCount);
         // FIX(#29): removed the unread `waveData` allocation (see constructor).
         // WARNING(#7): the analyser doubles as the audible path, and
@@ -133,6 +156,11 @@ export class AudioEngine {
         // routing stays: mute monitors or capture via a loopback device
         // (VB-Cable / BlackHole).
         this.analyser.connect(this.audioCtx.destination);
+        // FIX(r11): _nyq was the constructor's 22050 placeholder — the sample
+        // rate of the context was never read, so every band edge below was off
+        // by whatever the device's rate is not: 8.8 % on a 48 kHz context, and
+        // the "recompute" on this line reproduced the placeholder bit for bit.
+        this._nyq = this.audioCtx.sampleRate / 2;
         this._fpb = this._nyq / (this.analyser.frequencyBinCount);
       }
       // Chromium auto-suspends contexts created before the first user
@@ -713,15 +741,24 @@ export class AudioEngine {
       this.analyser.getByteFrequencyData(this.fftData);
       // Three-band energies with multipliers tuned to roughly equalise
       // perceived response across bass/mid/treble.
-      const rb = Math.min(1, this._energy(20,   140)  * 1.4);
-      const rm = Math.min(1, this._energy(140,  2000) * 1.2);
+      // FIX(r11): the 1.4 and 1.2 were there to lift bands that the -100…-30
+      // window had already flattened; with the window set to what music uses,
+      // they only bring the ceiling closer. The clamp stays as a guard, not as
+      // the operating point.
+      const rb = Math.min(1, this._energy(20,   140));
+      const rm = Math.min(1, this._energy(140,  2000));
       const rt = Math.min(1, this._energy(2000, 12000));
       // Low-pass smoothing: 70% new value, 30% prior frame. Removes the
       // jagged frame-to-frame jitter from raw FFT bins.
       this.bass   = this.bass   * 0.3 + rb * 0.7;
       this.mid    = this.mid    * 0.3 + rm * 0.7;
       this.treble = this.treble * 0.3 + rt * 0.7;
-      this._detectBeat(this.bass);
+      // FIX(r11): the detector is handed linear power, not the 0…1 byte
+      // average. getByteFrequencyData is a dB scale, and dB compresses exactly
+      // the thing an onset detector needs to see: a kick 14 dB over the bed is
+      // 25x in power and 19 % of the byte range, so a relative test on bytes
+      // cannot be both sensitive to a kick and deaf to a loud passage.
+      this._detectBeat(this._energyLinear(20, 140));
       this._detectMultiBandBeats();
       this._updateSeek();
       this.cb.onEQ(this.fftData);
@@ -733,10 +770,45 @@ export class AudioEngine {
       this.mid    = 0.2  + Math.sin(time * 0.9) * 0.09;
       this.treble = 0.15 + Math.cos(time * 1.1) * 0.08;
     }
-    this.beatInt = Math.max(0, this.beatInt - 0.04);
+    // FIX(r11): this used to subtract a fixed 0.04 per CALL, and the call is
+    // one animation frame — so the flash lasted 208 ms on a 120 Hz display,
+    // 417 ms at 60 Hz and 833 ms on the mobile path, which main.js enters on
+    // window width alone (RENDER_FRAME_SKIP with innerWidth < 768). Same track,
+    // four-fold spread in the duty cycle a camera script sees on `beat`. It is
+    // a wall-clock fade of 0.4 s now, measured with the same guards the volume
+    // tick uses against a hidden tab handing back one enormous delta.
+    const nowMs = this._now();
+    const dt = this._lastBeatFadeMs === undefined ? 1 / 60 : (nowMs - this._lastBeatFadeMs) / 1000;
+    this._lastBeatFadeMs = nowMs;
+    if (dt > 0 && dt < 1) this.beatInt = Math.max(0, this.beatInt - dt / 0.4);
   }
 
   // ── Analysis helpers ──────────────────────────────────────────────────────
+  /**
+   * The clock the analysis half runs on. performance.now() is monotonic;
+   * Date.now() steps with the system clock, and a step backwards would stall
+   * the refractory period until the wall clock caught up. _trackBpm already
+   * read performance.now(), so before round 11 the detector's refractory and
+   * its BPM estimate were measured on two different clocks.
+   */
+  _now() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
+
+  /**
+   * Mean linear power over a band, undoing the analyser's dB mapping.
+   * byte 0…255 spans [minDecibels, maxDecibels], so dB = min + byte/255·(max−min)
+   * and power = 10^(dB/10). Used by the beat detector; the display bands stay
+   * on the byte average, which is the perceptual curve they want.
+   */
+  _energyLinear(lo, hi) {
+    if (!this.fftData || !this.analyser) return 0;
+    const min = this.analyser.minDecibels ?? -100, max = this.analyser.maxDecibels ?? -30;
+    let s = 0, c = 0;
+    const a = Math.floor(lo / this._fpb);
+    const b = Math.min(this.fftData.length - 1, Math.ceil(hi / this._fpb));
+    for (let i = a; i <= b; i++) { s += Math.pow(10, (min + this.fftData[i] / 255 * (max - min)) / 10); c++; }
+    return c ? s / c : 0;
+  }
+
   _energy(lo, hi) {
     if (!this.fftData) return 0;
     let s = 0, c = 0;
@@ -747,8 +819,33 @@ export class AudioEngine {
   }
 
   _detectBeat(b) {
-    if (b > this.BEAT_THRESHOLD && Date.now() - this.lastBeatTime > this.BEAT_COOLDOWN) {
-      this.lastBeatTime = Date.now();
+    // FIX(r11): this was an absolute level test — `b > 0.65` — with no moving
+    // baseline of any kind, so on material whose bass sat above the threshold
+    // the condition was simply always true and the only thing setting the beat
+    // rate was the 190 ms refractory period: 5.3 "beats" a second, and
+    // estimatedBpm converging on ~300 whatever the track was. Everything that
+    // calls itself music-synced ran 2.3-2.5x fast on that number — AUTO COLOUR
+    // at 8 bars fired every 6.4 s instead of 15, a 4-bar clip step every 3.0 s
+    // instead of 7.5.
+    //
+    // A beat is a local surge now: the band's POWER has to stand above its own
+    // recent mean by a margin that scales with how much that mean has been
+    // moving, so a loud steady passage is not a beat and a kick in a quiet one
+    // is. The floor keeps the detector off in near-silence, where mean and
+    // deviation are both tiny and any ripple clears a relative test.
+    const h = this._bassHist ??= [];
+    h.push(b);
+    if (h.length > 60) h.shift();
+    let mean = 0;
+    for (const v of h) mean += v;
+    mean /= h.length;
+    let varsum = 0;
+    for (const v of h) varsum += (v - mean) * (v - mean);
+    const sd = Math.sqrt(varsum / h.length);
+    const surging = h.length >= 20 && b > mean * this.BEAT_RISE && b > mean + sd * this.BEAT_SIGMAS && b > this.BEAT_FLOOR;
+    const now = this._now();
+    if (surging && now - this.lastBeatTime > this.BEAT_COOLDOWN) {
+      this.lastBeatTime = now;
       this.beatInt = 1.0;
       this._trackBpm();
       this.cb.onBeat();
@@ -772,7 +869,7 @@ export class AudioEngine {
   }
 
   _detectMultiBandBeats() {
-    const now = Date.now();
+    const now = this._now();
     // Tuned bands and gains chosen empirically against drum mixes.
     // Smoothing constants differ per band: hihats decay faster than kicks.
     this.kickEnergy  = this.kickEnergy  * 0.3 + this._energy(40,    100)   * 1.6 * 0.7;

@@ -23,7 +23,8 @@ import { isAboutModalOpen } from './ui/about-modal.js';
 // ── App config ──────────────────────────────────────────────────────────────
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
 // FIX(#29): dropped beatCooldown / beatThreshold. They duplicated
-// AudioEngine.BEAT_COOLDOWN / BEAT_THRESHOLD (audio.js) but CFG is only ever
+// AudioEngine.BEAT_COOLDOWN / BEAT_FLOOR (audio.js — the second was called
+// BEAT_THRESHOLD until round 11 turned it into a floor) but CFG is only ever
 // handed to RenderEngine and CameraSystem — neither reads them, and the audio
 // engine never sees CFG at all — so the values could silently drift from the
 // ones actually used by the detector. audio.js owns them.
