@@ -143,7 +143,14 @@ function makeUi() {
       startNDI() {}, stopNDI() {},
     },
     secondScreen: { open() {}, close() {}, active: false, cb: {} },
-    gifRec: { cb: {} }, webmRec: { cb: {} },
+    // The recorder pair, with just enough surface for the STOP path: which
+    // phase it is in, and which of the two exits was taken.
+    gifRec: {
+      cb: {}, encoding: false,
+      stop()  { calls.push(['gif.stop']); },
+      abort() { calls.push(['gif.abort']); },
+    },
+    webmRec: { cb: {}, stop() { calls.push(['webm.stop']); } },
     _showToast() {},
   };
 }
@@ -168,6 +175,24 @@ describe('the Virtual Camera controls say what is true', () => {
     assert.deepEqual(ui.called('vcam.start')[0], ['vcam.start', 60],
       'parseInt("") is NaN — the ?? guards a missing element, not an empty one, ' +
       'and captureStream(NaN) picks its own rate while the panel reports NaNfps');
+  });
+
+  test('a typed zero does not start a stream that never advances', () => {
+    // captureStream(0) is legal — it means "a frame only when something asks
+    // for one" — so nothing threw, the panel went green, and the picture sat
+    // still. Number.isFinite(0) is true, which is what the old guard asked.
+    byId('out-vcam-fps').value = '0';
+
+    fire('out-btn-vcam-start', 'click');
+
+    assert.deepEqual(ui.called('vcam.start')[0], ['vcam.start', 60],
+      'zero reached captureStream and the feedback line reported "active @ 0fps"');
+  });
+
+  test('a frame rate outside anything a canvas can do falls back too', () => {
+    byId('out-vcam-fps').value = '100000';
+    fire('out-btn-vcam-start', 'click');
+    assert.deepEqual(ui.called('vcam.start')[0], ['vcam.start', 60]);
   });
 
   test('control — a frame rate that was typed is the one used', () => {
@@ -247,5 +272,51 @@ describe('the camera PARAMS sliders are told when something else changes them', 
 
     assert.equal(ui.camera.cpParams.radius, 9.5);
     assert.equal(byId('cp-radius-v').textContent, '9.5');
+  });
+});
+
+
+// ── Round 11: STOP means stop ───────────────────────────────────────────────
+describe('the recorder STOP button does what the documentation promises', () => {
+
+  test('during capture it aborts rather than saving a partial GIF', () => {
+    // documents/recording.md:131 — "For GIF, this aborts the worker and
+    // discards partial frames — no file is saved". During capture
+    // gif.encoding is false, so the old branch called stop(), and
+    // GifRecorder.stop() with frames collected renders and downloads them.
+    ui.gifRec.encoding = false;
+
+    fire('rec-btn-stop', 'click');
+
+    assert.equal(ui.called('gif.abort').length, 1, 'STOP saved the partial take the docs say it discards');
+    assert.equal(ui.called('gif.stop').length, 0);
+  });
+
+  test('control — while encoding it still aborts, which was already true', () => {
+    ui.gifRec.encoding = true;
+    fire('rec-btn-stop', 'click');
+    assert.equal(ui.called('gif.abort').length, 1);
+  });
+});
+
+describe('SIZE cannot show a value the take will ignore', () => {
+
+  test('ASPECT: Native disables it, and says why', () => {
+    byId('rec-aspect').value = 'native';
+    fire('rec-aspect', 'change');
+
+    assert.equal(byId('rec-gif-size').disabled, true,
+      'Native sends no dimensions at all (deliberately — see FIX(#23, r3)), so a live SIZE selector is a lie');
+    assert.match(byId('rec-gif-size').title, /Native/);
+  });
+
+  test('control — any other aspect leaves it usable', () => {
+    byId('rec-aspect').value = 'native';
+    fire('rec-aspect', 'change');
+    byId('rec-aspect').value = 'portrait';
+    fire('rec-aspect', 'change');
+
+    assert.equal(byId('rec-gif-size').disabled, false);
+    assert.equal(byId('rec-gif-size').title, '');
   });
 });
