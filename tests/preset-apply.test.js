@@ -131,17 +131,24 @@ function makeUi() {
     compileAndApply() {
       this.customVS = `VS{${this._vert}}`;
       this.customFS = `FS{${this._frag}}`;
+      // FIX(r11): the real editor records the BODIES that compiled, and
+      // captureState stores those rather than the assembled programs
+      // (shaders.js onSuccess). A stub without them makes "is this shader
+      // already live?" unanswerable, and the draft buffer indistinguishable
+      // from the applied source.
+      this._appliedVert = this._vert;
+      this._appliedFrag = this._frag;
       render.gpuMat.vertexShader   = this.customVS;
       render.gpuMat.fragmentShader = this.customFS;
       calls.push(['compileAndApply']);
     },
     revertToBuiltIn() {
-      this.customVS = null; this.customFS = null;
+      this.customVS = null; this.customFS = null; this._appliedVert = null; this._appliedFrag = null;
       render.gpuMat.vertexShader   = BUILTIN_VS;
       render.gpuMat.fragmentShader = BUILTIN_FS;
       calls.push(['revertToBuiltIn']);
     },
-    reset() { this.revertToBuiltIn(); this._vert = 'default vert'; this._frag = 'default frag'; calls.push(['reset']); },
+    reset() { this.revertToBuiltIn(); this._vert = 'default vert'; this._frag = 'default frag'; this._appliedVert = null; this._appliedFrag = null; calls.push(['reset']); },
   };
 
   return Object.assign(Object.create(PresetMixin), {
@@ -886,5 +893,37 @@ describe('_renderPresets — a delete the storage refuses is reported', () => {
 
     assert.deepEqual(storedNames(), ['Alpha']);
     assert.equal(ui.called('toast').length, 0);
+  });
+});
+
+
+// ── Round 11: a preset must not type over the operator ──────────────────────
+describe('applying a preset whose shader is already live leaves the editor alone', () => {
+
+  const SNAP = { _version: 2, shader: { hasCustom: true, vert: 'V1', frag: 'F1' } };
+
+  test('the second apply neither recompiles nor rewrites the draft buffer', () => {
+    const ui = makeUi();
+    ui.applyState({ ...SNAP });
+    assert.equal(ui.called('compileAndApply').length, 1, 'precondition: the first apply compiles');
+
+    // The operator starts typing and has not applied it yet. A clip stepping
+    // through presets arrives every few seconds.
+    ui.shaderEditor._frag = 'half-typed idea';
+    ui.applyState({ ...SNAP });
+
+    assert.equal(ui.shaderEditor._frag, 'half-typed idea',
+      'the preset overwrote source the operator had not applied — the rule the ' +
+      'revert branch states fifteen lines below in the same file');
+    assert.equal(ui.called('compileAndApply').length, 1, 'and it recompiled a program that was already live');
+  });
+
+  test('control — a preset carrying a DIFFERENT shader still applies', () => {
+    const ui = makeUi();
+    ui.applyState({ ...SNAP });
+    ui.applyState({ _version: 2, shader: { hasCustom: true, vert: 'V2', frag: 'F2' } });
+
+    assert.equal(ui.called('compileAndApply').length, 2);
+    assert.equal(ui.shaderEditor._frag, 'F2');
   });
 });

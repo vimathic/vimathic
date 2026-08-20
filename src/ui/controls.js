@@ -714,10 +714,9 @@ export function bindControls(ui) {
     r.camera.up.set(0, 1, 0);
     r.orbit.update();
 
-    // Auto-rotate starts OFF — the user opts in via the AUTO-ROTATE button.
+    // Physics preset back to the factory one. Auto-rotate is cleared AFTER
+    // the script reset below, not here — see the note there.
     cam.setCamPhysics('dark_matter');
-    cam.autoRot = false;
-    cam.cb.onAutoRotChanged(false);
 
     // Reset camera programmer.
     // FIX(#24, r4): through resetScript(), which also puts the default template
@@ -727,9 +726,18 @@ export function bindControls(ui) {
     // straight back to the persisted snapshot ~1.5 s later. That used to be
     // laundered by the boot-time blanking; now that a reload restores the
     // script (as it should), RESET ALL has to actually reset it.
-    // resetScript() re-does fov=45 and setCamPhysics('dark_matter'), both
-    // already set above with the same values, and does not touch autoRot.
+    // FIX(r11): "does not touch autoRot" — which is what this comment used to
+    // claim — was false. resetScript() ends with setCamPhysics('dark_matter'),
+    // and that setter's own last two lines are `this.autoRot = true` and
+    // `onAutoRotChanged(true)`. So the button labelled RESET ALL, whose stated
+    // contract is "Auto-rotate starts OFF — the user opts in", switched
+    // auto-rotate ON and repainted the button to say so, twelve lines after
+    // clearing it. The carefully placed bottom-up view above lasted less than a
+    // frame with the physics orbit running. Clearing it after the script reset
+    // is the whole fix; the ordering is the contract now, and a test holds it.
     cam.resetScript();
+    cam.autoRot = false;
+    cam.cb.onAutoRotChanged(false);
     cam.cpKeyframes = [];
     cam.cpSelectedKf = null;
     cam.buildTimeline();
@@ -908,6 +916,15 @@ export function bindControls(ui) {
   document.addEventListener('keyup', e => {
     if (e.key.toLowerCase() === _dragKey) _dragKey = null;
   });
+  // FIX(r11): keyup was the ONLY place that cleared it. Hold L, K, J, N, B, X,
+  // Z, V, C or A and let the focus leave the document — Alt+Tab, Ctrl+T, a
+  // system dialog — and the keyup lands in the other window: the key stays
+  // armed for the rest of the session. After that every mouse move drags a
+  // parameter and the wheel handler swallows the page's scroll, with no key
+  // held and nothing on screen to say why. A window that has lost focus cannot
+  // be holding a key, and a hidden document cannot either.
+  window.addEventListener('blur', () => { _dragKey = null; });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) _dragKey = null; });
   // ── NOTE on touchpad freezing while a drag key is held ────────────────
   // All three desktop OSes ship "disable touchpad while typing" enabled
   // by default. JavaScript cannot override this — it happens before the
