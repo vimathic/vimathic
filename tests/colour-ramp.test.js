@@ -198,7 +198,12 @@ function readProgram(src, label) {
   const P = G.readVertexProgram(src);
 
   const gpuPos = pick(POS_MODEL, P.gpu.pos, `${label} GPU pos.y`);
-  const cpuPos = pick(POS_MODEL, P.cpu.pos, `${label} CPU pos.y`);
+  // The CPU write is checked, not modelled: pick() asserts there is exactly one
+  // of it, that it carries a displacement and that this reader understands it.
+  // Nothing below evaluates it — the CPU branch's geometry is applyHeightField's
+  // business — so the CALL is the point and the return value is deliberately
+  // dropped. Binding it to a name only made it look like an oversight.
+  pick(POS_MODEL, P.cpu.pos, `${label} CPU pos.y`);
 
   // A vH write after the branch overrides whatever either branch wrote — that
   // is exactly the shape of the round-10 defect, so it must not be invisible.

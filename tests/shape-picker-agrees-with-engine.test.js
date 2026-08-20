@@ -332,7 +332,10 @@ function census(text, file, names, justified) {
     out.push({ file, rhs: m[1].trim(), verdict: classify(m[1], names, justified) });
   }
   VIA_RE.lastIndex = 0;
-  while ((m = VIA_RE.exec(code)) !== null) {
+  // No capture is read here — unlike the loop above, every match means the same
+  // thing — so the match is not bound to a name. exec still has to be called:
+  // it is what advances lastIndex and ends the loop.
+  while (VIA_RE.exec(code) !== null) {
     // selectShape's argument does not need proving: whatever goes in, what the
     // picker receives is its return value, and normalizeShape's own contract
     // (SHAPE_NAMES membership) is pinned in tests/shape-fallback-and-hf-once.
