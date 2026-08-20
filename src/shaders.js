@@ -22,6 +22,39 @@ export const VS = `
 uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
 uniform int   uMode,uMathMode,uModeNext;
 uniform float uMorphProgress,uModeBlend;
+// ── The colour channel ────────────────────────────────────────────────────────
+// vH is the ONLY thing the fragment shader colours by: t = clamp((vH+.8)*.6,
+// .03,.97), i.e. the palette's live window is vH in [-0.75, +0.8167] — solve
+// .03/.6-.8 and .97/.6-.8, 1.567 units wide — which is the size of the
+// audio-driven displacement and nothing wider. That window is
+// what makes the palette the audio channel: measured on mode 0, the field
+// spans +-0.14 in silence (nothing clamps, on any of the twenty shapes) and
+// reaches -1.49..+2.00 with uAmp 1.5 and bass 1.0, where the ramp clips 64 % of
+// the plane's area — it clipped that loud before round 10 as well, and this
+// change neither improves nor worsens it.
+//
+// Since round 10 the shape keeps its own y, so pos.y is body + field and no
+// longer fits that window at all — a sphere spans +-3.5. Measured on the
+// catalogue at boot uniforms in silence, colouring by pos.y put 73-100 % of the
+// surface of FOURTEEN of the twenty shapes on a CLAMPED, flat colour (the boot
+// shape 81.5 %, octahedron 100 %) where it had been 0 % on every one of them.
+// The other six are accounted for: plane, disc, circle, hex and tetrahedron
+// read 0.0 %, and solar reads 37.7 %. So vH
+// is written from the DISPLACEMENT, not from the absolute height, and geometry
+// and colour become two independent channels instead of one contested one.
+//
+// uVHField says which of the two the CPU path left in the attribute:
+//   0 — pos.y IS the value to colour by (GPU mode, Volume, Collapse). Volume
+//       and Collapse have always written base + displacement and have always
+//       clamped, and this uniform is what keeps them bit-identical.
+//   1 — Surface mode: applyHeightField wrote base + field, so the field is
+//       recovered as pos.y - aBaseY.
+// aBaseY is the shape's own y, uploaded once per shape by RenderEngine.setShape
+// (a static attribute, never touched per frame). A geometry that does not carry
+// it reads 0 — which is exactly the value that makes the subtraction a no-op,
+// and is also what applyHeightField falls back to when it has no base.
+uniform int   uVHField;
+attribute float aBaseY;
 varying float vH;
 // SURF lighting: pass post-displacement world position and view direction to FS
 // so the fragment shader can reconstruct surface normals via screen-space
@@ -200,15 +233,82 @@ void main(){
     // GPU mode: compute both current and next, blend between them
     float y    = computeMode(uMode,    pos.xz, b, t, m, bt, a, wi, T);
     float yNxt = computeMode(uModeNext, pos.xz, b, t, m, bt, a, wi, T);
-    // uMorphProgress scales the whole displacement (1=full, 0=flat for shape swap)
-    pos.y = mix(y, yNxt, uModeBlend) * uMorphProgress;
+    // FIX(r10 §1.5): ADD the field to the shape's own y, do not replace it.
+    // Assignment made pos.y a pure function of pos.xz, so every vertex sharing
+    // an (x,z) column landed on one point and the shape stopped existing.
+    // Measured on the catalogue AS IT STOOD BEFORE ROUND 10 — c629b53's own
+    // setShape, which still turned disc and hex onto edge — with GPU mode 0 at
+    // the boot uniforms in silence (uAmp .7, bass = mid = treble = 0, uWI 1,
+    // T 0) and uMorphProgress 1: 23.74 % of the catalogue's triangles came out
+    // with exactly zero area (cylinder 98.8 %, box 66.7 %, hex 33.1 % — 34.2 %
+    // if a 1e-15 area epsilon counts the slivers as well as the points), and
+    // the surviving area, as a fraction of the SAME SHAPE'S UNDISPLACED area,
+    // fell to 9.8 % for hex, 21.1 % for disc, 33.4 % for cylinder.
+    // Both halves of that sentence are needed to re-derive it: on THIS tree's
+    // catalogue, where disc and hex lie flat, the same probe reads hex 84.7 %
+    // and disc 97.8 %. Only cylinder is unchanged, never having been in the
+    // rotate list.
+    // Adding degenerates nothing on any of the twenty, on either catalogue,
+    // and shrinks nothing: on this tree the area readings run from 100.0 % of
+    // the undisplaced shape up to 126.2 % (the plane, which is all field).
+    // The factored form keeps uMorphProgress honest: at progress 0 the whole
+    // thing — shape and field together — is still flat, which is what the
+    // deflate/swap/inflate in setShapeAnimated relies on (see the "the mesh is
+    // invisible there" note in render.js). A bare "pos.y +=" would leave the
+    // solid standing at the flat frame and turn every shape swap into a cut.
+    // On the two shapes the old assignment was RIGHT for — plane and circle,
+    // whose own y is exactly 0 (rotateX leaves a 2.1e-16 residue and setShape
+    // writes it back to zero, see render.js) — this is bit-exact: 0 of 130415
+    // float32 vertices differ across progress 0/.25/.5/.75/1. That total is
+    // the desktop plane's 25921 vertices and circle's 162, five progress
+    // values each: 129605 + 810. Mobile is 33215 the same way.
+    float f = mix(y, yNxt, uModeBlend);
+    pos.y = (pos.y + f) * uMorphProgress;
+    // The field alone, scaled the same way — bit-for-bit what vH carried
+    // before round 10, when the height WAS the field: c629b53 stored
+    // mix(y,yNxt,uModeBlend)*uMorphProgress and copied that into vH. Verified
+    // on all 20 shapes at progress 0/.25/.5/.75/1 in two uniform states, 0 of
+    // 1471360 float32 words differing (tests/colour-ramp.test.js).
+    vH = f * uMorphProgress;
   } else {
-    // CPU math mode: pos.y already written by applyHeightField().
+    // CPU math mode: pos.y already written by applyHeightField() (Surface) or
+    // by the volume/collapse writers, which put base + displacement there.
     // Apply uMorphProgress so shape transitions still deflate/inflate.
+    // vH is read off the attribute BEFORE that scaling, so the Surface form is
+    // (base + field - base) * progress rather than a difference of two scaled
+    // numbers. Both are only rounding apart, and this order is the better one
+    // where it matters — but NOT "everywhere", which is what this comment used
+    // to say. Measured on all twenty shapes at progress 0/.25/.5/.75/1 under
+    // four Surface formulas (pseudosphere, landauLevels, hyperbolicParaboloid,
+    // mandelbrot) at the factory sliders, error taken against the field in
+    // double precision and divided by that shape's own peak |field|:
+    //   catalogue worst   this order 5.9e-8   the other 8.2e-6  (~140x)
+    //   tetrahedron       this order 0.0e+0   the other up to 4.3e-7
+    //     (12 vertices, base y +-2.02 — the sparsest shape in the catalogue,
+    //      and the one the old sentence singled out. Not its biggest base:
+    //      torus reaches +-3.90 and sphere +-3.50.)
+    // The exception, stated because it is real: on 3 of the 80 (formula, shape)
+    // pairs the other order rounds marginally better — disc under pseudosphere
+    // 3.5e-8 against 4.0e-8, disc under landauLevels 2.7e-8 against 4.7e-8,
+    // hex under hyperbolicParaboloid 3.0e-8 against 3.6e-8. All three sit at
+    // the 1e-8 floor both forms bottom out on, and all three are shapes whose
+    // base barely leaves zero (disc +-0.04, hex +-0.25) — exactly where there
+    // is nothing to subtract. Nowhere does the shipped order lose by an amount
+    // that survives the ramp: 1e-8 in vH is 6e-9 in the palette parameter,
+    // against 1/255 = 4e-3 per colour step.
+    // (Measured over the twenty shapes x five uMorphProgress values x four
+    // Surface formulas, both orders evaluated in float32 and compared against
+    // the field in double, normalised by that shape's own peak |field|. The
+    // control that must fire — dropping the subtraction entirely — reads 1.5e+2
+    // on the same scale. The probe that produced this lived outside the
+    // repository, which by this repo's own rule for numbers means the figures
+    // above are conditions-and-magnitude, not a reproducible table: what is
+    // pinned here is the ORDER of the two forms, by tests/colour-ramp.test.js,
+    // not the individual exponents.)
+    vH = (uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress : pos.y * uMorphProgress;
     pos.y = pos.y * uMorphProgress;
   }
 
-  vH=pos.y;
   gl_PointSize=uPointSize;
   // Compute world-space position AFTER all displacement so derived normals are correct
   vec4 _wp = modelMatrix * vec4(pos, 1.0);
@@ -551,6 +651,13 @@ void main(){
 const SE_VS_TEMPLATE = body => `uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
 uniform int uMode,uMathMode,uModeNext;
 uniform float uMorphProgress,uModeBlend;
+// uVHField / aBaseY — see the long note in VS. The editor's fragment template
+// shares the same ramp (t=clamp((vH+.8)*.6,.03,.97)), so a user shader gets the
+// same two channels: their body drives the palette through y, the shape it is
+// drawn on drives the geometry. Both are declared unconditionally because the
+// morph line below reads them whatever the body did.
+uniform int uVHField;
+attribute float aBaseY;
 varying float vH;
 varying vec3  vWorldPos;
 varying vec3  vViewDir;
@@ -576,8 +683,37 @@ void main(){vec3 pos=position;
   // branch reproduces the built-in's CPU path, including its double scaling in
   // collapse mode (math-visualizer applies morphScale before this): parity
   // with the reference, not a new behaviour.
-  if(uMathMode==0){pos.y=y*uMorphProgress;}else{pos.y=pos.y*uMorphProgress;}
-  vH=pos.y;
+  // FIX(r10 §1.5): adds rather than replaces, for the same reason as the
+  // built-in VS above — an editor shader was flattening the shape it was
+  // drawn on into the graph of its own body. Parity with the reference. Two
+  // contracts here, and they do NOT hold for the same set of saved bodies —
+  // measured on the plane at progress 0/.25/.5/.75/1, 129605 float32
+  // comparisons per body, against this template as it stood at c629b53:
+  //   COLOUR is bit-identical for every body. Before round 10 vH was pos.y
+  //     after this line, which in the GPU branch was y*uMorphProgress and
+  //     never the body's own pos.y write; it is y*uMorphProgress now. 0 of
+  //     129605 differ for a body writing only y, one writing only pos.y, and
+  //     one writing both.
+  //   GEOMETRY is bit-exact only for a body that writes y and leaves pos.y
+  //     alone — which is what the shipped snippet and the built-in presets
+  //     do: 0 of 129605. A body that writes pos.y ITSELF used to have that
+  //     write discarded here and now keeps it, so it moves: 103680 of 129605
+  //     for a body whose whole text is  pos.y = sin(r*3.)*.9;  (vertex 0 at
+  //     progress .25, 0.0000 -> 0.1703). That is the fix and not a casualty
+  //     of it — the old line silently threw the user's own pos.y away.
+  //     (This example used to be spelled out in English because the guard in
+  //     tests/shader-source-owner.test.js read prose as code. Round 10 gave
+  //     that guard a reader that strips both comment kinds and splits on
+  //     statements, so the GLSL is back. Measured: with the line above written
+  //     as GLSL, shader-source-owner 23/0, colour-ramp 20/0 and gpu-shape-y
+  //     21/0 all stay green, while unscaling the REAL write below turns them
+  //     1, 3 and 7 red respectively.)
+  // FIX(r10, colour): vH carries the DISPLACEMENT, not the absolute height —
+  // the built-in VS above has the measurement and the reasoning. In the GPU
+  // branch that is the body's own y, which is bit-for-bit what vH was here
+  // before round 10, when the template stored y*uMorphProgress as the height
+  // and copied that into vH.
+  if(uMathMode==0){pos.y=(pos.y+y)*uMorphProgress;vH=y*uMorphProgress;}else{vH=(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
   // An editor shader is now installed on the POINTS proxy too, and a vertex
   // program that leaves gl_PointSize unwritten draws points of undefined size.
   // Mirrors the built-in VS; harmless in WIRE/SURF, which ignore it.
@@ -738,6 +874,12 @@ export class ShaderEditor {
       uniforms:       this._render.U,
       side:           THREE.DoubleSide,
     });
+    // Same aBaseY fallback as gpuMat. SE_VS_TEMPLATE declares and reads the
+    // attribute unconditionally, and the throwaway PlaneGeometry above never
+    // went through attachBaseY, so without this the probe draw takes neither
+    // of three's two paths for it and leaves the generic location holding
+    // whatever the last program put there. See attachBaseY in render.js.
+    tMat.defaultAttributeValues.aBaseY = [0];
     // Probe in a scene of its own rather than adding the test mesh to the live
     // one: compile()/render() would then walk every material in the scene —
     // seconds of work on a software GL — and the probe mesh could show up in
@@ -1017,7 +1159,16 @@ export class ModelLoader {
     group.traverse(child => {
       if (!(child instanceof THREE.Mesh)) return;
       (Array.isArray(child.material) ? child.material : [child.material]).forEach(m => m.dispose());
-      child.material = new THREE.ShaderMaterial({ vertexShader:vs, fragmentShader:fs, uniforms:this._render.U, side:THREE.DoubleSide });
+      const mat = new THREE.ShaderMaterial({ vertexShader:vs, fragmentShader:fs, uniforms:this._render.U, side:THREE.DoubleSide });
+      // THIS is the case attachBaseY's docblock names as the real one: an
+      // imported geometry never passes through setShape, so it carries no
+      // aBaseY, while both VS and SE_VS_TEMPLATE read the attribute
+      // unconditionally. Declaring the default is what makes three write 0
+      // into the generic location instead of leaving the previous program's
+      // value there. Survives the editor's swap: applyShaderSource mutates
+      // .vertexShader in place and does not rebuild the material.
+      mat.defaultAttributeValues.aBaseY = [0];
+      child.material = mat;
       this._meshes.push(child);
     });
   }

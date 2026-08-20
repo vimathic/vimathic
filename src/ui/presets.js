@@ -9,6 +9,7 @@
 import { DOM } from '../dom.js';
 import { PARAMS, applyParam } from '../params.js';
 import { clampFov } from '../camera.js';
+import { selectShape } from '../shapes.js';
 
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
@@ -298,8 +299,11 @@ export const PresetMixin = {
    *   (state may be partly applied). True once the state has been pushed.
    */
   applyState(s, opts = {}) {
-    // Normalise via migratePreset first — handles unknown shape, version skew,
-    // and future migration steps; null means "not a snapshot".
+    // Normalise via migratePreset first — an unrecognised snapshot LAYOUT,
+    // version skew, and future migration steps; null means "not a snapshot".
+    // It does not look at s.shape (measured: no reference to it in the
+    // function) — the shape value is resolved where it is consumed, by
+    // selectShape in _applyStateFields.
     // FIX(#18, r2): report that refusal to the caller instead of returning
     // silently — importSettings() used to announce "✔ State loaded" for a file
     // migratePreset had just rejected.
@@ -418,8 +422,22 @@ export const PresetMixin = {
     const onFlatActions = [];
 
     if (s.shape) {
-      DOM.shapeSel.value = s.shape;
-      onFlatActions.push(() => r.setShape(s.shape));
+      // Every door that carries a shape value this build did not write comes
+      // through here: preset apply, importSettings, a clip step, an AUTO cycle
+      // step, and bootPersist's restore of vimathic_persisted_state. setShape
+      // resolves its own argument, so the SCENE was always a shape this build
+      // can draw; `DOM.shapeSel.value = s.shape` was the raw value, so the
+      // control could disagree with it. Measured on the built app in Chromium
+      // with an unknown shape seeded into localStorage before any app script:
+      // scene pyramid-smooth, one [shape] warning, combobox placeholder
+      // "— select —".
+      //
+      // selectShape writes the picker and returns what it wrote, so `shape` is
+      // the only string left to hand the engine — the two cannot drift apart
+      // without deleting the variable. `s.shape` is deliberately not mentioned
+      // again below.
+      const shape = selectShape(DOM.shapeSel, s.shape);
+      onFlatActions.push(() => r.setShape(shape));
     }
 
     if (s.gpuSelVal != null) {

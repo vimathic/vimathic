@@ -6,6 +6,7 @@ import { ShaderPass }      from 'three/examples/jsm/postprocessing/ShaderPass.js
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass }  from 'three/examples/jsm/postprocessing/AfterimagePass.js';
 import { VS, FS } from './shaders.js';
+import { DEFAULT_SHAPE, normalizeShape } from './shapes.js';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Solar-system procedural assets — surfaces, clouds and ring profiles
@@ -1011,6 +1012,71 @@ export class TransitionManager {
   get isActive() { return this._slots.size > 0; }
 }
 
+/**
+ * Freeze a geometry's own Y into the static `aBaseY` attribute the vertex
+ * program reads.
+ *
+ * One value per vertex, written once when the geometry is built and never
+ * again: nothing in the frame loop looks at it, and the Surface tick only ever
+ * writes `position`, so the buffer's version stays 0 for the life of the shape
+ * and the GPU upload happens on the shape change alone.
+ *
+ * A geometry that never passes through here has no such attribute — imported
+ * OBJ/GLTF meshes are the real case, since they get the vertex program without
+ * ever going through setShape. three then takes neither the buffer path nor the
+ * vertexAttrib path for it and the location keeps whatever GENERIC value was
+ * last left there by some other program (three 0.169.0, three.module.js:15589
+ * — the `materialDefaultAttributeValues !== undefined` arm, whose default case
+ * calls gl.vertexAttrib1fv at :15610 — and :15480, the
+ * `geometryAttribute !== undefined` branch that is skipped). The GL spec's
+ * initial generic value is (0,0,0,1), but "initial" is not "current": three's
+ * own Material default table (:12325) sets `color` to [1,1,1], and a location
+ * index reused between programs carries that over.
+ *
+ * So every material that installs a program reading `aBaseY` declares
+ * `defaultAttributeValues.aBaseY = [0]`, which makes three call
+ * vertexAttrib1fv(loc, [0]) on exactly the geometries that lack the attribute.
+ * Zero is the value that makes `pos.y - aBaseY` a no-op, i.e. the pre-round-10
+ * behaviour, and it is the same fallback applyHeightField takes when it has no
+ * base positions — so the two agree instead of disagreeing, and the agreement
+ * is the app's choice rather than the driver's leftovers.
+ *
+ * There are four such materials, and only two of them live in this file. Named
+ * rather than numbered on purpose — the round's own rule for citations, written
+ * after four line references in MATHEMATICAL_ACCURACY.md rotted the same day
+ * they were added, and after this very table shipped with all four numbers
+ * eight to twelve lines stale:
+ *   render.js    RenderEngine's constructor, `this.gpuMat`      — VS
+ *   render.js    RenderEngine#setVizModeGPU, `ptsMat`           — this.activeVS
+ *   shaders.js   ShaderEditor#compileAndApply, `tMat`           — SE_VS_TEMPLATE(body)
+ *   shaders.js   ModelLoader#_applyShader, `mat`                — vs || VS  ← the imported case
+ * All four are built and inspected by tests/model-abasey-default.test.js, which
+ * is what keeps this list from drifting again: it constructs each material
+ * through the shipped code path rather than grepping for the declaration.
+ * FIX(r10 wave 3): the last two were missed. The docblock said "every material
+ * built here", which was true and beside the point: the materials that ever
+ * carry a MODEL mesh are built in shaders.js, and neither declared anything —
+ * so the one case named above as "the real case" was the one left open.
+ * applyShaderSource (:1779) mutates .vertexShader in place rather than
+ * rebuilding, so the declaration survives an editor swap on all four.
+ * Solar-system materials (_atmosphere at :610 and the ring/planet programs
+ * below it) are NOT on this list: their vertex programs never mention aBaseY.
+ *
+ * Nothing in this VM links GLSL, so the declaration is checked by reading it
+ * off the four real material objects (tests/model-abasey-default.test.js);
+ * the generic-value behaviour itself is three's code, cited above, not a guess.
+ *
+ * @param {THREE.BufferGeometry} geo
+ */
+function attachBaseY(geo) {
+  const pos = geo.attributes.position;
+  if (!pos) return;
+  const n = pos.count;
+  const baseY = new Float32Array(n);
+  for (let i = 0; i < n; i++) baseY[i] = pos.getY(i);
+  geo.setAttribute('aBaseY', new THREE.BufferAttribute(baseY, 1));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RenderEngine
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1224,6 +1290,14 @@ export class RenderEngine {
                uCMNext:       { value: 0   },
                uCMBlend:      { value: 0.0 },
                uPointSize:    { value: 1.0 },
+               // Colour channel — which value the vertex program hands the ramp.
+               // 0 = pos.y as written (GPU mode, and the Volume/Collapse CPU
+               // modes, which have always coloured by base + displacement).
+               // 1 = Surface mode, where the CPU wrote base + field and the
+               // ramp wants the field alone, recovered as pos.y - aBaseY.
+               // MathVisualizer owns this: it is the only thing that knows
+               // which CPU mode is running. See the note at the top of VS.
+               uVHField:      { value: 0   },
                // SURF lighting: 1 = on (surface mode), 0 = off (wireframe/points).
                // Starts at 0 because startup mode is wireframe.
                uLighting:     { value: 0   },
@@ -1247,6 +1321,11 @@ export class RenderEngine {
       // built-ins in WebGL2, and r169 honours only clipCullDistance/multiDraw,
       // so the flag was a no-op. Adding it back changes nothing.
     });
+    // The fallback for a geometry that has no aBaseY — imported model meshes,
+    // which never pass through setShape/attachBaseY. Without the entry the
+    // attribute reads the driver's leftover generic value; with it, zero, which
+    // makes the ramp's `pos.y - aBaseY` the identity. See attachBaseY.
+    this.gpuMat.defaultAttributeValues.aBaseY = [0];
     this.gpuMesh = new THREE.Mesh(gpuGeo, this.gpuMat);
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
@@ -1797,6 +1876,11 @@ export class RenderEngine {
         // FIX(#29): no `extensions: { derivatives: true }` — ignored by r169,
         // same reason as on gpuMat above.
       });
+      // Same aBaseY fallback as gpuMat. The proxy shares gpuMesh.geometry,
+      // which always carries the attribute, so this is a no-op today — it is
+      // here so the two materials that run the same vertex program cannot
+      // disagree about what the missing case means.
+      ptsMat.defaultAttributeValues.aBaseY = [0];
       // Geometry is deliberately shared with gpuMesh, not cloned — see the
       // dispose note at the top of this method.
       this.gpuPtsProxy = new THREE.Points(this.gpuMesh.geometry, ptsMat);
@@ -1949,13 +2033,69 @@ export class RenderEngine {
    * (initial load, solar system).
    */
   setShape(shape) {
+    // Resolve first, so every field, callback and rotation rule below sees a
+    // value this build can actually draw. A known name comes back unchanged;
+    // an unknown one — a retired preset, hand-edited JSON, localStorage left
+    // by another build — becomes the boot shape and says so on the console.
+    // Until round 10 an unknown name reached _buildShapeGeo's `default:` and
+    // came back a PlaneGeometry that the rotate list below never touched,
+    // because that list keys off the NAME: a 7x7 plate standing on edge in
+    // XY, 161 distinct (x,z) against the 25921 a real 'plane' gives. Silent,
+    // on a boot path — bootPersist() restores the persisted state on every
+    // page open.
+    shape = normalizeShape(shape);
     if (this.isShapeChanging) { this.pendingShape = shape; return; }
     this.isShapeChanging = true;
     this.currentShape    = shape;
     this.clearSolarSystem();
 
     const newGeo = this._buildShapeGeo(shape);
-    if (['plane','circle','disc','hex'].includes(shape)) newGeo.rotateX(-Math.PI/2);
+    // PlaneGeometry and CircleGeometry are authored in the XY plane, so they
+    // need this quarter turn to lie flat in XZ — the plane the whole app
+    // displaces out of along +Y. CylinderGeometry is authored with its axis
+    // already along Y, so 'disc' and 'hex' arrive flat and the same turn
+    // stood them on EDGE: area-weighted mean |n.y| 0.978 -> 0.014 for disc
+    // and 0.847 -> 0.088 for hex, and the startup camera (which looks
+    // straight up the Y axis) saw a 0.08-thick rim instead of the face —
+    // silhouette 38.44 -> 0.56. Keep this list to the XY-authored geometries.
+    if (['plane','circle'].includes(shape)) {
+      newGeo.rotateX(-Math.PI/2);
+      // cos(-PI/2) is 6.12e-17, not 0, so the turn leaves the plate's own Y at
+      // up to 2.14e-16 instead of flat (25760 of the 25921 vertices are off
+      // zero). That was invisible while the height field REPLACED Y; since
+      // round 10 it is ADDED to Y, so those vertices keep the residue wherever
+      // the field is too small to round it away — measured at the factory
+      // sliders, grid 161, t = 0: 174 of 25921 vertices on `pseudosphere` and
+      // 168 on `landauLevels` come out with a different float32 Y if this loop
+      // is skipped.
+      // FIX(r10 wave 3): the condition used to read "wherever the field is
+      // exactly zero", which is not what those two counts measure — NEITHER
+      // formula has a single exactly-zero value anywhere on the 161x161
+      // lattice. The vertices that keep the residue are the ones where the
+      // field is small enough that 2.14e-16 is still half a float32 ULP of it,
+      // i.e. |field| below roughly 3.6e-9: the differing vertices run
+      // 4.1e-15 … 3.6e-9 on pseudosphere and 1.4e-36 … 1.0e-9 on landauLevels.
+      // Exact zeros do exist elsewhere in the catalogue, and there the old
+      // wording is right: `mandelbrot` has 2939 of them and every one of its
+      // 2850 differing vertices sits on one.
+      // The amount is fifteen orders below anything a viewer can see; the
+      // point is the exactness of the claim, not the size of the number. A
+      // plate laid down in XZ has y = 0, and the field is then the only thing
+      // that moves it — which is what makes round 10 a provable no-op on the
+      // plane.
+      const py = newGeo.attributes.position;
+      for (let i = 0; i < py.count; i++) py.setY(i, 0);
+      py.needsUpdate = true;
+    }
+
+    // aBaseY — the shape's own y, frozen. The colour ramp needs it to subtract
+    // the body back out in Surface mode (see the note at the top of VS); it is
+    // written here, once, from the geometry as built, and never again — no tick
+    // touches it, so the attribute uploads on the shape change and on no frame
+    // after it. It is also exactly the Y that MathVisualizer's pristine
+    // snapshot captures a moment later (the hook below fires before any tick
+    // can run), which is what makes `pos.y - aBaseY` the field and nothing else.
+    attachBaseY(newGeo);
 
     const oldGpuGeo = this.gpuMesh.geometry;
     const oldPtsGeo = this.gpuPtsProxy?.geometry ?? null;
@@ -1989,18 +2129,44 @@ export class RenderEngine {
   _buildShapeGeo(shape) {
     const seg = this.CFG.planeSegs, lo = this.isMobile ? 40 : 80;
     switch (shape) {
+      // 'plane' used to be served by `default:` — which is why an unknown
+      // name silently became a plane, and an unrotated one at that. It gets
+      // its own label so the default branch can stop being a shape.
+      case 'plane':            return new THREE.PlaneGeometry(this.CFG.planeSize, this.CFG.planeSize, seg, seg);
       case 'sphere':           return new THREE.SphereGeometry(3.5, seg, seg);
       case 'box':              return new THREE.BoxGeometry(5,5,5, lo,lo,lo);
       case 'cylinder':         return new THREE.CylinderGeometry(2.5,2.5,5, lo,lo);
-      case 'cone':             return new THREE.ConeGeometry(3.2,5.5, lo,lo);
+      // three r169 builds ConeGeometry as CylinderGeometry(0, r, ...), and
+      // buildTorso tests the PARAMETER radiusTop, not the radius of the row
+      // it is on:
+      //     if ( radiusTop    > 0 ) indices.push( a, b, d );
+      //     if ( radiusBottom > 0 ) indices.push( b, c, d );
+      // With radiusTop === 0 the (a,b,d) half of EVERY torso quad is dropped,
+      // in every row and not only the degenerate one at the apex — 6400 of the
+      // 80×80 = 12800 torso triangles, exactly half, plus the 80-triangle top
+      // cap the same flag gates: 6480 triangles here where the closed build
+      // has 12960. That draws 64.51 of an exact 96.08 units of surface (the
+      // 80-gon three actually builds, not the smooth cone) and leaves 18960
+      // boundary edges on a mesh that ought to be closed. At heightSegments=1
+      // the dropped triangle really is degenerate, which is why this survived
+      // ordinary use — and the app boots in wireframe, where a missing
+      // diagonal reads as a quad mesh rather than as a hole.
+      // A 1 mm top radius takes the same code path with radiusTop > 0 and
+      // closes the mesh: 0 boundary edges, area exact to 0.02 %. The tip
+      // becomes a cap 0.002 across on a body 6.4 across — 3e-6 % of the
+      // surface, sub-pixel at any framing this app uses.
+      case 'cone':             return new THREE.CylinderGeometry(0.001,3.2,5.5, lo,lo);
       case 'disc':             return new THREE.CylinderGeometry(3.5,3.5,.08, lo,lo);
       case 'ring':             return new THREE.TorusGeometry(3.0,.35, 24, seg);
       case 'circle':           return new THREE.CircleGeometry(3.5, seg);
       case 'torus':            return new THREE.TorusGeometry(2.8,1.1, 80, seg);
       case 'torusknot':        return new THREE.TorusKnotGeometry(2.2,.65, seg*2, 16, 2, 3);
       case 'hex':              return new THREE.CylinderGeometry(3.2,3.2,.5, 6, lo);
-      case 'pyramid':          return new THREE.ConeGeometry(3.2,5, 4, lo);
-      case 'pyramid-smooth':   return new THREE.ConeGeometry(3.2,5, lo, lo);
+      // Cones under other names — the identical three r169 defect. Note
+      // 'pyramid-smooth' is the boot shape, so this half-drawn shell is what
+      // a first-time viewer has been looking at.
+      case 'pyramid':          return new THREE.CylinderGeometry(0.001,3.2,5, 4, lo);
+      case 'pyramid-smooth':   return new THREE.CylinderGeometry(0.001,3.2,5, lo, lo);
       // Polyhedra — detail must be 0 for the shape to actually look like
       // the named polyhedron. The second arg to Tetrahedron/Octahedron/
       // Icosahedron/DodecahedronGeometry is a subdivision count; each
@@ -2024,7 +2190,18 @@ export class RenderEngine {
       case 'dodecahedron':     return new THREE.DodecahedronGeometry(3.5, 0);
       case 'star':             return this._buildStarGeo();
       case 'solar':            return new THREE.SphereGeometry(1.2, 64, 64);
-      default:                 return new THREE.PlaneGeometry(this.CFG.planeSize, this.CFG.planeSize, seg, seg);
+      // Not a name this build knows. setShape() resolves every value through
+      // normalizeShape() before it reaches here, so this is the second line
+      // of defence: for direct callers, and for a `case` deleted without its
+      // whitelist entry. It must NOT be a PlaneGeometry — the rotate list
+      // above keys off the NAME, so a plane built under an unknown name is
+      // never laid flat. The recursion terminates because DEFAULT_SHAPE has
+      // its own `case`, which tests/shape-fallback-and-hf-once.test.js pins
+      // ('the shape whitelist is the only list of shape values' — it parses
+      // the case labels out of this very method and asserts DEFAULT_SHAPE is
+      // among them); without that pin a mis-set DEFAULT_SHAPE would turn this
+      // into a stack overflow.
+      default:                 return this._buildShapeGeo(DEFAULT_SHAPE);
     }
   }
 
