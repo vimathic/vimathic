@@ -453,6 +453,30 @@ export function bindControls(ui) {
     // this value in #gpu-sel — see applyMathFormula.
     _gpuSel().value = val;
     if (ui.mathViz) ui.mathViz.deactivate();
+    // FIX: the third door out of VOLUME. Two were already guarded — picking an
+    // `m:` formula in VOLUME moves the panel with the engine (applyMathFormula
+    // above), and clicking VOLUME while a shader owns the surface is refused
+    // out loud (_setDeformMode) — but a shader picked WHILE volume was lit went
+    // through neither. deactivate() clears `active` and uMathMode and leaves
+    // `_mode` where it was, so the engine left volume mode and nothing told the
+    // panel: VOLUME stayed highlighted with its formula row open, describing a
+    // mode nothing was in, and a second click on the lit button was refused by
+    // the guard above. Worse, captureState reads mathViz._mode
+    // (presets.js:223), so the snapshot carried deformMode:'volume' beside a
+    // numeric gpuSelVal — the one pair applyState refuses to restore
+    // (presets.js:466), which means the preset came back as SURFACE rather than
+    // as the screen it was saved from.
+    //
+    // 'surface' rather than 'collapse' for the same reason applyState picks it:
+    // with the CPU deformation off, an undeformed surface under the shader is
+    // what the viewer is actually looking at. COLLAPSE is deliberately left
+    // alone — it never touches uMathMode, so it round-trips over a shader and
+    // applyState honours it.
+    if (document.getElementById('deform-volume')?.classList.contains('active')) {
+      ui.mathViz?.setMode('surface');
+      ui.syncDeformUI('surface');
+      ui._showToast?.('Volume → Surface · a GPU shader owns the surface');
+    }
     r.setGPUModeAnimated(+val);
     if (onFlat) r.triggerMorphTransition(onFlat);
   };

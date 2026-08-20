@@ -587,6 +587,35 @@ describe('applyFormulaValue is the one door for the dropdown, R and F', () => {
       'the volume auto-switch is the reason this door exists');
   });
 
+  test('a shader picked in VOLUME takes the panel out of it', () => {
+    byId('deform-volume').classList.add('active');   // the user is in VOLUME
+    byId('volume-formula-wrap').style.display = '';  // with its formula row open
+
+    ui.applyFormulaValue('20');
+
+    assert.deepEqual(ui.called('setMode').map(c => c[1]), ['surface'],
+      'the engine mode is written too: captureState reads mathViz._mode, and a stale ' +
+      "'volume' beside a numeric gpuSelVal is the one pair applyState refuses to restore");
+    assert.equal(byId('deform-volume').classList.contains('active'), false,
+      'the panel must not keep VOLUME lit while a shader owns the surface — the guard in ' +
+      '_setDeformMode refuses the very mode the button is showing as current');
+    assert.equal(byId('deform-surface').classList.contains('active'), true);
+    assert.equal(byId('volume-formula-wrap').style.display, 'none',
+      'the volume formula row is one click away from a mode the shader forbids');
+    assert.ok(ui.called('toast').length, 'and the operator is told why the mode changed');
+  });
+
+  test('control — a shader picked in COLLAPSE leaves the panel alone', () => {
+    byId('deform-collapse').classList.add('active');
+
+    ui.applyFormulaValue('20');
+
+    assert.equal(byId('deform-collapse').classList.contains('active'), true,
+      'collapse never touches uMathMode, so it round-trips over a shader and applyState honours it');
+    assert.equal(ui.called('setMode').length, 0, 'nothing asked for a mode change here');
+    assert.equal(ui.called('toast').length, 0);
+  });
+
   test('control — the dropdown itself goes through the same door', () => {
     byId('gpu-sel').value = '20';
     fire('gpu-sel', 'change', { target: byId('gpu-sel') });
