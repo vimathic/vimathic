@@ -656,11 +656,29 @@ export const PresetMixin = {
 
     // ── Custom shader ───────────────────────────────────────────────────────
     if (s.shader?.hasCustom) {
-      se._vert = s.shader.vert;
-      se._frag = s.shader.frag;
-      // Re-apply the custom shader via the compileAndApply path.
-      if (DOM.seCode) DOM.seCode.value = se._tab === 'vert' ? se._vert : se._frag;
-      se.compileAndApply();
+      // FIX(r11): this ran unconditionally, so applying the same preset twice —
+      // or a clip stepping through one every few seconds — rewrote se._vert,
+      // se._frag and #se-code each time, throwing away whatever the user had
+      // typed and not yet applied. The rule against exactly that is written out
+      // fifteen lines below, for the branch that reverts to the built-in look;
+      // this branch simply did not follow it. A preset whose shader is already
+      // the live program has nothing to apply, and now does nothing.
+      // Against the APPLIED BODIES, not against customVS/customFS: those hold
+      // the assembled programs, while a snapshot stores the bodies —
+      // captureState writes `se._appliedVert ?? se._vert`. Comparing the wrong
+      // pair would make this guard one that can never fire, which is worse than
+      // no guard, because it reads as a fix.
+      const live = !!se?.customVS;
+      const alreadyLive = live
+        && (se._appliedVert ?? se._vert) === s.shader.vert
+        && (se._appliedFrag ?? se._frag) === s.shader.frag;
+      if (!alreadyLive) {
+        se._vert = s.shader.vert;
+        se._frag = s.shader.frag;
+        // Re-apply the custom shader via the compileAndApply path.
+        if (DOM.seCode) DOM.seCode.value = se._tab === 'vert' ? se._vert : se._frag;
+        se.compileAndApply();
+      }
     } else if (s.shader && (se?.customVS || se?.customFS)) {
       // A snapshot that carries a shader record with hasCustom:false describes
       // the built-in look, so it has to be able to UNDO a live custom program —
@@ -769,10 +787,25 @@ export const PresetMixin = {
 
     // ── 2. Debounced auto-save ────────────────────────────────────────────
     const DEBOUNCE_MS = 1500;
-    let timer = null;
+    // FIX(r11): a debounce with no ceiling starves itself. The periodic tick
+    // below runs every 1000 ms and calls schedule(), and 1000 < 1500 — so any
+    // state that keeps changing faster than once a second re-armed the timer
+    // before it could ever fire, and NOTHING was written. A running camera
+    // script moves the camera every frame, which moved the fingerprint every
+    // tick, which re-armed the debounce every tick: the snapshot a reload
+    // restores was whatever beforeunload managed to catch, and nothing else.
+    // A maximum wait is the standard half of a debounce and the half that was
+    // missing: however often the input arrives, the write happens at least
+    // every MAX_WAIT_MS.
+    const MAX_WAIT_MS = 4000;
+    let timer = null, pendingSince = 0;
+    const persist = () => { pendingSince = 0; timer = null; this._persistNow(); };
     const schedule = () => {
+      const now = Date.now();
+      if (!pendingSince) pendingSince = now;
+      if (now - pendingSince >= MAX_WAIT_MS) { if (timer) clearTimeout(timer); persist(); return; }
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { this._persistNow(); timer = null; }, DEBOUNCE_MS);
+      timer = setTimeout(persist, DEBOUNCE_MS);
     };
     // Delegated capture-phase listener picks up every input/change inside
     // the controls panel — sliders, selects, checkboxes, text inputs.
@@ -783,19 +816,42 @@ export const PresetMixin = {
       panel.addEventListener('click',  schedule, { capture: true });
     }
     // Hotkeys + MIDI + drag-orbit fire outside the panel — catch them via
-    // a periodic low-cost tick. We compare a cheap fingerprint (color + 
-    // formula + camera position) to decide whether to schedule a real save.
+    // a periodic low-cost tick, comparing a fingerprint to decide whether to
+    // schedule a real save.
+    //
+    // FIX(r11): the fingerprint was colour, formula and camera position — six
+    // values against the thirteen top-level keys captureState() writes. So the
+    // D, T and G hotkeys (deform mode, viz mode, grid), a hold-and-drag on any
+    // slider, a MIDI CC on anything but colour, a shape change from R — none of
+    // them moved it, and none of them scheduled a save. They were only ever
+    // written if something else happened to schedule one within the same
+    // session. It covers what the snapshot covers now; the camera stays rounded
+    // to 2 dp so that orbit jitter alone does not keep the timer armed.
     let _lastFp = '';
     const fingerprint = () => {
       try {
         const a = this.audio, r = this.render, mv = this.mathViz;
-        const cp = r.camera.position;
+        const cp = r.camera.position, ct = r.orbit?.target;
+        const ctx = { audio: a, render: r, camera: this.camera };
+        // Per field, not per fingerprint: one getter reading something that is
+        // not built yet used to blank the WHOLE string through the catch below,
+        // and a blank fingerprint schedules nothing — auto-save would switch
+        // itself off with no symptom. Widening what is watched widened that
+        // risk, so each reader now fails alone.
+        const safe = fn => { try { const v = fn(); return typeof v === 'number' ? v.toFixed(4) : String(v); } catch (_) { return '?'; } };
+        const params = PARAM_FIELDS.map(k => safe(() => PARAMS[k]?.get?.(ctx)));
         return [
           // FIX(#14): MathVisualizer's fields are _collId / _formulaKey. The
           // old names were always undefined, so a hotkey formula swap never
           // moved the fingerprint and never scheduled a save.
-          a.colorIdx, mv?._collId, mv?._formulaKey,
-          cp.x.toFixed(2), cp.y.toFixed(2), cp.z.toFixed(2),
+          safe(() => a.colorIdx), safe(() => mv?._collId), safe(() => mv?._formulaKey),
+          safe(() => mv?._mode), safe(() => mv?._volumeKey),
+          safe(() => r.currentShape), safe(() => r.vizMode),
+          safe(() => r.currentMaterial), safe(() => r.currentParticleStyle),
+          safe(() => DOM.gpuSel?.value), safe(() => r.grid?.visible),
+          safe(() => cp.x.toFixed(2)), safe(() => cp.y.toFixed(2)), safe(() => cp.z.toFixed(2)),
+          safe(() => ct ? `${ct.x.toFixed(2)},${ct.y.toFixed(2)},${ct.z.toFixed(2)}` : ''),
+          ...params,
         ].join('|');
       } catch (_) { return ''; }
     };

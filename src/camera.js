@@ -102,6 +102,18 @@ const FOV_MAX = 160;
 export const clampFov = fov => Math.max(FOV_MIN, Math.min(FOV_MAX, fov));
 
 // ── CameraSystem ──────────────────────────────────────────────────────────────
+// FIX(r11): the eight knobs a camera script reads as p.*. They used to exist
+// only as an object literal in the constructor, so nothing could put them back:
+// RESET ALL sweeps the PARAMS registry, and exactly one of the eight —
+// rotSpeed — has an entry there, while resetScript() reset cpActive, cpFn,
+// cpSource, fov and roll and left cpParams alone. Seven of eight survived the
+// button that says it resets everything, carrying a previous script's radius,
+// height, gravity, damping, bassReact and roll into the next one.
+const CP_DEFAULT_PARAMS = Object.freeze({
+  rotSpeed: 0.00002, radius: 7.2, height: 3.2, gravity: 0.0004,
+  bassReact: 1.0, damping: 0.996, fov: 45, roll: 0,
+});
+
 export class CameraSystem {
   constructor(camera, orbitControls, CFG) {
     this.camera = camera;
@@ -155,7 +167,7 @@ export class CameraSystem {
     // was merely reading. Kept here because loadScript otherwise retains only
     // the compiled function and the text is unrecoverable from it.
     this.cpSource     = null;
-    this.cpParams     = { rotSpeed:.00002, radius:7.2, height:3.2, gravity:.0004, bassReact:1.0, damping:.996, fov:45, roll:0 };
+    this.cpParams     = { ...CP_DEFAULT_PARAMS };
     this.cpKeyframes  = [];
     this.cpSelectedKf = null;
     this._cpState     = { velY:0, phase:0 };
@@ -321,6 +333,14 @@ export class CameraSystem {
    */
   resetScript() {
     this.cpActive = false; this.cpFn = null; this.cpSource = null; this._cpState = {};
+    // The eight script knobs go back to factory with the script itself. A
+    // fresh object rather than an assign, so a script that added its own keys
+    // to p.* does not leave them behind either. The editor's eight sliders read
+    // these, so they are told — otherwise this fix would leave the panel
+    // showing numbers the camera no longer holds, which is the same class of
+    // defect one layer up.
+    this.cpParams = { ...CP_DEFAULT_PARAMS };
+    this.cb?.onParamsChanged?.();
     this.cb.onSetCode(CP_DEFAULT);
     this._setScriptStatus('clear', '');
     this.camera.fov = 45; this.camera.updateProjectionMatrix();

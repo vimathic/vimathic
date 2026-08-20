@@ -182,6 +182,13 @@ const settle = () => new Promise(r => setImmediate(r));
 
 const CP_DEFAULT_TEMPLATE = '// the camera-programmer starting template';
 
+// The eight camera-programmer knobs at factory settings — camera.js owns the
+// real copy (CP_DEFAULT_PARAMS); this is the value the reset has to restore.
+const CP_FACTORY = {
+  rotSpeed: 0.00002, radius: 7.2, height: 3.2, gravity: 0.0004,
+  bassReact: 1.0, damping: 0.996, fov: 45, roll: 0,
+};
+
 function makeUi() {
   const calls = [];
   const ui = {
@@ -225,15 +232,26 @@ function makeUi() {
     // part of camera.js:322 (resetScript) that a reset is judged by, which is that the editor
     // buffer stops holding the user's script (real one: cb.onSetCode(CP_DEFAULT)).
     camera: {
-      autoRot: false, cpActive: false, cpSource: null, cpParams: {}, cpKeyframes: [],
-      cb: { onAutoRotChanged() {}, onSetCode(code) { byId('ce-code').value = code; } },
+      autoRot: false, cpActive: false, cpSource: null, cpParams: { ...CP_FACTORY, radius: 99, damping: 0.5 }, cpKeyframes: [],
+      cb: { onAutoRotChanged(v) { calls.push(['autoRotChanged', v]); }, onSetCode(code) { byId('ce-code').value = code; }, onParamsChanged() { calls.push(['paramsChanged']); } },
       getDefaultCode: () => CP_DEFAULT_TEMPLATE,
-      setCamPhysics: p => calls.push(['setCamPhysics', p]),
+      // FIX(r11): the real setCamPhysics ends with `this.autoRot = true` and
+      // `onAutoRotChanged(true)` (camera.js). The stub used to record the call
+      // and stop there, which is why nothing here could see RESET ALL switching
+      // auto-rotate back on twelve lines after clearing it. A stub that omits
+      // the side effect under test is a test that cannot fail.
+      setCamPhysics(p) {
+        calls.push(['setCamPhysics', p]);
+        this.autoRot = true;
+        this.cb.onAutoRotChanged(true);
+      },
       buildTimeline: () => calls.push(['buildTimeline']),
       resetScript() {
         this.cpActive = false; this.cpFn = null; this.cpSource = null;
         this.cb.onSetCode(this.getDefaultCode());
         calls.push(['resetScript']);
+        // Mirrors the real one's last line, which is where the defect lived.
+        this.setCamPhysics('dark_matter');
       },
     },
     shaderEditor: { customVS: null, customFS: null },
@@ -1072,4 +1090,22 @@ describe('RESET ALL — the camera programmer goes back to defaults for real', (
     assert.deepEqual(ui.camera.cpKeyframes, []);
     assert.equal(ui.called('buildTimeline').length, 1);
   });
+});
+
+
+// ── Round 11: RESET ALL has to reset ────────────────────────────────────────
+describe('RESET ALL leaves the state it advertises', () => {
+
+  test('auto-rotate is OFF afterwards, as the button\'s own comment promises', () => {
+    ui.camera.autoRot = true;
+    fire('btn-reset-all', 'click');
+
+    assert.equal(ui.camera.autoRot, false,
+      'RESET ALL ended with auto-rotate on — resetScript() re-enters setCamPhysics, which sets it');
+    // And the button's label follows the flag: the last onAutoRotChanged wins.
+    const paints = ui.called('autoRotChanged');
+    assert.equal(paints.at(-1)?.[1], false,
+      `the last repaint said ${paints.at(-1)?.[1]}, so the button would read ON`);
+  });
+
 });
