@@ -1080,6 +1080,26 @@ function attachBaseY(geo) {
 // ─────────────────────────────────────────────────────────────────────────────
 // RenderEngine
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Colours that are meant to be seen as written ─────────────────────────
+// FIX(r11): three converts a colour given as sRGB bytes INTO the working
+// linear space on construction (ColorManagement.enabled is true by default
+// in r152+), and the matching conversion back out lives in the
+// <colorspace_fragment> chunk that only three's own materials carry. This
+// app draws its frame through custom GLSL, so nothing performs it: a value
+// authored as sRGB bytes reaches the screen linearised, i.e. darker and
+// more saturated than written. Measured: 0x050515 displays as 0x000002,
+// 0x88aaff as 0x3f67ff, 0x3355aa as 0x081767, mid grey 0x808080 as 0x373737.
+//
+// The 44 shader palettes are unaffected — they never pass through
+// THREE.Color and land exactly as authored, which is why the mismatch went
+// unnoticed. Adding a global output transform would fix these few colours
+// and shift all 44, so the narrow repair is the right one: declare these
+// values in the space they are actually written to.
+export const uiColor = hex => new THREE.Color().setRGB(
+  ((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255,
+  THREE.LinearSRGBColorSpace,
+);
+
 export class RenderEngine {
   // ── Surface material presets ──────────────────────────────────────────
   // Each preset is the four FS reflection scalars plus an `on` flag.
@@ -1149,8 +1169,8 @@ export class RenderEngine {
 
     // ── Three.js core ─────────────────────────────────────────────────────────
     this.scene    = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x050515);
-    this.scene.fog = new THREE.FogExp2(0x050515, 0.007);
+    this.scene.background = uiColor(0x050515);
+    this.scene.fog = new THREE.FogExp2(uiColor(0x050515), 0.007);
 
     this.camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 800);
     // Bottom-up startup view: looking straight up at the object's underside.
@@ -1166,7 +1186,7 @@ export class RenderEngine {
     // FIX(#26): via _pixelRatio(), which onResize() re-applies — see its doc.
     this.renderer.setPixelRatio(this._pixelRatio());
     this.renderer.setSize(innerWidth, innerHeight);
-    this.renderer.setClearColor(0x050515, 1);
+    this.renderer.setClearColor(uiColor(0x050515), 1);
     document.body.appendChild(this.renderer.domElement);
 
     // FIX(#29): no WebGL1 fallback on purpose. r169 dropped the WebGL1 renderer
@@ -1271,7 +1291,7 @@ export class RenderEngine {
     this.stars = new THREE.Points(sGeo, new THREE.PointsMaterial({ color:0xffffff, size:.05, transparent:true, opacity:.35 }));
     this.scene.add(this.stars);
 
-    this.grid = new THREE.GridHelper(9, 28, 0x88aaff, 0x3355aa);
+    this.grid = new THREE.GridHelper(9, 28, uiColor(0x88aaff), uiColor(0x3355aa));
     this.grid.position.y = -1.3; this.grid.material.transparent = true;
     this.grid.material.opacity = GRID_OPACITY;
     this.scene.add(this.grid);
@@ -2608,9 +2628,9 @@ export class RenderEngine {
       this.stars.visible = false;
       this.grid.visible  = false;
     } else {
-      this.scene.background = new THREE.Color(0x050515);
-      this.scene.fog        = new THREE.FogExp2(0x050515, 0.007);
-      this.renderer.setClearColor(0x050515, 1);
+      this.scene.background = uiColor(0x050515);
+      this.scene.fog        = new THREE.FogExp2(uiColor(0x050515), 0.007);
+      this.renderer.setClearColor(uiColor(0x050515), 1);
       this.stars.visible = true;
       // FIX(r2): give the grid back only if nothing claimed it meanwhile. The
       // snapshot is right for a bare round trip and wrong the moment ⊞ GRID,
