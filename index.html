@@ -1015,7 +1015,7 @@
       <select id="gpu-sel">
         <optgroup label="AUDIO REACTIVE">
           <option value="0">1. Bass Reactive Waves</option>
-          <option value="1">2. Chirped Radial Rings</option><option value="2">3. Frequency Rings</option>
+          <option value="1">2. Damped Radial Rings</option><option value="2">3. Frequency Rings</option>
           <option value="3">4. Turbulence Mode</option><option value="4">5. Ripple Effect</option>
           <option value="5">6. Treble Spikes</option><option value="6">7. Ramanujan Theta Sum</option>
           <option value="7">8. Quantum Wave</option>
@@ -1135,7 +1135,7 @@
           <option value="m:trigonometry:productSum">Product-to-Sum</option>
           <option value="m:trigonometry:tangentWave">Tanh / Smooth Step</option>
           <option value="m:trigonometry:lissajous">Lissajous Height</option>
-          <option value="m:trigonometry:hyperbolicGeom">Cosh²−Sinh²=1 Surface</option>
+          <option value="m:trigonometry:hyperbolicGeom">cosh Bowl (cosh ρ − 1)</option>
           <option value="m:trigonometry:chebyshevTrig">Chebyshev Identity cos(nθ)</option>
           <option value="m:trigonometry:standingWave">Standing Wave</option>
           <option value="m:trigonometry:travelingWave">Traveling Wave</option>
@@ -1154,12 +1154,12 @@
           <option value="m:complexNumbers:riemannSphere">Riemann Sphere Projection</option>
           <option value="m:complexNumbers:mobiusTransform">Möbius Transformation</option>
           <option value="m:complexNumbers:cauchyRiemann">Re(z²) — Harmonic Saddle</option>
-          <option value="m:complexNumbers:complexSin">Complex sin(z) Real Part</option>
+          <option value="m:complexNumbers:complexSin">sin x · cosh(z/2) Surface</option>
           <option value="m:complexNumbers:juliaPotential">Julia Potential</option>
           <option value="m:complexNumbers:windingNumber">Winding Number Field</option>
           <option value="m:complexNumbers:blaschke">Blaschke Product |B(z)|</option>
           <option value="m:complexNumbers:complexHeat">Heat Kernel in ℂ</option>
-          <option value="m:complexNumbers:argandField">Argand Phase Color</option>
+          <option value="m:complexNumbers:argandField">Phase Petals sin(n·arg z)</option>
           <option value="m:complexNumbers:riemannZetaStrip">Riemann ζ Critical Line</option>
         </optgroup>
         <optgroup label="━━ 〜 FOURIER SERIES ━━">
@@ -1194,7 +1194,7 @@
           <option value="m:differentialEqs:rungeKutta4">Runge-Kutta RK4</option>
           <option value="m:differentialEqs:beamBending">Euler–Bernoulli Beam</option>
           <option value="m:differentialEqs:schrodingerBox">Particle in a Box</option>
-          <option value="m:differentialEqs:reynoldsFlow">Stokes Flow (low Re)</option>
+          <option value="m:differentialEqs:reynoldsFlow">Poiseuille Profile × Travelling Wave</option>
           <option value="m:differentialEqs:fishersEquation">Fisher's Equation (wave front)</option>
           <option value="m:differentialEqs:pendulumNonLinear" selected>Nonlinear Pendulum Phase</option>
         </optgroup>
@@ -1207,13 +1207,13 @@
           <option value="m:integralTransforms:waveletTransform">Morlet Wavelet</option>
           <option value="m:integralTransforms:hilbertTransform">Hilbert Transform (f + H[f])/2</option>
           <option value="m:integralTransforms:radonTransform">Radon Transform (sinogram)</option>
-          <option value="m:integralTransforms:hankelTransform">Hankel Kernel J₀(ρ)</option>
+          <option value="m:integralTransforms:hankelTransform">J₀(ρ) with e^{−0.3ρ} envelope</option>
           <option value="m:integralTransforms:mellinTransform">Mellin Integrand x^{s−1}e^{−x}</option>
           <option value="m:integralTransforms:stieltjesTransform">Stieltjes Transform</option>
           <option value="m:integralTransforms:cauchyIntegral">Cauchy Integral Formula</option>
           <option value="m:integralTransforms:stocksFormula">Green's Theorem Flow</option>
           <option value="m:integralTransforms:poissonIntegral">Poisson Integral Formula</option>
-          <option value="m:integralTransforms:continuousWavelet">CWT Scalogram</option>
+          <option value="m:integralTransforms:continuousWavelet">Morlet CWT (signed W)</option>
           <option value="m:integralTransforms:fourierSlice">Angle-Swept Sinusoid</option>
         </optgroup>
         <optgroup label="━━ ∞ TOPOLOGY & GEOMETRY ━━">
@@ -1241,7 +1241,7 @@
           <option value="m:cellularAutomata:rule184">Rule 184 (Traffic model)</option>
           <option value="m:cellularAutomata:gameOfLifeDensity">Game of Life (density)</option>
           <option value="m:cellularAutomata:briansBrain">Brian's Brain</option>
-          <option value="m:cellularAutomata:langtonAnt">Langton's Ant (trajectory density)</option>
+          <option value="m:cellularAutomata:langtonAnt">Langton's Ant (cell colour)</option>
           <option value="m:cellularAutomata:cyclicCA">Cyclic CA</option>
           <option value="m:cellularAutomata:wiredFire">Wireworld (wire / fire)</option>
           <option value="m:cellularAutomata:sandpile">Abelian Sandpile</option>

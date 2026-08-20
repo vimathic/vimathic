@@ -2380,7 +2380,10 @@ const TRIGONOMETRY = {
       }
     },
     hyperbolicGeom: {
-      name: 'Cosh²−Sinh²=1 Surface',
+      // FIX(r11): the name quoted an identity, cosh^2 - sinh^2 = 1, that the kernel never forms: it computes (cosh(0.7·freq·rho) - 1), an exponentially growing bowl. There are no squares and no difference anywhere in it.
+      // Renamed from 'Cosh²−Sinh²=1 Surface': the <option> label is the only text a
+      // viewer reads for an entry — the caption never reaches the DOM.
+      name: 'cosh Bowl (cosh ρ − 1)',
       formula: 'cosh²−sinh²=1; drawn: cosh(0.7r) − 1, r = freq·√(x²+z²)',
       f(x, z, t, {amp=1, freq=1}) {
         const r=Math.sqrt(x*x+z*z)*freq;
@@ -2615,7 +2618,10 @@ const COMPLEX_NUMBERS = {
       }
     },
     complexSin: {
-      name: 'Complex sin(z) Real Part',
+      // FIX(r11): the name promised Re sin(z), and the real part of a holomorphic function must be harmonic. The plate is sin(freq·x)·cosh(freq·z/2) — the imaginary axis compressed by two — so Delta u = (-1 + 1/4)u = -0.75u, never zero, and freq cannot absorb the two because it scales both axes alike. Deviation from the named function at the app's boot sliders: 2.858 world units.
+      // Renamed from 'Complex sin(z) Real Part': the <option> label is the only text a
+      // viewer reads for an entry — the caption never reaches the DOM.
+      name: 'sin x · cosh(z/2) Surface',
       formula: 'Re(sin(x+iz/2)) = sin(x)cosh(z/2), x → freq·x+0.3t, z → freq·z, folded above 0.7',
       f(x, z, t, {amp=1, freq=1}) {
         // FIX(r8): the same repair round 6 gave catenoid, applied to the clamp
@@ -2756,7 +2762,10 @@ const COMPLEX_NUMBERS = {
       }
     },
     argandField: {
-      name: 'Argand Phase Color',
+      // FIX(r11): the height is sin(n·arg z), not arg z, so the surface is two-valued in the very phase it claims to show; n = round(1+4·comp) never reaches 1. The colour is taken from the height alone, so 'Color' named nothing of its own either.
+      // Renamed from 'Argand Phase Color': the <option> label is the only text a
+      // viewer reads for an entry — the caption never reaches the DOM.
+      name: 'Phase Petals sin(n·arg z)',
       // FIX(r8): what is drawn is the sine of the named quantity, not the
       // quantity — so the surface is two-to-one in the phase (π/6 and 5π/6 give
       // the same height) and spans ±0.45 rather than ±π. The accuracy row's own
@@ -3287,7 +3296,10 @@ const DIFFERENTIAL_EQUATIONS = {
       }
     },
     reynoldsFlow: {
-      name: 'Stokes Flow (low Re)',
+      // FIX(r11): Stokes flow is the whole low-Reynolds regime; what is drawn is the exact Poiseuille cross-section (max|kernel - (1-z^2)·sin(0.5)·0.45| = 0.00e+00) multiplied by a sine running along the flow, which no Stokes solution does.
+      // Renamed from 'Stokes Flow (low Re)': the <option> label is the only text a
+      // viewer reads for an entry — the caption never reaches the DOM.
+      name: 'Poiseuille Profile × Travelling Wave',
       formula: 'Poiseuille u = max(0, 1−(z·freq)²), carried along x by sin(0.5·freq·x + 0.3t)',
       f(x, z, t, {amp=1, freq=1}) {
         // Poiseuille: u = (1−r²), parabolic
@@ -3454,7 +3466,10 @@ const INTEGRAL_TRANSFORMS = {
       }
     },
     hankelTransform: {
-      name: 'Hankel Kernel J₀(ρ)',
+      // FIX(r11): the Hankel kernel is J0 alone; the plate is J0 damped by an exponential the transform does not have. The zeros stay where J0 puts them and the kernel is exact to 3.8e-09 against scipy, so only the envelope is unnamed — and the envelope is what the eye reads.
+      // Renamed from 'Hankel Kernel J₀(ρ)': the <option> label is the only text a
+      // viewer reads for an entry — the caption never reaches the DOM.
+      name: 'J₀(ρ) with e^{−0.3ρ} envelope',
       formula: 'J₀(ρ)·e^{−0.3ρ} — the kernel, not a transform',
       f(x, z, t, {amp=1, freq=1}) {
         const rho=Math.sqrt(x*x+z*z)*freq*2;
@@ -3594,7 +3609,10 @@ const INTEGRAL_TRANSFORMS = {
       }
     },
     continuousWavelet: {
-      name: 'CWT Scalogram',
+      // FIX(r11): a scalogram is |W| or |W|^2; the plate is the SIGNED real-Morlet W(a,b), so a ridge is cut into alternating positive and negative bands. The transform itself is right — this is a name about which function of it is drawn.
+      // Renamed from 'CWT Scalogram': the <option> label is the only text a
+      // viewer reads for an entry — the caption never reaches the DOM.
+      name: 'Morlet CWT (signed W)',
       formula: 'W(a,b) = 1/√a ∫ f(t)ψ*((t−b)/a)dt',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         // FIX(r6): the integration grid was fixed - twenty samples with step
@@ -4247,7 +4265,10 @@ const CELLULAR_AUTOMATA = {
       }, 48),
     },
     langtonAnt: {
-      name: "Langton's Ant (trajectory density)",
+      // FIX(r11): 'density' promised a count; the height is the cell's COLOUR, i.e. the parity of visits. Exactly two heights exist, 0 and 0.4, and a cell visited twice is drawn at the same height as one the ant never reached.
+      // Renamed from "Langton's Ant (trajectory density)": the <option> label is the only text a
+      // viewer reads for an entry — the caption never reaches the DOM.
+      name: "Langton's Ant (cell colour)",
       formula: 'Turn R on white, L on black; flip',
       f: createCachedHeavySampler((t, {amp = 1, comp = 1}, res) => {
         const W = res, H = res;
