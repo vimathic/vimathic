@@ -144,8 +144,14 @@ function bindOutputModal(ui) {
     // <input type="number"> has value '' — a string — so the default never
     // fired and parseInt('') is NaN, which captureStream then resolves however
     // it likes while the feedback line reported "active @ NaNfps".
+    // FIX(r11): the guard tested finiteness, and 0 is finite. A typed zero
+    // therefore reached captureStream(0), which does NOT throw — it is the
+    // legal way to ask for a stream that only produces a frame when something
+    // requests one — so the feedback line went green with "active @ 0fps" over
+    // a picture that never advances. Anything outside a sane frame rate falls
+    // back to 60 rather than being handed on.
     const typed = parseInt(document.getElementById('out-vcam-fps')?.value ?? '', 10);
-    const fps   = Number.isFinite(typed) ? typed : 60;
+    const fps   = (Number.isFinite(typed) && typed >= 1 && typed <= 120) ? typed : 60;
     const res = out.vcam.start(fps);
     if (res.ok) {
       vcamStartBtn.style.display   = 'none';
@@ -213,6 +219,25 @@ function bindRecordingSection(ui, setOutFeedback) {
   const durBeatSel   = $('rec-dur-beat');
   const startBtn     = $('rec-btn-start');
 
+  // FIX(r11): SIZE is meaningless under ASPECT: Native — computeDimensions
+  // returns null there and the recorder uses its own default (1280x720 for
+  // GIF, the canvas for WebM), which is deliberate and measured (see the
+  // FIX(#23, r3) note at the call site). What was not deliberate is that the
+  // selector stayed enabled and showed a value the take would ignore: four
+  // options, no disabled state, nothing on the row to say so. The control now
+  // matches what it can do.
+  const syncSizeAvailability = () => {
+    if (!sizeSel || !aspectSel) return;
+    const native = aspectSel.value === 'native';
+    sizeSel.disabled = native;
+    sizeSel.style.opacity = native ? '0.45' : '';
+    sizeSel.title = native
+      ? 'ASPECT: Native keeps the canvas aspect and each encoder\'s own default size — pick another aspect to choose a size'
+      : '';
+  };
+  aspectSel?.addEventListener('change', syncSizeAvailability);
+  syncSizeAvailability();
+
   // ── Output dimensions from aspect preset + size ──────────────────────────
   // The SIZE dropdown holds a p-value (480/640/720) interpreted as the
   // SHORT edge, so a "480p" clip is ~the same file weight whether it's
@@ -229,7 +254,13 @@ function bindRecordingSection(ui, setOutFeedback) {
     switch (aspect) {
       case 'portrait':  return { width: shortEdge,                      height: Math.round(shortEdge * 16 / 9) };
       case 'square':    return { width: shortEdge,                      height: shortEdge };
-      case 'native':    return null;  // recorder falls back to canvas size
+      // Native deliberately sends NO dimensions — see FIX(#23, r3) at the call
+      // site: resolving it here to the canvas size made GifRecorder's 1280x720
+      // native default unreachable and a 10 s / 20 fps take was refused
+      // outright on memory. What round 11 found is not this line but the
+      // interface around it: SIZE stayed live and lied. It is disabled while
+      // Native is selected now, with the reason on the row.
+      case 'native':    return null;  // recorder falls back to its own default
       case 'landscape':
       default:          return { width: Math.round(shortEdge * 16 / 9), height: shortEdge };
     }
@@ -450,7 +481,15 @@ function bindRecordingSection(ui, setOutFeedback) {
       // the label — capture can end on its own (duration timer / beat target)
       // between the last repaint and this click. Once gif.js is encoding,
       // stop() is a no-op and abort() is the only way out.
-      if (gif.encoding) gif.abort(); else gif.stop();
+      // FIX(r11): documents/recording.md:131 promises "For GIF, this aborts the
+      // worker and discards partial frames — no file is saved". During CAPTURE
+      // gif.encoding is false, so this called stop() — and GifRecorder.stop()
+      // with frames already collected sets encoding = true and renders them,
+      // downloading the partial file the documentation says is discarded. STOP
+      // means stop for both phases now; the timed and beat-counted finishes
+      // still call stop() on their own path, which is where a file is meant to
+      // come from.
+      gif.abort();
       return;
     }
     if (currentFmt === 'webm') webm.stop();

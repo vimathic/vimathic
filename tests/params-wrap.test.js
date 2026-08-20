@@ -138,7 +138,12 @@ describe('MIDI relative mode — the path a user actually turns', () => {
     ctx.audio.colorIdx = 1;                   // one click above the bottom
     const seen = [];
     for (let turn = 0; turn < 6; turn++) {
-      input.onmidimessage({ data: [0xB0, 21, 0x41] }); // one click anticlockwise
+      // FIX(r11): 0x7F, not 0x41. One click anticlockwise is 0x7F in two's
+      // complement, which is the format the MIDIController header declares and
+      // — since round 11 — the one it implements; 0x41 is that format's −63,
+      // the far end of the detent range. The claim under test is unchanged:
+      // past the bottom the palette comes round from the top.
+      input.onmidimessage({ data: [0xB0, 21, 0x7F] }); // one click anticlockwise
       seen.push(ctx.audio.colorIdx);
     }
 
