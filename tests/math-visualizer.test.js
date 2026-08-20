@@ -192,3 +192,35 @@ describe('a worker reply cannot move the surface backwards', () => {
     assert.ok(lastWorker.posted.length >= 2, 'a discarded reply must not starve the worker');
   });
 });
+
+
+// ── Round 11: WAVE INTENSITY is the app's main formula control ───────────────
+describe('the volume tick reads the same sliders the other two modes read', () => {
+
+  const runAt = waveInt => {
+    const { viz, geometry } = makeViz();
+    viz.audio.waveInt = waveInt;
+    viz.setVolumeFormula('twist');            // its angle is y·freq·1.2·amp + t·0.3
+    for (let f = 0; f < 3; f++) viz.tick(1 + f * 0.1);
+    return xyz(geometry);
+  };
+
+  test('WAVE INTENSITY reaches the volume fields', () => {
+    // _tickVolume built freq as `1 + treble·0.3` while _tickSurface and
+    // _tickCollapse both build `waveInt·(1 + treble·0.3)`, so the slider moved
+    // nothing here: every field saw freq in [1.00, 1.30] wherever it stood,
+    // against [0.30, 4.55] in the other two modes.
+    const low = runAt(0.3), high = runAt(4.55);
+    const moved = Math.max(maxDelta(low, high, 0), maxDelta(low, high, 2));
+    assert.ok(moved > 0.05,
+      `the slider moved the mesh by ${moved.toFixed(6)} between its floor and its ceiling`);
+  });
+
+  test('control — with the slider held still, the mesh is reproducible', () => {
+    // The comparison above is only evidence if the same setting gives the same
+    // mesh twice: without this, a run-to-run difference would read as a slider.
+    const a = runAt(1), b = runAt(1);
+    assert.ok(Math.max(maxDelta(a, b, 0), maxDelta(a, b, 1), maxDelta(a, b, 2)) < 1e-9,
+      'two runs at the same slider position disagree, so the test above proves nothing');
+  });
+});

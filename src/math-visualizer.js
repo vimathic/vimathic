@@ -769,14 +769,19 @@ export class MathVisualizer {
     }
     this._lastTickTime = time;
 
-    const { bass, mid, treble, amp } = this.audio;
+    const { bass, mid, treble, amp, waveInt } = this.audio;
     const audioParams = {
-      amp:  amp  * (1 + bass  * 0.5),
-      freq: 1    + treble * 0.3,
-      comp: 0.5  + mid   * 0.4,
+      // FIX(r11): freq was `1 + treble·0.3` here and `waveInt·(1 + treble·0.3)`
+      // in both other modes, so WAVE INTENSITY — the app's main formula control
+      // — did nothing at all in VOLUME: every one of the six vector fields saw
+      // freq in [1.00, 1.30] wherever the slider stood, against [0.30, 4.55]
+      // in Surface and Collapse.
+      amp:  amp     * (1 + bass   * 0.5),
+      freq: waveInt * (1 + treble * 0.3),
+      comp: 0.5     + mid   * 0.4,
     };
 
-    const count = this._gridSize * this._gridSize;
+    const count = this._basePositions.length / 3;
     if (!this._dfBuffer || this._dfBuffer.length !== count * 3) {
       this._dfBuffer = new Float32Array(count * 3);
     }

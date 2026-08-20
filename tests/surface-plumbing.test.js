@@ -50,6 +50,8 @@ import {
   applyHeightField,
   applyDisplacementField,
   applyCollapseField,
+  generateVolumeFromFormula,
+  generateCollapseScalarField,
 } from '../src/math-collections.js';
 
 const BASELINE = { amp: 1, freq: 1, comp: 0.5 };
@@ -408,5 +410,75 @@ describe('getFormula — a key that does not exist resolves to nothing', () => {
     const hit = getFormula('trigonometry', 'sinCos');
     assert.ok(hit, 'precondition: the catalogue still has trigonometry/sinCos');
     assert.equal(hit, MATH_COLLECTIONS.trigonometry.formulas.sinCos);
+  });
+});
+
+
+// ── Round 11: the deform paths, measured on geometry they actually meet ──────
+describe('the volume field covers every vertex, not the first gridSize² of them', () => {
+
+  test('a mesh whose vertex count is not a perfect square has no frozen tail', () => {
+    // 130 vertices: round(√130) = 11, so the old field was 121 long and the
+    // last 9 vertices read `df[i*3] ?? 0`. On the shipped meshes that tail was
+    // 162 vertices on box, 56 on ring, 45 on torus, 20 on star, 17 on hex, 15
+    // on icosahedron-smooth, 8 on dodecahedron and 3 on tetrahedron.
+    const N = 130;
+    const base = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) { base[i * 3] = (i % 13) - 6; base[i * 3 + 1] = 0.5; base[i * 3 + 2] = Math.floor(i / 13) - 5; }
+    const field = () => ({ dx: 0.25, dy: -0.5, dz: 0.75 });
+
+    const df = generateVolumeFromFormula(field, BASELINE, 11, 3.5, 0, base);
+
+    assert.equal(df.length, N * 3, `the field is ${df.length / 3} vertices long against ${N} in the mesh`);
+    const frozen = [];
+    for (let i = 0; i < N; i++) if (df[i * 3] === 0 && df[i * 3 + 1] === 0 && df[i * 3 + 2] === 0) frozen.push(i);
+    assert.deepEqual(frozen, [], `vertices left unmoved by a field that displaces everything: ${frozen.join(', ')}`);
+  });
+
+  test('control — with no geometry the flat lattice is still gridSize²', () => {
+    // The synthetic path has no vertices to speak of, and callers that pass no
+    // basePositions still expect the square lattice.
+    const df = generateVolumeFromFormula(() => ({ dx: 1, dy: 0, dz: 0 }), BASELINE, 9, 3.5, 0, null);
+    assert.equal(df.length, 9 * 9 * 3);
+  });
+});
+
+describe('collapse keeps two coordinates on a flat figure', () => {
+
+  // The kernel is called as f(theta, phi): this one returns phi, so the field
+  // IS the second coordinate and a degenerate chart shows up as a constant.
+  const phiOf = base => Array.from(generateCollapseScalarField((theta, phi) => phi, BASELINE, base, 0));
+
+  test('a disc does not hand every vertex the same phi', () => {
+    const N = 200, base = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const a = i / N * Math.PI * 2, r = 0.2 + 3 * (i % 17) / 17;
+      base[i * 3] = Math.cos(a) * r; base[i * 3 + 1] = 0; base[i * 3 + 2] = Math.sin(a) * r;
+    }
+    const phi = phiOf(base);
+    const spread = Math.max(...phi) - Math.min(...phi);
+    assert.ok(spread > 1, `phi spans ${spread.toFixed(4)} across a flat figure — it used to be exactly 0, at pi/2`);
+    assert.ok(Math.max(...phi) <= Math.PI + 1e-6, 'the substitute coordinate stays inside phi\'s own band');
+  });
+
+  test('control — a body with height still gets the spherical phi', () => {
+    // Antipodal pairs, so the centroid is the origin exactly and the expected
+    // value stays acos(y) rather than acos((y − cy)/r) — the first version of
+    // this control failed on its own sampling, not on the code.
+    const N = 400, base = new Float32Array(N * 3);
+    for (let i = 0; i < N / 2; i++) {
+      const u = (i + 0.5) / (N / 2) * Math.PI, v = i * 2.399963;
+      const x = Math.sin(u) * Math.cos(v), y = Math.cos(u), z = Math.sin(u) * Math.sin(v);
+      base[i * 6] = x;     base[i * 6 + 1] = y;  base[i * 6 + 2] = z;
+      base[i * 6 + 3] = -x; base[i * 6 + 4] = -y; base[i * 6 + 5] = -z;
+    }
+    const phi = phiOf(base);
+    // On a unit sphere about its own centroid, phi = acos(y) exactly.
+    let worst = 0;
+    for (let i = 0; i < N; i++) worst = Math.max(worst, Math.abs(phi[i] - Math.acos(base[i * 3 + 1])));
+    // 1e-4, not 1e-6: basePositions is a Float32Array and acos has slope
+    // 1/√(1−y²) near the poles, so the storage alone accounts for 3.4e-6 here.
+    // The claim is that the chart is unchanged, not that it is bit-exact.
+    assert.ok(worst < 1e-4, `the solid-body chart moved by ${worst}`);
   });
 });
