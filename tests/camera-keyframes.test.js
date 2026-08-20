@@ -138,3 +138,48 @@ describe('camera timeline — deleting a keyframe', () => {
     assert.equal(painted, 1);
   });
 });
+
+
+// ── Round 11: resetScript has to reset the knobs a script writes ────────────
+describe('resetScript returns the eight programmer knobs to factory', () => {
+
+  // The shared makeCam() above has no camera.rotation, which resetScript
+  // levels — so this block builds its own, one field richer.
+  const makeCamWithRotation = () => {
+    const camera = { position: { x: 0, y: 0, z: 0, set() {} }, rotation: { x: 0, y: 0, z: 0 }, fov: 45, updateProjectionMatrix() {} };
+    const orbit  = { target: { x: 0, y: 0, z: 0, set() {} }, update() {} };
+    return new CameraSystem(camera, orbit, { autoRotRadius: 7.2 });
+  };
+
+  const FACTORY = {
+    rotSpeed: 0.00002, radius: 7.2, height: 3.2, gravity: 0.0004,
+    bassReact: 1.0, damping: 0.996, fov: 45, roll: 0,
+  };
+
+  test('all eight, not just the one the PARAMS registry knows about', () => {
+    const cam = makeCamWithRotation();
+    assert.deepEqual({ ...cam.cpParams }, FACTORY, 'precondition: a fresh camera is at factory');
+
+    Object.assign(cam.cpParams, { radius: 99, damping: 0.5, roll: 1.3, bassReact: 4, height: -2 });
+    cam.resetScript();
+
+    assert.deepEqual({ ...cam.cpParams }, FACTORY,
+      'RESET ALL sweeps the PARAMS registry, and rotSpeed is the only one of the eight in it — ' +
+      'the other seven used to survive the button that says it resets everything');
+  });
+
+  test('a key a script invented does not survive either', () => {
+    const cam = makeCamWithRotation();
+    cam.cpParams.myOwnKnob = 7;
+    cam.resetScript();
+    assert.equal(cam.cpParams.myOwnKnob, undefined, 'a fresh object, not an assign over the old one');
+  });
+
+  test('control — the sliders that read these are told', () => {
+    let painted = 0;
+    const cam = makeCamWithRotation();
+    cam.cb.onParamsChanged = () => { painted++; };
+    cam.resetScript();
+    assert.ok(painted > 0, 'the camera editor would show numbers the camera no longer holds');
+  });
+});
