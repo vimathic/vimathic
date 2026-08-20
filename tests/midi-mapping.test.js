@@ -123,3 +123,60 @@ describe('setMapping keeps the mode the operator chose', () => {
     assert.equal(midi.getMappingEntry(20).mode, 'relative');
   });
 });
+
+
+// ── Round 11: the relative decoder against its own declared format ──────────
+// The class header lists three encoder formats and says: "We decode Two's
+// complement by default — by far the most common format". The decoder did
+// sign-magnitude, which is that format's mirror: 0x7F, the value a two's
+// complement encoder sends for ONE click counter-clockwise, read as −63/63 —
+// the whole parameter range in one detent — while 0x41 (its −63) read as a
+// single step.
+describe('relative encoders decode as the two\'s complement the class declares', () => {
+
+  const send = (cc, raw) => input.onmidimessage({ data: [0xB0, cc, raw] });
+
+  test('one click each way is one step each way', () => {
+    midi.setMapping(21, 'bloom', 'relative');
+    midi.cb.getParamValue = () => 0.5;
+
+    send(21, 0x01);                       // +1
+    const up = set.at(-1).val;
+    send(21, 0x7F);                       // −1 in two's complement
+    const down = set.at(-1).val;
+
+    assert.ok(up > 0.5, `a clockwise click moved the value to ${up}`);
+    assert.ok(down < 0.5, `an anticlockwise click moved the value to ${down}`);
+    assert.ok(Math.abs((up - 0.5) + (down - 0.5)) < 1e-9,
+      `the two clicks are not symmetric: +${(up - 0.5).toFixed(5)} against ${(down - 0.5).toFixed(5)} — ` +
+      'that asymmetry is exactly what sign-magnitude decoding of a two\'s complement encoder looks like');
+  });
+
+  test('one click is a small step, not the whole range', () => {
+    midi.setMapping(22, 'bloom', 'relative');
+    midi.cb.getParamValue = () => 0.5;
+    send(22, 0x7F);
+    const moved = Math.abs(set.at(-1).val - 0.5);
+    assert.ok(moved < 0.1,
+      `one detent moved the parameter by ${moved.toFixed(3)} of its range — the old decoder read 0x7F as −63 steps`);
+  });
+
+  test('the far end of the range is the big jump, both ways', () => {
+    midi.setMapping(23, 'bloom', 'relative');
+    midi.cb.getParamValue = () => 0.5;
+    send(23, 0x3F);                       // +63
+    const bigUp = Math.abs(set.at(-1).val - 0.5);
+    send(23, 0x41);                       // −63
+    const bigDown = Math.abs(set.at(-1).val - 0.5);
+    assert.ok(bigUp > 0.1 && bigDown > 0.1,
+      `the extremes read as ${bigUp.toFixed(3)} and ${bigDown.toFixed(3)} — they are the ends, not the clicks`);
+  });
+
+  test('control — the centre value is still no movement', () => {
+    midi.setMapping(24, 'bloom', 'relative');
+    const before = set.length;
+    send(24, 0x40);
+    send(24, 0x00);
+    assert.equal(set.length, before, 'a no-movement message moved the parameter');
+  });
+});

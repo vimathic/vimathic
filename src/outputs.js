@@ -362,6 +362,15 @@ export class SecondScreen {
       this._popup = window.open('./second-screen.html', '_vjscreen', features);
 
       if (!this._popup) {
+        // FIX(r11): the stream is opened BEFORE the popup and was left running
+        // here — tracks live, window._vjStream still pointing at it, and
+        // this.active false, so nothing in the app could reach it to stop it.
+        // captureStream on the WebGL canvas keeps a frame pipeline alive for
+        // the rest of the session, and every retry opened another one. The
+        // failure path now undoes exactly what the success path set up.
+        try { this._stream?.getTracks().forEach(t => t.stop()); } catch (_) {}
+        this._stream = null;
+        if (window._vjStream) window._vjStream = null;
         this.cb.onError('Popup blocked — allow popups for this site and try again.');
         return;
       }

@@ -228,10 +228,18 @@ export class MIDIController {
    */
   _decodeRelativeDelta(raw) {
     if (raw === 0 || raw === 0x40) return 0;
-    // Sign bit is 0x40 (bit 6). Low 6 bits (mask 0x3F) hold magnitude.
-    const magnitude = raw & 0x3F;
-    const negative  = (raw & 0x40) !== 0;
-    return (negative ? -magnitude : magnitude) / 63;
+    // FIX(r11): this was sign-magnitude — magnitude = raw & 0x3F with 0x40 as
+    // the sign bit — while the class header two hundred lines above declares
+    // "We decode Two's complement by default — by far the most common format".
+    // The two are mirror images: a two's complement encoder sends 0x7F for one
+    // click counter-clockwise, which the old decoder read as −63/63, i.e. the
+    // WHOLE parameter range in one detent, and 0x41 (its −63) as a single
+    // step. The declared format is the implemented one now: 0x01…0x3F is +1…+63
+    // and 0x41…0x7F is −63…−1. Sign-magnitude and binary-offset rigs remain
+    // what the header says they are — a per-mapping addition at this one point,
+    // which is the reason the decoder is a method rather than an expression.
+    const signed = raw < 0x40 ? raw : raw - 128;
+    return signed / 63;
   }
 
 
