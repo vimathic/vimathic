@@ -6438,3 +6438,52 @@ describe('Round 11 — the media advance, and they carry a pattern', () => {
     assert.equal(worst, 0, `continued and cold fields differ by ${worst}`);
   });
 });
+
+
+// ── Round 11 tail: three copies of one name, and none of them free to drift ──
+describe('the catalogue, the picker and the accuracy report agree on every name', () => {
+
+  test("the report's Name column is the entry's name", () => {
+    // The column header says "Name" and 146 of the 192 rows held an older or
+    // shortened caption; three named an object the row's own text says the
+    // entry does not draw. This is the guard that keeps the third copy in step
+    // with the two the app itself uses.
+    const doc = readFileSync(new URL('../MATHEMATICAL_ACCURACY.md', import.meta.url), 'utf8');
+    const CELL = String.raw`((?:\\\||[^|])*)`;
+    const rowRe = new RegExp(String.raw`^\| \`([A-Za-z0-9_]+)\` \| ${CELL}\| (🟢 A|🔵 B|🟡 C|🔴 D) \| `, 'gm');
+    const rows = new Map();
+    for (const m of doc.matchAll(rowRe)) rows.set(m[1], m[2].trim().replace(/\\\|/g, '|'));
+
+    const wrong = [], missing = [];
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        const cell = rows.get(key);
+        if (cell === undefined) { missing.push(`${colId}/${key}`); continue; }
+        if (cell !== entry.name) wrong.push(`${key}: report "${cell}" vs name "${entry.name}"`);
+      }
+    }
+    assert.deepEqual(missing, [], `entries with no catalogue row: ${missing.join(', ')}`);
+    assert.deepEqual(wrong, [], `the report names them differently:\n  ${wrong.join('\n  ')}`);
+    // Control: the walk actually found the tables. A regexp that stopped
+    // matching would report nothing wrong about nothing read.
+    assert.equal(rows.size, 192, `${rows.size} catalogue rows were read`);
+  });
+
+  test('the renamed entries no longer name what they do not draw', () => {
+    const gone = [
+      ['complexNumbers', 'complexSin', /Re(al)? Part/i, 'Re of a holomorphic function is harmonic; this one has Δu = −0.75u'],
+      ['complexNumbers', 'argandField', /Argand Phase Color/, 'the height is sin(n·arg z), two-valued in the phase it claimed'],
+      ['differentialEqs', 'reynoldsFlow', /Stokes/, 'a Poiseuille profile times a travelling sine is no Stokes solution'],
+      ['integralTransforms', 'hankelTransform', /^Hankel Kernel/, 'the drawn envelope e^{−0.3ρ} is not part of the kernel'],
+      ['integralTransforms', 'continuousWavelet', /Scalogram/, 'a scalogram is |W|; the plate is the signed W'],
+      ['trigonometry', 'hyperbolicGeom', /Cosh²|Sinh²/, 'the identity in the old name is computed nowhere'],
+      ['cellularAutomata', 'langtonAnt', /density/, 'the height is the cell colour — two values, not a count'],
+    ];
+    for (const [col, key, pattern, why] of gone) {
+      const name = getFormula(col, key).name;
+      assert.ok(!pattern.test(name), `${col}:${key} still reads "${name}" — ${why}`);
+    }
+    // Control, as above: a pattern that matches nothing would pass silently.
+    assert.match(getFormula('cellularAutomata', 'gameOfLifeDensity').name, /density/i);
+  });
+});
