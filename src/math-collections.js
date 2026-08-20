@@ -5143,39 +5143,45 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
  */
 export function generateVolumeFromFormula(fn, params = {}, gridSize = 90, extent = 3.5, time = 0, basePositions = null) {
   const { amp = 1, freq = 1, comp = 0.5 } = params;
-  const count = gridSize * gridSize;
-  const out   = new Float32Array(count * 3);
-
   const step = (extent * 2) / (gridSize - 1);
 
-  for (let zi = 0; zi < gridSize; zi++) {
-    for (let xi = 0; xi < gridSize; xi++) {
-      const idx = zi * gridSize + xi;
+  // FIX(r11): the field used to be gridSize² long whatever geometry it was
+  // given, while applyDisplacementField walks every vertex and reads
+  // `df[i*3] ?? 0` — so on any shape whose vertex count is not exactly
+  // gridSize² the tail stood still while the rest of the mesh moved. Measured
+  // on the shipped meshes: 162 vertices frozen on box, 56 on ring, 45 on torus,
+  // 20 on star, 17 on hex, 15 on icosahedron-smooth, 8 on dodecahedron and 3 on
+  // tetrahedron — 326 across 8 of the 20 shapes, and on box that is two whole
+  // rows of the cap. There is nothing to interpolate here: a volume formula is
+  // a vector field of position, so it is evaluated at each vertex's own
+  // position when the geometry is known, and the grid is used only for the
+  // synthetic flat lattice that has no geometry to speak of.
+  const N = basePositions ? basePositions.length / 3 : gridSize * gridSize;
+  const out = new Float32Array(N * 3);
 
-      // Base position — from geometry if provided, otherwise flat grid
-      let bx, by, bz;
-      if (basePositions) {
-        bx = basePositions[idx * 3];
-        by = basePositions[idx * 3 + 1];
-        bz = basePositions[idx * 3 + 2];
-      } else {
-        bx = -extent + xi * step;
-        by = 0;
-        bz = -extent + zi * step;
-      }
-
-      let dx = 0, dy = 0, dz = 0;
-      try {
-        const r = fn(bx, by, bz, time, { amp, freq, comp });
-        if (r && isFinite(r.dx)) dx = r.dx;
-        if (r && isFinite(r.dy)) dy = r.dy;
-        if (r && isFinite(r.dz)) dz = r.dz;
-      } catch (_) {}
-
-      out[idx * 3]     = dx;
-      out[idx * 3 + 1] = dy;
-      out[idx * 3 + 2] = dz;
+  for (let idx = 0; idx < N; idx++) {
+    let bx, by, bz;
+    if (basePositions) {
+      bx = basePositions[idx * 3];
+      by = basePositions[idx * 3 + 1];
+      bz = basePositions[idx * 3 + 2];
+    } else {
+      bx = -extent + (idx % gridSize) * step;
+      by = 0;
+      bz = -extent + Math.floor(idx / gridSize) * step;
     }
+
+    let dx = 0, dy = 0, dz = 0;
+    try {
+      const r = fn(bx, by, bz, time, { amp, freq, comp });
+      if (r && isFinite(r.dx)) dx = r.dx;
+      if (r && isFinite(r.dy)) dy = r.dy;
+      if (r && isFinite(r.dz)) dz = r.dz;
+    } catch (_) {}
+
+    out[idx * 3]     = dx;
+    out[idx * 3 + 1] = dy;
+    out[idx * 3 + 2] = dz;
   }
   return out;
 }
@@ -5253,6 +5259,31 @@ export function generateCollapseScalarField(fn, params = {}, basePositions, time
   }
   cx /= N; cy /= N; cz /= N;
 
+  // FIX(r11): on a flat figure this chart has only one coordinate. phi is
+  // acos(dy/r), and a plane or a disc has dy ≡ 0, so phi is exactly pi/2 at
+  // every vertex — measured: 1.5708 on all 162 vertices of `circle` and on
+  // 25 920 of the 25 921 of `plane`, the exception being the single vertex at
+  // the centroid, where the r > 1e-9 guard fires instead. The kernel is then
+  // called as f(theta, pi/2), i.e. a two-dimensional field is read along one
+  // line and swept around the axis, and every entry that treats its second
+  // argument as an independent direction — heatEquation and waveEquation read
+  // it as time — draws a figure of revolution of one profile rather than the
+  // object it names.
+  //
+  // The polar radius is the second coordinate a flat figure does have, so it
+  // takes phi's place there, scaled onto the same [0, pi] band phi occupies on
+  // a solid body. Bodies with any vertical extent are untouched.
+  let vertical = 0, radial = 0;
+  for (let i = 0; i < N; i++) {
+    const dy = Math.abs(basePositions[i * 3 + 1] - cy);
+    const dx = basePositions[i * 3] - cx, dz = basePositions[i * 3 + 2] - cz;
+    if (dy > vertical) vertical = dy;
+    const rr = Math.sqrt(dx * dx + dz * dz);
+    if (rr > radial) radial = rr;
+  }
+  const flat = vertical <= 1e-6 * Math.max(radial, 1e-9);
+  const radialToPhi = radial > 1e-9 ? Math.PI / radial : 0;
+
   // Per-vertex spherical coords + formula evaluation
   for (let i = 0; i < N; i++) {
     const dx = basePositions[i * 3]     - cx;
@@ -5260,7 +5291,9 @@ export function generateCollapseScalarField(fn, params = {}, basePositions, time
     const dz = basePositions[i * 3 + 2] - cz;
     const r  = Math.sqrt(dx * dx + dy * dy + dz * dz);
     const theta = Math.atan2(dz, dx);
-    const phi   = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, dy / r))) : 0;
+    const phi   = flat
+      ? Math.sqrt(dx * dx + dz * dz) * radialToPhi
+      : (r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, dy / r))) : 0);
 
     let s = 0;
     try { s = fn(theta, phi, time, { amp, freq, comp }); } catch (_) {}
