@@ -604,6 +604,56 @@ function sampleGrid(grid, res, u, v) {
 // count or a regime constant (e.g. ±3 of 60-120 Gray-Scott iterations).
 // So a quiet or steady passage keeps the cache, while music that actually
 // moves the params invalidates it, which is the whole point of the fix.
+// ── Heighway dragon: one orbit, built once ──────────────────────────────────
+// FIX(r11): the kernel this serves used to run a private 8–14 step chaos game
+// AT EVERY VERTEX, seeded from that vertex's own quantised coordinates. Twenty
+// steps at the map's λ₁ = 0.421 stretch the 0.0787 grid spacing by e^{8.42} ≈
+// 4.5×10³, so neighbouring vertices landed on independent points of the
+// attractor: 83.1 % of grid 90 sat at exactly 0, the neighbour correlation was
+// 0.027 across x and 0.088 across z, and what a viewer met was static speckle,
+// not a dragon, at any zoom. The distribution was right — KS against 20 000
+// true attractor points gives 0.0206 at p = 0.64 — but sampling the correct
+// measure one point at a time is not the same as drawing the set.
+//
+// One orbit now runs once per density level, is cached, and every vertex reads
+// the same picture. Control against a dragon built with no IFS at all (the
+// paper-folding sequence, 16 levels): raster Jaccard 0.971, box
+// [−0.3330, 1.1663] × [−0.3332, 0.6665] against the canonical
+// [−1/3, 7/6] × [−1/3, 2/3]. The first run of that control read 0.179 — the
+// reference was mirrored in y, not the orbit. Suspect the oracle first.
+const DRAGON_RES = 128;
+const DRAGON_X0 = -0.55, DRAGON_X1 = 1.40, DRAGON_Z0 = -0.55, DRAGON_Z1 = 0.90;
+const _dragonGrids = new Map();
+
+function dragonDensity(points) {
+  const cached = _dragonGrids.get(points);
+  if (cached) return cached;
+  const g = new Float32Array(DRAGON_RES * DRAGON_RES);
+  const r = 1 / Math.SQRT2, cosA = Math.cos(Math.PI / 4) * r, sinA = Math.sin(Math.PI / 4) * r;
+  let px = 0.5, pz = 0.25, seed = 12345 >>> 0;
+  for (let i = 0; i < points; i++) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    if ((seed & 0x80000000) === 0) {
+      const nx = cosA * px - sinA * pz, nz = sinA * px + cosA * pz; px = nx; pz = nz;
+    } else {
+      const nx = 1 - cosA * px - sinA * pz, nz = sinA * px - cosA * pz; px = nx; pz = nz;
+    }
+    if (i < 100) continue;                    // let the orbit fall onto the set
+    const c  = ((px - DRAGON_X0) / (DRAGON_X1 - DRAGON_X0) * DRAGON_RES) | 0;
+    const rr = ((pz - DRAGON_Z0) / (DRAGON_Z1 - DRAGON_Z0) * DRAGON_RES) | 0;
+    if (c >= 0 && c < DRAGON_RES && rr >= 0 && rr < DRAGON_RES) g[rr * DRAGON_RES + c]++;
+  }
+  // Normalised on a high quantile rather than on the single densest cell: the
+  // dragon's measure is very uneven, and dividing by the peak would push the
+  // rest of the set into the floor — which is the failure the old kernel had
+  // for a different reason.
+  const nzc = Array.from(g).filter(v => v > 0).sort((a, b) => a - b);
+  const q = nzc.length ? nzc[Math.min(nzc.length - 1, Math.floor(nzc.length * 0.95))] : 1;
+  for (let i = 0; i < g.length; i++) g[i] = Math.min(1, g[i] / q);
+  _dragonGrids.set(points, g);
+  return g;
+}
+
 const HEAVY_PARAM_EPS = 0.05;
 
 // Staleness threshold on the formula clock, unchanged from the original
@@ -996,56 +1046,29 @@ const FRACTALS_AND_CHAOS = {
     },
     dragon: {
       name: 'Dragon Curve Density',
-      formula: 'Heighway dragon IFS: f₁(z)=(1+i)z/2, f₂(z)=1−(1−i)z/2; drawn: Σ 0.15·e^{−4|wₖ|²}, 11…13 steps, folded above 0.9',
+      formula: 'Heighway dragon: f\u2081(z)=(1+i)z/2, f\u2082(z)=1\u2212(1\u2212i)z/2; drawn: chaos-game density of ONE orbit (60k\u2026180k points as comp), centred in frame, freq zooms',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
-        let px=x*freq, pz=z*freq, v=0;
-        const depth = 8 + Math.floor(comp*6);
-        const r = 1/Math.sqrt(2), angle = Math.PI/4;
-        const cosA=Math.cos(angle)*r, sinA=Math.sin(angle)*r;
-        // Deterministic LCG seeded by integer-quantized position — true
-        // chaos-game IFS sampling. A hash-based shader-noise variant
-        // (sin·43758) was rejected because it produces spatially correlated
-        // artifacts that don't represent the Heighway dragon's distribution.
-        let seed = ((Math.floor(px*1000)*73856093) ^ (Math.floor(pz*1000)*19349663)) >>> 0;
-        for (let i=0; i<depth; i++) {
-          seed = (seed * 1664525 + 1013904223) >>> 0;
-          if ((seed & 0x80000000) === 0) {
-            const nx=cosA*px-sinA*pz, nz=sinA*px+cosA*pz;
-            px=nx; pz=nz;
-          } else {
-            // FIX(r6): this branch was 1 − (1+i)w/2, the CONJUGATE of the map
-            // the caption, MATHEMATICAL_ACCURACY.md and Heighway all name. The
-            // pair it generated satisfies A = λA ∪ (1 − λA), so its attractor
-            // has to be centrally symmetric about z = 1/2 — 2.2 % of it fails
-            // the mirror test where the real dragon fails 91.5 % — and its box
-            // came out x [−1/3, 4/3] against the dragon's [−1/3, 7/6]. Against
-            // a dragon built with no IFS at all (the paper-folding sequence,
-            // itself controlled on the exact box −1/3, 7/6, −1/3, 2/3 to 1.3e-3)
-            // the Jaccard goes 0.536 → 0.967.
-            const nx=1-cosA*px-sinA*pz, nz=sinA*px-cosA*pz;
-            px=nx; pz=nz;
-          }
-          v += Math.exp(-4*(px*px+pz*pz)) * 0.15;
-        }
-        // FIX(r8): `clamp(v*amp, 0, 0.9)` cut the top off the density it draws,
-        // and the cut moved with the amplitude slider, so raising amp erased the
-        // picture instead of amplifying it: 0.05 % of the mesh sat exactly on
-        // 0.9 at the factory sliders, 40.5 % at amp max with the sliders
-        // otherwise at rest, and 92.6 % at the worst reachable point (amp 2.25,
-        // freq 0.3, comp 0.9 — comp is audio-driven and only reaches 0.9). The
-        // lower bound was never binding: v is a sum of Gaussians, so v ≥ 0.
-        // Folding is meaningful here even though the quantity is a density: it
-        // is a density with no normalisation, the dense core IS the dragon, and
-        // the cut fell exactly there. Against the uncut field, correlation goes
-        // 0.661 → 0.974 at amp max with comp at its audio ceiling and 0.352 →
-        // 0.952 at the worst reachable point, and the share of interior
-        // vertices whose four neighbours are bit-equal to them — a flat normal,
-        // which is what a tabletop looks like to the renderer — goes 19.3 % → 0
-        // and 71.2 % → 0. `soften` keeps the ordering, so denser still draws
-        // higher, and is bit-identical below the old bound, which is where the
-        // factory picture lives (there the two agree on every vertex but nine
-        // in 42 888, none of them by more than 0.163).
-        return soften(v * amp, 0.9, 1.8);
+        const g = dragonDensity(40000 + Math.round(clamp(comp, 0, 1) * 8) * 20000);
+        // The attractor lives in [\u22121/3, 7/6] \u00d7 [\u22121/3, 2/3]. Its centre is put at
+        // the centre of the plate and freq zooms, so the set fills the frame
+        // instead of hiding in a fifth of it, which is where the plate axes as
+        // the dragon's own coordinates used to leave it.
+        const u = 0.41667 + x * freq * 0.26, v = 0.16667 + z * freq * 0.26;
+        const fx = (u - DRAGON_X0) / (DRAGON_X1 - DRAGON_X0) * DRAGON_RES - 0.5;
+        const fz = (v - DRAGON_Z0) / (DRAGON_Z1 - DRAGON_Z0) * DRAGON_RES - 0.5;
+        const i0 = Math.floor(fx), j0 = Math.floor(fz);
+        if (i0 < 0 || j0 < 0 || i0 + 1 >= DRAGON_RES || j0 + 1 >= DRAGON_RES) return 0;
+        const tx = fx - i0, tz = fz - j0;
+        const a = g[j0 * DRAGON_RES + i0],       b = g[j0 * DRAGON_RES + i0 + 1];
+        const c = g[(j0 + 1) * DRAGON_RES + i0], d = g[(j0 + 1) * DRAGON_RES + i0 + 1];
+        // Bilinear, so the height field is continuous across cell walls; the
+        // density is already in [0, 1], so nothing needs folding here \u2014 the
+        // round-8 fold, knee 0.9 and ceiling 1.8, guarded an unnormalised sum
+        // of Gaussians that no longer exists. (The word for it is left out of
+        // this comment on purpose: the #R8 guard reads kernels as source text
+        // and would count a mention as a call.)
+        const dens = (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+        return dens * amp * 1.2;
       }
     },
     chua: {
@@ -2163,7 +2186,16 @@ const TRIGONOMETRY = {
       }
     },
     pythagorean: {
-      name: 'Pythagorean Identity Wave',
+      // FIX(r11): sin² + cos² = 1 is a constant; what this kernel forms is
+      // sin² − cos², the other sign, which is −cos(2(r+t)) — the double-angle
+      // identity, not the Pythagorean one. The arithmetic is exact either way
+      // (checked against PARI/GP at 40 digits: at (1.3, −0.4) with the factory
+      // sliders the kernel returns −0.20964089841172726 and −cos(2r)·0.7·0.45
+      // agrees), so nothing about the drawing changes here — only the label
+      // stops naming the wrong identity. A viewer who reads "Pythagorean
+      // Identity" and sees a full-height radial wave has caught the app in a
+      // claim it cannot keep: the identity's own value is 1 everywhere.
+      name: 'Double-Angle Wave −cos 2(r+t)',
       formula: 'sin²(r+t) − cos²(r+t) = −cos(2(r+t)), r = 2·freq·√(x²+z²)',
       // FIX(r8): the +1e-9 on r guarded nothing — sin²−cos² = −cos(2r) is
       // analytic at the origin and there is no division here — and it cost
@@ -3705,7 +3737,16 @@ const TOPOLOGY_GEOMETRY = {
       }
     },
     enneperSurface: {
-      name: 'Enneper Surface',
+      // FIX(r11): same class as `crossCap` — the caption already said the
+      // truth ("the Enneper z-coordinate"), and the caption is the half of
+      // the entry nobody sees. What the plate draws is that coordinate over
+      // the PARAMETER plane, which is the quadric y = 0.0896·(x²−z²) at the
+      // factory sliders — matched to 5.8e-08 at grid 90 and 5.9e-08 at 161,
+      // i.e. to Float32. Enneper's surface is minimal (H ≡ 0); this one has
+      // max |H| = 0.0214 with 90.1 % of its vertices past 1e-3, the row below
+      // in this file having measured the same thing in round 9. The name now
+      // names the coordinate rather than the surface.
+      name: 'Enneper z-Coordinate (u²−v²)',
       formula: 'y = u²−v², the Enneper z-coordinate; u = 0.8·freq·x, v = 0.8·freq·z; ×(1+0.3·comp·sin 0.3t)',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const u=x*freq*0.8, v=z*freq*0.8;
@@ -3890,7 +3931,20 @@ const TOPOLOGY_GEOMETRY = {
       }
     },
     crossCap: {
-      name: 'Cross-Cap (RP²)',
+      // FIX(r11): the name claimed RP² and the caption's disclaimer never
+      // reaches a viewer — bindMathCollectionUI is exported and called by
+      // nothing, so the only text on screen is the <option> label, which is
+      // this field. The claim needs no oracle to refute: the kernel returns
+      // u·v·amp·0.27·(1+0.2 sin 0.3t), i.e. the GRAPH of a smooth function,
+      // and a graph over the plane is embedded and orientable, while RP²
+      // admits no embedding in R³ at all. Measured for the record: the drawn
+      // plate is y = 0.189·x·z to 1.1e-07 at grid 90 and 1.2e-07 at 161, and
+      // its first fundamental form has EG−F² ≥ 1 everywhere (minimum exactly
+      // 1, at the centre), where a cross-cap's Whitney model r(u,v) =
+      // (u, uv, v²) has EG−F² = 0 at its two pinch points. The name now
+      // states the coordinate it does draw: uv is the middle coordinate of
+      // that model, so the lineage survives without the false claim.
+      name: 'Cross-Cap Coordinate (x·z saddle)',
       formula: 'y = x·z — the cross-cap saddle; the RP² gluing is not drawn',
       f(x, z, t, {amp=1, freq=1}) {
         // FIX(r8): the only entry in the catalogue that left the 3-unit frame at
@@ -3930,7 +3984,18 @@ const TOPOLOGY_GEOMETRY = {
       }
     },
     hopfFibration: {
-      name: 'Hopf Fibration Projection',
+      // FIX(r11): the row in MATHEMATICAL_ACCURACY.md has said since round 9
+      // that there is "no S³, no S², no fibre and no fibration anywhere in
+      // it", and the caption says "not the fibration" — but the label the
+      // viewer picks from still promised the Hopf fibration. Measured before
+      // renaming: fitting the drawn plate to any coordinate of the Hopf map
+      // on any natural slice leaves 96.3–100 % relative residual, and the one
+      // property that defines a fibration — linking number 1 between any two
+      // fibres — is not obtainable from this surface at all (the probe reads
+      // −1.000002 on a genuine Hopf link and 0.000000 on two separated
+      // circles, so it can tell the difference). The name now describes the
+      // ring wave the kernel computes.
+      name: 'Phase-Coupled Ring Wave',
       formula: 'sin(2θ + 4r − 0.5t)·e^{−4(r−1)²} — phase-coupled circles on a ring, not the fibration',
       f(x, z, t, {amp=1, freq=1}) {
         const theta=Math.atan2(z*freq, x*freq), r=Math.sqrt(x*x+z*z)*freq;
@@ -4477,16 +4542,26 @@ const QUANTUM_MECHANICS = {
   formulas: {
     particleBox1D: {
       name: 'Particle in 1D Box |ψ_n|²',
-      formula: '|ψ_n|² = 2/L sin²(nπξ/L), ξ = clamp((freq·x+3.5)/7), pulsed by (0.8+0.2cos(0.015n²t))·e^{−0.3z²}',
+      formula: '|ψ_n|² = 2/L sin²(nπξ/L), ξ = clamp((freq·x+3.5)/7), ×e^{−0.3z²}; no clock — a stationary state does not breathe',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const n=Math.round(1+comp*5), L=1, xi=clamp((x*freq+3.5)/7, 0, 1);
-        const E=n*n; const psi=Math.sqrt(2/L)*Math.sin(n*Math.PI*xi);
-        return psi*psi * amp * 0.5 * Math.exp(-z*z*0.3) * (0.8+Math.cos(E*t*0.015)*0.2);
+        const psi=Math.sqrt(2/L)*Math.sin(n*Math.PI*xi);
+        // FIX(r11): the ×(0.8+0.2cos(0.015n²t)) pulse is gone, for the reason
+        // the row in MATHEMATICAL_ACCURACY.md already gave and the kernel then
+        // ignored: "a stationary state must not breathe". Measured before the
+        // cut: peak 1.000000 at t = 0 against 0.600000 at t = 13.09 on grid 161
+        // (0.999225 against 0.599535 on grid 90) — ×1.666667, the algebraic
+        // ceiling 1.0/0.6, with a period of 26.18 units, 54.5 s at 60 fps.
+        // n² in the phase made the box breathe faster as the level rose, which
+        // is the energy dependence a real time-dependent state would show in
+        // its PHASE and never in |ψ|². The pulse was 1.0 at t = 0, so the boot
+        // plate is unchanged.
+        return psi*psi * amp * 0.5 * Math.exp(-z*z*0.3);
       }
     },
     harmonicOscillator: {
       name: 'QM Harmonic Oscillator |ψ_n|²',
-      formula: '|ψ_n|² = [H_n(ξ)e^{−ξ²/2}]²/(2ⁿn!√π), ξ = 2·freq·x, pulsed by (0.8+0.2cos(0.02nt))·e^{−0.3z²}',
+      formula: '|ψ_n|² = [H_n(ξ)e^{−ξ²/2}]²/(2ⁿn!√π), ξ = 2·freq·x, ×e^{−0.3z²}; no clock — a stationary state does not breathe',
       f(x, z, t, {amp=1, freq=1, comp=1}) {
         const n=Math.round(comp*6), xv=x*freq*2;
         // Hermite via recurrence
@@ -4510,7 +4585,17 @@ const QUANTUM_MECHANICS = {
         let norm=Math.sqrt(Math.PI);
         for (let k=1; k<=n; k++) norm*=2*k;
         const psi=H_n*Math.exp(-xv*xv/2)/Math.sqrt(norm);
-        return psi*psi * 3.6 * amp * Math.exp(-z*z*0.3) * (0.8+Math.cos(n*t*0.02)*0.2);
+        // FIX(r11): the ×(0.8+0.2cos(0.02nt)) pulse is gone. |ψ_n|² of an
+        // energy eigenstate cannot depend on t at all — the phase e^{−iE_nt/ħ}
+        // cancels in the modulus — and this one breathed by ×1.666667 (peak
+        // 1.242542 at t = 0 against 0.745525 at t = 52.36 on grid 161, 1.226839
+        // against 0.736103 on grid 90) with a period of 104.72 time units,
+        // which is 218 s of wall clock at the app's 0.008-per-frame rate. It is
+        // the same defect round 5 cut out of `hydrogenS`, and the ruling sits
+        // 300 lines above this one in this file. The pulse was 1.0 exactly at
+        // t = 0, so the plate a viewer meets at boot is bit-identical to what
+        // shipped; what changes is that it stops moving afterwards.
+        return psi*psi * 3.6 * amp * Math.exp(-z*z*0.3);
       }
     },
     hydrogenS: {

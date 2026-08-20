@@ -811,29 +811,35 @@ describe('Regression — Tier D defects (fixed)', () => {
     assert.ok(foundNonzero, 'Dragon produced all-zero output (broken IFS)');
   });
 
-  test('dragon: bounded by its fold ceiling, and no longer a tabletop', () => {
-    // Round 8 replaced clamp(v·amp, 0, 0.9) with soften(v·amp, 0.9, 1.8). The
-    // knee sits at the old bound, so every value the clamp did not touch is
-    // bit-identical and the factory picture is unchanged; what goes is the
-    // plateau. The cut used to pin 40.5 % of the plate at amp 2.25 / freq 1 and
+  test('dragon: bounded by amp alone, and no longer a tabletop', () => {
+    // History of this assertion, because it has changed shape twice. Round 8
+    // replaced clamp(v·amp, 0, 0.9) with a fold whose knee sat at the old
+    // bound: the cut used to pin 40.5 % of the plate at amp 2.25 / freq 1 and
     // 92.6 % at amp 2.25 / freq 0.3 / comp 0.9 to exactly 0.9 — a density drawn
-    // as a table. Measured after: the top-value share is 0.01 % at every setting
-    // below, i.e. one vertex, and the peak reaches 1.794 against the 1.8 ceiling.
+    // as a table. Round 11 removed the reason for either: the drawn quantity is
+    // a normalised density in [0, 1], so the height is amp·1.2 at the very
+    // most and nothing has to be folded to keep it in frame. What the test
+    // still asks is the half that outlived both kernels — no plateau, and no
+    // value outside the band the entry claims.
     const f = getFormula('fractals', 'dragon').f;
     for (const P of [BASELINE, { amp: 2.25, freq: 0.3, comp: 0.9 }, { amp: 2.25, freq: 4.55, comp: 1 }]) {
       const vals = [];
       for (let i = 0; i < 90; i++) {
         for (let j = 0; j < 90; j++) {
           const v = f(-3.5 + 7 * i / 89, -3.5 + 7 * j / 89, 0, P);
-          assert.ok(v >= 0 && v <= 1.8,
+          assert.ok(v >= 0 && v <= P.amp * 1.2 + 1e-9,
             `Dragon out of bounds at amp ${P.amp}, freq ${P.freq}: ${v}`);
           vals.push(v);
         }
       }
-      const peak = Math.max(...vals);
-      const share = vals.filter(v => v > peak - 1e-9).length / vals.length;
+      // Nonzero values only: outside the attractor's box the density is 0 by
+      // construction, and at freq 4.55 that is most of the plate — counting
+      // those as "the top value" would make this pass for the wrong reason.
+      const live = vals.filter(v => v > 1e-9);
+      const peak = Math.max(...live);
+      const share = live.filter(v => v > peak - 1e-9).length / live.length;
       assert.ok(share < 0.05,
-        `${(share * 100).toFixed(1)} % of the plate sits on the top value at amp ${P.amp}, freq ${P.freq} — that is a cut, not a density`);
+        `${(share * 100).toFixed(1)} % of the drawn set sits on the top value at amp ${P.amp}, freq ${P.freq} — that is a cut, not a density`);
     }
   });
 });
@@ -2849,10 +2855,13 @@ describe('Attractors and states that were drawn as something simpler (#R6)', () 
     // entry returns separates them. Saying that plainly is better than an
     // assertion that looks numeric and is not.
     const src = readFileSync(new URL('../src/math-collections.js', import.meta.url), 'utf8');
-    const from = src.indexOf('dragon: {');
-    assert.ok(from > 0, 'the dragon entry is gone');
-    const body = src.slice(from, src.indexOf('chua: {', from));
-    assert.ok(body.length > 100, 'could not isolate the dragon entry');
+    // Round 11 moved the orbit out of the entry and into dragonDensity(), which
+    // runs it once instead of once per vertex; the two contractions are the
+    // same two lines and this is still the place to read them.
+    const from = src.indexOf('function dragonDensity(');
+    assert.ok(from > 0, 'the dragon orbit is gone');
+    const body = src.slice(from, src.indexOf('\n}', from));
+    assert.ok(body.length > 100, 'could not isolate the dragon orbit');
     assert.ok(/nx\s*=\s*1\s*-\s*cosA\s*\*\s*px\s*-\s*sinA\s*\*\s*pz/.test(body),
       'the second contraction is not 1 − (1−i)w/2');
     assert.ok(!/nx\s*=\s*-\s*cosA\s*\*\s*px\s*\+\s*sinA\s*\*\s*pz\s*\+\s*1/.test(body),
@@ -5043,16 +5052,20 @@ describe('Round 8 — what the whole catalogue said against what an oracle says 
       'a row quotes only grid 90, which the app never draws (81 on mobile, 161 on desktop):\n  ' +
       noMeshFigure.join('\n  '));
 
-    // Controls. Twelve entries fold; if that number collapses the sweep has
+    // Controls. Eleven entries fold; if that number collapses the sweep has
     // stopped finding them, and the rows checked would silently become none.
     // Raised from 10 to 12 in the correction pass: at 10 the guard tolerated
     // two of the twelve quietly ceasing to fold, which is the whole of HOLE 1.
-    assert.ok(folders.length >= 12,
+    // Round 11 moved it 12 → 11, and this sentence is the record of why, since
+    // a floor that drifts down without one is how HOLE 1 got in: `dragon` was
+    // rebuilt around a density that is normalised to [0, 1] by construction, so
+    // there is nothing left for it to fold. It is the only entry that left.
+    assert.ok(folders.length >= 11,
       `only ${folders.length} entries were found to call soften():\n  ${folders.join('\n  ')}`);
     // …and the same floor on the document's side, so the two ratchets cannot be
     // satisfied by deleting from both ends at once.
-    assert.ok(claimants.length >= 12,
-      `only ${claimants.length} rows state a fold coverage (12 did when this was written): ` +
+    assert.ok(claimants.length >= 11,
+      `only ${claimants.length} rows state a fold coverage (11 since round 11 took dragon's fold away): ` +
       claimants.join(', '));
     assert.ok(folders.length - undocumented.length >= 3,
       `no row states a fold coverage any more, so this test asserts nothing:\n  ${folders.join('\n  ')}`);
@@ -5076,9 +5089,18 @@ describe('Round 8 — what the whole catalogue said against what an oracle says 
     // a row can only be credited for its own figures. It may only ever be
     // raised — and a row absent from the walk counts as zero here rather than
     // being skipped, so a kernel that quietly stops folding fails with its own
-    // name as well as through the `folders.length >= 12` control above.
+    // name as well as through the `folders.length >= 11` control above.
+    //
+    // Round 11 removed `dragon: 6` from this table, and that is the one edit
+    // this ratchet is built to make expensive, so here is the reason in full:
+    // the entry no longer folds, because its kernel no longer produces an
+    // unnormalised quantity to fold. Its six figures were all coverage of a
+    // compression that has nothing left to compress, and its row now states the
+    // bound it does have — a density in [0, 1], height at most amp·1.2. This is
+    // the guard working: it failed with dragon's own name attached, which is
+    // exactly what it promises to do when a kernel stops folding.
     const FIGURE_FLOOR = {
-      lyapunov: 4, dragon: 6, manifoldCurvature: 6, eulerIm: 4, complexPower: 4,
+      lyapunov: 4, manifoldCurvature: 6, eulerIm: 4, complexPower: 4,
       mobiusTransform: 2, complexSin: 4, blaschke: 3, scherkSurface: 6, catenoid: 4,
       breatherSurface: 4, pseudosphere: 4,
     };
@@ -6208,5 +6230,148 @@ describe('The display contract, clause 1 — the amplitude slider is the instrum
       `the control kernel reads gain ${clean.gain} spread ${clean.spread}, and it is amp·sin(x)`);
     assert.ok(!pure(clamped),
       `a clamp at ±0.3 reads as a pure gain (${clamped.gain}, spread ${clamped.spread}) — this test cannot fail`);
+  });
+});
+
+// ── Round 11: the label is the claim, because the caption is not on screen ───
+// bindMathCollectionUI() is exported and called by nothing, so `formula` never
+// reaches the DOM: the only text a viewer reads for an entry is its <option>
+// label in index.html, which mirrors `name`. Four names were therefore claims
+// the plate could not keep, and two kernels contradicted a ruling this
+// repository had already written down.
+describe('Round 11 — the visible label against the drawn object', () => {
+
+  // The label and the field are two hand-maintained copies of one string. This
+  // is the guard that keeps them one string; it is also what makes the renames
+  // below meaningful rather than cosmetic.
+  test('every catalogue name is exactly the option label the viewer reads', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const labels = new Map();
+    for (const m of html.matchAll(/<option value="m:([^:"]+):([^"]+)"[^>]*>([^<]*)<\/option>/g)) {
+      labels.set(`${m[1]}:${m[2]}`, m[3].trim());
+    }
+    const missing = [], differ = [];
+    let checked = 0;
+    for (const [colId, col] of Object.entries(MATH_COLLECTIONS)) {
+      for (const [key, entry] of Object.entries(col.formulas)) {
+        const id = `${colId}:${key}`;
+        const label = labels.get(id);
+        if (label === undefined) { missing.push(id); continue; }
+        checked++;
+        if (label !== entry.name) differ.push(`${id}: <option> "${label}" vs name "${entry.name}"`);
+      }
+    }
+    assert.deepEqual(missing, [], `entries with no <option> at all: ${missing.join(', ')}`);
+    assert.deepEqual(differ, [], `the picker and the catalogue disagree:\n  ${differ.join('\n  ')}`);
+    // Control: the comparison actually ran over the whole catalogue. A regexp
+    // that stopped matching would leave `checked` at 0 and pass both asserts.
+    assert.equal(checked, 192, `only ${checked} of 192 entries were compared`);
+  });
+
+  test('the four renamed entries no longer name objects the plate does not draw', () => {
+    const forbidden = [
+      ['topology', 'crossCap', /RP²|Cross-Cap \(/, 'a graph over the plane is embedded and orientable; RP² admits no embedding in R³'],
+      ['topology', 'enneperSurface', /^Enneper Surface$/, 'the plate is the quadric 0.0896(x²−z²), whose |H| reaches 0.0214 where Enneper is minimal'],
+      ['topology', 'hopfFibration', /Hopf Fibration/, 'no S³, no fibre and no fibration in sin(2θ+4r−0.5t)·e^{−4(r−1)²}'],
+      ['trigonometry', 'pythagorean', /Pythagorean/, 'the kernel forms sin²−cos² = −cos 2(r+t), the double-angle identity, not sin²+cos² = 1'],
+    ];
+    for (const [col, key, pattern, why] of forbidden) {
+      const name = getFormula(col, key).name;
+      assert.ok(!pattern.test(name), `${col}:${key} still reads "${name}" — ${why}`);
+    }
+    // Control: the same probe on an entry whose name IS honest still matches,
+    // so a broken regexp cannot pass this test by matching nothing.
+    assert.match(getFormula('topology', 'kleinBottle').name, /Klein/);
+  });
+
+  test('a stationary state does not breathe', () => {
+    // |ψ_n|² of an energy eigenstate has no time dependence at all: the phase
+    // e^{−iE_n t/ħ} cancels in the modulus. Both entries used to carry a
+    // ×(0.8+0.2cos(...)) pulse — ×1.666667 peak to trough, 54.5 s and 218 s of
+    // wall clock per period at the app's 0.008-per-frame rate.
+    for (const [col, key] of [['quantumMechanics', 'particleBox1D'], ['quantumMechanics', 'harmonicOscillator']]) {
+      const f = getFormula(col, key).f;
+      const at = t => Array.from(generateSurfaceFromFormula(f, { amp: 1, freq: 1, comp: 0.5 }, 41, 3.5, t));
+      const base = at(0);
+      for (const t of [13.09, 52.36, 104.72, 419.0]) {
+        assert.deepEqual(at(t), base, `${key} moved between t = 0 and t = ${t}`);
+      }
+    }
+    // Control: the probe can see a clock. wavePacket carries one by design, so
+    // a comparison that had stopped comparing would fail here.
+    const wp = getFormula('quantumMechanics', 'wavePacket').f;
+    const w0 = Array.from(generateSurfaceFromFormula(wp, { amp: 1, freq: 1, comp: 0.5 }, 41, 3.5, 0));
+    const w1 = Array.from(generateSurfaceFromFormula(wp, { amp: 1, freq: 1, comp: 0.5 }, 41, 3.5, 13.09));
+    assert.notDeepEqual(w1, w0, 'the probe cannot see time passing, so the two greens above mean nothing');
+  });
+
+  test('the dragon plate is the Heighway dragon, not per-vertex speckle', () => {
+    // Reference built with no IFS at all: the paper-folding sequence, the
+    // dragon's other definition. Twelve levels is 4 095 turns.
+    const paperFolding = levels => {
+      let seq = [];
+      for (let i = 0; i < levels; i++) seq = [...seq, 1, ...seq.map(s => -s).reverse()];
+      let x = 0, y = 0, dx = 1, dy = 0;
+      const pts = [[0, 0]];
+      const scale = 1 / Math.pow(2, levels / 2);
+      for (const turn of seq) {
+        x += dx; y += dy; pts.push([x, y]);
+        [dx, dy] = turn > 0 ? [-dy, dx] : [dy, -dx];
+      }
+      const ang = -Math.PI / 4 * levels, ca = Math.cos(ang), sa = Math.sin(ang);
+      // The y flip is not cosmetic: without it this reference is a mirror of
+      // the dragon and reads Jaccard 0.179 against a correct kernel. The first
+      // measurement of this fix hit exactly that and blamed the kernel.
+      return pts.map(([px, py]) => [(px * ca - py * sa) * scale, -(px * sa + py * ca) * scale]);
+    };
+
+    const G = 48, X0 = -0.4, X1 = 1.25, Z0 = -0.4, Z1 = 0.75;
+    const cell = (x, z) => {
+      const c = Math.floor((x - X0) / (X1 - X0) * G), r = Math.floor((z - Z0) / (Z1 - Z0) * G);
+      return (c >= 0 && c < G && r >= 0 && r < G) ? r * G + c : -1;
+    };
+
+    const truth = new Uint8Array(G * G);
+    for (const [x, z] of paperFolding(12)) { const i = cell(x, z); if (i >= 0) truth[i] = 1; }
+
+    // The drawn plate, read in the dragon's own coordinates: the kernel puts
+    // the attractor's centre at the plate centre with u = 0.41667 + x·freq·0.26.
+    const f = getFormula('fractals', 'dragon').f;
+    const drawn = new Uint8Array(G * G);
+    const peak = (() => {
+      let m = 0;
+      for (let r = 0; r < G; r++) for (let c = 0; c < G; c++) {
+        const u = X0 + (c + 0.5) / G * (X1 - X0), v = Z0 + (r + 0.5) / G * (Z1 - Z0);
+        const y = f((u - 0.41667) / 0.26, (v - 0.16667) / 0.26, 0, { amp: 1, freq: 1, comp: 0.5 });
+        if (y > m) m = y;
+      }
+      return m;
+    })();
+    for (let r = 0; r < G; r++) for (let c = 0; c < G; c++) {
+      const u = X0 + (c + 0.5) / G * (X1 - X0), v = Z0 + (r + 0.5) / G * (Z1 - Z0);
+      const y = f((u - 0.41667) / 0.26, (v - 0.16667) / 0.26, 0, { amp: 1, freq: 1, comp: 0.5 });
+      if (y > peak * 0.05) drawn[r * G + c] = 1;
+    }
+
+    let inter = 0, uni = 0;
+    for (let i = 0; i < truth.length; i++) { if (truth[i] || drawn[i]) uni++; if (truth[i] && drawn[i]) inter++; }
+    const jaccard = inter / uni;
+    assert.ok(jaccard > 0.7, `drawn set against the paper-folding dragon: Jaccard ${jaccard.toFixed(3)}`);
+
+    // The other half of the old defect: neighbouring vertices used to be
+    // independent samples of the attractor — measured neighbour correlation
+    // 0.027 across x on grid 90, with 83.1 % of the plate at exactly 0.
+    const grid = 90;
+    const hf = generateSurfaceFromFormula(f, { amp: 1, freq: 1, comp: 0.5 }, grid, 3.5, 0);
+    let n = 0, sx = 0, sy = 0, sxy = 0, sxx = 0, syy = 0;
+    for (let r = 0; r < grid; r++) for (let c = 0; c + 1 < grid; c++) {
+      const a = hf[r * grid + c], b = hf[r * grid + c + 1];
+      n++; sx += a; sy += b; sxy += a * b; sxx += a * a; syy += b * b;
+    }
+    const corr = (n * sxy - sx * sy) / Math.sqrt((n * sxx - sx * sx) * (n * syy - sy * sy));
+    assert.ok(corr > 0.5, `neighbouring vertices correlate at ${corr.toFixed(3)} — a picture, not speckle`);
+
+    const zeros = Array.from(hf).filter(v => v === 0).length / hf.length;
+    assert.ok(zeros < 0.8, `${(zeros * 100).toFixed(1)} % of the plate is exactly zero`);
   });
 });
