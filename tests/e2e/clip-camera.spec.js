@@ -134,21 +134,34 @@ test.describe('Clip player — camera ownership', () => {
     // cam-b turns auto-rotate ON when it is applied — that is the observable:
     // once the player owns the camera again, the button flips without a click.
     //
-    // ── Why this clip holds each step for 8s instead of the usual 1.2s ────────
-    // The click below is a CLAIM only if it turns auto-rotate ON, and cam-b
-    // switches it on by itself. So if a step boundary lands between reading the
-    // button and the click arriving, the button is already ON and the click
-    // RELEASES instead — nothing reports MANUAL and the test fails on a race it
-    // never meant to test. On a GPU-less runner a single click takes seconds,
-    // which is the same order as a 1.2s hold, so the boundary lands inside the
-    // click. It failed first-attempt on both runs there and passed on retry.
+    // ── Why the claim comes through the programmer and not through the button ─
+    // What this test is FOR is the release. The claim is only its setup, and as
+    // setup the AUTO-ROTATE button is the one door that cannot be used safely
+    // here: clicking it is a claim only while rotation is OFF, and cam-b turns
+    // rotation on by itself, so a step boundary landing inside the click leaves
+    // the button already ON and the click spends itself releasing a camera that
+    // was never taken. Nothing reports MANUAL and the test fails on a race it is
+    // not about.
     //
-    // Reproduced deterministically here by crossing a boundary before the click
-    // (`waitForTimeout(2900)` in front of it at the default hold): identical
-    // failure, same `Received string: "[2/2] cam-b — 1.2s"`. Two fixes were
-    // tried and measured first — asserting the pre-state, then riding to the
-    // start of a fresh step — and neither survives a click that outlasts the
-    // step. The step has to be longer than a click, so it is.
+    // That race was answered twice by widening the margin — the hold went 1.2s,
+    // then 8s, so a step would outlast a click. It does not, on a runner slow
+    // enough, and slow enough has no upper bound. Measured across the two CI
+    // runs of PR #44, same commit for everything Playwright loads, one green and
+    // one red: the nineteen tests that pass in both take 637s on the fast
+    // machine and 894s on the slow one — 1.40x, every test slower (1.26x to
+    // 1.70x) — and the 8s hold that carried the fast run lost three attempts in
+    // a row on the slow one.
+    //
+    // So the claim is made through APPLY in the Camera Programmer instead, which
+    // claims unconditionally: there is no pre-state to read, so there is nothing
+    // for a boundary to invalidate. AUTO-ROTATE as a WAY IN keeps its coverage
+    // in the two tests either side of this one, where every preset carries
+    // `autoRot: false` and no boundary can touch the button — race-free by
+    // construction rather than by margin.
+    //
+    // The 8s hold stays: with the claim standing, every later step is look-only,
+    // so the readings below cannot be moved by the player — but the release and
+    // the assertions after it are still easier to read in a long step.
     const HOLD = 8000;
     await boot(page, [preset('cam-a', 13, false, HOLD), preset('cam-b', 5, true, HOLD)]);
     await setCamMode(page, '0');
@@ -156,9 +169,36 @@ test.describe('Clip player — camera ownership', () => {
     await page.locator('#btn-clip-play').click();
     await expect(clipStatus(page)).toContainText('[1/2]');
 
-    await expect(arBtn(page)).toHaveText(/AUTO-ROTATE: OFF/);
-    await arBtn(page).click();                       // claim
+    await page.locator('#btn-open-cam-editor').click();
+    await page.locator('#ce-btn-apply').click();     // claims; loadScript never touches autoRot
     await expect(clipStatus(page)).toContainText('MANUAL');
+    await page.locator('#ce-close').click();
+
+    // From here the label moves only when WE move it: the claim makes every step
+    // look-only, so this read cannot be raced however slow the machine is.
+    if (!/AUTO-ROTATE: ON/.test(await arBtn(page).innerText())) {
+      await arBtn(page).click();                     // rotation on; the claim already stands
+      await expect(arBtn(page)).toHaveText(/AUTO-ROTATE: ON/);
+    }
+    await expect(clipStatus(page), 'turning rotation on must not have disturbed the claim')
+      .toContainText('MANUAL');
+
+    // Ride to the start of a fresh step before releasing, so the release and the
+    // two assertions after it have a whole step of room. Opening the programmer
+    // costs an unknown slice of this one, and a release landing just before a
+    // boundary would have cam-b flip the label to ON while the very next line
+    // asserts OFF — a product accusation manufactured by timing. This wait is
+    // only safe BECAUSE the claim stands: every step is look-only until we
+    // release, so crossing a boundary changes nothing we are about to read.
+    // Not waitForStepChange(): its budget is built from HOLD_MS and is shorter
+    // than one step at this hold.
+    const tag = ((await clipStatus(page).innerText()).match(/\[\d+\/\d+\]/) || [''])[0];
+    await expect
+      .poll(() => clipStatus(page).innerText(),
+        { timeout: 3 * stepMs(HOLD), intervals: [100] })
+      .not.toContain(tag);
+    await expect(clipStatus(page), 'the claim did not survive a step boundary')
+      .toContainText('MANUAL');
 
     await arBtn(page).click();                       // release
     await expect(arBtn(page)).toHaveText(/AUTO-ROTATE: OFF/);
