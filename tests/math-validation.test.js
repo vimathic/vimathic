@@ -6375,3 +6375,66 @@ describe('Round 11 — the visible label against the drawn object', () => {
     assert.ok(zeros < 0.8, `${(zeros * 100).toFixed(1)} % of the plate is exactly zero`);
   });
 });
+
+
+// ── Round 11: the two simulations that never advanced ────────────────────────
+// createCachedHeavySampler calls its simulator on every rebuild — 16-20 per
+// second — and both of these allocated and re-seeded their fields each time, so
+// neither medium ever got past its first hundred Euler steps whatever the clock
+// said. Gray-Scott showed one round blob; the Barkley medium that replaced
+// FitzHugh-Nagumo showed a barely-relaxed initial condition, bit-identical at
+// every t.
+describe('Round 11 — the media advance, and they carry a pattern', () => {
+
+  const plate = (key, comp, t) => Array.from(generateSurfaceFromFormula(
+    getFormula('cellularAutomata', key).f, { amp: 1, freq: 1, comp }, 64, 3.5, t));
+
+  // Interface length at half the peak: a blob and a flooded lattice both read
+  // near zero, a pattern reads in the hundreds. Counting cells above a
+  // threshold cannot tell those three apart, which is how the shipped
+  // Gray-Scott passed for a pattern at 1.95 % coverage.
+  const interfaceLength = (p, g = 64) => {
+    const peak = Math.max(...p), thr = peak * 0.5;
+    let n = 0;
+    for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+      const i = r * g + c, rp = ((r + 1) % g) * g + c, cp = r * g + (c + 1) % g;
+      if ((p[i] > thr) !== (p[rp] > thr)) n++;
+      if ((p[i] > thr) !== (p[cp] > thr)) n++;
+    }
+    return n;
+  };
+
+  for (const key of ['reactionDiffusion', 'excitableMedia']) {
+    test(`${key} draws a pattern across the whole reachable comp band`, () => {
+      for (const comp of [0.5, 0.7, 0.9]) {
+        const len = interfaceLength(plate(key, comp, 0));
+        assert.ok(len > 200, `${key} at comp ${comp}: interface length ${len} — that is a blob or a flood, not a pattern`);
+      }
+    });
+
+    test(`${key} moves with the clock`, () => {
+      const a = plate(key, 0.5, 0), b = plate(key, 0.5, 40);
+      let worst = 0;
+      for (let i = 0; i < a.length; i++) worst = Math.max(worst, Math.abs(a[i] - b[i]));
+      assert.ok(worst > 0.05, `${key} moved by ${worst.toExponential(2)} between t = 0 and t = 40`);
+      for (const v of b) assert.ok(Number.isFinite(v), `${key} produced a non-finite value at t = 40`);
+    });
+  }
+
+  test('continuing a medium gives the same field as computing it cold', () => {
+    // The continuation cache is keyed by (regime bucket, step count), so the
+    // field at a clock value must not depend on which clock values were asked
+    // for on the way there. Sampling t = 0, 10, 40 walks the cache forward;
+    // crossing into another comp bucket drops it; coming back recomputes t = 40
+    // from the seed. The two have to agree, or the cache is inventing history.
+    plate('excitableMedia', 0.5, 0);
+    plate('excitableMedia', 0.5, 10);
+    const continued = plate('excitableMedia', 0.5, 40);
+    plate('excitableMedia', 0.9, 40.5);           // different bucket — state dropped
+    const cold = plate('excitableMedia', 0.5, 40);
+
+    let worst = 0;
+    for (let i = 0; i < cold.length; i++) worst = Math.max(worst, Math.abs(cold[i] - continued[i]));
+    assert.equal(worst, 0, `continued and cold fields differ by ${worst}`);
+  });
+});
