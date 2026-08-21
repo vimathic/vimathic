@@ -43,6 +43,17 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
+import * as THREE from 'three';
+
+// render.js and math-visualizer.js touch browser globals at import time; the
+// same two stubs the other geometry-reading tests install.
+globalThis.requestAnimationFrame ??= cb => { void cb; return 0; };
+globalThis.performance ??= { now: () => 0 };
+globalThis.Worker ??= class { postMessage() {} terminate() {} };
+
+const { RenderEngine } = await import('../src/render.js');
+const { weldNormals, MathVisualizer } = await import('../src/math-visualizer.js');
+
 import {
   MATH_COLLECTIONS,
   getFormula,
@@ -480,5 +491,258 @@ describe('collapse keeps two coordinates on a flat figure', () => {
     // 1/√(1−y²) near the poles, so the storage alone accounts for 3.4e-6 here.
     // The claim is that the chart is unchanged, not that it is bit-exact.
     assert.ok(worst < 1e-4, `the solid-body chart moved by ${worst}`);
+  });
+});
+
+
+// ── Round 11: the field follows the surface, not the vertical ────────────────
+//
+// Measured on the geometry the app builds, through RenderEngine.setShape — not
+// on a hand-made PlaneGeometry. The first version of this block used one, and
+// it is precisely why it missed that `disc` is a plate 0.08 units thick with
+// 95 % of its vertices carrying a horizontal normal.
+describe('a height field deforms a closed body instead of shearing it', () => {
+
+  const buildShape = name => {
+    const stub = {
+      CFG: { planeSize: 7, planeSegs: 160 }, isMobile: false, isShapeChanging: false,
+      pendingShape: null, currentShape: 'plane',
+      gpuMesh: { geometry: new THREE.PlaneGeometry(1, 1, 1, 1) }, gpuPtsProxy: null, cb: {},
+      clearSolarSystem() {}, _buildSolarSystem() {},
+      _buildShapeGeo: RenderEngine.prototype._buildShapeGeo,
+      _buildStarGeo: RenderEngine.prototype._buildStarGeo,
+      setShape: RenderEngine.prototype.setShape,
+    };
+    stub.setShape(name);
+    return stub.gpuMesh.geometry;
+  };
+
+  /** Pristine positions and normals, exactly as MathVisualizer takes them. */
+  const snapshot = geo => {
+    if (!geo.attributes.normal) geo.computeVertexNormals();
+    const p = geo.attributes.position, n = geo.attributes.normal;
+    const pos = new Float32Array(p.count * 3), nrm = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      pos[i * 3] = p.getX(i); pos[i * 3 + 1] = p.getY(i); pos[i * 3 + 2] = p.getZ(i);
+      nrm[i * 3] = n.getX(i); nrm[i * 3 + 1] = n.getY(i); nrm[i * 3 + 2] = n.getZ(i);
+    }
+    return { pos, nrm: weldNormals(pos, nrm) };
+  };
+  const spanY = geo => {
+    const p = geo.attributes.position;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < p.count; i++) { const y = p.getY(i); if (y < lo) lo = y; if (y > hi) hi = y; }
+    return hi - lo;
+  };
+  const field = (grid, h) => new Float32Array(grid * grid).fill(h);
+
+  test('a sphere gains thickness where it used to shear', () => {
+    const geo = buildShape('sphere');
+    const { pos, nrm } = snapshot(geo);
+    const before = spanY(geo);
+
+    applyHeightField(geo, field(64, 0.3), pos, 3.5);            // +Y, what shipped
+    const yOnly = spanY(geo);
+    applyHeightField(geo, field(64, 0.3), pos, 3.5, nrm);       // along the normal
+    const alongNormal = spanY(geo);
+
+    assert.ok(Math.abs(yOnly - before) < 1e-5,
+      `a uniform field moved the sphere's span by ${(yOnly - before).toExponential(2)} under the old rule — ` +
+      'the premise here is that it shears rather than thickens');
+    assert.ok(alongNormal - before > 0.5,
+      `along the normal the span grew by ${(alongNormal - before).toFixed(4)}; a 0.3 field on a sphere owes about 0.6`);
+  });
+
+  test('no shape is torn apart: coincident vertices stay coincident', () => {
+    // Round 10's rule, re-measured through the call the app now makes. Without
+    // the weld this reads 0.405 on box and 0.493 on pyramid-smooth.
+    for (const name of ['box', 'pyramid-smooth', 'cone', 'cylinder', 'dodecahedron', 'octahedron', 'tetrahedron']) {
+      const geo = buildShape(name);
+      const { pos, nrm } = snapshot(geo);
+      const n = geo.attributes.position.count;
+      const groups = new Map();
+      for (let i = 0; i < n; i++) {
+        const k = `${Math.round(pos[i * 3] * 1e6)},${Math.round(pos[i * 3 + 1] * 1e6)},${Math.round(pos[i * 3 + 2] * 1e6)}`;
+        const g = groups.get(k); if (g) g.push(i); else groups.set(k, [i]);
+      }
+      const seams = [...groups.values()].filter(g => g.length > 1);
+      assert.ok(seams.length > 0, `precondition: ${name} has no coincident vertices, so this proves nothing about it`);
+
+      applyHeightField(geo, field(64, 0.4), pos, 3.5, nrm);
+      const q = geo.attributes.position;
+      let worst = 0;
+      for (const g of seams) for (let a = 1; a < g.length; a++) {
+        worst = Math.max(worst, Math.hypot(
+          q.getX(g[0]) - q.getX(g[a]), q.getY(g[0]) - q.getY(g[a]), q.getZ(g[0]) - q.getZ(g[a])));
+      }
+      assert.ok(worst < 1e-9, `${name} opened by ${worst.toExponential(3)} at a seam — the mesh is torn`);
+    }
+  });
+
+  test('the plane is untouched, to sixteen orders below anything it can show', () => {
+    // The app rotates its plane flat, so its normal IS +Y and the two rules are
+    // one rule. Not "to the bit": rotateX(-PI/2) leaves 6.123e-17 in the
+    // normal's z, so where the base z is exactly 0 the displaced z comes out
+    // -2.446e-17 instead of +0. That is the worst disagreement over the plane.
+    const geo = buildShape('plane');
+    const { pos, nrm } = snapshot(geo);
+    const grid = Math.round(Math.sqrt(geo.attributes.position.count));
+    const f = new Float32Array(grid * grid);
+    for (let i = 0; i < f.length; i++) f[i] = Math.sin(i * 0.37) * 0.4;
+
+    applyHeightField(geo, f, pos, 3.5);
+    const yOnly = Array.from(geo.attributes.position.array);
+    applyHeightField(geo, f, pos, 3.5, nrm);
+    const alongNormal = Array.from(geo.attributes.position.array);
+
+    let worst = 0;
+    for (let i = 0; i < yOnly.length; i++) worst = Math.max(worst, Math.abs(alongNormal[i] - yOnly[i]));
+    assert.ok(worst < 1e-12, `the default shape moved by ${worst.toExponential(3)}`);
+  });
+
+  test('control — the field is read at the base coordinate, so it does not creep', () => {
+    const geo = buildShape('sphere');
+    const { pos, nrm } = snapshot(geo);
+    const f = new Float32Array(64 * 64);
+    for (let i = 0; i < f.length; i++) f[i] = Math.cos(i * 0.21) * 0.35;
+
+    applyHeightField(geo, f, pos, 3.5, nrm);
+    const once = Array.from(geo.attributes.position.array);
+    applyHeightField(geo, f, pos, 3.5, nrm);
+    const twice = Array.from(geo.attributes.position.array);
+
+    assert.deepEqual(twice, once, 'the same field applied twice from the same base moved the mesh');
+  });
+});
+
+
+// ── Round 11, second pass: which bodies the field may follow ────────────────
+//
+// The first pass let it follow every body and two adversarial reviews measured
+// what that costs: seams opening on 12 of 20 shapes, a fold in the strip beside
+// each hard edge under a NEGATIVE field, `disc` inside out, `torusknot` past
+// its own axis. The rule is narrow now, and it is decided by measuring the
+// geometry rather than by naming shapes.
+describe('the field follows the surface only where that is safe', () => {
+
+  const vizFor = name => {
+    const stub = {
+      CFG: { planeSize: 7, planeSegs: 160 }, isMobile: false, isShapeChanging: false,
+      pendingShape: null, currentShape: 'plane',
+      gpuMesh: { geometry: new THREE.PlaneGeometry(1, 1, 1, 1) }, gpuPtsProxy: null, cb: {},
+      clearSolarSystem() {}, _buildSolarSystem() {},
+      _buildShapeGeo: RenderEngine.prototype._buildShapeGeo,
+      _buildStarGeo: RenderEngine.prototype._buildStarGeo,
+      setShape: RenderEngine.prototype.setShape,
+    };
+    stub.setShape(name);
+    const render = {
+      isMobile: false,
+      U: { uMathMode: { value: 0 }, uMorphProgress: { value: 1 }, uVHField: { value: 0 } },
+      gpuMesh: { geometry: stub.gpuMesh.geometry }, gpuPtsProxy: null, cb: {},
+    };
+    const viz = new MathVisualizer(render, { bass: 0, mid: 0, treble: 0, beatInt: 0, amp: 0.7, waveInt: 1 });
+    viz._workerReady = false;
+    viz.onShapeChange();
+    return { viz, geo: stub.gpuMesh.geometry };
+  };
+
+  const faceNormals = geo => {
+    const p = geo.attributes.position, idx = geo.index, out = [];
+    const n = idx ? idx.count : p.count;
+    for (let i = 0; i < n; i += 3) {
+      const a = idx ? idx.getX(i) : i, b = idx ? idx.getX(i + 1) : i + 1, c = idx ? idx.getX(i + 2) : i + 2;
+      const ax = p.getX(a), ay = p.getY(a), az = p.getZ(a);
+      const ux = p.getX(b) - ax, uy = p.getY(b) - ay, uz = p.getZ(b) - az;
+      const vx = p.getX(c) - ax, vy = p.getY(c) - ay, vz = p.getZ(c) - az;
+      out.push([uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]);
+    }
+    return out;
+  };
+  const flipped = (before, after) => {
+    let n = 0;
+    for (let i = 0; i < before.length; i++) {
+      if (before[i][0] * after[i][0] + before[i][1] * after[i][1] + before[i][2] * after[i][2] < 0) n++;
+    }
+    return n;
+  };
+
+  // The table IS the rule, and every row of it was measured.
+  const FOLLOWS  = ['sphere', 'torus', 'icosahedron-smooth', 'solar'];
+  const VERTICAL = ['plane', 'circle', 'disc', 'hex', 'ring', 'star',      // plates
+                    'box', 'cylinder', 'cone', 'pyramid', 'pyramid-smooth', // hard edges
+                    'tetrahedron', 'octahedron', 'icosahedron', 'dodecahedron',
+                    'torusknot'];                                           // 0.222 of clearance
+
+  test('the four bodies that can carry it, and the sixteen that keep the vertical rule', () => {
+    for (const name of FOLLOWS) {
+      const { viz } = vizFor(name);
+      assert.ok(viz._pristineNormals, `${name} should follow its own surface`);
+      assert.ok(viz._pristineDepth > 0.3, `${name}: depth cap ${viz._pristineDepth}`);
+    }
+    for (const name of VERTICAL) {
+      const { viz } = vizFor(name);
+      assert.equal(viz._pristineNormals, null,
+        `${name} must keep the vertical rule — it has hard edges, is a plate, or has no room`);
+    }
+  });
+
+  test('a NEGATIVE field inverts no triangle on the bodies that follow the surface', () => {
+    // The sign is the whole test. The fold the second review found shows up at
+    // −0.4 and is invisible at +0.4: 3744 inverted faces against 0, on the same
+    // mesh with the same magnitude.
+    for (const name of FOLLOWS) {
+      const { viz, geo } = vizFor(name);
+      const before = faceNormals(geo);
+      const grid = Math.round(Math.sqrt(geo.attributes.position.count));
+      applyHeightField(geo, new Float32Array(grid * grid).fill(-0.4),
+        viz._pristinePositions, 3.5, viz._pristineNormals, viz._pristineDepth);
+      assert.equal(flipped(before, faceNormals(geo)), 0, `${name} turned triangles inside out`);
+    }
+  });
+
+  test('the sixteen on the vertical rule are bit-identical to what main draws', () => {
+    // Not "close": the same numbers. This is the guarantee that narrowing the
+    // change left everything else where it was.
+    for (const name of VERTICAL) {
+      const { viz, geo } = vizFor(name);
+      const grid = Math.round(Math.sqrt(geo.attributes.position.count));
+      const f = new Float32Array(grid * grid);
+      for (let i = 0; i < f.length; i++) f[i] = Math.sin(i * 0.31) * 0.5;
+
+      applyHeightField(geo, f, viz._pristinePositions, 3.5, viz._pristineNormals, viz._pristineDepth);
+      const branch = Array.from(geo.attributes.position.array);
+      applyHeightField(geo, f, viz._pristinePositions, 3.5, null);   // the rule main ships
+      const mainRule = Array.from(geo.attributes.position.array);
+
+      assert.deepEqual(branch, mainRule, `${name} moved away from the vertical rule`);
+    }
+  });
+
+  test('disc keeps its thickness — the reason the plate rule exists', () => {
+    const { viz, geo } = vizFor('disc');
+    const p = geo.attributes.position;
+    const grid = Math.round(Math.sqrt(p.count));
+    // Top and bottom cap vertices sharing an (x, z): their gap is the plate.
+    const cols = new Map();
+    for (let i = 0; i < p.count; i++) {
+      const k = `${Math.round(p.getX(i) * 1e4)},${Math.round(p.getZ(i) * 1e4)}`;
+      const c = cols.get(k); if (c) c.push(i); else cols.set(k, [i]);
+    }
+    const pairs = [...cols.values()].filter(c => c.length > 1).slice(0, 200);
+    assert.ok(pairs.length > 20, 'precondition: the disc has vertical pairs to measure');
+
+    applyHeightField(geo, new Float32Array(grid * grid).fill(-0.5),
+      viz._pristinePositions, 3.5, viz._pristineNormals, viz._pristineDepth);
+
+    let thinnest = Infinity;
+    for (const c of pairs) {
+      let lo = Infinity, hi = -Infinity;
+      for (const i of c) { const y = p.getY(i); if (y < lo) lo = y; if (y > hi) hi = y; }
+      thinnest = Math.min(thinnest, hi - lo);
+    }
+    assert.ok(thinnest > 0.07,
+      `the plate is ${thinnest.toFixed(4)} thick after the field — it was 0.08, and following its own ` +
+      'normals measured −0.606, i.e. inside out');
   });
 });

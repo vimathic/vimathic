@@ -5166,18 +5166,72 @@ function sampleHeightField(heightField, grid, extent, step, x, z) {
  *                                  a caller that passes neither cannot mismatch
  *                                  them; a caller that passes one must pass both.
  */
-export function applyHeightField(geometry, heightField, basePositions = null, extent = FIELD_EXTENT) {
+export function applyHeightField(geometry, heightField, basePositions = null, extent = FIELD_EXTENT, baseNormals = null, maxDepth = Infinity) {
   const pos  = geometry.attributes.position;
   const n    = pos.count;
   const grid = Math.max(1, Math.floor(Math.sqrt(heightField.length)));
   const step = grid > 1 ? (extent * 2) / (grid - 1) : 0;
   const base = (basePositions && basePositions.length === n * 3) ? basePositions : null;
+  // FIX(r11): the field moves the vertex along its own normal when the caller
+  // hands over the shape's normals, and along +Y only when it does not.
+  //
+  // Y-only cannot change a body's THICKNESS: every vertex sharing a shadow on
+  // the ground plane gets the same height and moves the same way, so the top
+  // and the bottom of a sphere travel together and the shape shears rather than
+  // deforms. (It does move the outline — an earlier revision of this comment
+  // claimed the vertical span never changed at all, on the strength of a probe
+  // run with a CONSTANT field, and that is false: on the shipped sphere the old
+  // rule moves the span by 2.394 at the factory sliders with `hydrogenS`. What
+  // is invariant is the thickness, not the silhouette.)
+  //
+  // Two conditions on the normals, both enforced by the caller
+  // (MathVisualizer._capturePristine), and both learned by measurement:
+  //
+  //   * they must be WELDED across coincident positions. A hard edge is several
+  //     vertices at one point with different normals — a box corner belongs to
+  //     three faces — and moving each along its own opens the seam by
+  //     h·|n₁ − n₂|: measured 0.405 on `box`, 0.493 on `pyramid-smooth`, up to
+  //     4.664 world units on `octahedron` over the 192 kernels. That is round
+  //     10's "no shape is torn apart" undone, and 18 of the 20 shapes are
+  //     closed bodies.
+  //   * a thin body keeps +Y. `disc` is a plate 0.08 thick; pushing its faces
+  //     apart along their own normals turns it inside out (measured thickness
+  //     −0.606 at the factory sliders).
+  //
+  // On the plane and the circle the two rules are one rule: the app rotates
+  // both flat, so their normal IS +Y — and they are also the two shapes the
+  // thin-body rule keeps on the vertical path anyway.
+  const norm = (baseNormals && baseNormals.length === n * 3) ? baseNormals : null;
+  const fa   = geometry.attributes.aField;
+  const field = (fa && fa.array && fa.array.length === n) ? fa : null;
 
   for (let i = 0; i < n; i++) {
-    const y0 = base ? base[i * 3 + 1] : 0;
-    pos.setY(i, y0 + sampleHeightField(heightField, grid, extent, step, pos.getX(i), pos.getZ(i)));
+    // Sampled at the BASE coordinate, not the live one. With Y-only
+    // displacement x and z never moved, so reading them back off the attribute
+    // was the same thing; along a normal they do move, and sampling the field
+    // where the vertex has already been pushed would drag the picture across
+    // the surface a little more every frame.
+    const bx = base ? base[i * 3]     : pos.getX(i);
+    const by = base ? base[i * 3 + 1] : 0;
+    const bz = base ? base[i * 3 + 2] : pos.getZ(i);
+    let h = sampleHeightField(heightField, grid, extent, step, bx, bz);
+    // Capped by the caller's measure of how far this surface can travel before
+    // it meets itself — the local medial radius, not the bounding box.
+    if (norm && h < -maxDepth) h = -maxDepth;
+    else if (norm && h > maxDepth) h = maxDepth;
+    if (norm) {
+      pos.setXYZ(i, bx + norm[i * 3] * h, by + norm[i * 3 + 1] * h, bz + norm[i * 3 + 2] * h);
+    } else {
+      pos.setY(i, by + h);
+    }
+    // The colour ramp reads this, not the geometry. Recovering the field by
+    // subtracting the frozen base y only works while the displacement is
+    // vertical; along a normal the same subtraction yields n_y·h, which is 0
+    // wherever the surface stands up and negative underneath.
+    if (field) field.array[i] = h;
   }
   pos.needsUpdate = true;
+  if (field) field.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 

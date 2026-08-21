@@ -806,6 +806,13 @@ const VH_FORMS = [
   ['height',               '=', 'pos.y'],
   ['height-scaled',        '=', 'pos.y * uMorphProgress'],
   ['field-cpu',            '=', '(uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress : pos.y * uMorphProgress'],
+  // FIX(r11): the three-state form. 2 says the CPU path left the field in its
+  // own attribute, which is what it does now that the displacement follows the
+  // surface normal — the subtraction under 1 would hand the ramp n_y·h. The
+  // guard is told the meaning here, in one place, exactly as its own failure
+  // message asks; the model that says what the meaning IS sits beside the table
+  // in tests/colour-ramp.test.js.
+  ['field-cpu-attr',       '=', '(uVHField == 2) ? aField * uMorphProgress : (uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress : pos.y * uMorphProgress'],
   ['field-cpu-late',       '=', '(uVHField == 1) ? (pos.y - aBaseY * uMorphProgress) : pos.y'],
   ['field-cpu-unscaled',   '=', '(uVHField == 1) ? (pos.y - aBaseY) : pos.y * uMorphProgress'],
   ['field-unconditional',  '=', '(pos.y - aBaseY) * uMorphProgress'],

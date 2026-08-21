@@ -61,7 +61,15 @@ const GRID = 9;
 function makeViz() {
   // A plane with GRID×GRID vertices: the surface path indexes the position
   // attribute as a square grid of exactly that size.
+  //
+  // FIX(r11): rotated the way render.js rotates it (gpuGeo.rotateX(-PI/2)).
+  // Unrotated, a PlaneGeometry lies in XY with its normals along +Z — so once
+  // the height field started following the surface normal, this stand-in was
+  // the only plane in the project whose field pushed sideways, and the control
+  // below failed while the app was fine. A stand-in that differs from the thing
+  // it stands for tests itself.
   const geometry = new THREE.PlaneGeometry(7, 7, GRID - 1, GRID - 1);
+  geometry.rotateX(-Math.PI / 2);
   const render = {
     isMobile: false,
     U: { uMathMode: { value: 0 }, uMorphProgress: { value: 1 } },
@@ -200,7 +208,12 @@ describe('the volume tick reads the same sliders the other two modes read', () =
   const runAt = waveInt => {
     const { viz, geometry } = makeViz();
     viz.audio.waveInt = waveInt;
-    viz.setVolumeFormula('twist');            // its angle is y·freq·1.2·amp + t·0.3
+    // FIX(r11): 'breathe', not 'twist'. Twist rotates about Y by an angle
+    // proportional to the vertex's own y — and the plane this harness now
+    // builds is the app's plane, rotated flat, where every y is 0. The old
+    // reading came from an unrotated stand-in. Breathe is a radial wave whose
+    // phase carries freq, so it answers the question this test is asking.
+    viz.setVolumeFormula('breathe');          // sin(t·freq·2 + r·2) along the radius
     for (let f = 0; f < 3; f++) viz.tick(1 + f * 0.1);
     return xyz(geometry);
   };
