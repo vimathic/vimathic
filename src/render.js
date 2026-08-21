@@ -1088,6 +1088,67 @@ function attachBaseY(geo) {
   geo.setAttribute('aField', new THREE.BufferAttribute(new Float32Array(n), 1));
 }
 
+/**
+ * A ROUND surface with the same grid the square one has.
+ *
+ * `circle` used to be `THREE.CircleGeometry(3.5, seg)`, and a CircleGeometry is
+ * a triangle fan: 162 vertices of which exactly ONE — the centre — is not on
+ * the rim, and 160 triangles that all meet there. Everything this app does to a
+ * flat shape is done per vertex, so on that geometry a height field had a
+ * single interior sample to bend and the formula was invisible; the square
+ * plane, by contrast, offers 25 909 interior vertices out of 25 921. The name
+ * said circle and the picker offered one, but as a SURFACE it was not one.
+ *
+ * So the disc is built from the square grid instead, through the elliptical
+ * grid mapping (Nowell):
+ *
+ *     x' = u·√(1 − v²/2),   y' = v·√(1 − u²/2),   u, v ∈ [−1, 1]
+ *
+ * which carries the square onto the disc, corners onto the rim, and keeps the
+ * quad topology intact. That last part is the point of choosing it over a polar
+ * fan of rings: vertex count, index buffer and uv layout stay exactly those of
+ * `plane`, so every consumer that derives the grid from √(vertexCount) — the
+ * height-field sampler, the collapse and volume modes, six of the 192 kernels
+ * that read a grid size — sees the same 161 it sees for the plane, and nothing
+ * needed a special case for a round outline.
+ *
+ * Radius is exact rather than approximate: at (±1, ±1) the mapping gives
+ * √(1−½)² + √(1−½)² = 1, so the corners land ON the rim, not near it. Measured
+ * on the shipped grid: worst rim error 1.3e-7, nothing pokes outside it, and
+ * the meshed area is 0.999983 of πr².
+ *
+ * The obvious alternative — Shirley–Chiu's concentric map, which is
+ * AREA-PRESERVING and therefore sounds like the better choice for even cells —
+ * was measured on the same grid and is worse at the thing it is picked for:
+ * largest/smallest triangle 258 against 81, largest/median 1.99 against 1.22.
+ * Preserving the area of the map is not the same as keeping the CELLS even,
+ * because the crease along the diagonals shears each quad into two unequal
+ * triangles. What the 81 buys is confined: 0.70 % of cells fall below a quarter
+ * of the median, and the smallest sits exactly on the rim at 135°, where the
+ * square's corner is being folded onto the arc. Everywhere else the grid is
+ * within a factor 1.22 of typical.
+ *
+ * @param {number} segs    grid divisions per side — CFG.planeSegs, as `plane` uses
+ * @param {number} radius  world radius of the finished disc
+ */
+function buildDiscSurfaceGeo(segs, radius) {
+  // Authored in XY like PlaneGeometry and CircleGeometry, because setShape's
+  // rotate list keys off the shape NAME and lays `circle` flat with the same
+  // quarter turn it gives the plane.
+  const geo = new THREE.PlaneGeometry(2, 2, segs, segs);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const u = p.getX(i), v = p.getY(i);
+    p.setXY(i, radius * u * Math.sqrt(1 - v * v / 2),
+               radius * v * Math.sqrt(1 - u * u / 2));
+  }
+  p.needsUpdate = true;
+  // Normals are untouched on purpose: the mapping moves vertices WITHIN the
+  // authoring plane, so every one of them still faces +Z exactly, and
+  // recomputing would only trade that exactness for a sum of cross products.
+  return geo;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RenderEngine
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2194,7 +2255,9 @@ export class RenderEngine {
       case 'cone':             return new THREE.CylinderGeometry(0.001,3.2,5.5, lo,lo);
       case 'disc':             return new THREE.CylinderGeometry(3.5,3.5,.08, lo,lo);
       case 'ring':             return new THREE.TorusGeometry(3.0,.35, 24, seg);
-      case 'circle':           return new THREE.CircleGeometry(3.5, seg);
+      // Not CircleGeometry: that is a 162-vertex fan with one interior point,
+      // and this app draws formulas per vertex. See buildDiscSurfaceGeo.
+      case 'circle':           return buildDiscSurfaceGeo(seg, 3.5);
       case 'torus':            return new THREE.TorusGeometry(2.8,1.1, 80, seg);
       case 'torusknot':        return new THREE.TorusKnotGeometry(2.2,.65, seg*2, 16, 2, 3);
       case 'hex':              return new THREE.CylinderGeometry(3.2,3.2,.5, 6, lo);

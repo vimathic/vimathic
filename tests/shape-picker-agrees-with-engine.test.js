@@ -353,15 +353,19 @@ describe('every door that writes the shape picker has a provenance', () => {
       // _cycleShape: the D hotkey steps through the picker's own <option>
       // values, so `next` is by construction one of them.
       next: src => /_shapeCycle\s*=\s*Array\.from\(DOM\.shapeSel\.options\)\.map\(o\s*=>\s*o\.value\)/.test(src),
-      // The R hotkey draws from _shapeBag, a ShuffleBag over the SHAPES const.
-      // Checked against the catalogue, not merely asserted to exist.
-      shape: (src, names) => {
-        if (!/_shapeBag\s*=\s*new ShuffleBag\(SHAPES\)/.test(src)) return false;
-        const m = src.match(/const SHAPES = \[([^\]]+)\]/);
-        if (!m) return false;
-        return m[1].split(',').map(s => s.trim().replace(/'/g, '')).every(s => names.includes(s));
+      // The R hotkey draws from _shapeBag, which is a ShuffleBag over the
+      // whitelist itself — the very catalogue this file audits against.
+      //
+      // It used to be a nine-name literal, and this justification parsed that
+      // literal and checked its entries one by one. There is nothing left to
+      // parse: what has to be proven now is that the name in the constructor is
+      // the IMPORTED whitelist and not a local of the same name, which is the
+      // only way this could go wrong.
+      shape: src =>
+        /_shapeBag\s*=\s*new ShuffleBag\(SHAPE_NAMES\)/.test(src) &&
+        /import\s*\{[^}]*\bSHAPE_NAMES\b[^}]*\}\s*from\s*'\.\/shapes\.js'/.test(src) &&
+        !/(?:const|let|var)\s+SHAPE_NAMES\b/.test(src),
       },
-    },
   };
 
   const FILES = [
@@ -461,13 +465,15 @@ describe('every door that writes the shape picker has a provenance', () => {
   });
 
   test('MUTATION — a justification that stops being true stops vouching', () => {
-    // main.js with the SHAPES const carrying a name the catalogue does not
-    // have. `shape` must lose its vouching, which is the whole point of
-    // re-deriving the justification instead of listing the identifier.
+    // main.js with the shape bag built from a hand-written list again instead
+    // of the whitelist — the exact regression this justification exists to
+    // catch, and the shape the file WAS in until the pool was widened. `shape`
+    // must lose its vouching, which is the whole point of re-deriving the
+    // justification instead of listing the identifier.
     const real = readFileSync(join(ROOT, 'src/main.js'), 'utf8');
-    const broken = real.replace(/const SHAPES = \[([^\]]+)\]/,
-      "const SHAPES = ['plane','torus-knot']");
-    assert.notEqual(broken, real, 'the SHAPES const moved — this mutation no longer bites');
+    const broken = real.replace(/const _shapeBag = new ShuffleBag\(SHAPE_NAMES\)/,
+      "const _shapeBag = new ShuffleBag(['plane','sphere','box'])");
+    assert.notEqual(broken, real, 'the shape bag moved — this mutation no longer bites');
     const rows = auditFile('src/main.js', broken);
     const shapeRow = rows.find(r => r.rhs === 'shape');
     assert.ok(shapeRow, 'the R-hotkey write disappeared from main.js');

@@ -809,3 +809,105 @@ describe('the hashed vertex grouping equals the string-keyed one it replaced', (
     });
   }
 });
+
+// ── The round surface ────────────────────────────────────────────────────────
+//
+// `circle` was THREE.CircleGeometry: a triangle fan of 162 vertices with
+// exactly ONE — the centre — off the rim. Every displacement this app performs
+// is per vertex, so the picker offered a circle that could not carry a formula:
+// 160 triangles each spanning a radius of the disc. It is built from the square
+// grid now, through the elliptical grid mapping, so the round surface is the
+// square surface with a different outline.
+describe('circle is a surface, not an outline', () => {
+
+  const R = 3.5;
+
+  /** The field the mesh is asked to draw, analytic so the test can ask for its
+   *  value anywhere rather than only where the mesh happens to sample it. */
+  const f = (x, z) => Math.sin(1.7 * x) * Math.cos(1.3 * z);
+
+  /** f on the app's own sampling grid, in the layout applyHeightField expects. */
+  const fieldFor = grid => {
+    const hf = new Float32Array(grid * grid);
+    const step = (R * 2) / (grid - 1);
+    for (let iz = 0; iz < grid; iz++) {
+      for (let ix = 0; ix < grid; ix++) hf[iz * grid + ix] = f(-R + ix * step, -R + iz * step);
+    }
+    return hf;
+  };
+
+  const basePositions = geo => {
+    const p = geo.attributes.position;
+    const base = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      base[i * 3] = p.getX(i); base[i * 3 + 1] = p.getY(i); base[i * 3 + 2] = p.getZ(i);
+    }
+    return base;
+  };
+
+  /**
+   * How badly the mesh misrepresents the field it was given: for every triangle,
+   * the gap between the field's true value at the centroid and what the surface
+   * shows there, which is the average of its three corners.
+   */
+  const worstMisdrawn = (geo, base) => {
+    const p = geo.attributes.position, idx = geo.index;
+    let worst = 0;
+    const n = idx ? idx.count : p.count;
+    for (let t = 0; t < n; t += 3) {
+      const a = idx ? idx.getX(t) : t, b = idx ? idx.getX(t + 1) : t + 1, c = idx ? idx.getX(t + 2) : t + 2;
+      const cx = (base[a * 3] + base[b * 3] + base[c * 3]) / 3;
+      const cz = (base[a * 3 + 2] + base[b * 3 + 2] + base[c * 3 + 2]) / 3;
+      const shown = (p.getY(a) + p.getY(b) + p.getY(c)) / 3;
+      worst = Math.max(worst, Math.abs(shown - f(cx, cz)));
+    }
+    return worst;
+  };
+
+  test('the same grid the square plane has', () => {
+    const circle = buildShape('circle'), plane = buildShape('plane');
+    assert.equal(circle.attributes.position.count, plane.attributes.position.count,
+      'the round surface must offer the square one\'s resolution, not a fan\'s');
+    assert.equal(circle.index.count, plane.index.count);
+  });
+
+  test('round to the last float, with nothing outside the rim', () => {
+    const geo = buildShape('circle');
+    const p = geo.attributes.position;
+    const segs = Math.round(Math.sqrt(p.count)) - 1;
+    let worstRim = 0, worstOver = 0, interior = 0;
+    for (let iy = 0; iy <= segs; iy++) {
+      for (let ix = 0; ix <= segs; ix++) {
+        const i = iy * (segs + 1) + ix;
+        const r = Math.hypot(p.getX(i), p.getZ(i));
+        if (ix === 0 || iy === 0 || ix === segs || iy === segs) worstRim = Math.max(worstRim, Math.abs(r - R));
+        else { interior++; worstOver = Math.max(worstOver, r - R); }
+      }
+    }
+    assert.ok(worstRim < 1e-5, `the outline is off the circle by ${worstRim}`);
+    assert.ok(worstOver <= 0, `${worstOver} of surface pokes outside its own rim`);
+    // The whole point: the old fan had one.
+    assert.ok(interior > 25000, `only ${interior} vertices carry the interior`);
+  });
+
+  test('a formula reaches the interior — measured against the fan it replaced', () => {
+    const geo  = buildShape('circle');
+    const base = basePositions(geo);
+    const grid = Math.round(Math.sqrt(geo.attributes.position.count));
+    applyHeightField(geo, fieldFor(grid), base, R);
+    const mine = worstMisdrawn(geo, base);
+
+    // CONTROL — the geometry this replaced, built and displaced by the same code.
+    const fan = new THREE.CircleGeometry(R, 160);
+    fan.rotateX(-Math.PI / 2);                       // what setShape does to it
+    const fanBase = basePositions(fan);
+    applyHeightField(fan, fieldFor(grid), fanBase, R);
+    const theirs = worstMisdrawn(fan, fanBase);
+
+    assert.ok(mine < 0.02, `the round surface misdraws the field by ${mine.toFixed(4)}`);
+    assert.ok(theirs > 0.5,
+      `precondition: the fan should be unable to draw this field, but it is off by only ${theirs.toFixed(4)}`);
+    assert.ok(theirs / mine > 50,
+      `the fan misdraws by ${theirs.toFixed(4)} and the grid by ${mine.toFixed(4)} — expected a far wider gap`);
+  });
+});

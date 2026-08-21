@@ -201,11 +201,21 @@ describe('the shape whitelist is the only list of shape values', () => {
     for (const s of SHAPE_NAMES) assert.equal(normalizeShape(s), s);
     assert.equal(normalizeShape('retiredName'), DEFAULT_SHAPE);
 
-    // CONTROL: the R-hotkey pool is a subset, and was already correct.
+    // The R-hotkey pool is the whitelist, not a copy of part of it.
+    //
+    // It used to be a nine-name literal in main.js, and asserting only that its
+    // entries WERE shapes is what let that stand: a subset check cannot see
+    // what fell out. Eleven of the twenty were unreachable by R — disc, ring,
+    // circle, hex, pyramid-smooth, tetrahedron, octahedron,
+    // icosahedron-smooth, dodecahedron, star and solar — while documents/
+    // hotkeys.md described a deck in which "every shape will appear before any
+    // repeats". Reading the construction rather than a literal is the point:
+    // there is no fourth list left to drift.
     const main = readFileSync(join(ROOT, 'src/main.js'), 'utf8');
-    const pool = main.match(/const SHAPES = \[([^\]]+)\]/)[1]
-      .split(',').map(s => s.trim().replace(/'/g, ''));
-    for (const s of pool) assert.ok(SHAPE_NAMES.includes(s), `R-pool entry ${s} is not a shape`);
+    assert.match(main, /const _shapeBag = new ShuffleBag\(SHAPE_NAMES\)/,
+      'the R pool must be built from the whitelist, not from a copy of part of it');
+    assert.match(main, /import \{ SHAPE_NAMES \} from '\.\/shapes\.js'/,
+      'and that SHAPE_NAMES must be the imported whitelist, not a local of the same name');
   });
 });
 
