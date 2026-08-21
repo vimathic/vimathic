@@ -165,8 +165,13 @@ Formulas labelled as running "on a 64×64 grid" or similar in this document refe
   f = sin(1.3x) + cos(0.9z) + 0.2xz on each shape's own grid, the drawn
   displacement correlates **1.000000** with f(x, z) — that is, r ≥ 0.9999995,
   which is what rounds to six nines; only `plane` and `octahedron` read a bit-
-  exact 1.000000000 — on **eight** of the twenty, and **≥ 0.997** on **ten**
-  more. (Two earlier revisions of this bullet disagreed about which count was
+  exact 1.000000000 — on **nine** of the twenty, and **≥ 0.997** on **nine**
+  more. (It was eight and ten until `circle` stopped being a triangle fan and
+  became a round grid: **0.999734299 → 0.999999991**. The old reading flattered
+  it, because the probe field is built on the shape's OWN grid — the fan had 162
+  vertices, so it was scored against a 13 × 13 field it could almost represent,
+  while the grid version is scored against 161 × 161. The bit-exact pair is
+  unchanged: `plane` and `octahedron`.) (Two earlier revisions of this bullet disagreed about which count was
   which, because each was measured in a sandbox and none of them had a home in
   the repository. This one does: `tests/surface-field-on-shapes.test.js`, "the
   census MATHEMATICAL_ACCURACY.md publishes is the census this tree produces",

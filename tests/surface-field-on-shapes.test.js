@@ -325,8 +325,8 @@ describe('the paths the app takes and the guards above do not', () => {
       else below.push(`${shape} ${Number(r).toFixed(3)}`);
       g.dispose();
     }
-    assert.equal(ones, 8, `the document says eight shapes round to 1.000000; this tree gives ${ones}`);
-    assert.equal(near, 10, `the document says ten more clear 0.997; this tree gives ${near}`);
+    assert.equal(ones, 9, `the document says nine shapes round to 1.000000; this tree gives ${ones}`);
+    assert.equal(near, 9, `the document says nine more clear 0.997; this tree gives ${near}`);
     assert.deepEqual(below, ['tetrahedron 0.407', 'star 0.954'],
       'the document names exactly these two as falling short, with these values');
   });

@@ -78,6 +78,19 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Changed
 
+- **The Circle shape is a surface now, not an outline.** It was
+  `THREE.CircleGeometry` — a triangle fan of 162 vertices with exactly one, the
+  centre, off the rim, and 160 triangles each spanning a radius of the disc.
+  Every displacement this app performs is per vertex, so the picker offered a
+  round shape that could not carry a formula: asked to draw
+  sin(1.7x)·cos(1.3z), the fan was off by 0.776 at the worst triangle against
+  the square plane's 0.001. It is built from the square grid now and carried
+  onto the disc by the elliptical grid mapping, which keeps the quad topology,
+  so the round surface is 161 × 161 like the square one, its rim is round to
+  1.3e-7, and the same field is drawn to 0.002. Nothing else needed a special
+  case: everything that derives a grid from the vertex count sees the same 161
+  it sees for the plane.
+
 - **Pristine-snapshot architecture** in the math visualizer. Mode transitions
   and shape changes now restore from a clean per-shape geometry snapshot taken
   before any tick writes to the live attribute, instead of from "whatever the
