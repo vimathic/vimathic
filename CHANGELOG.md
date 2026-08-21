@@ -211,6 +211,15 @@ full creative-control toolchain — packaged as a single-file deployment.
   documented in [MATHEMATICAL_ACCURACY.md](./MATHEMATICAL_ACCURACY.md).
 - **38 GPU shaders** (audio-reactive vertex/fragment) — Mandelbrot, Lorenz,
   Ramanujan modular forms, Schrödinger, wave and heat equations, and more.
+
+  > **Correction (round 11, 2026-08-20).** This line was not true of the tag it
+  > describes. `git show 03caff7:src/shaders.js` has 38 `mode ==` branches and zero
+  > matches for mandel, lorenz or schr, case-insensitively: no branch iterated
+  > anything, none was a partial differential equation, and none was Schrödinger.
+  > Of the modular forms the theta sums (modes 6, 8 and 9) were real; the τ(n)
+  > weighting arrived in round 5, which is also when nineteen of the labels were
+  > renamed to what their branch computes. The entry stands as written because a
+  > changelog records what was claimed at the time — this note records what was so.
 - **36 colour schemes** across cinematic / synthwave / scientific / premium
   / monochrome / trending / new collections.
 - **20 base shapes** + three render modes (surface / wireframe / points) +
