@@ -54,6 +54,21 @@ globalThis.Worker ??= class { postMessage() {} terminate() {} };
 const { RenderEngine } = await import('../src/render.js');
 const { weldNormals, MathVisualizer } = await import('../src/math-visualizer.js');
 
+/** The geometry the app itself builds for a shape name, through RenderEngine.setShape. */
+const buildShape = name => {
+  const stub = {
+    CFG: { planeSize: 7, planeSegs: 160 }, isMobile: false, isShapeChanging: false,
+    pendingShape: null, currentShape: 'plane',
+    gpuMesh: { geometry: new THREE.PlaneGeometry(1, 1, 1, 1) }, gpuPtsProxy: null, cb: {},
+    clearSolarSystem() {}, _buildSolarSystem() {},
+    _buildShapeGeo: RenderEngine.prototype._buildShapeGeo,
+    _buildStarGeo: RenderEngine.prototype._buildStarGeo,
+    setShape: RenderEngine.prototype.setShape,
+  };
+  stub.setShape(name);
+  return stub.gpuMesh.geometry;
+};
+
 import {
   MATH_COLLECTIONS,
   getFormula,
@@ -503,19 +518,6 @@ describe('collapse keeps two coordinates on a flat figure', () => {
 // 95 % of its vertices carrying a horizontal normal.
 describe('a height field deforms a closed body instead of shearing it', () => {
 
-  const buildShape = name => {
-    const stub = {
-      CFG: { planeSize: 7, planeSegs: 160 }, isMobile: false, isShapeChanging: false,
-      pendingShape: null, currentShape: 'plane',
-      gpuMesh: { geometry: new THREE.PlaneGeometry(1, 1, 1, 1) }, gpuPtsProxy: null, cb: {},
-      clearSolarSystem() {}, _buildSolarSystem() {},
-      _buildShapeGeo: RenderEngine.prototype._buildShapeGeo,
-      _buildStarGeo: RenderEngine.prototype._buildStarGeo,
-      setShape: RenderEngine.prototype.setShape,
-    };
-    stub.setShape(name);
-    return stub.gpuMesh.geometry;
-  };
 
   /** Pristine positions and normals, exactly as MathVisualizer takes them. */
   const snapshot = geo => {
@@ -745,4 +747,65 @@ describe('the field follows the surface only where that is safe', () => {
       `the plate is ${thinnest.toFixed(4)} thick after the field — it was 0.08, and following its own ` +
       'normals measured −0.606, i.e. inside out');
   });
+});
+
+
+// ── Round 11, cost: the grouping rewrite has to be the SAME grouping ─────────
+//
+// hasHardEdges and weldNormals each built their own Map keyed by a string
+// `"${qx},${qy},${qz}"`, twice per shape change, and that pair was most of the
+// hitch: 64.6 ms of capture on `sphere` and 18.4 ms on `box`, with 6.6 % of the
+// profile spent collecting the keys. One hashed pass replaced both. A hash
+// bucket resolves ties by comparing the quantised triple exactly, so a
+// collision may cost a comparison but must never merge two different points —
+// which is exactly what this measures, against the string-keyed original.
+describe('the hashed vertex grouping equals the string-keyed one it replaced', () => {
+
+  /** The implementation this replaced, kept here as the reference. */
+  const weldByStringKey = (positions, normals) => {
+    const n = positions.length / 3;
+    const groups = new Map();
+    for (let i = 0; i < n; i++) {
+      const k = `${Math.round(positions[i * 3] * 1e6)},${Math.round(positions[i * 3 + 1] * 1e6)},${Math.round(positions[i * 3 + 2] * 1e6)}`;
+      const g = groups.get(k);
+      if (g) g.push(i); else groups.set(k, [i]);
+    }
+    const out = Float32Array.from(normals);
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      let x = 0, y = 0, z = 0;
+      for (const i of g) { x += normals[i * 3]; y += normals[i * 3 + 1]; z += normals[i * 3 + 2]; }
+      const len = Math.hypot(x, y, z);
+      if (len < 1e-6) continue;
+      x /= len; y /= len; z /= len;
+      for (const i of g) { out[i * 3] = x; out[i * 3 + 1] = y; out[i * 3 + 2] = z; }
+    }
+    return out;
+  };
+
+  // Bodies with seams to weld, plates whose groups cancel, and smooth bodies
+  // with almost none — the three cases the weld distinguishes.
+  for (const name of ['box', 'pyramid-smooth', 'disc', 'cylinder', 'sphere', 'torus', 'solar']) {
+    test(`${name}: every welded normal matches the reference`, () => {
+      const geo = buildShape(name);
+      if (!geo.attributes.normal) geo.computeVertexNormals();
+      const p = geo.attributes.position, nAttr = geo.attributes.normal;
+      const pos = new Float32Array(p.count * 3), nrm = new Float32Array(p.count * 3);
+      for (let i = 0; i < p.count; i++) {
+        pos[i * 3] = p.getX(i); pos[i * 3 + 1] = p.getY(i); pos[i * 3 + 2] = p.getZ(i);
+        nrm[i * 3] = nAttr.getX(i); nrm[i * 3 + 1] = nAttr.getY(i); nrm[i * 3 + 2] = nAttr.getZ(i);
+      }
+      const mine = weldNormals(pos, nrm);
+      const ref  = weldByStringKey(pos, nrm);
+      let worst = 0, at = -1;
+      for (let i = 0; i < mine.length; i++) {
+        const d = Math.abs(mine[i] - ref[i]);
+        if (d > worst) { worst = d; at = i; }
+      }
+      // Not "close enough": the two differ only by hypot(x,y,z) against
+      // sqrt(x²+y²+z²) on the same sums, which is a last-bit affair in float32.
+      assert.ok(worst < 1e-6,
+        `${name}: welded normal ${at} differs from the reference by ${worst}`);
+    });
+  }
 });

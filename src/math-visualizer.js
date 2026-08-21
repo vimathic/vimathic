@@ -162,25 +162,63 @@ const MIN_USEFUL_DEPTH = 0.3;
  * degrees. Smooth bodies (sphere, torus, torus knot, icosahedron-smooth, solar)
  * have coincident vertices only at their wrap seam, where the normals agree,
  * and those stay on the normal path.
+ *
+ * Takes the grouping rather than building its own, because the weld needs the
+ * very same one — see positionGroups.
  */
-function hasHardEdges(positions, normals) {
-  const groups = new Map();
-  const n = positions.length / 3;
-  for (let i = 0; i < n; i++) {
-    const k = `${Math.round(positions[i * 3] * 1e6)},${Math.round(positions[i * 3 + 1] * 1e6)},${Math.round(positions[i * 3 + 2] * 1e6)}`;
-    const g = groups.get(k);
-    if (g) g.push(i); else groups.set(k, [i]);
-  }
-  for (const g of groups.values()) {
-    if (g.length < 2) continue;
-    for (let a = 1; a < g.length; a++) {
-      const d = normals[g[0] * 3] * normals[g[a] * 3]
-              + normals[g[0] * 3 + 1] * normals[g[a] * 3 + 1]
-              + normals[g[0] * 3 + 2] * normals[g[a] * 3 + 2];
-      if (d < 0.98) return true;                 // more than ~11 degrees apart
-    }
+function normalsDisagree(rep, normals) {
+  for (let i = 0; i < rep.length; i++) {
+    const r = rep[i];
+    if (r === i) continue;                       // this vertex IS its group's first
+    const d = normals[r * 3] * normals[i * 3]
+            + normals[r * 3 + 1] * normals[i * 3 + 1]
+            + normals[r * 3 + 2] * normals[i * 3 + 2];
+    if (d < 0.98) return true;                   // more than ~11 degrees apart
   }
   return false;
+}
+
+/**
+ * For each vertex, the first vertex standing at the same point — its group's
+ * representative, or itself when it stands alone.
+ *
+ * FIX(r11, cost): this used to be built TWICE per shape change, once by the
+ * hard-edge test and once by the weld, both keyed by a string
+ * `"${qx},${qy},${qz}"`. That is where the shape-change hitch came from: with
+ * the string keys, capture cost 64.6 ms on `sphere` and 18.4 ms on `box`
+ * against 0.59 and 0.61 on the version before this feature, and 6.6 % of the
+ * profile was garbage collection of those keys. One pass, hashed into a
+ * 32-bit key with the quantised triple compared exactly inside the bucket, is
+ * the same grouping without the garbage — a hash collision costs a comparison,
+ * never a wrong answer. That comparison is not ceremony: dropping it and
+ * trusting the hash makes the weld wrong on all seven shapes the equivalence
+ * test covers, `disc` and `solar` included.
+ *
+ * The quantisation stays at 1e-6, which is what tests/shape-lateral-surface.js
+ * uses to decide the same question about the same meshes.
+ */
+function positionGroups(positions) {
+  const n  = positions.length / 3;
+  const qx = new Int32Array(n), qy = new Int32Array(n), qz = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    qx[i] = Math.round(positions[i * 3] * 1e6);
+    qy[i] = Math.round(positions[i * 3 + 1] * 1e6);
+    qz[i] = Math.round(positions[i * 3 + 2] * 1e6);
+  }
+  const rep = new Int32Array(n);
+  const buckets = new Map();                     // hash → representatives sharing it
+  for (let i = 0; i < n; i++) {
+    const h = (Math.imul(qx[i], 73856093) ^ Math.imul(qy[i], 19349663) ^ Math.imul(qz[i], 83492791)) | 0;
+    const b = buckets.get(h);
+    if (b === undefined) { buckets.set(h, [i]); rep[i] = i; continue; }
+    let found = -1;
+    for (let k = 0; k < b.length; k++) {
+      const j = b[k];
+      if (qx[j] === qx[i] && qy[j] === qy[i] && qz[j] === qz[i]) { found = j; break; }
+    }
+    if (found < 0) { b.push(i); rep[i] = i; } else rep[i] = found;
+  }
+  return rep;
 }
 
 /**
@@ -209,14 +247,18 @@ function medialRadius(positions, normals) {
   for (let i = 0; i < n; i += stride) {
     const px = positions[i * 3], py = positions[i * 3 + 1], pz = positions[i * 3 + 2];
     const nx = normals[i * 3], ny = normals[i * 3 + 1], nz = normals[i * 3 + 2];
-    let near = Infinity;
+    // Squared throughout, with the one square root taken at the end. Both tests
+    // below survive the change unchanged in meaning: `dist >= near` is monotone
+    // in the square, and |along| > 0.7·dist is along² > 0.49·dist² with both
+    // sides non-negative. Math.hypot was 12 % of the whole profile.
+    let near2 = Infinity;
     for (let j = 0; j < n; j++) {
       if (j === i) continue;
       const d = nx * normals[j * 3] + ny * normals[j * 3 + 1] + nz * normals[j * 3 + 2];
       if (d > -0.8) continue;                    // not facing back at us
       const dx = positions[j * 3] - px, dy = positions[j * 3 + 1] - py, dz = positions[j * 3 + 2] - pz;
-      const dist = Math.hypot(dx, dy, dz);
-      if (dist >= near) continue;
+      const dist2 = dx * dx + dy * dy + dz * dz;
+      if (dist2 >= near2) continue;
       // BOTH directions matter, and for different reasons. Inward, the surface
       // meets its own far wall — that is the tube. Outward, it meets the
       // neighbour it is passing: a torus knot's strands run closer to each
@@ -224,33 +266,40 @@ function medialRadius(positions, normals) {
       // measured 0.509 for the knot and let it invert on 70 of the 192 kernels
       // at the reachable over-drive.
       const along = dx * nx + dy * ny + dz * nz;
-      if (Math.abs(along) > dist * 0.7) near = dist;
+      if (along * along > dist2 * 0.49) near2 = dist2;
     }
+    const near = near2 === Infinity ? Infinity : Math.sqrt(near2);
     if (near / 2 < best) best = near / 2;
   }
   return best;
 }
 
 export function weldNormals(positions, normals) {
-  const n = positions.length / 3;
-  const groups = new Map();
-  for (let i = 0; i < n; i++) {
-    const k = `${Math.round(positions[i * 3] * 1e6)},${Math.round(positions[i * 3 + 1] * 1e6)},${Math.round(positions[i * 3 + 2] * 1e6)}`;
-    const g = groups.get(k);
-    if (g) g.push(i); else groups.set(k, [i]);
-  }
+  return weldWithGroups(positionGroups(positions), normals);
+}
+
+/** The weld itself, once the grouping is in hand. */
+function weldWithGroups(rep, normals) {
+  const n = rep.length;
   const out = Float32Array.from(normals);
-  for (const g of groups.values()) {
-    if (g.length < 2) continue;
-    let x = 0, y = 0, z = 0;
-    for (const i of g) { x += normals[i * 3]; y += normals[i * 3 + 1]; z += normals[i * 3 + 2]; }
-    const len = Math.hypot(x, y, z);
+  // Sums accumulate onto the representative's slot, so no per-group array is
+  // built: on `box` that is 39 366 vertices' worth of allocation not made.
+  const sx = new Float64Array(n), sy = new Float64Array(n), sz = new Float64Array(n);
+  const count = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = rep[i];
+    sx[r] += normals[i * 3]; sy[r] += normals[i * 3 + 1]; sz[r] += normals[i * 3 + 2];
+    count[r]++;
+  }
+  for (let i = 0; i < n; i++) {
+    const r = rep[i];
+    if (count[r] < 2) continue;
+    const len = Math.sqrt(sx[r] * sx[r] + sy[r] * sy[r] + sz[r] * sz[r]);
     // A group whose normals cancel exactly — the two faces of a zero-thickness
     // sheet — has no direction to offer; those keep their own, and the caller's
     // thin-body rule is what protects them.
     if (len < 1e-6) continue;
-    x /= len; y /= len; z /= len;
-    for (const i of g) { out[i * 3] = x; out[i * 3 + 1] = y; out[i * 3 + 2] = z; }
+    out[i * 3] = sx[r] / len; out[i * 3 + 1] = sy[r] / len; out[i * 3 + 2] = sz[r] / len;
   }
   return out;
 }
@@ -1135,40 +1184,51 @@ export class MathVisualizer {
       this._pristineNormals[i * 3 + 1] = nrm.getY(i);
       this._pristineNormals[i * 3 + 2] = nrm.getZ(i);
     }
-    // The hard-edge test runs on the RAW normals: welding makes every copy at a
-    // position agree by construction, so asking afterwards always answers "no".
-    // (It did, and box, cylinder, cone and both pyramids went down the normal
-    // path and folded — 3744 inverted faces on box under a negative field.)
-    const rawHard = hasHardEdges(this._pristinePositions, this._pristineNormals);
-    this._pristineNormals = weldNormals(this._pristinePositions, this._pristineNormals);
     // Which bodies the field may follow, decided by measurement rather than by
     // shape name — names change, and round 10 spent a wave on that lesson.
     //
-    //   * hard edges  → vertical. The weld closes the seam and opens a fold in
-    //     the strip beside it; see hasHardEdges.
     //   * thin plate  → vertical. `disc` is 0.08 thick with 95.3 % of its
     //     vertices carrying a horizontal normal; pushing its faces apart turns
     //     it inside out (measured thickness −0.606 at the factory sliders).
+    //   * hard edges  → vertical. The weld closes the seam and opens a fold in
+    //     the strip beside it; see normalsDisagree.
     //   * otherwise   → the normal, with the depth capped at 0.8 of the local
     //     medial radius, because that — not the bounding box — is what decides
     //     whether the surface reaches its own axis. `torusknot` (tube 0.65)
     //     inverted on 8 of the 192 kernels at the factory sliders before this
     //     cap, worst −0.931, i.e. 143 % past the axis.
+    //
+    // FIX(r11, cost): the three questions are asked cheapest-first now, and the
+    // order is not cosmetic. The bounding box costs one pass and no allocation;
+    // the other two cost a hash of every vertex. Asked in the old order,
+    // `plane` — 25 921 vertices, and a plate by any measure — paid 25.5 ms per
+    // shape change to be told what its own bounding box already knew.
     this._pristineDepth = Infinity;
-    if (rawHard || thinnestExtent(this._pristinePositions) < THIN_BODY) {
+    if (thinnestExtent(this._pristinePositions) < THIN_BODY) {
       this._pristineNormals = null;
     } else {
-      const r = medialRadius(this._pristinePositions, this._pristineNormals);
-      this._pristineDepth = Number.isFinite(r) ? r * 0.8 : Infinity;
-      // And a body with almost no room keeps the vertical rule too. The knot's
-      // strands leave 0.222 between them, and a cap that tight both hides the
-      // field and still leaves the surface crossing itself somewhere the sample
-      // did not look — 34 of the 192 kernels at the reachable over-drive, worst
-      // 10 faces of 10 240. Below a third of a unit the answer is not a smaller
-      // cap, it is that this body cannot carry this field.
-      if (this._pristineDepth < MIN_USEFUL_DEPTH) {
-        this._pristineNormals = null;
-        this._pristineDepth = Infinity;
+      // One grouping, two answers. The hard-edge test runs on the RAW normals:
+      // welding makes every copy at a position agree by construction, so asking
+      // afterwards always answers "no". (It did, and box, cylinder, cone and
+      // both pyramids went down the normal path and folded — 3744 inverted
+      // faces on box under a negative field.)
+      const rep = positionGroups(this._pristinePositions);
+      if (normalsDisagree(rep, this._pristineNormals)) {
+        this._pristineNormals = null;                 // and no weld: it would be discarded
+      } else {
+        this._pristineNormals = weldWithGroups(rep, this._pristineNormals);
+        const r = medialRadius(this._pristinePositions, this._pristineNormals);
+        this._pristineDepth = Number.isFinite(r) ? r * 0.8 : Infinity;
+        // And a body with almost no room keeps the vertical rule too. The knot's
+        // strands leave 0.222 between them, and a cap that tight both hides the
+        // field and still leaves the surface crossing itself somewhere the sample
+        // did not look — 34 of the 192 kernels at the reachable over-drive, worst
+        // 10 faces of 10 240. Below a third of a unit the answer is not a smaller
+        // cap, it is that this body cannot carry this field.
+        if (this._pristineDepth < MIN_USEFUL_DEPTH) {
+          this._pristineNormals = null;
+          this._pristineDepth = Infinity;
+        }
       }
     }
 
@@ -1187,10 +1247,14 @@ export class MathVisualizer {
         this._pristinePtsNormals[i * 3 + 1] = pn.getY(i);
         this._pristinePtsNormals[i * 3 + 2] = pn.getZ(i);
       }
-      const ptsHard = hasHardEdges(this._pristinePtsPositions, this._pristinePtsNormals);
-      this._pristinePtsNormals = weldNormals(this._pristinePtsPositions, this._pristinePtsNormals);
-      if (ptsHard || thinnestExtent(this._pristinePtsPositions) < THIN_BODY) {
+      // Same three questions in the same cheapest-first order as the mesh above.
+      if (thinnestExtent(this._pristinePtsPositions) < THIN_BODY) {
         this._pristinePtsNormals = null;
+      } else {
+        const ptsRep = positionGroups(this._pristinePtsPositions);
+        this._pristinePtsNormals = normalsDisagree(ptsRep, this._pristinePtsNormals)
+          ? null
+          : weldWithGroups(ptsRep, this._pristinePtsNormals);
       }
     } else {
       this._pristinePtsPositions = null;
