@@ -55,6 +55,7 @@ uniform float uMorphProgress,uModeBlend;
 // and is also what applyHeightField falls back to when it has no base.
 uniform int   uVHField;
 attribute float aBaseY;
+attribute float aField;
 varying float vH;
 // SURF lighting: pass post-displacement world position and view direction to FS
 // so the fragment shader can reconstruct surface normals via screen-space
@@ -305,7 +306,14 @@ void main(){
     // above are conditions-and-magnitude, not a reproducible table: what is
     // pinned here is the ORDER of the two forms, by tests/colour-ramp.test.js,
     // not the individual exponents.)
-    vH = (uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress : pos.y * uMorphProgress;
+    // FIX(r11): uVHField == 2 means the CPU path left the field in its own
+    // attribute, because the displacement no longer lives in y alone — it
+    // follows the surface normal, and pos.y - aBaseY would hand the ramp
+    // n_y·h instead of h. 1 keeps the subtraction for the geometries that have
+    // no aField (imported models), 0 is the shader path, unchanged.
+    vH = (uVHField == 2) ? aField * uMorphProgress
+       : (uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress
+       : pos.y * uMorphProgress;
     pos.y = pos.y * uMorphProgress;
   }
 
@@ -658,6 +666,7 @@ uniform float uMorphProgress,uModeBlend;
 // morph line below reads them whatever the body did.
 uniform int uVHField;
 attribute float aBaseY;
+attribute float aField;
 varying float vH;
 varying vec3  vWorldPos;
 varying vec3  vViewDir;
@@ -713,7 +722,7 @@ void main(){vec3 pos=position;
   // branch that is the body's own y, which is bit-for-bit what vH was here
   // before round 10, when the template stored y*uMorphProgress as the height
   // and copied that into vH.
-  if(uMathMode==0){pos.y=(pos.y+y)*uMorphProgress;vH=y*uMorphProgress;}else{vH=(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
+  if(uMathMode==0){pos.y=(pos.y+y)*uMorphProgress;vH=y*uMorphProgress;}else{vH=(uVHField==2)?aField*uMorphProgress:(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
   // An editor shader is now installed on the POINTS proxy too, and a vertex
   // program that leaves gl_PointSize unwritten draws points of undefined size.
   // Mirrors the built-in VS; harmless in WIRE/SURF, which ignore it.

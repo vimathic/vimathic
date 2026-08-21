@@ -52,6 +52,7 @@ import {
   generateCollapseScalarField,
   applyCollapseField,
   VOLUME_FORMULAS,
+  FIELD_EXTENT,
 } from './math-collections.js';
 
 // ── Worker bootstrap ───────────────────────────────────────────────────────
@@ -100,6 +101,207 @@ const WORKER_ERROR_TOLERANCE = 3;
 // Smoother than a linear ramp; cheaper than a spring.
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+
+/**
+ * Normals welded across coincident positions.
+ *
+ * FIX(r11): a hard edge is several vertices at ONE point carrying DIFFERENT
+ * normals — a box corner belongs to three faces and appears three times. The
+ * height field hands all of those copies the same value (that is round 10's
+ * repair: "coincident vertices take the same height — no shape is torn apart"),
+ * and displacing each along its OWN normal therefore pulls them apart by
+ * h·|n₁ − n₂|. Measured before this weld, at the factory sliders: a 0.405 gap
+ * on `box` over 964 seam pairs, 0.493 on `pyramid-smooth`, and up to 4.664
+ * world units on `octahedron` across the 192 kernels — on a body of radius 3.5.
+ *
+ * Averaging the normals of every group that shares a position gives all copies
+ * one direction, so a seam travels as a unit and stays shut. On smooth
+ * geometry — sphere, torus, torus knot, ring, icosahedron-smooth, solar — there
+ * are no coincident groups at all and this returns the input untouched.
+ *
+ * The key quantises to 1e-6, which is what tests/shape-lateral-surface.js uses
+ * to decide the same question about the same meshes.
+ */
+
+/** Smallest bounding-box extent of a base-position array. */
+function thinnestExtent(positions) {
+  let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+    if (x < mnx) mnx = x; if (x > mxx) mxx = x;
+    if (y < mny) mny = y; if (y > mxy) mxy = y;
+    if (z < mnz) mnz = z; if (z > mxz) mxz = z;
+  }
+  return Math.min(mxx - mnx, mxy - mny, mxz - mnz);
+}
+
+/** Below this, a body is a plate and the field stays vertical. See _capturePristine. */
+const THIN_BODY = 1.0;
+
+/** …and below this much clearance, following the surface is not worth doing at all. */
+const MIN_USEFUL_DEPTH = 0.3;
+
+
+/**
+ * Does this geometry have hard edges?
+ *
+ * FIX(r11, second pass): welding the normals closed the seams and opened a
+ * FOLD instead. The vertices ON a hard edge now share one averaged direction,
+ * but their neighbours a row away still travel along their own face normal, so
+ * the strip between them shears by h·|n_avg − n_face| — and where the field is
+ * NEGATIVE that strip turns inside out. Measured with a constant field: at
+ * +0.4 not one triangle of `box` inverts, at −0.4 exactly 3744 of 76 800 do,
+ * and on the boot formula at the factory sliders 1012 do. A mitre would fix the
+ * outward half and nothing would fix the inward half short of limiting the
+ * depth to the mesh spacing.
+ *
+ * So a body with hard edges keeps the vertical rule. The test is the geometry's
+ * own: two vertices at one position whose normals disagree by more than a few
+ * degrees. Smooth bodies (sphere, torus, torus knot, icosahedron-smooth, solar)
+ * have coincident vertices only at their wrap seam, where the normals agree,
+ * and those stay on the normal path.
+ *
+ * Takes the grouping rather than building its own, because the weld needs the
+ * very same one — see positionGroups.
+ */
+function normalsDisagree(rep, normals) {
+  for (let i = 0; i < rep.length; i++) {
+    const r = rep[i];
+    if (r === i) continue;                       // this vertex IS its group's first
+    const d = normals[r * 3] * normals[i * 3]
+            + normals[r * 3 + 1] * normals[i * 3 + 1]
+            + normals[r * 3 + 2] * normals[i * 3 + 2];
+    if (d < 0.98) return true;                   // more than ~11 degrees apart
+  }
+  return false;
+}
+
+/**
+ * For each vertex, the first vertex standing at the same point — its group's
+ * representative, or itself when it stands alone.
+ *
+ * FIX(r11, cost): this used to be built TWICE per shape change, once by the
+ * hard-edge test and once by the weld, both keyed by a string
+ * `"${qx},${qy},${qz}"`. That is where the shape-change hitch came from: with
+ * the string keys, capture cost 64.6 ms on `sphere` and 18.4 ms on `box`
+ * against 0.59 and 0.61 on the version before this feature, and 6.6 % of the
+ * profile was garbage collection of those keys. One pass, hashed into a
+ * 32-bit key with the quantised triple compared exactly inside the bucket, is
+ * the same grouping without the garbage — a hash collision costs a comparison,
+ * never a wrong answer. That comparison is not ceremony: dropping it and
+ * trusting the hash makes the weld wrong on all seven shapes the equivalence
+ * test covers, `disc` and `solar` included.
+ *
+ * The quantisation stays at 1e-6, which is what tests/shape-lateral-surface.js
+ * uses to decide the same question about the same meshes.
+ */
+function positionGroups(positions) {
+  const n  = positions.length / 3;
+  const qx = new Int32Array(n), qy = new Int32Array(n), qz = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    qx[i] = Math.round(positions[i * 3] * 1e6);
+    qy[i] = Math.round(positions[i * 3 + 1] * 1e6);
+    qz[i] = Math.round(positions[i * 3 + 2] * 1e6);
+  }
+  const rep = new Int32Array(n);
+  const buckets = new Map();                     // hash → representatives sharing it
+  for (let i = 0; i < n; i++) {
+    const h = (Math.imul(qx[i], 73856093) ^ Math.imul(qy[i], 19349663) ^ Math.imul(qz[i], 83492791)) | 0;
+    const b = buckets.get(h);
+    if (b === undefined) { buckets.set(h, [i]); rep[i] = i; continue; }
+    let found = -1;
+    for (let k = 0; k < b.length; k++) {
+      const j = b[k];
+      if (qx[j] === qx[i] && qy[j] === qy[i] && qz[j] === qz[i]) { found = j; break; }
+    }
+    if (found < 0) { b.push(i); rep[i] = i; } else rep[i] = found;
+  }
+  return rep;
+}
+
+/**
+ * How deep the field may push before the surface meets itself.
+ *
+ * The thin-body rule measured the bounding box, and that is the wrong quantity:
+ * `ring` (tube 0.35, box 0.70) was protected while `torusknot` (tube 0.65, box
+ * 3.48) was not, though the two are nearly as thin as each other. What decides
+ * an inversion is the local tube radius — the distance to the medial axis — so
+ * that is what is measured here: for a sample of vertices, the nearest vertex
+ * whose normal points back at it, halved.
+ *
+ * Sampled rather than exhaustive because the app calls this once per shape and
+ * the meshes run to 26 000 vertices; the sample is deterministic (a fixed
+ * stride), so the answer does not wander between runs.
+ */
+function medialRadius(positions, normals) {
+  const n = positions.length / 3;
+  if (n < 8) return Infinity;
+  // Sources are sampled; CANDIDATES are not. A torus knot's strands pass each
+  // other closer than its own tube is thick, and a strided candidate list walks
+  // straight past that: with both sides sampled the knot measured 0.509 and
+  // still inverted on 70 of the 192 kernels at the reachable over-drive.
+  const stride = Math.max(1, Math.floor(n / 400));
+  let best = Infinity;
+  for (let i = 0; i < n; i += stride) {
+    const px = positions[i * 3], py = positions[i * 3 + 1], pz = positions[i * 3 + 2];
+    const nx = normals[i * 3], ny = normals[i * 3 + 1], nz = normals[i * 3 + 2];
+    // Squared throughout, with the one square root taken at the end. Both tests
+    // below survive the change unchanged in meaning: `dist >= near` is monotone
+    // in the square, and |along| > 0.7·dist is along² > 0.49·dist² with both
+    // sides non-negative. Math.hypot was 12 % of the whole profile.
+    let near2 = Infinity;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      const d = nx * normals[j * 3] + ny * normals[j * 3 + 1] + nz * normals[j * 3 + 2];
+      if (d > -0.8) continue;                    // not facing back at us
+      const dx = positions[j * 3] - px, dy = positions[j * 3 + 1] - py, dz = positions[j * 3 + 2] - pz;
+      const dist2 = dx * dx + dy * dy + dz * dz;
+      if (dist2 >= near2) continue;
+      // BOTH directions matter, and for different reasons. Inward, the surface
+      // meets its own far wall — that is the tube. Outward, it meets the
+      // neighbour it is passing: a torus knot's strands run closer to each
+      // other than its tube is thick, and a search that only looked inward
+      // measured 0.509 for the knot and let it invert on 70 of the 192 kernels
+      // at the reachable over-drive.
+      const along = dx * nx + dy * ny + dz * nz;
+      if (along * along > dist2 * 0.49) near2 = dist2;
+    }
+    const near = near2 === Infinity ? Infinity : Math.sqrt(near2);
+    if (near / 2 < best) best = near / 2;
+  }
+  return best;
+}
+
+export function weldNormals(positions, normals) {
+  return weldWithGroups(positionGroups(positions), normals);
+}
+
+/** The weld itself, once the grouping is in hand. */
+function weldWithGroups(rep, normals) {
+  const n = rep.length;
+  const out = Float32Array.from(normals);
+  // Sums accumulate onto the representative's slot, so no per-group array is
+  // built: on `box` that is 39 366 vertices' worth of allocation not made.
+  const sx = new Float64Array(n), sy = new Float64Array(n), sz = new Float64Array(n);
+  const count = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = rep[i];
+    sx[r] += normals[i * 3]; sy[r] += normals[i * 3 + 1]; sz[r] += normals[i * 3 + 2];
+    count[r]++;
+  }
+  for (let i = 0; i < n; i++) {
+    const r = rep[i];
+    if (count[r] < 2) continue;
+    const len = Math.sqrt(sx[r] * sx[r] + sy[r] * sy[r] + sz[r] * sz[r]);
+    // A group whose normals cancel exactly — the two faces of a zero-thickness
+    // sheet — has no direction to offer; those keep their own, and the caller's
+    // thin-body rule is what protects them.
+    if (len < 1e-6) continue;
+    out[i * 3] = sx[r] / len; out[i * 3 + 1] = sy[r] / len; out[i * 3 + 2] = sz[r] / len;
+  }
+  return out;
 }
 
 export class MathVisualizer {
@@ -269,6 +471,7 @@ export class MathVisualizer {
     this._basePtsNormals   = null;
     this._pristinePositions    = null;
     this._pristineNormals      = null;
+    this._pristineDepth        = Infinity;
     this._pristinePtsPositions = null;
     this._pristinePtsNormals   = null;
     this._volumeFn         = null;
@@ -940,7 +1143,14 @@ export class MathVisualizer {
     const pos    = this.render.gpuMesh?.geometry?.attributes?.position;
     const based  = !!(this._pristinePositions && pos &&
                       this._pristinePositions.length === pos.count * 3);
-    u.value = (this.active && this._mode === 'surface' && based) ? 1 : 0;
+    // FIX(r11): three states, not two. 2 says "the field is in aField", which
+    // is what the surface path writes now that the displacement follows the
+    // normal — pos.y - aBaseY would give the ramp n_y·h. 1 is the old
+    // subtraction, kept for a geometry that has no aField (an imported model),
+    // and 0 is the shader path.
+    const geo    = this.render.gpuMesh?.geometry;
+    const hasFld = !!(geo?.attributes?.aField && pos && geo.attributes.aField.array.length === pos.count);
+    u.value = (this.active && this._mode === 'surface' && based) ? (hasFld ? 2 : 1) : 0;
   }
 
   // ── Private — volume / collapse helpers ──────────────────────────────────
@@ -974,6 +1184,53 @@ export class MathVisualizer {
       this._pristineNormals[i * 3 + 1] = nrm.getY(i);
       this._pristineNormals[i * 3 + 2] = nrm.getZ(i);
     }
+    // Which bodies the field may follow, decided by measurement rather than by
+    // shape name — names change, and round 10 spent a wave on that lesson.
+    //
+    //   * thin plate  → vertical. `disc` is 0.08 thick with 95.3 % of its
+    //     vertices carrying a horizontal normal; pushing its faces apart turns
+    //     it inside out (measured thickness −0.606 at the factory sliders).
+    //   * hard edges  → vertical. The weld closes the seam and opens a fold in
+    //     the strip beside it; see normalsDisagree.
+    //   * otherwise   → the normal, with the depth capped at 0.8 of the local
+    //     medial radius, because that — not the bounding box — is what decides
+    //     whether the surface reaches its own axis. `torusknot` (tube 0.65)
+    //     inverted on 8 of the 192 kernels at the factory sliders before this
+    //     cap, worst −0.931, i.e. 143 % past the axis.
+    //
+    // FIX(r11, cost): the three questions are asked cheapest-first now, and the
+    // order is not cosmetic. The bounding box costs one pass and no allocation;
+    // the other two cost a hash of every vertex. Asked in the old order,
+    // `plane` — 25 921 vertices, and a plate by any measure — paid 25.5 ms per
+    // shape change to be told what its own bounding box already knew.
+    this._pristineDepth = Infinity;
+    if (thinnestExtent(this._pristinePositions) < THIN_BODY) {
+      this._pristineNormals = null;
+    } else {
+      // One grouping, two answers. The hard-edge test runs on the RAW normals:
+      // welding makes every copy at a position agree by construction, so asking
+      // afterwards always answers "no". (It did, and box, cylinder, cone and
+      // both pyramids went down the normal path and folded — 3744 inverted
+      // faces on box under a negative field.)
+      const rep = positionGroups(this._pristinePositions);
+      if (normalsDisagree(rep, this._pristineNormals)) {
+        this._pristineNormals = null;                 // and no weld: it would be discarded
+      } else {
+        this._pristineNormals = weldWithGroups(rep, this._pristineNormals);
+        const r = medialRadius(this._pristinePositions, this._pristineNormals);
+        this._pristineDepth = Number.isFinite(r) ? r * 0.8 : Infinity;
+        // And a body with almost no room keeps the vertical rule too. The knot's
+        // strands leave 0.222 between them, and a cap that tight both hides the
+        // field and still leaves the surface crossing itself somewhere the sample
+        // did not look — 34 of the 192 kernels at the reachable over-drive, worst
+        // 10 faces of 10 240. Below a third of a unit the answer is not a smaller
+        // cap, it is that this body cannot carry this field.
+        if (this._pristineDepth < MIN_USEFUL_DEPTH) {
+          this._pristineNormals = null;
+          this._pristineDepth = Infinity;
+        }
+      }
+    }
 
     if (this.render.gpuPtsProxy) {
       const ptsGeo = this.render.gpuPtsProxy.geometry;
@@ -989,6 +1246,15 @@ export class MathVisualizer {
         this._pristinePtsNormals[i * 3]     = pn.getX(i);
         this._pristinePtsNormals[i * 3 + 1] = pn.getY(i);
         this._pristinePtsNormals[i * 3 + 2] = pn.getZ(i);
+      }
+      // Same three questions in the same cheapest-first order as the mesh above.
+      if (thinnestExtent(this._pristinePtsPositions) < THIN_BODY) {
+        this._pristinePtsNormals = null;
+      } else {
+        const ptsRep = positionGroups(this._pristinePtsPositions);
+        this._pristinePtsNormals = normalsDisagree(ptsRep, this._pristinePtsNormals)
+          ? null
+          : weldWithGroups(ptsRep, this._pristinePtsNormals);
       }
     } else {
       this._pristinePtsPositions = null;
@@ -1234,8 +1500,15 @@ export class MathVisualizer {
     this._lastHFBuf.set(hf);
     this._lastHF = this._lastHFBuf;
     const geo = this.render.gpuMesh.geometry;
-    applyHeightField(geo, hf, this._pristinePositions);
+    // FIX(r11): the pristine NORMALS go with the pristine positions now — welded
+    // across coincident positions, and withheld entirely for a thin body (see
+    // _capturePristine). Without them the field could only push along +Y, and
+    // on a closed body that moves the top and the bottom of every column the
+    // same way: the shape shears and never changes thickness.
+    applyHeightField(geo, hf, this._pristinePositions, FIELD_EXTENT, this._pristineNormals, this._pristineDepth);
     const ptsGeo = this.render.gpuPtsProxy?.geometry;
-    if (ptsGeo && ptsGeo !== geo) applyHeightField(ptsGeo, hf, this._pristinePtsPositions);
+    if (ptsGeo && ptsGeo !== geo) {
+      applyHeightField(ptsGeo, hf, this._pristinePtsPositions, FIELD_EXTENT, this._pristinePtsNormals, this._pristineDepth);
+    }
   }
 }

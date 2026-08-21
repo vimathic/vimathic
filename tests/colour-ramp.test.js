@@ -70,7 +70,7 @@ const F = Math.fround;
 const SRC_PATH = fileURLToPath(new URL('../src/shaders.js', import.meta.url));
 
 let VS, THREE, RenderEngine, applyHeightField, generateSurfaceFromFormula, getFormula,
-    MathVisualizer, SHAPE_NAMES;
+    MathVisualizer, weldNormals, SHAPE_NAMES;
 
 // The worker bootstrap in MathVisualizer constructs one of these; without it
 // node throws a ReferenceError that the constructor catches and logs.
@@ -89,7 +89,7 @@ before(async () => {
   ({ RenderEngine } = await import('../src/render.js'));
   ({ applyHeightField, generateSurfaceFromFormula, getFormula } =
     await import('../src/math-collections.js'));
-  ({ MathVisualizer } = await import('../src/math-visualizer.js'));
+  ({ MathVisualizer, weldNormals } = await import('../src/math-visualizer.js'));
   ({ SHAPE_NAMES } = await import('../src/shapes.js'));
 });
 
@@ -161,6 +161,12 @@ const GPU_VH_MODEL = {
 };
 const CPU_VH_MODEL = {
   'field-cpu':      (attrY, base, p, field) => (field ? F(F(attrY - base) * p) : F(attrY * p)),
+  // FIX(r11): the field arrives in its own attribute instead of being recovered
+  // by subtraction, because the displacement follows the surface normal and
+  // pos.y − aBaseY is n_y·h there. The model says exactly that: under
+  // uVHField == 2 the ramp reads the field, scaled by the morph, and the
+  // geometry does not enter into it at all.
+  'field-cpu-attr': (attrY, base, p, field, first, fieldVal) => (field ? F(F(fieldVal) * p) : F(attrY * p)),
   // the same subtraction taken after the scaling instead of before — 3 ulps
   // rather than 1, measured, so it is modelled rather than refused
   'field-cpu-late': (attrY, base, p, field) => (field ? F(F(attrY * p) - F(base * p)) : F(attrY * p)),
@@ -223,7 +229,7 @@ function readProgram(src, label) {
     label,
     gpuPosY: (y0, f, p) => gpuPos(y0, f, p),
     gpuVH:   (y0, f, p) => gpuVH(y0, f, p, gpuPos(y0, f, p), gpuFirst),
-    cpuVH:   (attrY, base, p, field) => cpuVH(attrY, base, p, field, cpuFirst),
+    cpuVH:   (attrY, base, p, field, fieldVal) => cpuVH(attrY, base, p, field, cpuFirst, fieldVal),
     text: {
       gpuPosStmt: P.gpu.pos.stmt, gpuVHStmt: gpuVHw.stmt,
       cpuPosStmt: P.cpu.pos.stmt, cpuVHStmt: cpuVHw.stmt,
@@ -524,8 +530,18 @@ describe('Surface mode gets the field back out of base + field', () => {
       const fieldOnly = new Float32Array(n);
       for (let i = 0; i < n; i++) fieldOnly[i] = pos.getY(i);
       for (let i = 0; i < n; i++) pos.setY(i, base[i * 3 + 1]);
-      // …and what it writes now: base + field.
-      applyHeightField(g, hf, base, 3.5);
+      // …and what it writes now: base + field along the surface normal, called
+      // with the SAME arity the app calls it with. FIX(r11): this line used to
+      // pass four arguments while src/math-visualizer.js passed five, so the
+      // guard was measuring a branch the app no longer takes — and it stayed
+      // green while the ramp went blind on every non-flat shape.
+      if (!g.attributes.normal) g.computeVertexNormals();
+      const nrmAttr = g.attributes.normal;
+      const rawN = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        rawN[i * 3] = nrmAttr.getX(i); rawN[i * 3 + 1] = nrmAttr.getY(i); rawN[i * 3 + 2] = nrmAttr.getZ(i);
+      }
+      applyHeightField(g, hf, base, 3.5, weldNormals(base, rawN));
 
       let scale = 0, body = 0;
       for (let i = 0; i < n; i++) {
@@ -547,7 +563,7 @@ describe('Surface mode gets the field back out of base + field', () => {
       let worst = 0;
       for (const p of PROGS) {
         for (let i = 0; i < n; i++) {
-          const got   = P.cpuVH(pos.getY(i), base[i * 3 + 1], p, true);
+          const got   = P.cpuVH(pos.getY(i), base[i * 3 + 1], p, true, fieldOnly[i]);
           const ideal = F(fieldOnly[i] * p);
           worst = Math.max(worst, Math.abs(got - ideal));
         }
@@ -627,7 +643,7 @@ describe('the plumbing that carries the base y', () => {
       'aBaseY was re-uploaded during the frame loop; it is a per-shape constant');
   });
 
-  test('uVHField is 1 only where the CPU actually added a base', () => {
+  test('uVHField says WHERE the field is, and only where the CPU put one there', () => {
     const geometry = buildShape('sphere');
     const render = {
       isMobile: false,
@@ -643,13 +659,17 @@ describe('the plumbing that carries the base y', () => {
     assert.equal(render.U.uVHField.value, 0, 'nothing armed yet');
 
     viz.setFormula('trigonometry', 'standingWave');
-    assert.equal(render.U.uVHField.value, 1, 'Surface mode adds the field to the base — the ramp must subtract it');
+    // FIX(r11): 2, not 1. The displacement follows the surface normal now, so
+    // pos.y − aBaseY is n_y·h rather than h, and the ramp reads the field out
+    // of its own attribute instead. 1 remains the meaning "subtract the base",
+    // for a geometry that carries no aField — pinned by its own case below.
+    assert.equal(render.U.uVHField.value, 2, 'Surface mode leaves the field in aField — the ramp must read it');
 
     viz.setMode('collapse');
     assert.equal(render.U.uVHField.value, 0, 'CONTROL — Collapse writes base + displacement and colours by the sum');
 
     viz.setMode('surface');
-    assert.equal(render.U.uVHField.value, 1);
+    assert.equal(render.U.uVHField.value, 2);
 
     viz.setVolumeFormula('twist');
     assert.equal(render.U.uVHField.value, 0, 'CONTROL — Volume, likewise');
@@ -658,10 +678,25 @@ describe('the plumbing that carries the base y', () => {
     viz.deactivate();
     assert.equal(render.U.uVHField.value, 0, 'CONTROL — the GPU owns pos.y again');
 
+    // A geometry with no aField — an imported model — keeps the old meaning
+    // rather than going flat: the default attribute value is 0, and a ramp that
+    // read 0 everywhere would be a black screen dressed as a fix.
+    const bare = buildShape('sphere');
+    bare.deleteAttribute('aField');
+    const r2 = {
+      isMobile: false,
+      U: { uMathMode: { value: 0 }, uMorphProgress: { value: 1 }, uVHField: { value: 0 } },
+      gpuMesh: { geometry: bare }, gpuPtsProxy: null, cb: {},
+    };
+    const viz2 = new MathVisualizer(r2, audio);
+    viz2.onShapeChange();
+    viz2.setFormula('trigonometry', 'standingWave');
+    assert.equal(r2.U.uVHField.value, 1, 'without the attribute the ramp must fall back to the subtraction');
+
     // The one case where Surface must NOT subtract: no pristine snapshot, so
     // applyHeightField wrote the field alone and there is no base in there.
     viz.setFormula('trigonometry', 'standingWave');
-    assert.equal(render.U.uVHField.value, 1);
+    assert.equal(render.U.uVHField.value, 2);
     viz._pristinePositions = null;
     viz.setMode('collapse'); viz.setMode('surface');
     assert.equal(render.U.uVHField.value, 0,

@@ -1075,6 +1075,17 @@ function attachBaseY(geo) {
   const baseY = new Float32Array(n);
   for (let i = 0; i < n; i++) baseY[i] = pos.getY(i);
   geo.setAttribute('aBaseY', new THREE.BufferAttribute(baseY, 1));
+  // FIX(r11): the field itself, carried per vertex.
+  //
+  // The ramp used to recover it by subtraction — pos.y − aBaseY — which is the
+  // field exactly while the displacement lives in y and nowhere else. Once the
+  // field follows the surface normal that difference is n_y·h, so on a sphere's
+  // equator the ramp reads ~0 and on the lower half it reads the field with the
+  // sign flipped: measured, the correlation between what the viewer sees and
+  // the formula falls from 1.000 to ≈0.000 on every non-flat shape. Colour and
+  // geometry have to be two channels, which is what round 10 established; this
+  // attribute is that separation made explicit rather than reconstructed.
+  geo.setAttribute('aField', new THREE.BufferAttribute(new Float32Array(n), 1));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1346,6 +1357,10 @@ export class RenderEngine {
     // attribute reads the driver's leftover generic value; with it, zero, which
     // makes the ramp's `pos.y - aBaseY` the identity. See attachBaseY.
     this.gpuMat.defaultAttributeValues.aBaseY = [0];
+    // Same contract for the field: a geometry without it (an imported model)
+    // reads 0, and uVHField never reaches 2 for those, so the ramp keeps its
+    // previous source rather than going flat.
+    this.gpuMat.defaultAttributeValues.aField = [0];
     this.gpuMesh = new THREE.Mesh(gpuGeo, this.gpuMat);
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
@@ -1901,6 +1916,7 @@ export class RenderEngine {
       // here so the two materials that run the same vertex program cannot
       // disagree about what the missing case means.
       ptsMat.defaultAttributeValues.aBaseY = [0];
+      ptsMat.defaultAttributeValues.aField = [0];
       // Geometry is deliberately shared with gpuMesh, not cloned — see the
       // dispose note at the top of this method.
       this.gpuPtsProxy = new THREE.Points(this.gpuMesh.geometry, ptsMat);
