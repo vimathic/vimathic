@@ -17,6 +17,7 @@ import { GifRecorder, WebmRecorder } from './recorder.js';
 import { MathVisualizer } from './math-visualizer.js';
 import { getAllFormulasList } from './math-collections.js';
 import { FormulaPicker, isMathValue } from './formula-picker.js';
+import { SHAPE_NAMES } from './shapes.js';
 import { DOM } from './dom.js';
 import { isAboutModalOpen } from './ui/about-modal.js';
 
@@ -132,9 +133,15 @@ ui.bootPersist();
 // Each bag deals every value once before reshuffling; the reshuffle guarantees
 // the new top is not equal to the last drawn, so even at deck boundaries the
 // caller never sees the same value twice in a row.
-const SHAPES = ['plane','sphere','torus','torusknot','cylinder','cone','icosahedron','pyramid','box'];
-
-const _shapeBag = new ShuffleBag(SHAPES);
+// FIX: the shape pool WAS a nine-name literal here — plane, sphere, torus,
+// torusknot, cylinder, cone, icosahedron, pyramid, box — and the other eleven
+// shapes the picker offers could not be reached with R at all. Nothing recorded
+// why those nine; the list simply stopped being extended as shapes were added,
+// and shapes.js's own docblock names the hazard ("what keeps a fourth list from
+// drifting in") without this being one of the three lists it checks. R now
+// draws from the whitelist itself, so a shape added to the picker joins the
+// randomiser by construction rather than by remembering.
+const _shapeBag = new ShuffleBag(SHAPE_NAMES);
 // Color pool size sourced from params.js — single source of truth.
 // Previously a local COLOR_COUNT=36 lived here, which was correct but invited
 // drift if shaders.js gained another palette.

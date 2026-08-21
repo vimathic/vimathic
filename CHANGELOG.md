@@ -78,6 +78,17 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Changed
 
+- **`R` can reach all twenty shapes.** The randomiser drew its shape from a
+  nine-name literal in `main.js`, so eleven of the twenty — disc, ring, circle,
+  hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth,
+  dodecahedron, star, solar — never appeared under `R`, although
+  `documents/hotkeys.md` promised a deck in which "every shape will appear
+  before any repeats". Nothing recorded why those nine; the list had simply
+  stopped being extended as shapes were added. The pool is `SHAPE_NAMES` itself
+  now, so a shape in the picker is a shape `R` can deal. The guard that was
+  supposed to catch this checked the pool was a *subset* of the whitelist —
+  true, and blind to what had fallen out; it checks the construction now.
+
 - **The Circle shape is a surface now, not an outline.** It was
   `THREE.CircleGeometry` — a triangle fan of 162 vertices with exactly one, the
   centre, off the rim, and 160 triangles each spanning a radius of the disc.
