@@ -1469,7 +1469,9 @@ export class MathVisualizer {
    * reached the mesh.
    *
    * Size of the error = one frame of the formula's own motion, max over the
-   * lattice of |f(t + 0.008) − f(t)| at t = 0. That count depends on the grid
+   * lattice of |f(t + 0.008) − f(t)| at t = 0 — 0.008 being one 60 Hz frame of
+   * the 0.48 units/s clock (FIX(#50); a counted mobile-path frame spans two,
+   * which doubles the reading but not who has one). That count depends on the grid
    * and on the amplitude, so both have to be named: over the 192 catalogue
    * formulas it is exactly 0 for 100 of them at grids 21, 83, 90 and 198, and
    * for 99 at 43, 81 and 161 — and 43 and 83 are the boot grids while 81 and
