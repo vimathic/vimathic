@@ -7,6 +7,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { AfterimagePass }  from 'three/examples/jsm/postprocessing/AfterimagePass.js';
 import { VS, FS } from './shaders.js';
 import { DEFAULT_SHAPE, normalizeShape } from './shapes.js';
+import { normalizeVizMode } from './viz-mode.js';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Solar-system procedural assets — surfaces, clouds and ring profiles
@@ -1917,6 +1918,13 @@ export class RenderEngine {
 
   // ── Viz modes ────────────────────────────────────────────────────────────────
   setVizModeGPU(mode) {
+    // FIX(#51): resolve the argument here, the way setShape does — this is the
+    // one door every mode value passes through (buttons, presets, clip steps,
+    // localStorage restore), so normalizing here means this.vizMode can never
+    // hold a value the branches below have no row for. Before this, an unknown
+    // string fell into the "not points, not surface" gap: surface material
+    // with lighting off, no proxy, no button lit, and nothing said why.
+    mode = normalizeVizMode(mode);
     this.vizMode = mode;
     // FIX(#3): the proxy only BORROWS gpuMesh.geometry, which setShape() owns and
     // disposes; disposing it here kills the live mesh's buffer on every mode

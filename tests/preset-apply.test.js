@@ -927,3 +927,41 @@ describe('applying a preset whose shader is already live leaves the editor alone
     assert.equal(ui.shaderEditor._frag, 'F2');
   });
 });
+
+describe('applyState — a foreign vizMode resolves instead of falling through (FIX #51)', () => {
+  // The engine half was survivable before the fix only by accident: an unknown
+  // string fell into setVizModeGPU's "not points, not surface" gap. The UI
+  // half was worse — syncVizModeUI got the raw string, so no button lit and
+  // the material rule keyed off a mode this build cannot show. localStorage is
+  // one of the doors: bootPersist applies the same snapshot this test hands in.
+  let ui;
+  beforeEach(() => { ui = makeUi(); });
+
+  test('a vizMode from another build lands on the default, in both halves', () => {
+    assert.equal(ui.applyState({ _version: 2, vizMode: 'volumetric-x' }), true);
+    assert.deepEqual(ui.called('setVizModeGPU'), [['setVizModeGPU', 'surface']],
+      'the engine must be told the RESOLVED mode, not the foreign string');
+    assert.equal(ui.called('syncVizModeUI')[0][1], 'surface',
+      'the UI half must light the button for the mode actually in effect');
+  });
+
+  test('the material rule keys off the resolved mode, not the raw string', () => {
+    // The rule lives where the fallback computes it: outside SURF the only
+    // safe material is Matte. 'volumetric-x' !== 'surface', so the unresolved
+    // compare forced matte; the resolved mode IS surface, so the snapshot's
+    // material must survive. Only the no-helper path computes this in
+    // presets.js itself, so that is the path under test.
+    delete ui.syncVizModeUI;
+    assert.equal(ui.applyState({ _version: 2, vizMode: 'volumetric-x', material: 'glass' }), true);
+    assert.equal(document.getElementById('surface-material-sel').value, 'glass',
+      'a foreign string was compared against "surface" and stole the material');
+  });
+
+  test('control — the three real modes pass through untouched', () => {
+    for (const mode of ['surface', 'wireframe', 'points']) {
+      const u = makeUi();
+      assert.equal(u.applyState({ _version: 2, vizMode: mode }), true);
+      assert.deepEqual(u.called('setVizModeGPU'), [['setVizModeGPU', mode]]);
+    }
+  });
+});

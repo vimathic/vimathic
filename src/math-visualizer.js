@@ -828,8 +828,9 @@ export class MathVisualizer {
     const pos = this.render.gpuMesh.geometry.attributes.position;
     for (let i = 0; i < pos.count; i++) pos.setY(i, 0);
     pos.needsUpdate = true;
-    if (this.render.gpuPtsProxy) {
-      const pp = this.render.gpuPtsProxy.geometry.attributes.position;
+    const ptsGeo = this._ownPtsGeometry();
+    if (ptsGeo) {
+      const pp = ptsGeo.attributes.position;
       for (let i = 0; i < pp.count; i++) pp.setY(i, 0);
       pp.needsUpdate = true;
     }
@@ -939,14 +940,15 @@ export class MathVisualizer {
       this.render.gpuMesh.geometry, sf,
       this._basePositions, this._baseNormals, strength
     );
-    if (this.render.gpuPtsProxy && this._basePtsPositions && this._basePtsNormals) {
-      // Points geometry has a different vertex count, so the scalar field
-      // has to be recomputed for it rather than reused.
+    const ptsGeo = this._ownPtsGeometry();
+    if (ptsGeo && this._basePtsPositions && this._basePtsNormals) {
+      // A proxy with its own geometry can carry a different vertex count, so
+      // the scalar field is recomputed for it rather than reused.
       const sfPts = generateCollapseScalarField(
         this._formulaFn, audioParams, this._basePtsPositions, t
       );
       applyCollapseField(
-        this.render.gpuPtsProxy.geometry, sfPts,
+        ptsGeo, sfPts,
         this._basePtsPositions, this._basePtsNormals, strength
       );
     }
@@ -996,8 +998,9 @@ export class MathVisualizer {
     );
 
     applyDisplacementField(this.render.gpuMesh.geometry, df, this._basePositions);
-    if (this.render.gpuPtsProxy) {
-      applyDisplacementField(this.render.gpuPtsProxy.geometry, df, this._basePtsPositions ?? this._basePositions);
+    const ptsGeo = this._ownPtsGeometry();
+    if (ptsGeo) {
+      applyDisplacementField(ptsGeo, df, this._basePtsPositions ?? this._basePositions);
     }
   }
 
@@ -1166,6 +1169,25 @@ export class MathVisualizer {
    * baseline at mode-switch time has no source: ticks have already
    * mutated the live attribute past recognition.
    */
+  /**
+   * FIX(#52): the geometry the points proxy carries — but only when it is the
+   * proxy's OWN. In the shipped app the proxy BORROWS gpuMesh.geometry
+   * (render.js FIX(#3): construction shares it, every shape swap re-shares
+   * it), so all per-vertex work done for the mesh has already landed in the
+   * proxy's buffers, and every "and now the same for the proxy" branch was
+   * doing that work a second time on the same arrays — Collapse recomputed
+   * the whole scalar field once per tick, Volume re-applied the displacement
+   * pass, the snapshot methods held a byte-identical second copy of every
+   * pristine/base array (~1.2 MB at 161²). _tickSurface has guarded with
+   * `ptsGeo !== geo` since FIX(r11); this helper is that guard for everyone.
+   * A proxy that one day owns distinct geometry gets served exactly as
+   * before — that is the branch these call sites keep existing for.
+   */
+  _ownPtsGeometry() {
+    const ptsGeo = this.render.gpuPtsProxy?.geometry;
+    return (ptsGeo && ptsGeo !== this.render.gpuMesh.geometry) ? ptsGeo : null;
+  }
+
   _capturePristine() {
     const geo = this.render.gpuMesh.geometry;
     const pos = geo.attributes.position;
@@ -1232,8 +1254,8 @@ export class MathVisualizer {
       }
     }
 
-    if (this.render.gpuPtsProxy) {
-      const ptsGeo = this.render.gpuPtsProxy.geometry;
+    const ptsGeo = this._ownPtsGeometry();
+    if (ptsGeo) {
       const pp = ptsGeo.attributes.position;
       if (!ptsGeo.attributes.normal) ptsGeo.computeVertexNormals();
       const pn = ptsGeo.attributes.normal;
@@ -1285,8 +1307,9 @@ export class MathVisualizer {
     pos.needsUpdate = true;
     this.render.gpuMesh.geometry.computeVertexNormals();
 
-    if (this.render.gpuPtsProxy && this._pristinePtsPositions) {
-      const pp = this.render.gpuPtsProxy.geometry.attributes.position;
+    const ptsGeo = this._ownPtsGeometry();
+    if (ptsGeo && this._pristinePtsPositions) {
+      const pp = ptsGeo.attributes.position;
       if (this._pristinePtsPositions.length === pp.count * 3) {
         for (let i = 0; i < pp.count; i++) {
           pp.setXYZ(i,
@@ -1295,7 +1318,7 @@ export class MathVisualizer {
             this._pristinePtsPositions[i * 3 + 2]);
         }
         pp.needsUpdate = true;
-        this.render.gpuPtsProxy.geometry.computeVertexNormals();
+        ptsGeo.computeVertexNormals();
       }
     }
 
@@ -1345,8 +1368,8 @@ export class MathVisualizer {
     }
     this._gridSize = Math.round(Math.sqrt(n));
 
-    if (this.render.gpuPtsProxy) {
-      const ptsGeo = this.render.gpuPtsProxy.geometry;
+    const ptsGeo = this._ownPtsGeometry();
+    if (ptsGeo) {
       const pp = ptsGeo.attributes.position;
       if (!ptsGeo.attributes.normal) ptsGeo.computeVertexNormals();
       const pn = ptsGeo.attributes.normal;
@@ -1360,6 +1383,12 @@ export class MathVisualizer {
         this._basePtsNormals[i * 3 + 1] = pn.getY(i);
         this._basePtsNormals[i * 3 + 2] = pn.getZ(i);
       }
+    } else {
+      // Shared or absent proxy: the base arrays above cover it. Nulling keeps
+      // a snapshot from a formerly-distinct proxy from surviving a re-share —
+      // _capturePristine's else does the same one method up.
+      this._basePtsPositions = null;
+      this._basePtsNormals   = null;
     }
   }
 
@@ -1508,8 +1537,10 @@ export class MathVisualizer {
     // on a closed body that moves the top and the bottom of every column the
     // same way: the shape shears and never changes thickness.
     applyHeightField(geo, hf, this._pristinePositions, FIELD_EXTENT, this._pristineNormals, this._pristineDepth);
-    const ptsGeo = this.render.gpuPtsProxy?.geometry;
-    if (ptsGeo && ptsGeo !== geo) {
+    // FIX(#52): same guard as everywhere else, through the one helper — this
+    // site is where the pattern was born (FIX(r11)).
+    const ptsGeo = this._ownPtsGeometry();
+    if (ptsGeo) {
       applyHeightField(ptsGeo, hf, this._pristinePtsPositions, FIELD_EXTENT, this._pristinePtsNormals, this._pristineDepth);
     }
   }
