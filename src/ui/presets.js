@@ -10,6 +10,7 @@ import { DOM } from '../dom.js';
 import { PARAMS, applyParam } from '../params.js';
 import { clampFov } from '../camera.js';
 import { selectShape } from '../shapes.js';
+import { normalizeVizMode, DEFAULT_VIZ_MODE } from '../viz-mode.js';
 
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
@@ -378,9 +379,17 @@ export const PresetMixin = {
     // snapshot's own, or — when it carries none — whatever the engine already
     // shows. The material rule keys off the mode the user will be looking at,
     // not off whether the snapshot happened to name one.
-    const vizMode = s.vizMode ?? r.vizMode ?? 'surface';
+    //
+    // FIX(#51): resolved through the whitelist, the same way s.shape goes
+    // through selectShape above. setVizModeGPU normalizes its own argument, so
+    // the ENGINE was never going to hold a foreign value once it did — but the
+    // UI half below (syncVizModeUI, the material rule) read the raw snapshot
+    // string, and a value from another build would light no button and pick
+    // the material for a mode this build cannot show. One resolved string
+    // feeds both halves; `s.vizMode` decides only whether the engine is told.
+    const vizMode = normalizeVizMode(s.vizMode ?? r.vizMode ?? DEFAULT_VIZ_MODE);
 
-    if (s.vizMode) r.setVizModeGPU(s.vizMode);
+    if (s.vizMode) r.setVizModeGPU(vizMode);
 
     let matHandled = false;
     // The engine is switched above; the UI half goes through the same helper a
