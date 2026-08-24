@@ -142,7 +142,8 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
   // mesh pinned at the extreme. Folding the ARGUMENT into one period rather
   // than the time turns it into a train of the same pulse, and costs nothing:
   // sech is even, so mod(u+5., 10.)-5. matches value for value across the wrap
-  // (seam 1.3e-9, against 4.8e-3 for an ordinary 0.008 frame step), where
+  // (seam 1.3e-9, against 4.8e-3 for an ordinary 0.008 frame step — one 60 Hz
+  // frame of the 0.48 units/s clock, FIX(#50)), where
   // wrapping the time instead would teleport the crest back to the centre with
   // a seam of 1.32 — 264 frame steps. Spacing is 5 in r against a corner at
   // 4.9497, so exactly one crest is on the plate at a time, as before; the

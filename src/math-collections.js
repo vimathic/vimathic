@@ -129,7 +129,9 @@ const ouPath = (theta, steps) => {
  * that evolves with `t` replays instead of running out.
  *
  * The `time` these formulas receive is not a physical time. main.js starts it
- * at 0 and adds 0.008 on every animation frame for as long as the tab is open;
+ * at 0 and advances it 0.48 units per second of wall clock for as long as the
+ * tab is open (FIX(#50) — it used to be 0.008 per rendered frame, which tied
+ * the rate to the display and to RENDER_FRAME_SKIP);
  * STOP MOTION pauses it, nothing rewinds it, and no formula is ever handed a
  * zero of its own. Eight entries read it as the age of a decaying or
  * translating solution and were measured going out over the length of a set —
@@ -780,10 +782,13 @@ const simSteps = (t, base, rate, cap) =>
 const HEAVY_PARAM_EPS = 0.05;
 
 // Staleness threshold on the formula clock, unchanged from the original
-// cache: `time` advances 0.008 per rendered frame, so on its own this trigger
-// fires roughly every 3rd frame — the ~20Hz baseline the heavy formulas have
-// always animated at. Left ungated below, so that baseline is preserved
-// exactly whatever the ceiling does to the params trigger.
+// cache: `time` advances 0.48 units/s (FIX(#50)), so this trigger clears 33 ms
+// after the last rebuild — every 3rd frame on a 60 Hz desktop, the same ~20 Hz
+// baseline the heavy formulas have always animated at there. FIX(#50) moved
+// the mobile path: its counted frames land 33 ms apart, so the trigger now
+// fires every 2nd counted frame (~15 Hz, against ~10 when the clock crawled at
+// 0.24 units/s). Left ungated below, so that baseline is preserved exactly
+// whatever the ceiling does to the params trigger.
 const HEAVY_TIME_EPS = 0.016;
 
 // FIX(#12, r2): ceiling on how often the params trigger may rebuild the
@@ -804,12 +809,12 @@ const HEAVY_TIME_EPS = 0.016;
 // combined and not just on the params one.
 //
 // Counted in TICKS rather than in `t`: `t` is not a usable clock here. The
-// callers pass t = time + beatInt·0.3, and beatInt decays 0.04 per frame
-// (audio.js), so for the ~25 frames after every beat t moves by
-// 0.008 − 0.012 = −0.004 per frame — backwards, and four times slower than
-// the frame rate. A ceiling expressed in t collapses onto HEAVY_TIME_EPS in
-// exactly that regime and silently throws #12's responsiveness away
-// (measured: identical rebuild counts, 16.3Hz, params trigger dead).
+// callers pass t = time + beatInt·0.3, and beatInt fades to zero over 0.4 s of
+// wall clock (audio.js, FIX(r11)), so for the 0.4 s after every full beat t
+// moves at 0.48 − 0.3/0.4 = −0.27 units/s — backwards. A ceiling expressed in
+// t collapses onto HEAVY_TIME_EPS in exactly that regime and silently throws
+// #12's responsiveness away (measured on the pre-FIX(#50) per-frame clock:
+// identical rebuild counts, 16.3Hz, params trigger dead).
 const HEAVY_MIN_RECOMPUTE_TICKS = 2;
 
 /**
@@ -841,8 +846,8 @@ function createCachedHeavySampler(simulator, defaultRes = 64) {
     // Defaults mirror the simulators' own destructuring defaults, so the
     // comparison sees exactly the values the simulator would use.
     const { amp = 1, comp = 1 } = params;
-    // FIX(#12): the cache key used to be time alone, so with time advancing
-    // 0.008/frame against a 0.016 threshold roughly two frames in three
+    // FIX(#12): the cache key used to be time alone, so with time then
+    // advancing 0.008/frame against a 0.016 threshold roughly two frames in three
     // resampled a grid computed from stale audio params. Params now take part
     // in invalidation, guarded by HEAVY_PARAM_EPS so micro-jitter does not
     // rebuild the simulation.
@@ -2033,7 +2038,8 @@ const PROBABILITY_STATISTICS = {
           //
           // FIX(#4, r4): the hash used to read `v` and the global clock, which
           // produced exactly the flicker the sentence above says it prevents:
-          // `t` advances 0.008 per rendered frame, moving the sine argument
+          // `t` advances ~0.008 per 60 Hz frame (0.48 units/s, FIX(#50)),
+          // moving the sine argument
           // 2.49 rad, so the accept/reject decision for all 40 steps was
           // uncorrelated between consecutive frames and the height field
           // changed by 95% of its own peak every 16 ms. The step index carries
@@ -3916,7 +3922,7 @@ const TOPOLOGY_GEOMETRY = {
         // never returns exactly 0 for a double argument, so it is unreachable
         // in practice — it is here so the kernel, not just the height field,
         // is total). Meanwhile the band was 2e-3 rad wide while the phase 0.2·t
-        // advances 0.0016 rad per rendered frame, so it swept a whole mesh row
+        // advances 0.0016 rad per 60 Hz frame (0.096 rad/s), so it swept a whole mesh row
         // to exactly 0 on 455 of 8000 consecutive frames at grid 90 (5.7 %, one
         // flicker every 0.29 s at 60 fps) and on 817 of 8000 at grid 161, each
         // one dropping that row by up to 1.60 world units — the entire half
@@ -4516,9 +4522,10 @@ const CELLULAR_AUTOMATA = {
       // generations with no state repeat. It would also cost: the CA has no
       // inverse, so a t-driven generation counter must replay from the soup
       // (0.34 ms a generation here, unbounded in t), and t is not monotone —
-      // callers pass time + beatInt·0.3 while beatInt decays 0.04 a frame
-      // against the clock's 0.008, so t runs backwards for ~25 frames after
-      // every beat and the counter would step the evolution backwards. The
+      // callers pass time + beatInt·0.3 while beatInt fades over 0.4 s of wall
+      // clock (audio.js, FIX(r11)) against the clock's 0.48 units/s, so t runs
+      // backwards at 0.27 units/s for the 0.4 s after every full beat and the
+      // counter would step the evolution backwards. The
       // caption states the reseed and its period; that is what the display
       // contract asks of it. Full numbers in MATHEMATICAL_ACCURACY.md.
       f: createCachedHeavySampler((t, {amp = 1, comp = 1}, res) => {
@@ -4668,7 +4675,7 @@ const QUANTUM_MECHANICS = {
         // cancels in the modulus — and this one breathed by ×1.666667 (peak
         // 1.242542 at t = 0 against 0.745525 at t = 52.36 on grid 161, 1.226839
         // against 0.736103 on grid 90) with a period of 104.72 time units,
-        // which is 218 s of wall clock at the app's 0.008-per-frame rate. It is
+        // which is 218 s of wall clock at the app's 0.48 units/s. It is
         // the same defect round 5 cut out of `hydrogenS`, and the ruling sits
         // 300 lines above this one in this file. The pulse was 1.0 exactly at
         // t = 0, so the plate a viewer meets at boot is bit-identical to what

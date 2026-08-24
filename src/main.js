@@ -390,6 +390,10 @@ const RENDER_FRAME_SKIP = isMobile ? 2 : 1;
 let renderFrameCounter = 0;
 
 let time = 0, frames = 0, lastT = performance.now(), lastUniformUpdate = 0;
+// FIX(#50): frame stamp for the formula clock's dt. Deliberately separate from
+// `lastT`, which is the FPS counter's one-second window and resets once a
+// second — a dt taken from it would run the clock at 1/20th speed.
+let lastFrameT = performance.now();
 
 function animate() {
   requestAnimationFrame(animate);
@@ -410,10 +414,37 @@ function animate() {
     render.updatePerfMetrics();
   }
 
-  // FIX(#8): the visual clock stops under freeze, the audio clock does not.
-  // Advancing `time` here (instead of after the gate) keeps the value handed
-  // to audio.update() bit-identical to the previous code on unfrozen frames.
-  if (!isFrozen) time += 0.008;
+  // FIX(#50): formula time is measured, not counted. The old `time += 0.008`
+  // per rendered frame tied the clock to the render rate: 0.24 units/s on the
+  // mobile path, 0.48 on a 60 Hz desktop, 1.152 at 144 Hz — a ×9.6 spread
+  // (and `isMobile` includes `innerWidth < 768` at load, so a desktop opened
+  // in a narrow window sat at half speed for the whole session). Same class
+  // of bug as the beatInt decay repaired in audio.js. Now the clock runs at
+  // 0.48 units per real second on every path — exactly the old 60 Hz desktop
+  // speed; the mobile path doubles, which is the fix, not a side effect.
+  //   • The cap is 0.05·RENDER_FRAME_SKIP, not a bare 0.05: dt is taken after
+  //     the gate, so a counted frame on the mobile path spans SKIP rAF
+  //     intervals, and a fixed cap would shave every live frame below 40 Hz
+  //     (−25 % at 30 Hz). The cap exists only to swallow the huge interval a
+  //     backgrounded tab hands back on resume.
+  //   • The 1e-4 floor is load-bearing: performance.now() is coarsened by
+  //     browsers, dt = 0 is reachable and would mute the tick counter in
+  //     math-collections.js.
+  // Known gap, left deliberately: camera.updatePhysics and
+  // render.updateSolarSystem still advance per call, so they keep the old
+  // frame-rate dependence. Fixing only `time` also SPLITS one pair: the
+  // cosmos camera's sin(time·k) wobble now runs in real time next to an
+  // orbit angle and damper that stay per-call — before this fix the two
+  // were consistently wrong together at every refresh rate. See
+  // MATHEMATICAL_ACCURACY.md, "The clock".
+  //
+  // FIX(#8) still holds: the visual clock stops under freeze, the audio clock
+  // does not. `lastFrameT` updates unconditionally so STOP MOTION stays an
+  // exact hold — resuming continues from a one-frame dt instead of jumping by
+  // the length of the freeze.
+  const dt = Math.max(1e-4, Math.min(0.05 * RENDER_FRAME_SKIP, (now - lastFrameT) / 1000));
+  lastFrameT = now;
+  if (!isFrozen) time += dt * 0.48;
 
   // Audio analysis — updates bass/mid/treble/beatInt, fires seek + EQ callbacks.
   //

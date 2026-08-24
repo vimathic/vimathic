@@ -853,7 +853,7 @@ describe('Regression — Tier D defects (fixed)', () => {
 // (not exported), so it is exercised the only way production does — through the
 // public formula objects in MATH_COLLECTIONS.
 //
-// The bug: the cache key was `t` alone. `t` advances 0.008 per frame against a
+// The bug: the cache key was `t` alone. `t` then advanced 0.008 per frame against a
 // 0.016 staleness threshold, so only ~1 frame in 3 rebuilt and the rest sampled
 // a grid computed from stale audio params. Undersampled, not deaf — the eleven
 // formulas did track the music, at ~16-20Hz.
@@ -1376,8 +1376,9 @@ describe('Collapse mode — applyCollapseField', () => {
 // obvious here, so the drift tests use these rather than the unmodulated pair.
 const BOOT = { amp: 0.77, freq: 1.069, comp: 0.58 };
 
-// main.js advances `time` by 0.008 per animation frame and never resets it, so
-// at 60 fps one second of uptime is 0.48 in formula-time. Ten minutes into a
+// main.js advances `time` at 0.48 units per second of wall clock and never
+// resets it (FIX(#50) — before it, 0.008 per rendered frame, which made this
+// conversion true on a 60 Hz desktop only). Ten minutes into a
 // set is t ≈ 288 — a value no test in this file had ever used.
 const uptime = seconds => seconds * 0.48;
 
@@ -1397,7 +1398,7 @@ function peakOf(colId, key, params, t, gridSize = 49) {
 }
 
 describe('Regression — the session clock is not a physical time (#5, #6)', () => {
-  // main.js `time += 0.008` is the only mutation of the clock in the whole
+  // main.js `time += dt * 0.48` is the only mutation of the clock in the whole
   // app: STOP MOTION pauses it, nothing rewinds it, and no formula is handed a
   // per-entry zero. Seven entries read that number as the age of a decaying or
   // translating solution, so they went out one or two minutes into a set and
@@ -1663,9 +1664,9 @@ describe('Regression — catalogue arithmetic against the entry’s own promise 
   test('metropolisWalk does not re-roll its acceptance coin every frame (#4)', () => {
     // The comment above the acceptance test promises a surface "reproducible
     // frame to frame instead of flickering as Math.random() would" — and then
-    // hashed the global clock, which advances 0.008 per frame and moves the
-    // sine argument 2.49 rad in that step. One 60 fps frame changed the height
-    // field by 95% of its own peak.
+    // hashed the global clock, which advances ~0.008 per 60 Hz frame
+    // (0.48 units/s, FIX(#50)) and moves the sine argument 2.49 rad in that
+    // step. One 60 fps frame changed the height field by 95% of its own peak.
     const a = fieldOf('probability', 'metropolisWalk', BOOT, 12.0);
     const b = fieldOf('probability', 'metropolisWalk', BOOT, 12.008);
     let moved = 0;
@@ -2478,7 +2479,8 @@ describe('Linear algebra — the three kernels that computed something else (#R6
     // plate collapsed to 7.5e-17. Sampling two distant uptimes, as the round-4
     // test did, steps straight over a dip that narrow, so this walks the
     // neighbourhood of the known zero at the resolution the app renders at
-    // (t advances 0.008 per frame).
+    // (t advances ~0.008 per 60 Hz frame; the mobile path's counted frames
+    // step twice that, so 0.008 is the finest step the app takes).
     let worst = Infinity, worstT = 0;
     for (let t = 5 * Math.PI - 0.5; t <= 5 * Math.PI + 0.5; t += 0.008) {
       const hf = generateSurfaceFromFormula(LA.eigenField.f, FACTORY, 25, 3.5, t);
@@ -3278,8 +3280,8 @@ describe('Singularities — the peak must not depend on where the mesh samples (
     //   below rather than assumed — plus 90 and 91 so the parity is sampled both
     //   ways and the hole cannot come back.
     //
-    //   CLOCK. t = 0 is one frame of an animation that never rewinds (0.008 per
-    //   frame, monotone). An entry whose amplitude breathes is at its smallest
+    //   CLOCK. t = 0 is one frame of an animation that never rewinds
+    //   (0.48 units/s, monotone). An entry whose amplitude breathes is at its smallest
     //   at t = 0 as often as not. Four clock values are read; measured against a
     //   dense scan (t = 0…32 step 0.2, grid 91, all 192 entries) this set
     //   under-reads the true peak by at most ×1.42, and by ×1.14 for any entry
@@ -3545,8 +3547,9 @@ describe('Singularities — the peak must not depend on where the mesh samples (
 
 describe('Round 7 — repairs that cost more than they bought (#R7)', () => {
   // The audio the app feeds itself with nothing playing: audio.js drives three
-  // LFOs at 0.7, 0.9 and 1.1 rad/s and main.js advances the formula clock by
-  // 0.008 per rendered frame. So "silence" is not a constant — every parameter
+  // LFOs at 0.7, 0.9 and 1.1 rad/s and main.js advances the formula clock at
+  // 0.48 units/s — ~0.008 per 60 Hz frame, which is what k models below
+  // (FIX(#50)). So "silence" is not a constant — every parameter
   // is moving, always, and a kernel that cannot take a small parameter step
   // flickers on an idle machine.
   const idleFrame = k => {
@@ -6288,7 +6291,7 @@ describe('Round 11 — the visible label against the drawn object', () => {
     // |ψ_n|² of an energy eigenstate has no time dependence at all: the phase
     // e^{−iE_n t/ħ} cancels in the modulus. Both entries used to carry a
     // ×(0.8+0.2cos(...)) pulse — ×1.666667 peak to trough, 54.5 s and 218 s of
-    // wall clock per period at the app's 0.008-per-frame rate.
+    // wall clock per period at the app's 0.48 units/s.
     for (const [col, key] of [['quantumMechanics', 'particleBox1D'], ['quantumMechanics', 'harmonicOscillator']]) {
       const f = getFormula(col, key).f;
       const at = t => Array.from(generateSurfaceFromFormula(f, { amp: 1, freq: 1, comp: 0.5 }, 41, 3.5, t));
