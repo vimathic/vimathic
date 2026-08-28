@@ -941,6 +941,11 @@ function easeInOutCubic(t) {
 // `visible`, so the material must be back at this value whenever it is hidden —
 // see fadeGrid(), which is the only thing allowed to move it.
 export const GRID_OPACITY = 0.1;
+// What NIGHT lowers a shown grid to. Chosen against the palettes it has to sit
+// under, not by taste: a line at the shipped 0.1 reads brighter than the body
+// of the darkest NIGHT palette in silence, which puts the furniture in front of
+// the subject. Still visible — the grid is how the bend of the surface is read.
+export const NIGHT_GRID_OPACITY = 0.04;
 const GRID_FADE_MS = 400;
 
 // Exported for tests/camera-tween-damping.test.js: the cancel path below is
@@ -1368,6 +1373,16 @@ export class RenderEngine {
     this.grid.position.y = -1.3; this.grid.material.transparent = true;
     this.grid.material.opacity = GRID_OPACITY;
     this.scene.add(this.grid);
+
+    // What a *shown* grid rests at. A field rather than the GRID_OPACITY
+    // constant because NIGHT lowers it (setGridLitOpacity) and fadeGrid has to
+    // land on whatever the current answer is — otherwise the fade would keep
+    // parking the grid back at full strength behind the mode's back. The
+    // constant stays the default and the export, so nothing else moves.
+    this.gridLitOpacity = GRID_OPACITY;
+
+    // NIGHT mode. Owns nothing in the shader — see setNightly().
+    this.nightly = false;
 
     // ── GPU mesh + uniforms ───────────────────────────────────────────────────
     const gpuGeo = new THREE.PlaneGeometry(CFG.planeSize, CFG.planeSize, CFG.planeSegs, CFG.planeSegs);
@@ -2634,7 +2649,7 @@ export class RenderEngine {
     // may be mid-fade if G was pressed twice quickly.
     if (on) { g.material.opacity = 0; g.visible = true; }
     const from   = g.material.opacity;
-    const target = on ? GRID_OPACITY : 0;
+    const target = on ? this.gridLitOpacity : 0;
     // FIX(r4): what this fade left `visible` at. onDone lands GRID_FADE_MS
     // later, and ⊞ GRID, a preset or setTransparentBackground may have written
     // grid.visible in between — writing `on` regardless put the grid back on
@@ -2651,8 +2666,58 @@ export class RenderEngine {
       // That is what keeps every other path honest: the ⊞ GRID button, a
       // preset and setTransparentBackground all write only `visible`, and a
       // grid left at 0 would come back invisible while its button read ON.
-      if (!on) g.material.opacity = GRID_OPACITY;
+      // "Full" is gridLitOpacity, not the constant: in NIGHT they differ.
+      if (!on) g.material.opacity = this.gridLitOpacity;
     });
+  }
+
+  /**
+   * Change what a shown grid rests at, and take the current one there.
+   *
+   * Shares the 'grid-fade' slot with fadeGrid() on purpose. The two are the
+   * only writers of grid.material.opacity, and one slot means they cannot
+   * fight: whichever runs second cancels the first instead of interleaving
+   * two tweens onto the same number. A hidden grid is parked rather than
+   * tweened, which is the same rule fadeGrid's onDone applies — a grid that
+   * comes back must come back visible.
+   */
+  setGridLitOpacity(v) {
+    this.gridLitOpacity = v;
+    const g = this.grid;
+    if (!g) return;
+    if (!g.visible) { g.material.opacity = v; return; }
+    const from = g.material.opacity;
+    this.transitions.start('grid-fade', GRID_FADE_MS, p => {
+      g.material.opacity = from + (v - from) * p;
+    });
+  }
+
+  /**
+   * NIGHT — the mode for a dark room, not a stage.
+   *
+   * Deliberately touches nothing in the shader. The white specular stays white
+   * and stays keyed to treble (owner's call, 28.08: "leave it, we'll take it
+   * out if it looks bad"), bloom keeps its shipped strength/radius/threshold so
+   * the darkness can still be lifted with it, and no palette or lighting number
+   * moves. What is left is the furniture: the two things that outshine the
+   * mathematics on a dark palette.
+   *
+   * Measured, which is why these two and not others: the starfield composites
+   * to bloom-luma 0.366 and so clears the 0.15 bloom gate at all times, and a
+   * grid line at 0.088 is about 1.5× the body of the darkest NIGHT palette at
+   * rest (0.056). On the shipped bright palettes neither is noticeable.
+   *
+   * The grid is dimmed rather than hidden: it is how a viewer reads which way
+   * the surface is bending, and G stays exactly as it was — the mode changes
+   * what "on" looks like, not what the button does.
+   */
+  setNightly(on) {
+    this.nightly = !!on;
+    this.setGridLitOpacity(this.nightly ? NIGHT_GRID_OPACITY : GRID_OPACITY);
+    // Transparent background hides the stars for its own reason and must win:
+    // it is an output format, not a look. One expression, so the two cannot
+    // disagree about who put them back.
+    if (this.stars) this.stars.visible = !this.transparentBg && !this.nightly;
   }
 
   /**
@@ -2702,8 +2767,9 @@ export class RenderEngine {
       // on→off round trip put a grid into the scene (and into captureStream,
       // the second screen and the recorder) that the user never switched on,
       // leaving the ⊞ GRID button reading the opposite of reality from then
-      // on. Stars need no such care: nothing else writes stars.visible, so
-      // true is always the right answer for them.
+      // on. Stars need no such snapshot, but they are no longer ours alone
+      // either: NIGHT hides them too (setNightly), so the restore below asks
+      // the mode instead of writing `true`. Two writers, one expression.
       //
       // FIX(r2): only on the way IN. Enabling twice — the panel button and the
       // output modal drive the same call — used to re-snapshot the `false` we
@@ -2718,7 +2784,7 @@ export class RenderEngine {
       this.scene.background = uiColor(0x050515);
       this.scene.fog        = new THREE.FogExp2(uiColor(0x050515), 0.007);
       this.renderer.setClearColor(uiColor(0x050515), 1);
-      this.stars.visible = true;
+      this.stars.visible = !this.nightly;
       // FIX(r2): give the grid back only if nothing claimed it meanwhile. The
       // snapshot is right for a bare round trip and wrong the moment ⊞ GRID,
       // the G fade or a preset writes grid.visible in between — restoring then

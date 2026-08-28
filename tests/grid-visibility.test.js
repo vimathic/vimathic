@@ -70,6 +70,15 @@ beforeEach(() => {
     grid:  { visible: false, material: { opacity: GRID_OPACITY, transparent: true } },
     stars: { visible: true },
     scene: {}, renderer: { setClearColor() {} },
+    // What a shown grid rests at. The engine sets this in its constructor and
+    // fadeGrid lands on it in both directions; NIGHT is the one thing that
+    // moves it (setGridLitOpacity). Stated here rather than defaulted inside
+    // fadeGrid on purpose — a `?? GRID_OPACITY` fallback there would let an
+    // engine that never initialised the field look correct in every test.
+    gridLitOpacity: GRID_OPACITY,
+    // Read by setTransparentBackground's restore branch, which now asks the
+    // mode instead of writing `true`: the stars have two owners.
+    nightly: false,
   };
 });
 

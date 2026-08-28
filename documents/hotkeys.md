@@ -20,7 +20,7 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 | <kbd>D</kbd> | Next shape (sequential, looping through all 20 shapes) |
 | <kbd>T</kbd> | Next surface material — Matte / Glossy / Metal / Mirror / Velvet / Glass (SURFACE mode only) |
 | <kbd>Q</kbd> | Random color scheme |
-| <kbd>E</kbd> | Next color scheme (cycles through all 44) |
+| <kbd>E</kbd> | Next color scheme (cycles through all 54) |
 | <kbd>W</kbd> | Flip camera 180° around its orbit |
 | <kbd>G</kbd> | Toggle ground grid |
 | <kbd>S</kbd> | Glitch punch — brief bloom + chromatic burst |
@@ -30,7 +30,7 @@ The randomization keys (`R`, `Q`, `F`) use a **shuffle bag**: every color, shape
 
 > **Note on `F` and `R`:** the FORMULA dropdown holds two families — 38 GPU shaders and 192 CPU math formulas — and both randomizers draw from both. The choice of family is a coin flip, then the shuffle bag picks inside it, so a shader comes up about as often as a formula even though there are five times more formulas. Each family keeps its own no-repeat deck.
 
-> **Note on `R`:** `R` rotates colour, formula and shape across their full pools — 44 schemes, 38 shaders + 192 formulas, and all 20 shapes. Until August 2026 the shape half drew from a curated subset of nine, and the other eleven (disc, ring, circle, hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth, dodecahedron, star, solar) were reachable only through the Shape dropdown or `D`. Nothing recorded why those nine; the list had simply stopped being extended as shapes were added. The pool is the shape whitelist itself now, so a shape that appears in the dropdown appears under `R`.
+> **Note on `R`:** `R` rotates colour, formula and shape across their full pools — 54 schemes, 38 shaders + 192 formulas, and all 20 shapes. With NIGHT on, the colour half of that pool narrows to the 10 NIGHT schemes; the dropdown is unaffected. Until August 2026 the shape half drew from a curated subset of nine, and the other eleven (disc, ring, circle, hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth, dodecahedron, star, solar) were reachable only through the Shape dropdown or `D`. Nothing recorded why those nine; the list had simply stopped being extended as shapes were added. The pool is the shape whitelist itself now, so a shape that appears in the dropdown appears under `R`.
 
 ## Hold-and-drag shortcuts
 

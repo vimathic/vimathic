@@ -9,8 +9,9 @@
 //
 // ── The defect this pins ──────────────────────────────────────────────────────
 // A rotary encoder mapped to "Color Scheme (step)" — REL is the default mode
-// for a new mapping — kept incrementing past the last palette. There is no
-// scheme 44 and no <option value="44">, so the picture froze on the shader's
+// for a new mapping — kept incrementing past the last palette. At the time the
+// catalogue ended at 43: there was no scheme 44 and no <option value="44">, so
+// the picture froze on the shader's
 // out-of-range fallback and DOM.colorSel.selectedIndex went -1, i.e. the
 // dropdown blanked and the operator could not see where they were. The lower
 // clamp existed; the ceiling did not.
@@ -147,7 +148,20 @@ describe('MIDI relative mode — the path a user actually turns', () => {
       seen.push(ctx.audio.colorIdx);
     }
 
-    assert.deepEqual(seen, [0, 43, 42, 41, 40, 39],
+    // Derived from COLOR_SCHEME_COUNT rather than written out: the literal
+    // [0, 43, 42, …] pinned the catalogue size, not the claim, and would have
+    // failed on the next palette added — turning a green suite red for a reason
+    // that has nothing to do with wrapping.
+    //
+    // The derivation assumes one click still moves exactly one scheme. That is
+    // the decoder's own arithmetic — step = round((max − min) / 63), utils.js —
+    // so it holds while COLOR_SCHEME_COUNT − 1 lands in 32..94. Asserted rather
+    // than assumed, because outside that window the expectation below is wrong
+    // and would read as a wrap defect.
+    const N = COLOR_SCHEME_COUNT;
+    assert.equal(Math.round((N - 1) / 63), 1,
+      `one detent click no longer moves one scheme at ${N} palettes — the expectation below is stale`);
+    assert.deepEqual(seen, [0, N - 1, N - 2, N - 3, N - 4, N - 5],
       'past the bottom the palette must come round from the top, not stick at 0');
   });
 

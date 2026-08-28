@@ -326,19 +326,21 @@ void main(){
   gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);
 }`;
 
-// ── Fragment shader — 44 color schemes (0-43) ─────────────────────────────────
-// FIX(#28): every count in this file is 44 (0..43) — COLOR_SCHEME_COUNT in
-// params.js is authoritative; the prose lagged behind the DARK series (36..43).
+// ── Fragment shader — 54 color schemes (0-53) ─────────────────────────────────
+// FIX(#28): every count in this file is 54 (0..53) — COLOR_SCHEME_COUNT in
+// params.js is authoritative; the prose lagged behind the DARK series (36..43)
+// once already, which is why tests/palette-catalogue.test.js now checks the
+// enumerations against each other instead of trusting a note like this one.
 //
 // Transition uniform added:
 //   uCMNext  — color scheme to blend toward
 //   uCMBlend — 0=current only, 1=next only (crossfade, 0.6 s)
 //
-// All 44 scheme functions are defined once in _COLOR_FUNS below and injected
+// All 54 scheme functions are defined once in _COLOR_FUNS below and injected
 // into both export const FS and SE_FS_TEMPLATE via template interpolation.
 // _COLOR_FUNS also contains the getColor() dispatcher, so user-written
 // fragment shaders in the editor can call getColor(uCM, t) and get every
-// palette without copy-pasting a 44-way if-cascade.
+// palette without copy-pasting a 54-way if-cascade.
 //
 // Layout:
 //   CINEMATIC  0  tealOrange   1  bladeRunner   2  matrix      3  bleachBypass
@@ -352,21 +354,33 @@ void main(){
 //             32  deepSpace   33 acidRain       34 volcanic    35 bioluminescence
 //   DARK      36  charcoalSmoke  37 slateIndigo  38 mossStone  39 petrol
 //             40  emberBlack  41 burgundyVelvet 42 midnightForest 43 coalPlum
+//   NIGHT     44  burgundyBlack  45 crimsonAbyss 46 tarnishedGold 47 fathomBlue
+//             48  cedarSmoke  49 fernShadow     50 orchidAsh      51 driedRose
+//             52  deepJade    53 rustSlate
 
-// ── _COLOR_FUNS — single source of truth for all 44 GLSL color functions ─────
+// ── _COLOR_FUNS — single source of truth for all 54 GLSL color functions ─────
 // Used in both export const FS and SE_FS_TEMPLATE. Edit here only.
 //
-// IMPORTANT: when adding a new palette, update three things in lockstep:
+// IMPORTANT: adding a palette means SIX places, not three. This list said three
+// for a long time, and the three it left out are exactly the ones that fail in
+// silence — see tests/palette-catalogue.test.js, which now checks all six
+// against each other and against COLOR_SCHEME_COUNT.
 //   1. Add the vec3 function below.
 //   2. Add an `else if(cm==N)` branch in getColor() below.
 //   3. Bump COLOR_SCHEME_COUNT in params.js (which feeds MIDI range, the
 //      shuffle bag in main.js, and the E-key cycle modulus).
+//   4. Add an <option value="N"> under #color-sel in index.html. Miss it and
+//      the dropdown blanks out at that index — the defect params-wrap.test.js
+//      was written for.
+//   5. Add the name to the Layout comment in the FS header above.
+//   6. Add it to the name list above SE_DEFAULT_FRAG, or the palette reads as
+//      unsupported to shader-editor users (FIX(#28)).
 //
 // FIX(#28, r3): the range below read 0..23, left over from the 24-palette era.
 // getColor() is included in this block — not duplicated into FS — so user
 // fragments in the shader editor can call it too. Without it, SE_FS_TEMPLATE
 // users copy-pasted the if-cascade or got undefined-`c` artefacts for any uCM
-// their copy skipped; the dispatcher covers the whole 0..43 range.
+// their copy skipped; the dispatcher covers the whole 0..53 range.
 const _COLOR_FUNS = `
 vec3 tealOrange(float t){return mix(vec3(0.,0.706,0.847),vec3(1.,0.620,0.),t);}
 vec3 bladeRunner(float t){vec3 a=vec3(.051,.008,.129),b=vec3(1.,.420,.208),c=vec3(0.,.898,1.);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
@@ -422,6 +436,53 @@ vec3 burgundyVelvet(float t){vec3 a=vec3(.039,.012,.020),b=vec3(.243,.055,.106),
 vec3 midnightForest(float t){vec3 a=vec3(.008,.027,.020),b=vec3(.043,.165,.106),c=vec3(.157,.435,.302);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
 vec3 coalPlum(float t){vec3 a=vec3(.020,.012,.031),b=vec3(.137,.078,.180),c=vec3(.341,.235,.443);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
 
+// ── NIGHT series (44..53) ─────────────────────────────────────────────
+// Built for one job the DARK series above does not do: staying dark on a
+// dark screen while bloom is still reachable. The two are different
+// contracts and the numbers say so — measured, not asserted:
+//
+//   Y = .2126R + .7152G + .0722B is not a nicety here. It is literally
+//   what gates bloom: LuminosityHighPassShader calls luminance(), three
+//   fills in the working-space coefficients, and the pass is built with
+//   threshold 0.15 (render.js). So a palette's Y and the bloom gate are
+//   directly comparable numbers.
+//
+//   NIGHT contract, every stop and therefore the whole ramp (Y is affine
+//   in the components and max_channel is a max of affine functions, so
+//   both take their extremes at the stops):
+//     max_channel ≤ 0.55, Y ≤ 0.28, Y(b) ≤ 0.14, Y at the top ≥ 0.17.
+//
+//   The floor is the point. Without it the first two drafts of 44 and 45
+//   topped out at Y 0.100 and 0.148 — under the gate, so the Bloom slider
+//   and the S punch were a no-op on them: the high-pass gates before the
+//   strength multiply, and what never passes cannot be amplified.
+//   With it: nothing here blooms at rest (field is ±0.14 in silence, and
+//   the ramp only reaches the top on loud peaks), everything blooms on
+//   peaks. That is the whole design — dark body, lit crest.
+//
+// Guarded by tests/palette-catalogue.test.js for enumeration only. The
+// contract above is arithmetic on these literals; the four historical
+// violations that motivated it are recorded there as reinjection cases.
+//
+// CORRECTION to the DARK comment above, which is wrong and stays wrong
+// until someone re-tiers it deliberately: its two tiers are ordered by
+// forced channel, not by darkness, and by darkness they invert.
+// charcoalSmoke (36), labelled truly-dark, is the BRIGHTEST of the eight
+// (Y peaks 0.461); burgundyVelvet (41) and coalPlum (43), labelled
+// with-glow, are the two darkest (0.215, 0.262). Five of the eight clear
+// the bloom gate in silence, so as a group DARK is not dark in the sense
+// this series is. Numbers, not adjectives: notes/26-dark-palettes-v2.
+vec3 burgundyBlack(float t){vec3 a=vec3(.016,.004,.008),b=vec3(.153,.027,.059),c=vec3(.529,.086,.169);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 crimsonAbyss(float t){vec3 a=vec3(.016,.031,.110),b=vec3(.129,.043,.118),c=vec3(.490,.102,.086);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 tarnishedGold(float t){vec3 a=vec3(.024,.016,.008),b=vec3(.122,.094,.031),c=vec3(.325,.267,.067);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 fathomBlue(float t){vec3 a=vec3(.008,.016,.055),b=vec3(.031,.086,.220),c=vec3(.110,.224,.392);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 cedarSmoke(float t){vec3 a=vec3(.039,.027,.020),b=vec3(.161,.110,.067),c=vec3(.325,.235,.157);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 fernShadow(float t){vec3 a=vec3(.008,.031,.012),b=vec3(.043,.122,.043),c=vec3(.106,.318,.098);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 orchidAsh(float t){vec3 a=vec3(.020,.008,.024),b=vec3(.129,.035,.122),c=vec3(.404,.102,.376);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 driedRose(float t){vec3 a=vec3(.043,.020,.027),b=vec3(.176,.086,.118),c=vec3(.392,.180,.259);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 deepJade(float t){vec3 a=vec3(.008,.031,.031),b=vec3(.024,.098,.098),c=vec3(.063,.271,.267);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+vec3 rustSlate(float t){vec3 a=vec3(.024,.035,.063),b=vec3(.129,.075,.086),c=vec3(.400,.180,.075);return t<.5?mix(a,b,t*2.):mix(b,c,t*2.-1.);}
+
 // ── getColor — dispatcher so both main() and user-written fragments can call ─
 // one entry point and get every palette. Out-of-range cm safely falls through
 // to bioluminescence (35) — so picking a scheme that doesn't exist (e.g. from
@@ -473,6 +534,17 @@ vec3 getColor(int cm, float t){
   else if(cm==41) return burgundyVelvet(t);
   else if(cm==42) return midnightForest(t);
   else if(cm==43) return coalPlum(t);
+  // NIGHT series — dark body, lit crest; see the block above getColor's table
+  else if(cm==44) return burgundyBlack(t);
+  else if(cm==45) return crimsonAbyss(t);
+  else if(cm==46) return tarnishedGold(t);
+  else if(cm==47) return fathomBlue(t);
+  else if(cm==48) return cedarSmoke(t);
+  else if(cm==49) return fernShadow(t);
+  else if(cm==50) return orchidAsh(t);
+  else if(cm==51) return driedRose(t);
+  else if(cm==52) return deepJade(t);
+  else if(cm==53) return rustSlate(t);
   else            return bioluminescence(t);  // safe default for out-of-range
 }
 `;
@@ -734,7 +806,7 @@ void main(){vec3 pos=position;
   gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);}`;
 
 // FIX(#28): counts below track COLOR_SCHEME_COUNT — see the FS header note.
-// Template wrapping user frag body — _COLOR_FUNS provides all 44 color
+// Template wrapping user frag body — _COLOR_FUNS provides all 54 color
 // functions AND the getColor() dispatcher, so a user fragment can just do
 // `c = getColor(uCM, t);` and cover every palette without copy-pasting a
 // 44-way if-cascade.
@@ -776,12 +848,12 @@ y = sin(r * 8.0 * wi + T) * (0.2 + b * 0.8) * a
   + bt * 0.5;`;
 
 // Default frag code shown in editor: routes through getColor(uCM, t), which
-// covers all 44 palettes — so picking any scheme from the dropdown Just Works
+// covers all 54 palettes — so picking any scheme from the dropdown Just Works
 // without the user editing the fragment.
 //
 // FIX(#28): the list must stay complete — a name missing here reads as
 // "unsupported" to editor users even though getColor() dispatches it.
-// All 44 functions are callable by name from custom code:
+// All 54 functions are callable by name from custom code:
 //   0  tealOrange      1  bladeRunner       2  matrix          3  bleachBypass
 //   4  outrun          5  vaporwave         6  neonNoir        7  sunsetGrid
 //   8  viridis         9  inferno          10  plasma         11  cividis
@@ -793,10 +865,13 @@ y = sin(r * 8.0 * wi + T) * (0.2 + b * 0.8) * a
 //  32  deepSpace      33 acidRain          34 volcanic        35 bioluminescence
 //  36  charcoalSmoke  37 slateIndigo       38 mossStone       39 petrol
 //  40  emberBlack     41 burgundyVelvet    42 midnightForest  43 coalPlum
-const SE_DEFAULT_FRAG = `// t = normalised height 0..1   uCM = scheme index 0..43
+//  44  burgundyBlack  45 crimsonAbyss      46 tarnishedGold   47 fathomBlue
+//  48  cedarSmoke     49 fernShadow        50 orchidAsh       51 driedRose
+//  52  deepJade       53 rustSlate
+const SE_DEFAULT_FRAG = `// t = normalised height 0..1   uCM = scheme index 0..53
 // Audio comes in as uniforms here, not short locals: uBass uMid uTreble uBeat
 // uTime. Note t is the height ramp here, not treble as in the vertex tab.
-// getColor(uCM, t) dispatches to one of 44 palettes. You can also call
+// getColor(uCM, t) dispatches to one of 54 palettes. You can also call
 // any palette by name directly, e.g.  c = lava(t)  or  c = cyberpunkGold(t);
 c = getColor(uCM, t);`;
 

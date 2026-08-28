@@ -7,7 +7,8 @@
 // Called once from UIController.bindAll().
 
 import { DOM } from '../dom.js';
-import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT, DRAG_FLOOR } from '../params.js';
+import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT,
+         NIGHT_SCHEME_FIRST, NIGHT_SCHEMES, ALL_SCHEMES, DRAG_FLOOR } from '../params.js';
 import { bindAboutModal, closeAbout, isAboutModalOpen } from './about-modal.js';
 import { AutoCycler } from './auto-cycle.js';
 
@@ -622,7 +623,7 @@ export function bindControls(ui) {
   // PARAMS.colorIdx.set, which starts the crossfade again at its own default
   // duration and would undo the longer, cadence-scaled fade asked for here.
   ui.autoColor = new AutoCycler({
-    pool:      Array.from({ length: COLOR_SCHEME_COUNT }, (_, i) => i),
+    pool:      ALL_SCHEMES,
     current:   () => a.colorIdx,
     isPlaying: () => !!a.isPlaying,
     bpm:       () => a.estimatedBpm,
@@ -634,6 +635,55 @@ export function bindControls(ui) {
     onToggle:  on => DOM.colorAuto?.classList.toggle('active', on),
   });
   DOM.colorAuto?.addEventListener('click', () => ui.autoColor.toggle());
+
+  // ── NIGHT ─────────────────────────────────────────────────────────────────
+  // One switch for a dark room. Everything it does is furniture and choice —
+  // it writes no shader uniform, no bloom setting and no palette number, so
+  // with it off the frame is bit-for-bit what it always was, and there is
+  // nothing to prove about that.
+  //
+  // What it does NOT do, deliberately: the specular stays white and keyed to
+  // treble (owner, 28.08 — "leave it, we'll take it out if it looks bad"),
+  // and bloom keeps its shipped threshold so the dark can still be lifted with
+  // it. The NIGHT palettes are built to clear that threshold on peaks and to
+  // sit under it at rest, which is where the mode's darkness actually comes
+  // from — not from turning lights down.
+  //
+  // @param {boolean} on
+  // @param {{keepPalette?: boolean}} [opts] — keepPalette leaves the current
+  //        scheme alone. Preset restore passes it: the snapshot carries the
+  //        palette it wants and applies it separately, and switching here
+  //        first would either be overwritten a moment later or, if the order
+  //        ever flipped, quietly overwrite the snapshot.
+  ui.setNightly = (on, opts = {}) => {
+    on = !!on;
+    r.setNightly(on);
+    document.body.classList.toggle('nightly', on);
+    DOM.nightBtn?.classList.toggle('active', on);
+
+    // Both unattended pickers, together: AUTO COLOUR lives here, the R/Q bag
+    // lives in main.js and registers itself. Narrowing one and not the other
+    // would leave a bright palette one keypress away from a mode whose whole
+    // claim is that it does not do that.
+    ui.autoColor?.setPool(on ? NIGHT_SCHEMES : ALL_SCHEMES);
+    ui.onColorPoolChange?.(on);
+
+    // Switching on while a bright palette is up would leave the mode looking
+    // broken — stars gone, grid dimmed, picture still glaring. Move to the
+    // first NIGHT scheme, through the same write path AUTO COLOUR uses so the
+    // dropdown and the engine stay in step. Deterministic rather than a draw:
+    // a mode you turn on should look the same each time you turn it on.
+    if (on && !opts.keepPalette && a.colorIdx < NIGHT_SCHEME_FIRST) {
+      const idx = NIGHT_SCHEMES[0];
+      a.colorIdx = idx;
+      r.setColorSchemeAnimated(idx);
+      if (DOM.colorSel) DOM.colorSel.value = String(idx);
+    }
+    // Leaving NIGHT keeps whatever is on screen. The palettes are ordinary
+    // members of the catalogue and a good look should not evaporate because
+    // the furniture came back.
+  };
+  DOM.nightBtn?.addEventListener('click', () => ui.setNightly(!r.nightly));
 
   // ── Camera reset / auto-rot ───────────────────────────────────────────────
   DOM.btnReset.addEventListener('click', () => {

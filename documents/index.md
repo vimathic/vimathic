@@ -1,12 +1,12 @@
 ---
 title: Overview
 order: 0
-description: VIMATHIC is a browser-based mathematical VJ studio that turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 44 colour schemes.
+description: VIMATHIC is a browser-based mathematical VJ studio that turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 54 colour schemes.
 ---
 
 # VIMATHIC — Mathematical VJ Studio
 
-VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser, with no installation, no accounts, and no plugins. You load audio — a music file, the microphone, a browser tab, or system output — and the visualizer reacts in real time using 192 mathematical formulas, 38 GPU shaders, and 44 colour schemes.
+VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser, with no installation, no accounts, and no plugins. You load audio — a music file, the microphone, a browser tab, or system output — and the visualizer reacts in real time using 192 mathematical formulas, 38 GPU shaders, and 54 colour schemes.
 
 ## What it does
 
@@ -14,7 +14,7 @@ The visualizer takes any audio source and decomposes it into bass and treble ban
 
 - **192 CPU formulas** across 12 mathematical domains (fractals, special functions, probability, linear algebra, trigonometry, complex analysis, Fourier series, differential equations, integral transforms, topology, cellular automata, quantum mechanics)
 - **38 GPU shaders** (audio-reactive vertex and fragment programs) running on the graphics card for real-time performance
-- **44 colour schemes** ranging from cinematic to synthwave to scientific to dark
+- **54 colour schemes** ranging from cinematic to synthwave to scientific to dark, including a Night collection for dark rooms
 - **20 base 3D shapes** with three render modes (surface, wireframe, points) and three deformation modes (surface, volume, collapse)
 - **MIDI controller support** for any controller that sends standard CC messages
 - **Recording suite** for animated GIF (beat-synchronized loops) and high-quality WebM video

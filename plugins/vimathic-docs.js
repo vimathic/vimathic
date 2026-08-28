@@ -424,7 +424,8 @@ Sitemap: ${siteUrl}/sitemap.xml
 // catalogue), so re-check them against these files when any of them change:
 //   192 formulas  → src/math-collections.js (12 collections, 192 entries)
 //   38 GPU shaders→ the shader <optgroup>s in index.html (#gpu-sel, 0..37)
-//   44 schemes    → COLOR_SCHEME_COUNT in src/params.js (was stated as 36)
+//   54 schemes    → COLOR_SCHEME_COUNT in src/params.js (was stated as 36,
+//                   then 44 before the NIGHT series)
 //   122/42/28     → the tier table in MATHEMATICAL_ACCURACY.md
 //                   (was stated as 120/44/28; A+B = 164, A+B+C = 192)
 // FIX(#30, r2): the bundle size was missed in the first pass and still read
@@ -453,7 +454,7 @@ function renderLlmsTxt(siteUrl, docs) {
     .join('\n');
   return `# VIMATHIC
 
-> VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 44 colour schemes.
+> VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 54 colour schemes.
 
 VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 four years after each version's release — 2030-05-18 for 1.0.0-beta). The entire application is bundled into a single HTML file (~1.1 MB) plus three companion files: a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
 
