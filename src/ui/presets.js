@@ -226,8 +226,18 @@ export const PresetMixin = {
       gridVisible: r.grid?.visible ?? true,
       // NIGHT is part of the look, not a session preference: a snapshot taken
       // at 3 a.m. that comes back with the starfield on and the panel glowing
-      // is not the snapshot that was taken. Older files have no such key and
-      // read as false, which is what they were.
+      // is not the snapshot that was taken.
+      //
+      // FIX(night): this used to promise that older files "have no such key
+      // and read as false, which is what they were". They do not. The apply
+      // side is guarded by `s.nightly != null` (_applyStateFields), so a file
+      // written before this key existed leaves the mode exactly as it found
+      // it — load one while NIGHT is on and its bright colorIdx arrives under
+      // a starless sky. That is the same "no opinion, no change" policy the
+      // s.shader branch keeps a few lines further down, and it is the one
+      // corrected here rather than the code: a preset that never recorded the
+      // mode has nothing to say about it, and guessing false for it would be
+      // an opinion the file does not hold.
       nightly:     r.nightly ?? false,
 
       // ── Camera ──────────────────────────────────────────────────────────

@@ -1167,6 +1167,36 @@ describe('NIGHT — what the panel switch owns', () => {
       'a switch-on that restarts a fade nobody needed is a visible flicker');
   });
 
+  test('it paints the panel and the button, not just the engine', () => {
+    // body.nightly is what brings the three accent hues down with the picture
+    // (index.html) — in a dark room the panel is the brightest thing on
+    // screen, so a mode that dims the scene and not the chrome is half a mode.
+    fire('night-btn', 'click');
+    assert.equal(document.body.classList.contains('nightly'), true);
+    assert.equal(byId('night-btn').classList.contains('active'), true);
+
+    fire('night-btn', 'click');
+    assert.equal(document.body.classList.contains('nightly'), false);
+    assert.equal(byId('night-btn').classList.contains('active'), false,
+      'the button reads ON in a session where the mode is off');
+  });
+
+  test('keepPalette — a snapshot brings its own palette, so the switch-on leaves it', () => {
+    // The preset and ClipPlayer path. applyState has already applied the
+    // snapshot's colorIdx through PARAM_FIELDS; the switch-on nudge is for a
+    // hand on the button, not for a file that has already said which palette
+    // it wants. The pool must still narrow — that is about what the app picks
+    // unattended, which the snapshot says nothing about.
+    ui.audio.colorIdx = 16;
+    ui.render.U.uCM.value = 16;
+
+    ui.setNightly(true, { keepPalette: true });
+
+    assert.equal(ui.audio.colorIdx, 16, "the snapshot's own palette was dragged to 44");
+    assert.equal(ui.called('setColorSchemeAnimated').length, 0);
+    assert.deepEqual(ui.autoColor.pool, NIGHT_SCHEMES);
+  });
+
   test('re-asserting the mode leaves both shuffle decks alone', () => {
     // What a preset click, an import, a boot restore and every ClipPlayer step
     // do: captureState writes `nightly` unconditionally, so applyState calls

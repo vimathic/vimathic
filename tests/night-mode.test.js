@@ -38,9 +38,9 @@ globalThis.document = {
   querySelectorAll: () => [],
 };
 
-let RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY, uiColor, THREE;
+let RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY, STARS_OPACITY, uiColor, THREE;
 before(async () => {
-  ({ RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY, uiColor } =
+  ({ RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY, STARS_OPACITY, uiColor } =
     await import('../src/render.js'));
   // Both are free variables in setTransparentBackground's body, so the
   // reinjection below has to hand them to the rebuilt copy.
@@ -61,7 +61,8 @@ beforeEach(() => {
   host = Object.assign(Object.create(RenderEngine.prototype), {
     transitions: new TransitionManager(),
     grid:  { visible: true, material: { opacity: GRID_OPACITY, transparent: true } },
-    stars: { visible: true },
+    // The starfield fades now, so it has a material like the grid does.
+    stars: { visible: true, material: { opacity: STARS_OPACITY, transparent: true } },
     scene: {}, renderer: { setClearColor() {} },
     gridLitOpacity: GRID_OPACITY,
     nightly: false,
@@ -77,9 +78,30 @@ const advance = ms => { for (let d = 0; d < ms; d += 16) { clock += 16; host.tra
 describe('NIGHT moves the furniture', () => {
   test('the starfield goes, and comes back on the way out', () => {
     setNightly(true);
+    advance(600);
     assert.equal(host.stars.visible, false, 'the brightest thing in the frame is still there');
     setNightly(false);
+    advance(600);
     assert.equal(host.stars.visible, true);
+    assert.equal(host.stars.material.opacity, STARS_OPACITY);
+  });
+
+  test('the starfield fades rather than cuts', () => {
+    // `nightly` is part of the snapshot (presets.js), so a clip whose steps
+    // were saved with the mode on and off alternates it every few seconds —
+    // and 1200 white points arriving between one frame and the next is exactly
+    // the flashing this app damps elsewhere. The grid already fades across
+    // this toggle; the two halves of the mode should arrive together.
+    setNightly(true);
+    advance(100);
+    assert.equal(host.stars.visible, true,
+      'gone within a frame of the click — that is a cut, not a fade');
+    assert.ok(host.stars.material.opacity > 0 && host.stars.material.opacity < STARS_OPACITY,
+      `mid-fade opacity is ${host.stars.material.opacity}, i.e. the fade is not running`);
+    advance(600);
+    assert.equal(host.stars.visible, false);
+    assert.equal(host.stars.material.opacity, STARS_OPACITY,
+      'hidden stars must rest at full opacity, or the instant restore brings back nothing');
   });
 
   test('a shown grid is dimmed, not hidden — it is how the surface is read', () => {
@@ -249,10 +271,10 @@ describe('NIGHT and transparent background share the starfield', () => {
     // through THAT. If the fix is ever rewritten, RESTORE_RE stops matching
     // and the control below says so rather than going quietly green.
     const src = RenderEngine.prototype.setTransparentBackground.toString();
-    const RESTORE_RE = /this\.stars\.visible\s*=\s*!this\.nightly;/;
+    const RESTORE_RE = /this\._setStarsNow\(!this\.nightly\);/;
     assert.ok(RESTORE_RE.test(src),
       'RESTORE_RE is stale — this control can no longer reinject the defect, fix the regexp');
-    const mutantSrc = src.replace(RESTORE_RE, 'this.stars.visible = true;');
+    const mutantSrc = src.replace(RESTORE_RE, 'this._setStarsNow(true);');
     // Class bodies are strict; an object-literal method rebuilt through
     // Function is not, so say so explicitly rather than run the copy under
     // different rules than the original.
@@ -265,6 +287,22 @@ describe('NIGHT and transparent background share the starfield', () => {
     unfixed.call(host, false);
     assert.equal(host.stars.visible, true,
       'the defect no longer reproduces — the test above may have stopped discriminating');
+  });
+
+  test('the instant restore is not undone by a fade still running', () => {
+    // The output format writes both fields itself, so it owes an abandoned
+    // fade nothing — but it does have to take the slot away from it. A fade
+    // left in the slot goes on writing opacity one frame later, over the value
+    // just set, and the starfield dips to nothing before climbing back.
+    setNightly(true);  advance(600);      // stars hidden
+    setNightly(false);                    // ...and now fading back IN
+    advance(100);
+    transparent(true);                    // alpha output: hide, instantly
+    transparent(false);                   // ...and back, instantly (NIGHT is off)
+    assert.equal(host.stars.material.opacity, STARS_OPACITY, 'restored at full strength');
+    advance(16);
+    assert.equal(host.stars.material.opacity, STARS_OPACITY,
+      'a fade nobody stopped went on writing opacity over the instant restore');
   });
 
   test('switching NIGHT off under transparent background leaves them hidden', () => {

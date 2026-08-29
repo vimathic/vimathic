@@ -447,6 +447,18 @@ vec3 coalPlum(float t){vec3 a=vec3(.020,.012,.031),b=vec3(.137,.078,.180),c=vec3
 //   threshold 0.15 (render.js). So a palette's Y and the bloom gate are
 //   directly comparable numbers.
 //
+//   FIX(night): comparable where getColor()'s return value IS the pixel,
+//   which is WIRE and PTS with a Matte finish — the shipped startup state.
+//   It is not the whole story in SURF, nor with any non-Matte material.
+//   uLighting=1 puts color*(0.30 + diff*0.85) + color*rim + vec3(spec)
+//   between the palette and gl_FragColor, i.e. a gain and an ADDITIVE
+//   white term; the reflection block runs in every viz mode and mixes in
+//   studioEnv on top. Both raise what the high-pass sees above the number
+//   below. The contract still holds as written — it is a contract on the
+//   palette, and it is what keeps the palette itself out of the glow — but
+//   "nothing here blooms at rest" is a claim about the palette, not a
+//   promise about every lit frame.
+//
 //   NIGHT contract, every stop and therefore the whole ramp (Y is affine
 //   in the components and max_channel is a max of affine functions, so
 //   both take their extremes at the stops):
