@@ -1381,6 +1381,12 @@ export class RenderEngine {
     // constant stays the default and the export, so nothing else moves.
     this.gridLitOpacity = GRID_OPACITY;
 
+    // The handback a grid fade still owes, or null. fadeGrid keeps its whole
+    // `visible` bookkeeping in the tween's onDone, and a pre-emption never
+    // runs one — so a pre-empting caller that establishes nothing itself has
+    // to run this instead. setGridLitOpacity is that caller; see both.
+    this._gridFadeSettle = null;
+
     // NIGHT mode. Owns nothing in the shader — see setNightly().
     this.nightly = false;
 
@@ -2658,9 +2664,18 @@ export class RenderEngine {
     // setTransparentBackground already makes; this is the one writer that lands
     // long after the fact.
     const claimed = g.visible;
-    this.transitions.start('grid-fade', GRID_FADE_MS, p => {
-      g.material.opacity = from + (target - from) * p;
-    }, () => {
+    // FIX(night): the handback published so a pre-emption can make it happen.
+    // It is deliberately NOT the tween's onCancel. Another fadeGrid taking
+    // this slot establishes `visible` itself and this one owes nothing, so
+    // running it there would be wrong — and reachably wrong: G reads
+    // grid.visible (main.js), a fade-out leaves that true for its whole
+    // 400 ms, so a second tap of G inside the fade calls fadeGrid(false)
+    // AGAIN, and a handback then would yank the grid out of the scene at
+    // nine-tenths opacity instead of letting it finish. The one caller that
+    // does need it is setGridLitOpacity, which establishes nothing — it asks
+    // for it by name.
+    const settle = () => {
+      if (this._gridFadeSettle === settle) this._gridFadeSettle = null;
       if (g.visible === claimed) g.visible = on;
       // Hidden grids rest at full opacity, never at the 0 the fade ended on.
       // That is what keeps every other path honest: the ⊞ GRID button, a
@@ -2668,7 +2683,11 @@ export class RenderEngine {
       // grid left at 0 would come back invisible while its button read ON.
       // "Full" is gridLitOpacity, not the constant: in NIGHT they differ.
       if (!on) g.material.opacity = this.gridLitOpacity;
-    });
+    };
+    this._gridFadeSettle = settle;
+    this.transitions.start('grid-fade', GRID_FADE_MS, p => {
+      g.material.opacity = from + (target - from) * p;
+    }, settle);
   }
 
   /**
@@ -2676,12 +2695,29 @@ export class RenderEngine {
    *
    * Shares the 'grid-fade' slot with fadeGrid() on purpose. The two are the
    * only writers of grid.material.opacity, and one slot means they cannot
-   * fight: whichever runs second cancels the first instead of interleaving
-   * two tweens onto the same number. A hidden grid is parked rather than
+   * fight over that number: whichever runs second cancels the first instead
+   * of interleaving two tweens onto it. A hidden grid is parked rather than
    * tweened, which is the same rule fadeGrid's onDone applies — a grid that
    * comes back must come back visible.
+   *
+   * FIX(night): one slot was NOT enough on its own. The loser of that race
+   * also owned `grid.visible` — fadeGrid lowers it only in its onDone, which
+   * the cancel path never reaches — so pre-empting a fade-out left the grid
+   * the operator had just switched off in the scene, and in captureStream, the
+   * second screen and the recorder with it, while `grid.visible` reported the
+   * opposite and swallowed the next G press. Unlike a second fadeGrid, this
+   * method establishes no `visible` of its own, so nothing downstream would
+   * repair that: it has to make the fade land itself, which is what the two
+   * lines below do.
    */
   setGridLitOpacity(v) {
+    // Run the pending fade's handback — its decision about `visible` stands,
+    // only its animation is cut short — and then take the slot off it, or it
+    // goes on writing opacity over whatever is chosen below and lands on the 0
+    // it was heading for. Order matters: settle first, because it is what can
+    // make `g.visible` false, and the branch below reads that.
+    this._gridFadeSettle?.();
+    this.transitions.cancel('grid-fade');
     this.gridLitOpacity = v;
     const g = this.grid;
     if (!g) return;

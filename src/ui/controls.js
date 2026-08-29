@@ -657,6 +657,16 @@ export function bindControls(ui) {
   //        ever flipped, quietly overwrite the snapshot.
   ui.setNightly = (on, opts = {}) => {
     on = !!on;
+    // FIX(night): a mode that is already where it is asked to be does nothing.
+    // Not an optimisation — the two lines below build brand-new ShuffleBags,
+    // and a new bag is a new deck, so re-asserting the mode silently reset the
+    // no-repeat guarantee both pools advertise. That is not a rare path:
+    // captureState writes `nightly` unconditionally, so applyState re-asserts
+    // it on every preset click, every import, every boot restore and every
+    // ClipPlayer step — and a clip stepping every 5 s under an 8-bar cadence
+    // meant every automatic draw came from a virgin deck. Read r.nightly here,
+    // before r.setNightly(on) overwrites the answer.
+    if (r.nightly === on) return;
     r.setNightly(on);
     document.body.classList.toggle('nightly', on);
     DOM.nightBtn?.classList.toggle('active', on);
@@ -669,15 +679,43 @@ export function bindControls(ui) {
     ui.onColorPoolChange?.(on);
 
     // Switching on while a bright palette is up would leave the mode looking
-    // broken — stars gone, grid dimmed, picture still glaring. Move to the
-    // first NIGHT scheme, through the same write path AUTO COLOUR uses so the
-    // dropdown and the engine stay in step. Deterministic rather than a draw:
-    // a mode you turn on should look the same each time you turn it on.
-    if (on && !opts.keepPalette && a.colorIdx < NIGHT_SCHEME_FIRST) {
-      const idx = NIGHT_SCHEMES[0];
-      a.colorIdx = idx;
-      r.setColorSchemeAnimated(idx);
-      if (DOM.colorSel) DOM.colorSel.value = String(idx);
+    // broken — stars gone, grid dimmed, picture still glaring.
+    //
+    // FIX(night): asking a.colorIdx alone was asking the wrong question. What
+    // is on screen is mix(getColor(uCM), getColor(uCMNext), uCMBlend), and
+    // a.colorIdx names only the DESTINATION — AUTO COLOUR writes it at fire
+    // time, before the fade has moved a pixel. That gap used to be at most 3 s
+    // of a 16 s period; then the fade grew to fill the whole period
+    // (auto-cycle.js, fadeRatio 1) and the destination stopped describing the
+    // picture at all. Two different wrongs, so two answers.
+    if (on && !opts.keepPalette) {
+      const showing = r.U?.uCM?.value ?? a.colorIdx;
+      if (a.colorIdx < NIGHT_SCHEME_FIRST) {
+        // Heading somewhere bright: move it. Through the same write path AUTO
+        // COLOUR uses, so the dropdown and the engine stay in step, and to a
+        // fixed scheme rather than a draw — a mode you turn on should look the
+        // same each time you turn it on.
+        const idx = NIGHT_SCHEMES[0];
+        a.colorIdx = idx;
+        r.setColorSchemeAnimated(idx);
+        if (DOM.colorSel) DOM.colorSel.value = String(idx);
+        ui.autoColor?.defer();
+      } else if (showing < NIGHT_SCHEME_FIRST) {
+        // Already bound for a NIGHT palette — AUTO COLOUR drew one, or the
+        // operator picked one — but still showing the bright scheme it is
+        // crawling away from, for up to a minute of an idle-cadence fade.
+        // Keep the destination and shorten the journey to a hand-pick's
+        // length; overwriting it with scheme 44 would throw away a choice that
+        // already satisfies the mode.
+        r.setColorSchemeAnimated(a.colorIdx);
+        ui.autoColor?.defer();
+      }
+      // defer() on both, because this is a hand on a button and every other
+      // manual colour write defers: the dropdown above, Q/E/R through
+      // main.js's _pickColorScheme, the MIDI knob. Assigning DOM.colorSel.value
+      // from script fires no change event, so nothing else would — and without
+      // it AUTO COLOUR could crossfade the mode's own opening palette away a
+      // fraction of a second later.
     }
     // Leaving NIGHT keeps whatever is on screen. The palettes are ordinary
     // members of the catalogue and a good look should not evaporate because
@@ -709,6 +747,15 @@ export function bindControls(ui) {
     // a control the user had forgotten was on.
     ui.autoColor?.disable();
     ui.autoMaterial?.disable();
+    // FIX(night): and NIGHT, which is a mode by the same test. Nothing undoes
+    // it transitively: resetParamsToDefault sweeps only registered PARAMS,
+    // AutoCycler.disable() leaves a pool alone, and the starfield has no other
+    // writer. Left on, "back to the startup state" landed on bright Amber
+    // under a starless sky with both unattended pickers still locked to the
+    // NIGHT ten — verbatim the picture setNightly's own comment calls broken —
+    // and the capture-phase autosave in presets.js then wrote it back, so it
+    // survived the reload too.
+    ui.setNightly?.(false);
 
     // ── Visual mode + shape + formula ─────────────────────────────────────
     // FIX(#15, r3): route the viz-mode reset through the same engine call + UI

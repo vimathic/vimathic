@@ -38,10 +38,13 @@ globalThis.document = {
   querySelectorAll: () => [],
 };
 
-let RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY;
+let RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY, uiColor, THREE;
 before(async () => {
-  ({ RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY } =
+  ({ RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY, uiColor } =
     await import('../src/render.js'));
+  // Both are free variables in setTransparentBackground's body, so the
+  // reinjection below has to hand them to the rebuilt copy.
+  THREE = await import('three');
 });
 
 const realNow = performance.now.bind(performance);
@@ -106,6 +109,101 @@ describe('NIGHT moves the furniture', () => {
       'parked immediately — there is nothing on screen to fade');
   });
 
+  test('a NIGHT toggle inside a G fade does not lose the hide', () => {
+    // fadeGrid keeps its whole bookkeeping in the tween's onDone: on the way
+    // out `visible` stays true for the full 400 ms and goes false only when
+    // the fade lands. setGridLitOpacity shares the slot, so starting its own
+    // tween cancelled that fade and the write was discarded — leaving the grid
+    // the operator had just switched off in the scene, and therefore in
+    // captureStream, the second screen and the recorder, with grid.visible
+    // reading the opposite of reality and swallowing the next G press.
+    fadeGrid(false);        // G — 400 ms of fading out...
+    advance(100);
+    setNightly(true);       // ...and the mode switched inside it
+    advance(600);
+    assert.equal(host.grid.visible, false,
+      'the grid that was switched off is still in the scene — the pre-empted fade lost its onDone');
+    assert.equal(host.grid.material.opacity, NIGHT_GRID_OPACITY,
+      'a hidden grid rests at the mode\'s lit opacity, so G brings it back at the right strength');
+  });
+
+  test('control — the same two actions in the other order were always fine', () => {
+    // The defect is one-directional: setGridLitOpacity's tween owes no
+    // handback, so fadeGrid pre-empting it loses nothing. If this ever fails,
+    // the fix has broken the half that was already right.
+    setNightly(true);
+    advance(100);
+    fadeGrid(false);
+    advance(600);
+    assert.equal(host.grid.visible, false);
+    assert.equal(host.grid.material.opacity, NIGHT_GRID_OPACITY);
+  });
+
+  test('control — a grid hidden by a third party mid-fade still rests at the new value', () => {
+    // ⊞ GRID, a preset and setTransparentBackground all write grid.visible
+    // directly, so a fade can be left running over a grid that is already
+    // hidden. Nothing here needs the fade cancelled — its own onDone parks at
+    // gridLitOpacity, which by then is the mode's value — and this case says
+    // so, because an earlier draft of the fix added a cancel that no test
+    // could distinguish from its own absence.
+    fadeGrid(false);
+    advance(100);
+    host.grid.visible = false;   // ⊞ GRID / a preset / transparent background
+    setNightly(true);
+    advance(600);
+    assert.equal(host.grid.material.opacity, NIGHT_GRID_OPACITY);
+    assert.equal(host.grid.visible, false,
+      'the fade handed `visible` back over a third party that had already claimed it');
+  });
+
+  test('a settled fade does not land a second time over ⊞ GRID', () => {
+    // Making the fade land is only half of it: its tween is still in the slot
+    // and its onDone is still coming. If it arrives after the operator has
+    // brought the grid back by hand, `claimed` no longer protects anything —
+    // the fade re-runs its decision and switches off a grid switched on a
+    // moment ago, with the button left reading ON. So the slot has to be taken
+    // away from it, not merely settled.
+    fadeGrid(false);            // G — fading out
+    advance(100);
+    setNightly(true);           // the mode makes that fade land: hidden, at 0.04
+    host.grid.visible = true;   // ⊞ GRID — the operator brings it straight back
+    advance(600);               // ...where the old fade's onDone would have landed
+    assert.equal(host.grid.visible, true,
+      'the settled fade landed again and switched off a grid the operator had just switched on');
+  });
+
+  test('control — a second G tap inside the fade does not cut the grid out early', () => {
+    // The regression an earlier draft of this fix shipped, caught in review.
+    // G reads grid.visible (src/main.js), and a fade-OUT leaves that true for
+    // its whole 400 ms — so double-tapping G calls fadeGrid(false) a SECOND
+    // time, and that is the reachable double-fade path, not fade-out→fade-in.
+    // A draft ran the dying fade's handback at the top of every fadeGrid,
+    // which hid the grid at the instant of the second tap, at nine-tenths
+    // opacity, with the remaining fade running invisibly. NIGHT is not
+    // involved: this is the plain G key on a plain grid.
+    fadeGrid(false);
+    advance(100);
+    fadeGrid(false);
+    assert.equal(host.grid.visible, true,
+      'the grid vanished at the second tap instead of finishing its fade');
+    advance(600);
+    assert.equal(host.grid.visible, false);
+    assert.equal(host.grid.material.opacity, GRID_OPACITY);
+  });
+
+  test('control — G pre-empted by G still ends where the second press asked', () => {
+    // The handback must not be run from the pre-empted tween's onCancel: by
+    // then fadeGrid(true) has already raised `visible`, and a dying fade-out
+    // handing back `false` would hide the fade-in that replaced it. This is
+    // the case that fails if the settle moves into start()'s onCancel alone.
+    fadeGrid(false);
+    advance(100);
+    fadeGrid(true);
+    advance(600);
+    assert.equal(host.grid.visible, true, 'the second G press was swallowed');
+    assert.equal(host.grid.material.opacity, GRID_OPACITY);
+  });
+
   test('G still lands on whatever NIGHT decided rest means', () => {
     setNightly(true); advance(600);
     fadeGrid(false);  advance(600);
@@ -134,18 +232,37 @@ describe('NIGHT and transparent background share the starfield', () => {
     assert.equal(host.stars.visible, true);
   });
 
-  test('reinjected — the old unconditional restore undoes NIGHT', () => {
-    // The assertion above has to discriminate, not just pass. This is the
-    // restore branch as it was before NIGHT existed, verbatim in effect:
-    // `this.stars.visible = true`, under a comment explaining that nothing else
-    // writes the field. Run the same scenario through it and the starfield
-    // comes back — which is the failure the test above is there to catch.
-    const unfixedRestore = h => { h.transparentBg = false; h.stars.visible = true; };
+  test('reinjected — the pre-NIGHT restore, rebuilt from the real method, undoes NIGHT', () => {
+    // The assertion above has to discriminate, not just pass, and this is the
+    // case that proves it can.
+    //
+    // FIX(night): it used to prove nothing. The "unfixed restore" was a
+    // two-line stand-in written here — `h.stars.visible = true` — and the
+    // assertion under it read back the value that line had just written. No
+    // edit to src/ could turn it red, so the alarm in its own message could
+    // never print: a control that cannot fail is the thing it was guarding
+    // against, one file over.
+    //
+    // So mutate the real source instead, the way tests/clock-rate.test.js
+    // does: take setTransparentBackground's own text, put the pre-NIGHT
+    // restore back into it, rebuild the method and run the same scenario
+    // through THAT. If the fix is ever rewritten, RESTORE_RE stops matching
+    // and the control below says so rather than going quietly green.
+    const src = RenderEngine.prototype.setTransparentBackground.toString();
+    const RESTORE_RE = /this\.stars\.visible\s*=\s*!this\.nightly;/;
+    assert.ok(RESTORE_RE.test(src),
+      'RESTORE_RE is stale — this control can no longer reinject the defect, fix the regexp');
+    const mutantSrc = src.replace(RESTORE_RE, 'this.stars.visible = true;');
+    // Class bodies are strict; an object-literal method rebuilt through
+    // Function is not, so say so explicitly rather than run the copy under
+    // different rules than the original.
+    const unfixed = new Function('THREE', 'uiColor',
+      `'use strict'; return ({ ${mutantSrc} }).setTransparentBackground;`)(THREE, uiColor);
 
     setNightly(true);
-    transparent(true);
+    unfixed.call(host, true);
     assert.equal(host.stars.visible, false, 'precondition: both owners agree they are hidden');
-    unfixedRestore(host);
+    unfixed.call(host, false);
     assert.equal(host.stars.visible, true,
       'the defect no longer reproduces — the test above may have stopped discriminating');
   });
