@@ -325,10 +325,170 @@ describe('the paths the app takes and the guards above do not', () => {
       else below.push(`${shape} ${Number(r).toFixed(3)}`);
       g.dispose();
     }
-    assert.equal(ones, 9, `the document says nine shapes round to 1.000000; this tree gives ${ones}`);
-    assert.equal(near, 9, `the document says nine more clear 0.997; this tree gives ${near}`);
+    // Ten and eight since `pyramid` was meshed across its faces: it read
+    // 0.999966 on 423 vertices standing on two lines, and reads 0.9999998 on
+    // the 6883 it has now. The body is the same one — same planes, same box,
+    // same volume — so this pair moving is a fact about the sampling, not about
+    // the shape. See snapRingsToPolygon in src/render.js.
+    assert.equal(ones, 10, `the document says ten shapes round to 1.000000; this tree gives ${ones}`);
+    assert.equal(near, 8, `the document says eight more clear 0.997; this tree gives ${near}`);
     assert.deepEqual(below, ['tetrahedron 0.407', 'star 0.954'],
       'the document names exactly these two as falling short, with these values');
+  });
+
+  test('the grid list MATHEMATICAL_ACCURACY.md publishes is the one this tree produces', () => {
+    // The document names every `gridSize` the catalogue can produce, and until
+    // this test the list was kept by hand. It had drifted: the revision before
+    // this one published 22 values including 9 and 13, which NO shape produced
+    // on either configuration — walking the tree at 5d13eeb gives 20. A list
+    // maintained by hand in a file that also states three times over what the
+    // odd ones are is a list that will drift again, so it gets a home here.
+    //
+    // Both configurations, because the document's list is the union: `lo` and
+    // `planeSegs` both move with isMobile, and half these values exist only on
+    // one side (43 and 45 are mobile-only, 83 and 114 desktop-only).
+    const grids = new Set();
+    for (const isMobile of [false, true]) {
+      for (const shape of SHAPE_NAMES) {
+        const stage = Object.create(RenderEngine.prototype);
+        Object.assign(stage, {
+          CFG: { planeSegs: isMobile ? 80 : 160, planeSize: 7 },
+          isMobile,
+          isShapeChanging: false, pendingShape: null, currentShape: null,
+          gpuMesh: { geometry: new THREE.PlaneGeometry(1, 1, 1, 1) },
+          gpuPtsProxy: null,
+          clearSolarSystem() {}, _buildSolarSystem() {}, cb: null,
+        });
+        stage.setShape(shape);
+        // The same expression MathVisualizer uses — five places in that file,
+        // all of them `Math.round(Math.sqrt(pos.count))`.
+        grids.add(Math.round(Math.sqrt(stage.gpuMesh.geometry.attributes.position.count)));
+      }
+    }
+    const produced = [...grids].sort((a, b) => a - b);
+
+    // Same idiom the shader-source check at the foot of this file uses: this
+    // file has no path helper, and a URL relative to the module cannot go stale.
+    const doc = readFileSync(new URL('../MATHEMATICAL_ACCURACY.md', import.meta.url), 'utf8');
+    const m = doc.match(/\*\*(\d+) distinct grids — ([\d,\s]+)\*\*/);
+    assert.ok(m, 'the document no longer publishes a grid list in the form this test reads');
+    const published = m[2].split(',').map(s => Number(s.trim())).sort((a, b) => a - b);
+
+    assert.deepEqual(produced, published,
+      `the document publishes ${published.join(', ')}; this tree produces ${produced.join(', ')}`);
+    assert.equal(Number(m[1]), produced.length,
+      `the document counts ${m[1]} grids and then lists ${produced.length}`);
+    // The sentence also states the parity split, and that is the half that went
+    // stale silently last time — the count was right while the members were not.
+    const odd = produced.filter(g => g % 2).length;
+    assert.match(doc, new RegExp(`\\*\\* — ${'zero one two three four five six seven eight nine ten eleven twelve thirteen'.split(' ')[odd]} odd and ${'zero one two three four five six seven eight nine ten eleven twelve thirteen'.split(' ')[produced.length - odd]} even`),
+      `this tree gives ${odd} odd and ${produced.length - odd} even grids; the sentence after the list disagrees`);
+  });
+
+  test('a faceted body has interior vertices for the field to move', async () => {
+    // The census above scores how FAITHFULLY a shape draws a field. This asks
+    // the question under it: whether the shape has anywhere to draw one at all.
+    // `pyramid` did not. Built as CylinderGeometry(…, 4, lo) its 423 vertices
+    // stood on the two lines x = 0 and z = 0 — a face had two bounding edges
+    // and no interior sample — so the height field could vary along the four
+    // rays and nowhere across a face.
+    //
+    // `rule90` is the probe because it is the case where "nearly invisible"
+    // became exactly nothing: the field lattice was round(√423) = 21, x = 0 is
+    // the automaton's seed column and its centre cell C(g, g/2) is even for
+    // every g ≥ 1, and z = 0 is generation 17, whose live cells sit at 15, 17,
+    // 47, 49 of 64 and a 21-node lattice steps over all four. Both sampled
+    // lines dead, one constant, and the pyramid sank as a rigid body.
+    const { getFormula } = await import('../src/math-collections.js');
+    const rule90 = getFormula('cellularAutomata', 'rule90');
+
+    const heights = (geo) => {
+      const pos  = geo.attributes.position;
+      const base = pristineOf(geo);
+      const grid = Math.round(Math.sqrt(pos.count));
+      applyHeightField(
+        geo, generateSurfaceFromFormula(rule90.f, { amp: 0.7 }, grid, EXTENT, 0),
+        base, EXTENT);
+      const levels = new Set();
+      let lifted = 0;
+      for (let i = 0; i < pos.count; i++) {
+        const h = pos.getY(i) - base[i * 3 + 1];
+        levels.add(h.toFixed(4));
+        if (h > 0.1) lifted++;                       // the automaton's live level is +0.4·amp
+      }
+      return { levels: levels.size, lifted, count: pos.count };
+    };
+
+    const now = heights(build('pyramid'));
+    assert.ok(now.levels > 1,
+      `rule90 draws ${now.levels} distinct heights on pyramid; a body that draws one is drawing nothing`);
+    // 11.6 % of the automaton's own cells are live, and the shape's footprint is
+    // a diamond inside the square domain, so the two figures do not have to
+    // match — but a shape carrying the pattern cannot be an order off it.
+    assert.ok(now.lifted / now.count > 0.05,
+      `only ${(100 * now.lifted / now.count).toFixed(1)} % of pyramid vertices reach the live level`);
+
+    // CONTROL, and this is the half that makes the assertions above mean
+    // something: the geometry this replaced fails them, on the identical probe.
+    const before = heights(new THREE.CylinderGeometry(0.001, 3.2, 5, 4, 80));
+    assert.equal(before.levels, 1,
+      'the four-column pyramid is supposed to read exactly one height — if it does not, ' +
+      'this control is no longer measuring the defect the test is named for');
+    assert.equal(before.lifted, 0);
+
+    // …and the repair added vertices without moving the body. Same four planes,
+    // same box, same volume — measured rather than asserted by construction,
+    // because "more vertices" is one edit away from "different shape".
+    const volume = (geo) => {
+      const p = geo.attributes.position, idx = geo.index;
+      const tris = idx ? idx.count / 3 : p.count / 3;
+      let v = 0;
+      for (let t = 0; t < tris; t++) {
+        const i = idx ? [idx.getX(3*t), idx.getX(3*t+1), idx.getX(3*t+2)] : [3*t, 3*t+1, 3*t+2];
+        const a = [p.getX(i[0]), p.getY(i[0]), p.getZ(i[0])];
+        const b = [p.getX(i[1]), p.getY(i[1]), p.getZ(i[1])];
+        const c = [p.getX(i[2]), p.getY(i[2]), p.getZ(i[2])];
+        v += (a[0]*(b[1]*c[2] - b[2]*c[1]) - a[1]*(b[0]*c[2] - b[2]*c[0])
+                                           + a[2]*(b[0]*c[1] - b[1]*c[0])) / 6;
+      }
+      return Math.abs(v);
+    };
+    const box = (geo) => {
+      geo.computeBoundingBox();
+      const b = geo.boundingBox;
+      return [b.min.x, b.max.x, b.min.y, b.max.y, b.min.z, b.max.z].map(v => +v.toFixed(6));
+    };
+    const drawn = build('pyramid');
+    const was   = new THREE.CylinderGeometry(0.001, 3.2, 5, 4, 80);
+    assert.deepEqual(box(drawn), box(was), 'the meshed pyramid does not occupy the same box');
+    assert.ok(Math.abs(volume(drawn) - volume(was)) < 1e-3,
+      `volume moved: ${volume(drawn).toFixed(4)} against ${volume(was).toFixed(4)}`);
+    assert.equal(drawn.attributes.position.count, 6883);
+
+    // And the section is still a SQUARE, which is the property the other three
+    // assertions cannot see on their own. The corners sit on the axes, so the
+    // cross-section at height y is the diamond |x| + |z| = r(y); a body left as
+    // an 80-gon, or snapped onto one with any other corner count, fails this by
+    // seven orders of magnitude while passing the box unchanged.
+    //
+    // The three are complementary rather than redundant, and the numbers say
+    // which catches what: a cone or an octagon reads 1.325 here and 34.14 →
+    // 53.58 / 48.29 on volume, but an identical box; a snap onto 4 corners with
+    // a segment count that is not a multiple of 4 reads 2.3e-7 here — the
+    // vertices still land on the square's EDGES, only the corners go unclaimed —
+    // and is caught by the box instead (max x 2.977 against 3.2).
+    const rAt = y => 3.2 + (0.001 - 3.2) * (y + 2.5) / 5;
+    const pos = drawn.attributes.position;
+    let offSquare = 0, onSection = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const s = Math.abs(pos.getX(i)) + Math.abs(pos.getZ(i));
+      if (s < 1e-6) continue;                       // the axis: cap centres
+      onSection++;
+      offSquare = Math.max(offSquare, Math.abs(s - rAt(pos.getY(i))));
+    }
+    assert.ok(onSection > 6000, `only ${onSection} vertices are off the axis to measure`);
+    assert.ok(offSquare < 1e-5,
+      `the section is not a square: worst |(|x|+|z|) - r(y)| is ${offSquare.toExponential(3)}`);
   });
 
   test('CONTROL — that census is not something every rule produces', () => {

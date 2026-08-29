@@ -72,11 +72,23 @@ function shapeOf(fake) {
   const g = fake.gpuMesh.geometry;
   g.computeBoundingBox();
   const b = g.boundingBox;
+  // `sec` — the widest |x| + |z| any vertex reaches, i.e. the cross-section
+  // read in the one way a bounding box cannot read it. Added when `pyramid`
+  // was meshed across its faces (snapRingsToPolygon in src/render.js) and its
+  // vertex count and box became those of `pyramid-smooth` exactly: the four
+  // fields above stopped telling the two apart, so a `default:` aimed at the
+  // wrong one of them would have fallen back silently past this stencil. A
+  // square section reaches its widest at a CORNER, on an axis, so sec is the
+  // radius 3.2; a circular one reaches it at 45°, so sec is 3.2·√2 = 4.5255.
+  let sec = 0;
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) sec = Math.max(sec, Math.abs(p.getX(i)) + Math.abs(p.getZ(i)));
   return {
     verts: g.attributes.position.count,
     x: +(b.max.x - b.min.x).toFixed(4),
     y: +(b.max.y - b.min.y).toFixed(4),
     z: +(b.max.z - b.min.z).toFixed(4),
+    sec: +sec.toFixed(4),
   };
 }
 
@@ -110,14 +122,19 @@ describe('an unknown shape value cannot reach the geometry', () => {
     // names, or a `default:` that changed what 'plane' builds, breaks here
     // first. ('plane' had no `case` of its own before round 10 — it WAS the
     // default — which is exactly how a careless fix breaks it.)
-    assert.deepEqual(build('plane'),  { verts: 25921, x: 7, y: 0, z: 7 });
-    assert.deepEqual(build('sphere'), { verts: 25921, x: 7, y: 7, z: 7 });
+    assert.deepEqual(build('plane'),  { verts: 25921, x: 7, y: 0, z: 7, sec: 7 });
+    assert.deepEqual(build('sphere'), { verts: 25921, x: 7, y: 7, z: 7, sec: 4.9497 });
     // disc is 0.08 thick along Y: round 10 took it out of the rotate list, so
     // it lies flat like the plane instead of standing on its rim.
-    assert.deepEqual(build('disc'),   { verts: 6883,  x: 7, y: 0.08, z: 7 });
+    assert.deepEqual(build('disc'),   { verts: 6883,  x: 7, y: 0.08, z: 7, sec: 4.9497 });
     // 6883, not 6722: the boot shape is built through CylinderGeometry with a
     // 1 mm top radius since round 10, which is what closes its mesh.
-    assert.deepEqual(build(BOOT_SHAPE), { verts: 6883, x: 6.4, y: 5, z: 6.4 });
+    assert.deepEqual(build(BOOT_SHAPE), { verts: 6883, x: 6.4, y: 5, z: 6.4, sec: 4.5255 });
+    // The one that made `sec` necessary, and the reason it is asserted here
+    // rather than only in the fallback test: `pyramid` now differs from the
+    // boot shape in this field ALONE — 3.2 against 4.5255, a square section
+    // against a round one — everything else about the two meshes is identical.
+    assert.deepEqual(build('pyramid'),  { verts: 6883, x: 6.4, y: 5, z: 6.4, sec: 3.2 });
   });
 
   test('an unknown value builds the boot shape, not a plate on edge — and says so', () => {

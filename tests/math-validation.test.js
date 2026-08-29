@@ -4384,11 +4384,14 @@ describe('Round 8 — what the whole catalogue said against what an oracle says 
     // At t = 0 the map is (z)/(comp·z + 1), so the pole sits at
     // x = −1/(comp·freq); at the FACTORY sliders that is x = −2, and
     // 0.5·(−2) + 1 is exactly 0 in IEEE double. It is a lattice point of every
-    // mesh whose spacing divides 1.5 — grid 15 has it at xi = 3 — and of the 24
+    // mesh whose spacing divides 1.5 — grid 15 has it at xi = 3 — and of the 19
     // grids the app can reach (3…198, set by the selected shape, not by
     // planeSegs, which is only ever 80 or 160) exactly two land on it: 15
-    // (pyramid and icosahedron-smooth on mobile) and 43 (cylinder and disc on
-    // mobile). The plane's own 81 and 161 miss by 0.0125.
+    // (`icosahedron-smooth`, on both platforms) and 43 (`cylinder`, `cone`,
+    // `disc` and both pyramids, all on mobile). The plane's own 81 and 161 miss
+    // by 0.0125. `pyramid` was named on 15 here until its faces were meshed
+    // (see snapRingsToPolygon in src/render.js); it draws at 43 on mobile now,
+    // which is the other of the two, so the sentence's count is unchanged.
     //
     // With the epsilon the numerator was 0 and the denominator 1e-9, so the
     // pole vertex was drawn at exactly 0: a hole punched through a ridge whose
