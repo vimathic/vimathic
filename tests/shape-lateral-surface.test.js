@@ -139,3 +139,72 @@ test('CONTROL — the app shapes that were never broken stay quiet (#R10 §1.1)'
       `${shape} draws ${area(g).toFixed(4)}, expected ${want.toFixed(4)}`);
   }
 });
+
+// ── The one body with an inside ──────────────────────────────────────────────
+// Every other shape here is a shell: a closed surface with nothing behind it.
+// `sierpinski-tetra` is the exception, and that is the whole reason it exists —
+// a fractal defined by what it REMOVES from a solid cannot be a height field
+// over the floor, and cannot be a formula, because a formula moves vertices and
+// never makes new ones. What a viewer sees in POINTS mode is exactly this
+// property: a cloud with depth in it rather than a lit skin.
+//
+// The hull is derived from the geometry rather than written down, so the test
+// cannot go stale against a change of radius: the four points furthest from the
+// centroid ARE the corners of a regular tetrahedron, and the four planes follow.
+function tetraHullInterior(g) {
+  const p = g.attributes.position;
+  const seen = new Map();
+  for (let i = 0; i < p.count; i++) {
+    const v = [p.getX(i), p.getY(i), p.getZ(i)];
+    seen.set(v.map(x => (Math.round(x * 1e5) / 1e5 + 0).toFixed(5)).join(','), v);
+  }
+  const pts = [...seen.values()];
+  const c = pts.reduce((a, v) => [a[0] + v[0], a[1] + v[1], a[2] + v[2]], [0, 0, 0]).map(x => x / pts.length);
+  const d2 = v => (v[0]-c[0])**2 + (v[1]-c[1])**2 + (v[2]-c[2])**2;
+  const corners = [...pts].sort((a, b) => d2(b) - d2(a)).slice(0, 4);
+
+  const planes = [];
+  for (const skip of [0, 1, 2, 3]) {
+    const [a, b, cc] = [0, 1, 2, 3].filter(i => i !== skip).map(i => corners[i]);
+    const u = b.map((v, j) => v - a[j]), w = cc.map((v, j) => v - a[j]);
+    let n = [u[1]*w[2] - u[2]*w[1], u[2]*w[0] - u[0]*w[2], u[0]*w[1] - u[1]*w[0]];
+    const L = Math.hypot(...n);
+    n = n.map(v => v / L);
+    let dd = n[0]*a[0] + n[1]*a[1] + n[2]*a[2];
+    const o = corners[skip];
+    if (n[0]*o[0] + n[1]*o[1] + n[2]*o[2] - dd > 0) { n = n.map(v => -v); dd = -dd; }
+    planes.push([n, dd]);
+  }
+  let inside = 0;
+  for (const v of pts) {
+    if (planes.every(([n, dd]) => n[0]*v[0] + n[1]*v[1] + n[2]*v[2] - dd < -1e-6)) inside++;
+  }
+  return { inside, total: pts.length };
+}
+
+test('sierpinski-tetra is the one shape with vertices strictly inside its own hull', () => {
+  const g = build('sierpinski-tetra', false);
+  const { inside, total } = tetraHullInterior(g);
+  assert.equal(total, 2050, `depth 5 has 2050 distinct corners; this build has ${total}`);
+  assert.equal(inside, 780,
+    `${inside} of ${total} vertices are strictly inside the hull; depth 5 gives 780 (38.0 %), and ` +
+    'a body whose vertices are all on the skin cannot draw a cloud with depth in it');
+  // POINTS shares the mesh buffer, so the cloud is the un-welded count: the
+  // figure is written out per triangle precisely so those 780 are not welded
+  // away with the rest.
+  assert.equal(g.attributes.position.count, 12288);
+
+  const m = build('sierpinski-tetra', true);
+  const mob = tetraHullInterior(m);
+  assert.equal(mob.inside, 120, `mobile depth 4 gives 120 interior of 514; measured ${mob.inside}`);
+  assert.equal(m.attributes.position.count, 3072);
+});
+
+test('CONTROL — the plain tetrahedron has none, on the identical measurement', () => {
+  // Same hull derivation, same shape family, and the answer must be zero: a
+  // TetrahedronGeometry is a skin over four corners. If this ever reports an
+  // interior, the measurement above is counting something other than depth.
+  const { inside, total } = tetraHullInterior(build('tetrahedron', false));
+  assert.equal(inside, 0, `the plain tetrahedron reports ${inside} interior vertices of ${total}`);
+  assert.equal(total, 4);
+});

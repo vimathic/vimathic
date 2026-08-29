@@ -330,7 +330,7 @@ describe('the paths the app takes and the guards above do not', () => {
     // the 6883 it has now. The body is the same one — same planes, same box,
     // same volume — so this pair moving is a fact about the sampling, not about
     // the shape. See snapRingsToPolygon in src/render.js.
-    assert.equal(ones, 10, `the document says ten shapes round to 1.000000; this tree gives ${ones}`);
+    assert.equal(ones, 11, `the document says eleven shapes round to 1.000000; this tree gives ${ones}`);
     assert.equal(near, 8, `the document says eight more clear 0.997; this tree gives ${near}`);
     assert.deepEqual(below, ['tetrahedron 0.407', 'star 0.954'],
       'the document names exactly these two as falling short, with these values');

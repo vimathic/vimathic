@@ -47,6 +47,7 @@ export const SHAPE_NAMES = Object.freeze([
   'plane', 'sphere', 'box', 'cylinder', 'cone', 'disc', 'ring', 'circle',
   'torus', 'torusknot', 'hex', 'pyramid', 'pyramid-smooth',
   'tetrahedron', 'octahedron', 'icosahedron', 'icosahedron-smooth', 'dodecahedron',
+  'sierpinski-tetra',
   'star', 'solar',
 ]);
 

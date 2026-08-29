@@ -19,11 +19,14 @@
 // spans ±3.5. Measured on the catalogue as render.js builds it (desktop, the
 // same uniforms in silence, uMorphProgress 1), the triangle area landing on a
 // CLAMPED, flat colour went from 0.0 % on every one of the twenty shapes to
-// 73-100 % on FOURTEEN of them, on the first frame: from 73.6 % (torusknot) to
+// 73-100 % on FIFTEEN of them, on the first frame: from 73.6 % (torusknot) to
 // 100 % (octahedron), with solar at 37.7 % and the five flat shapes — plane,
-// disc, circle, hex, tetrahedron — at 0.0 %. 14 + 1 + 5 = 20, and the count is
+// disc, circle, hex, tetrahedron — at 0.0 %. 15 + 1 + 5 = 21, and the count is
 // re-derivable: notes/audits/.../wave3/glsl/probes/P4-clamped-count.txt prints
-// the whole table, and the CONTROL below re-measures the same fourteen.
+// the whole table, and the CONTROL below re-measures the same fifteen.
+// (Fourteen until `sierpinski-tetra` joined the catalogue — a solid body, so it
+// lands in this column like the other solids. The probe file above predates it
+// and lists fourteen; the CONTROL, not the file, is what this count answers to.)
 // (The header used to say "fifteen of them — 81.5 % of the boot shape". The
 // count was wrong and the second half was right: fourteen shapes clear 73 %,
 // and 81.5 % is pyramid-smooth, which IS the boot shape — src/shapes.js's
@@ -481,9 +484,9 @@ describe('the ramp is back inside its window on the whole catalogue', () => {
     // If this ever comes back quiet, the reading above proves nothing.
     const solid = SHAPE_NAMES.filter(n => !FLAT.includes(n) && n !== 'solar');
     // The count in this file's header, pinned here so the two cannot drift:
-    // fourteen shapes clear 73 %, solar reads 37.7 %, the five flat ones 0.0 %.
-    assert.equal(solid.length, 14,
-      `the header says fourteen shapes saturate the ramp under absolute-height colouring; this ` +
+    // fifteen shapes clear 73 %, solar reads 37.7 %, the five flat ones 0.0 %.
+    assert.equal(solid.length, 15,
+      `the header says fifteen shapes saturate the ramp under absolute-height colouring; this ` +
       `control measures ${solid.length} of them (${SHAPE_NAMES.length} shapes, minus ${FLAT.length} ` +
       `flat ones, minus solar)`);
     for (const name of solid) {
