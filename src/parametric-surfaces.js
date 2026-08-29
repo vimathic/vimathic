@@ -30,7 +30,10 @@
 // globally consistent — nothing can, that is what non-orientable means — and
 // the seam is where it shows. See the note on `mobius`.
 
-import * as THREE from 'three';
+// No `import * as THREE` here: ParametricGeometry does the meshing and hands
+// back a BufferGeometry already, so nothing in this file names a three class at
+// runtime. The `Vector3` in the JSDoc below is the type of the target the addon
+// passes in, not a value this module constructs.
 import { ParametricGeometry } from 'three/examples/jsm/geometries/ParametricGeometry.js';
 
 const TAU = Math.PI * 2;
@@ -39,7 +42,7 @@ const TAU = Math.PI * 2;
  * Mesh a parametrisation and hand back a geometry posed like the rest of the
  * catalogue.
  *
- * @param {(u:number, v:number, t:THREE.Vector3)=>void} fn  u, v in [0, 1]
+ * @param {(u:number, v:number, t:import('three').Vector3)=>void} fn  u, v in [0, 1]
  * @param {number} uSegs  divisions along u
  * @param {number} vSegs  divisions along v
  */
@@ -218,7 +221,3 @@ export function buildPseudosphereGeo(uSegs = 120, vSegs = 160, a = 2.4, U = 2.6)
     target.set(rad * Math.cos(v), a * (u - Math.tanh(u)), rad * Math.sin(v));
   }, uSegs, vSegs);
 }
-
-// Re-exported for the tests, which mesh the same parametrisations at their own
-// resolutions rather than trusting the app's.
-export { TAU as _TAU };
