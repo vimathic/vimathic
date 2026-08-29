@@ -149,8 +149,13 @@ Formulas labelled as running "on a 64×64 grid" or similar in this document refe
   of them then pointed at something unrelated. `grep -n 'Math.round(Math.sqrt'
   src/math-visualizer.js` finds the five and cannot go stale.
   Over the twenty shapes in `#shape-sel` that is
-  **21 distinct grids — 3, 5, 8, 10, 15, 18, 24, 43, 45, 52, 63, 65,
-  74, 81, 83, 100, 114, 161, 198, 222, 443** — eleven odd and ten even. 222 and
+  **31 distinct grids — 3, 5, 8, 10, 15, 18, 24, 40, 43, 45, 50, 52, 56, 63, 65,
+  70, 74, 78, 79, 81, 83, 99, 100, 111, 114, 140, 157, 161, 198, 222, 443** — fifteen odd and sixteen even.
+  Ten of those arrived with the six parametric
+  surfaces (40, 50, 56, 70, 78, 79, 99, 111, 140, 157 — two configurations each,
+  with `catenoid` and `hyperboloid` sharing both of theirs), and 111 is a
+  returning value rather than a new one: it was `sierpinski-tetra` at IFS depth
+  5 before that body went deeper. 222 and
   443 are the newest, and they are `sierpinski-tetra` on its two configurations
   — the twenty-first shape, and the first with an interior. They read 222 and
   443 rather than the 55 and 111 published before because the body's IFS now
@@ -183,8 +188,12 @@ Formulas labelled as running "on a 64×64 grid" or similar in this document refe
   f = sin(1.3x) + cos(0.9z) + 0.2xz on each shape's own grid, the drawn
   displacement correlates **1.000000** with f(x, z) — that is, r ≥ 0.9999995,
   which is what rounds to six nines; only `plane` and `octahedron` read a bit-
-  exact 1.000000000 — on **eleven** of the twenty-one, and **≥ 0.997** on
-  **eight** more. The pair has moved twice, and the two moves are one story told at two
+  exact 1.000000000 — on **sixteen** of the twenty-seven, and **≥ 0.997** on
+  **nine** more. Five of the six parametric surfaces land in the first column and
+  one in the second, which is the answer worth taking from this census: a body
+  that no height field can BE still carries a height field faithfully, because
+  the field travels along the normal and does not care how the body was
+  authored. The pair has moved twice before that, and the two moves are one story told at two
   scales, so they are read in order rather than as competing claims about "what
   it was before".
   (Most recently it was nine and nine, until `pyramid` stopped being a body with

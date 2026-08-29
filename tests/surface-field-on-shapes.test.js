@@ -330,8 +330,15 @@ describe('the paths the app takes and the guards above do not', () => {
     // the 6883 it has now. The body is the same one — same planes, same box,
     // same volume — so this pair moving is a fact about the sampling, not about
     // the shape. See snapRingsToPolygon in src/render.js.
-    assert.equal(ones, 11, `the document says eleven shapes round to 1.000000; this tree gives ${ones}`);
-    assert.equal(near, 8, `the document says eight more clear 0.997; this tree gives ${near}`);
+    //
+    // Sixteen and nine since the six parametric surfaces arrived: five of them
+    // land on 1.000000 and one on the 0.997 shelf. That is the answer worth
+    // having from this census — a body that no height field can BE still takes
+    // a height field faithfully, because the field is applied along the normal
+    // and does not care how the body was authored. The two that fall short are
+    // still the same two, with the same values.
+    assert.equal(ones, 16, `the document says sixteen shapes round to 1.000000; this tree gives ${ones}`);
+    assert.equal(near, 9, `the document says nine more clear 0.997; this tree gives ${near}`);
     assert.deepEqual(below, ['tetrahedron 0.407', 'star 0.954'],
       'the document names exactly these two as falling short, with these values');
   });
@@ -380,9 +387,21 @@ describe('the paths the app takes and the guards above do not', () => {
       `the document counts ${m[1]} grids and then lists ${produced.length}`);
     // The sentence also states the parity split, and that is the half that went
     // stale silently last time — the count was right while the members were not.
+    // The word table used to stop at "thirteen", which was every count the
+    // catalogue could reach when it was written. The six parametric surfaces
+    // took the split to fifteen and sixteen, and `words[15]` was `undefined` —
+    // so the regexp became `** — undefined odd and undefined even` and the test
+    // failed while BOTH the document and the tree were right. A guard that
+    // cannot express the answer is not a stricter guard, it is a broken one.
+    const words = ('zero one two three four five six seven eight nine ten eleven twelve thirteen ' +
+                   'fourteen fifteen sixteen seventeen eighteen nineteen twenty').split(' ');
     const odd = produced.filter(g => g % 2).length;
-    assert.match(doc, new RegExp(`\\*\\* — ${'zero one two three four five six seven eight nine ten eleven twelve thirteen'.split(' ')[odd]} odd and ${'zero one two three four five six seven eight nine ten eleven twelve thirteen'.split(' ')[produced.length - odd]} even`),
-      `this tree gives ${odd} odd and ${produced.length - odd} even grids; the sentence after the list disagrees`);
+    const even = produced.length - odd;
+    assert.ok(words[odd] && words[even],
+      `this split is ${odd}/${even} and the word table only reaches ${words.length - 1} — extend it ` +
+      'rather than loosening the match');
+    assert.match(doc, new RegExp(`\\*\\* — ${words[odd]} odd and ${words[even]} even`),
+      `this tree gives ${odd} odd and ${even} even grids; the sentence after the list disagrees`);
   });
 
   test('a faceted body has interior vertices for the field to move', async () => {

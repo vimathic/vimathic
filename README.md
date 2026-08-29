@@ -89,18 +89,18 @@ custom code enters the picture:
 <!-- Colour schemes track COLOR_SCHEME_COUNT in src/params.js (54). -->
 | Axis | Count |
 |---|---|
-| 3D shapes (Plane, Sphere, Torus, Icosahedron, and others) | 20 |
+| 3D shapes (Plane, Sphere, Torus, Klein Bottle, and others) | 27 |
 | Formulas (192 CPU + 38 GPU shaders) | 230 |
 | Colour schemes | 54 |
 | Render modes (surface / wireframe / points) | 3 |
 | Deformation modes (surface / volume / collapse) | 3 |
 | Volume vector fields (when Volume mode is active) | 6 |
 
-<!-- (2 deform modes × 230 formulas + 6 volume fields) × 20 shapes ×
-     3 render modes × 54 schemes = 1 509 840. Recompute if any factor moves. -->
+<!-- (2 deform modes × 230 formulas + 6 volume fields) × 27 shapes ×
+     3 render modes × 54 schemes = 2 038 284. Recompute if any factor moves. -->
 Counting these combinations honestly — accounting for the fact that Volume
 mode replaces the formula slot with one of 6 vector fields, while Surface and
-Collapse use the chosen formula — gives **roughly 1.5 million distinct base
+Collapse use the chosen formula — gives **roughly 2 million distinct base
 states**.
 
 That's before:

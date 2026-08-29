@@ -15,7 +15,7 @@ The visualizer takes any audio source and decomposes it into bass and treble ban
 - **192 CPU formulas** across 12 mathematical domains (fractals, special functions, probability, linear algebra, trigonometry, complex analysis, Fourier series, differential equations, integral transforms, topology, cellular automata, quantum mechanics)
 - **38 GPU shaders** (audio-reactive vertex and fragment programs) running on the graphics card for real-time performance
 - **54 colour schemes** ranging from cinematic to synthwave to scientific to dark, including a Night collection for dark rooms
-- **20 base 3D shapes** with three render modes (surface, wireframe, points) and three deformation modes (surface, volume, collapse)
+- **27 base 3D shapes** with three render modes (surface, wireframe, points) and three deformation modes (surface, volume, collapse)
 - **MIDI controller support** for any controller that sends standard CC messages
 - **Recording suite** for animated GIF (beat-synchronized loops) and high-quality WebM video
 - **Live performance tools**: clip player, second-screen output, virtual camera, OBS integration

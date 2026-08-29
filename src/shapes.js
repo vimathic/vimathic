@@ -48,6 +48,11 @@ export const SHAPE_NAMES = Object.freeze([
   'torus', 'torusknot', 'hex', 'pyramid', 'pyramid-smooth',
   'tetrahedron', 'octahedron', 'icosahedron', 'icosahedron-smooth', 'dodecahedron',
   'sierpinski-tetra',
+  // Surfaces that no height field can be: one-sided (mobius, klein), minimal
+  // (catenoid, helicoid), doubly ruled (hyperboloid), constant negative
+  // curvature (pseudosphere). See src/parametric-surfaces.js for why each one
+  // earns a slot instead of being left to the 192 kernels.
+  'mobius', 'klein', 'catenoid', 'helicoid', 'hyperboloid', 'pseudosphere',
   'star', 'solar',
 ]);
 

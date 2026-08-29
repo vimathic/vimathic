@@ -22,7 +22,7 @@ This page is about what comes after.
 │                  Web · WebGL · Source-available · Free forever  │
 │                                                                 │
 │                  192 mathematical formulas, 38 GPU shaders,     │
-│                  54 colour schemes, 20 base shapes, full        │
+│                  54 colour schemes, 27 base shapes, full        │
 │                  documentation, MIDI, recording, second-screen  │
 │                  output. Single-file deployment, works offline. │
 │                                                                 │
@@ -63,7 +63,7 @@ given freely.
 192   mathematical formulas across 12 domains
  38   GPU shaders
  54   colour schemes
- 20   base shapes × 3 deformation modes
+ 27   base shapes × 3 deformation modes
   ✓   validation tests against scipy, mpmath, NIST DLMF
  14   documentation pages
   ∞   yours to use, study, fork, share

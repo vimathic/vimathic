@@ -8,6 +8,10 @@ import { AfterimagePass }  from 'three/examples/jsm/postprocessing/AfterimagePas
 import { VS, FS } from './shaders.js';
 import { DEFAULT_SHAPE, normalizeShape } from './shapes.js';
 import { normalizeVizMode } from './viz-mode.js';
+import {
+  buildMobiusGeo, buildKleinGeo, buildCatenoidGeo,
+  buildHelicoidGeo, buildHyperboloidGeo, buildPseudosphereGeo,
+} from './parametric-surfaces.js';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Solar-system procedural assets — surfaces, clouds and ring profiles
@@ -2559,6 +2563,17 @@ export class RenderEngine {
       // reference images. Mobile keeps one level back — 4 096 cells, the same
       // ~4× step it had before.
       case 'sierpinski-tetra': return buildSierpinskiTetraGeo(this.isMobile ? 6 : 7, 3.2);
+      // Surfaces a height field cannot be — see src/parametric-surfaces.js for
+      // the rule that decides which of the two catalogues a body belongs in.
+      // The segment counts halve on mobile the same way `lo` does; none of the
+      // six needs the rotate list above, because every parametrisation is
+      // authored with its axis already on Y.
+      case 'mobius':           return buildMobiusGeo(this.isMobile ? 120 : 240, this.isMobile ? 12 : 24);
+      case 'klein':            return buildKleinGeo(this.isMobile ? 110 : 220, this.isMobile ? 55 : 110);
+      case 'catenoid':         return buildCatenoidGeo(this.isMobile ? 100 : 200, this.isMobile ? 30 : 60);
+      case 'helicoid':         return buildHelicoidGeo(this.isMobile ? 120 : 240, this.isMobile ? 20 : 40);
+      case 'hyperboloid':      return buildHyperboloidGeo(this.isMobile ? 100 : 200, this.isMobile ? 30 : 60);
+      case 'pseudosphere':     return buildPseudosphereGeo(this.isMobile ? 60 : 120, this.isMobile ? 80 : 160);
       case 'star':             return this._buildStarGeo();
       case 'solar':            return new THREE.SphereGeometry(1.2, 64, 64);
       // Not a name this build knows. setShape() resolves every value through
