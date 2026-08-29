@@ -51,6 +51,7 @@ const REQUIRED = {
   // resolved by getElementById inside controls.js, where its whole block is
   // written to tolerate a build without it.
   colorAuto:           'color-auto',
+  nightBtn:            'night-btn',
   surfaceMaterialAuto: 'surface-material-auto',
   // Particle style — the PTS counterpart of the surface material row.
   particleStyleWrap:   'particle-style-wrap',

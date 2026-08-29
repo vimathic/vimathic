@@ -174,6 +174,15 @@
     .cg-row > select,.cg-row > .srch-wrap{flex:1;min-width:0}
     .autobtn{flex:0 0 72px;width:auto;margin-top:0;font-size:9px;padding:5px 4px;letter-spacing:.5px}
     .autobtn.active{background:rgba(0,255,170,.11);border-color:var(--green);color:var(--green)}
+    /* NIGHT — in a dark room the panel is brighter than the picture, so the
+       three accent hues come down with it. Only colour moves: no layout, no
+       sizes, no opacity, so nothing shifts under the cursor when it is
+       switched. --pink/--cyan are re-stated because a custom property that
+       reads another one resolves where it is DECLARED (:root), not where it is
+       used — overriding --accent alone would leave the aliases at full
+       strength and only half the chrome would dim. */
+    body.nightly{--accent:#8f2044;--accent2:#0a8f8f;--green:#00805a;
+      --pink:#8f2044;--cyan:#0a8f8f}
     /* ── Global dark select override — covers all selects incl. modals ── */
     select{background:#0a0a1a!important;color:#ddd!important;border-color:rgba(255,58,122,.35)!important;
       border-radius:6px;font-family:monospace;cursor:pointer;color-scheme:dark}
@@ -935,9 +944,23 @@
         <option value="42">Midnight Forest</option>
         <option value="43">Coal Plum</option>
         </optgroup>
+        <optgroup label="— NIGHT —">
+        <option value="44">Burgundy Black</option>
+        <option value="45">Crimson Abyss</option>
+        <option value="46">Tarnished Gold</option>
+        <option value="47">Fathom Blue</option>
+        <option value="48">Cedar Smoke</option>
+        <option value="49">Fern Shadow</option>
+        <option value="50">Orchid Ash</option>
+        <option value="51">Dried Rose</option>
+        <option value="52">Deep Jade</option>
+        <option value="53">Rust Slate</option>
+        </optgroup>
       </select>
       <button id="color-auto" class="autobtn"
-        title="AUTO COLOUR — keeps changing the palette on its own, always as a crossfade. On the beat while music plays (8 bars), on a timer while it doesn't. While it is on, clip-player steps stop applying their preset's colour.">⟳ AUTO</button>
+        title="AUTO COLOUR — keeps changing the palette on its own, always as a crossfade that fills the whole period, so the palette is never standing still. On the beat while music plays (8 bars), on a timer while it doesn't. While it is on, clip-player steps stop applying their preset's colour.">⟳ AUTO</button>
+      <button id="night-btn" class="autobtn"
+        title="NIGHT — for a dark room. Narrows the palette pool to the NIGHT series, hides the starfield and dims the grid, so the mathematics is the brightest thing on screen. Bloom, the specular and every palette number are left alone; G still works. The dropdown stays free — this changes what the app picks for you, not what you can pick.">☾ NIGHT</button>
       </div></div>
     <div class="cg"><label>Surface Material</label>
       <div class="cg-row">

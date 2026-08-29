@@ -59,7 +59,7 @@ Every parameter that has a slider in the panel is mappable, plus a few that aren
 | Bass Sensitivity | 0 – 2.5 | How much bass moves the geometry |
 | Treble Sensitivity | 0 – 2.5 | How much treble brightens edges |
 | Bloom | 0 – 1.5 | Post-process bloom strength |
-| Color Scheme | 0 – 43 | Integer; quantized to 44 palettes |
+| Color Scheme | 0 – 53 | Integer; quantized to 54 palettes |
 | Auto-Rotate Speed | 0 – 0.002 | Slow orbit speed |
 
 In **ABS** mode, CC values 0–127 are mapped linearly across the parameter range. In **REL** mode the incoming byte is a signed tick count and the range only sets the step size. For integer parameters (Color Scheme), the value is rounded to the nearest valid index, and that one wraps rather than sticking at either end.

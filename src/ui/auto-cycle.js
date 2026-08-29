@@ -74,9 +74,11 @@ export class AutoCycler {
    * @param {number}            [opts.bars]        — musical period, default 8.
    * @param {number}            [opts.idleMs]      — silent period, default 12000.
    * @param {number}            [opts.minFadeMs]   — fade floor, default 600.
-   * @param {number}            [opts.maxFadeMs]   — fade ceiling, default 3000.
+   * @param {number}            [opts.maxFadeMs]   — fade ceiling, default none
+   *                                                 (Infinity). See below.
    * @param {number}            [opts.fadeRatio]   — fade as a share of the
-   *                                                 period, default 0.35.
+   *                                                 period, default 1 — the
+   *                                                 fade IS the period.
    * @param {(a,b)=>boolean}    [opts.eq]          — value equality, default ===.
    */
   constructor(opts = {}) {
@@ -84,8 +86,8 @@ export class AutoCycler {
     this.bars       = opts.bars      ?? 8;
     this.idleMs     = opts.idleMs    ?? 12000;
     this.minFadeMs  = opts.minFadeMs ?? 600;
-    this.maxFadeMs  = opts.maxFadeMs ?? 3000;
-    this.fadeRatio  = opts.fadeRatio ?? 0.35;
+    this.maxFadeMs  = opts.maxFadeMs ?? Infinity;
+    this.fadeRatio  = opts.fadeRatio ?? 1;
 
     this._apply     = opts.apply     ?? (() => {});
     this._current   = opts.current   ?? (() => null);
@@ -104,6 +106,26 @@ export class AutoCycler {
     this._timerId = null;
   }
 
+  /**
+   * Swap the pool this draws from — NIGHT narrows AUTO COLOUR to its own
+   * palettes and back again.
+   *
+   * The bag is rebuilt rather than filtered: a ShuffleBag's no-repeat guard is
+   * a deck it deals from, and a deck holding values that are no longer in the
+   * pool would keep dealing them until it emptied. Rebuilding also resets the
+   * "not twice in a row" seam, which is right — across a pool change there is
+   * no run to protect.
+   *
+   * Does not fire, and does not reschedule: what is on screen keeps its full
+   * period. A caller that wants the new pool visible now says so itself.
+   */
+  setPool(pool) {
+    this.pool = (pool ?? []).slice();
+    // Same reason as the constructor: an empty pool makes AUTO a no-op rather
+    // than throwing out of a UI event handler.
+    this._bag = this.pool.length ? new ShuffleBag(this.pool, this._eq) : null;
+  }
+
   // ── Cadence ───────────────────────────────────────────────────────────────
 
   /** Milliseconds until the next change, under the regime in force right now. */
@@ -116,9 +138,31 @@ export class AutoCycler {
   }
 
   /**
-   * How long the fade into the next value should take. A share of the period,
-   * clamped: fast cadences stay legible (never a cut), slow ones don't spend
-   * ten seconds in a half-mixed state.
+   * How long the fade into the next value should take.
+   *
+   * The whole period, by default — so there is no dwell at all: a value
+   * arrives and is already on its way to the next one.
+   *
+   * This used to be 0.35 of the period under a 3 s ceiling, and the ceiling is
+   * what the owner was looking at when he said "the palette just hangs there
+   * for ages". At the shipped 8-bar cadence that is 3 s of crossfade and 13 s
+   * of a still picture (16 bars for material: 3 s and 29 s) — which reads as a
+   * switch, not as drift, because the in-between shades go past in a fifth of
+   * the time they are on screen. The old rationale here — "slow ones don't
+   * spend ten seconds in a half-mixed state" — had it backwards for this
+   * instrument: the half-mixed state IS the thing worth looking at.
+   *
+   * Chaining back-to-back is safe rather than lucky. setColorSchemeAnimated
+   * lands on uCM = uCMNext, uCMBlend = 0 in its onDone, and TransitionManager
+   * retires a tween BEFORE calling onDone specifically so a callback can start
+   * the next one in the same slot. Timer jitter is invisible either way: a
+   * touch early leaves startBlend > 0.5 and the engine rebases onto the value
+   * it was nearly at, a touch late is a few ms of stillness.
+   *
+   * The floor still matters, and now it is the only clamp: at a period under
+   * minFadeMs the fade would outlast its own period and each change would
+   * cancel the one before it mid-way. That needs a cadence below 600 ms — 8
+   * bars at 3200 BPM — but a floor is cheaper than finding out.
    */
   fadeMs(period = this.periodMs()) {
     return Math.round(

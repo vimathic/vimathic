@@ -15,6 +15,33 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Added
 
+- **A NIGHT mode, and ten palettes dark enough for it.** The existing DARK
+  series is not dark: five of its eight clear the bloom threshold in silence, so
+  they glow on their own with no music playing, and the comment describing them
+  has its two tiers the wrong way round — `charcoalSmoke`, labelled truly-dark,
+  is the brightest of the eight. That comment is left alone except for a
+  correction beside it; the numbers behind both claims are in the new NIGHT
+  block. The ten NIGHT palettes (`burgundyBlack` … `rustSlate`, 44–53) are built
+  to a stated contract instead of an adjective: dark enough at rest to stay
+  under the bloom gate, bright enough at the crest to cross it, so a track lights
+  its own peaks and silence stays still. Two of the ten are the requested pairs,
+  burgundy-into-black and red-into-deep-blue.
+  The **☾ NIGHT** button sits beside ⟳ AUTO and does only what a dark room needs:
+  it narrows the unattended pickers — AUTO COLOUR and the R/Q bag — to those ten,
+  hides the starfield, and dims the grid. It writes no shader uniform, no bloom
+  setting and no palette number, so with it off the frame is unchanged and there
+  is nothing to prove about that. The dropdown stays free: the mode changes what
+  the app picks for you, not what you can pick. `G` is untouched. Bloom keeps its
+  shipped strength, radius and threshold, so the dark can still be lifted with
+  it. It rides in snapshots, because a look captured at 3 a.m. that comes back
+  with the starfield on is not the look that was captured.
+- **A guard for the palette catalogue.** Adding a palette touches six places and
+  the recipe in the source named three; the three it left out are the ones that
+  fail silently — a missing dispatcher branch renders the out-of-range default, a
+  missing `<option>` blanks the dropdown, a missing name reads as "unsupported"
+  in the shader editor. `tests/palette-catalogue.test.js` checks all six against
+  each other and against `COLOR_SCHEME_COUNT`, by index and by name, and proves
+  it can fail by reinjecting each of the six half-edits.
 - **A real solar system** behind the Solar System shape. It used to be six
   invented spheres on circular orbits at made-up distances, one of them wearing
   a torus for a ring; it is now the eight planets, built from published J2000
@@ -78,6 +105,20 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Changed
 
+- **AUTO no longer parks between changes.** The fade was 0.35 of the period
+  under a 3-second ceiling, and the ceiling was doing the damage: at the shipped
+  8-bar cadence that is three seconds of crossfade followed by thirteen seconds
+  of a still picture — twenty-nine for material at 16 bars. The in-between
+  shades went past in a fifth of the time they were on screen, so an automatic
+  change read as a switch rather than as drift. The fade is now the whole
+  period: a palette arrives and is already on its way to the next one. Chaining
+  back to back is safe by construction rather than by luck —
+  `setColorSchemeAnimated` lands on a clean `uCMBlend = 0` in its `onDone`, and
+  `TransitionManager` retires a tween before calling it precisely so the
+  callback can start the next one in the same slot. The floor stays, as the only
+  clamp left: below it a fade would outlast its own period and each change would
+  cancel the one before it half way through. AUTO ships off, so nothing changes
+  for anyone who has not switched it on.
 - **`R` can reach all twenty shapes.** The randomiser drew its shape from a
   nine-name literal in `main.js`, so eleven of the twenty — disc, ring, circle,
   hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth,

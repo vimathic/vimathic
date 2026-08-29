@@ -941,7 +941,17 @@ function easeInOutCubic(t) {
 // `visible`, so the material must be back at this value whenever it is hidden —
 // see fadeGrid(), which is the only thing allowed to move it.
 export const GRID_OPACITY = 0.1;
+// What NIGHT lowers a shown grid to. Chosen against the palettes it has to sit
+// under, not by taste: a line at the shipped 0.1 reads brighter than the body
+// of the darkest NIGHT palette in silence, which puts the furniture in front of
+// the subject. Still visible — the grid is how the bend of the surface is read.
+export const NIGHT_GRID_OPACITY = 0.04;
 const GRID_FADE_MS = 400;
+// What a shown starfield rests at — the value it is built with. A constant
+// because two paths now put it back (a NIGHT fade and setTransparentBackground's
+// instant restore), and a literal in one of them is a literal that drifts.
+export const STARS_OPACITY = 0.35;
+const STARS_FADE_MS = 400;
 
 // Exported for tests/camera-tween-damping.test.js: the cancel path below is
 // half of a fix, and a hand-rolled stand-in would not pin it.
@@ -1485,13 +1495,29 @@ export class RenderEngine {
     const sp = new Float32Array(1200*3);
     for (let i=0; i<sp.length; i+=3) { sp[i]=(Math.random()-.5)*200; sp[i+1]=(Math.random()-.5)*100; sp[i+2]=(Math.random()-.5)*100-40; }
     const sGeo = new THREE.BufferGeometry(); sGeo.setAttribute('position', new THREE.BufferAttribute(sp,3));
-    this.stars = new THREE.Points(sGeo, new THREE.PointsMaterial({ color:0xffffff, size:.05, transparent:true, opacity:.35 }));
+    this.stars = new THREE.Points(sGeo, new THREE.PointsMaterial({ color:0xffffff, size:.05, transparent:true, opacity:STARS_OPACITY }));
     this.scene.add(this.stars);
 
     this.grid = new THREE.GridHelper(9, 28, uiColor(0x88aaff), uiColor(0x3355aa));
     this.grid.position.y = -1.3; this.grid.material.transparent = true;
     this.grid.material.opacity = GRID_OPACITY;
     this.scene.add(this.grid);
+
+    // What a *shown* grid rests at. A field rather than the GRID_OPACITY
+    // constant because NIGHT lowers it (setGridLitOpacity) and fadeGrid has to
+    // land on whatever the current answer is — otherwise the fade would keep
+    // parking the grid back at full strength behind the mode's back. The
+    // constant stays the default and the export, so nothing else moves.
+    this.gridLitOpacity = GRID_OPACITY;
+
+    // The handback a grid fade still owes, or null. fadeGrid keeps its whole
+    // `visible` bookkeeping in the tween's onDone, and a pre-emption never
+    // runs one — so a pre-empting caller that establishes nothing itself has
+    // to run this instead. setGridLitOpacity is that caller; see both.
+    this._gridFadeSettle = null;
+
+    // NIGHT mode. Owns nothing in the shader — see setNightly().
+    this.nightly = false;
 
     // ── GPU mesh + uniforms ───────────────────────────────────────────────────
     const gpuGeo = new THREE.PlaneGeometry(CFG.planeSize, CFG.planeSize, CFG.planeSegs, CFG.planeSegs);
@@ -2762,7 +2788,7 @@ export class RenderEngine {
     // may be mid-fade if G was pressed twice quickly.
     if (on) { g.material.opacity = 0; g.visible = true; }
     const from   = g.material.opacity;
-    const target = on ? GRID_OPACITY : 0;
+    const target = on ? this.gridLitOpacity : 0;
     // FIX(r4): what this fade left `visible` at. onDone lands GRID_FADE_MS
     // later, and ⊞ GRID, a preset or setTransparentBackground may have written
     // grid.visible in between — writing `on` regardless put the grid back on
@@ -2771,16 +2797,154 @@ export class RenderEngine {
     // setTransparentBackground already makes; this is the one writer that lands
     // long after the fact.
     const claimed = g.visible;
-    this.transitions.start('grid-fade', GRID_FADE_MS, p => {
-      g.material.opacity = from + (target - from) * p;
-    }, () => {
+    // FIX(night): the handback published so a pre-emption can make it happen.
+    // It is deliberately NOT the tween's onCancel. Another fadeGrid taking
+    // this slot establishes `visible` itself and this one owes nothing, so
+    // running it there would be wrong — and reachably wrong: G reads
+    // grid.visible (main.js), a fade-out leaves that true for its whole
+    // 400 ms, so a second tap of G inside the fade calls fadeGrid(false)
+    // AGAIN, and a handback then would yank the grid out of the scene at
+    // nine-tenths opacity instead of letting it finish. The one caller that
+    // does need it is setGridLitOpacity, which establishes nothing — it asks
+    // for it by name.
+    const settle = () => {
+      if (this._gridFadeSettle === settle) this._gridFadeSettle = null;
       if (g.visible === claimed) g.visible = on;
       // Hidden grids rest at full opacity, never at the 0 the fade ended on.
       // That is what keeps every other path honest: the ⊞ GRID button, a
       // preset and setTransparentBackground all write only `visible`, and a
       // grid left at 0 would come back invisible while its button read ON.
-      if (!on) g.material.opacity = GRID_OPACITY;
+      // "Full" is gridLitOpacity, not the constant: in NIGHT they differ.
+      if (!on) g.material.opacity = this.gridLitOpacity;
+    };
+    this._gridFadeSettle = settle;
+    this.transitions.start('grid-fade', GRID_FADE_MS, p => {
+      g.material.opacity = from + (target - from) * p;
+    }, settle);
+  }
+
+  /**
+   * Change what a shown grid rests at, and take the current one there.
+   *
+   * Shares the 'grid-fade' slot with fadeGrid() on purpose. The two are the
+   * only writers of grid.material.opacity, and one slot means they cannot
+   * fight over that number: whichever runs second cancels the first instead
+   * of interleaving two tweens onto it. A hidden grid is parked rather than
+   * tweened, which is the same rule fadeGrid's onDone applies — a grid that
+   * comes back must come back visible.
+   *
+   * FIX(night): one slot was NOT enough on its own. The loser of that race
+   * also owned `grid.visible` — fadeGrid lowers it only in its onDone, which
+   * the cancel path never reaches — so pre-empting a fade-out left the grid
+   * the operator had just switched off in the scene, and in captureStream, the
+   * second screen and the recorder with it, while `grid.visible` reported the
+   * opposite and swallowed the next G press. Unlike a second fadeGrid, this
+   * method establishes no `visible` of its own, so nothing downstream would
+   * repair that: it has to make the fade land itself, which is what the two
+   * lines below do.
+   */
+  setGridLitOpacity(v) {
+    // Run the pending fade's handback — its decision about `visible` stands,
+    // only its animation is cut short — and then take the slot off it, or it
+    // goes on writing opacity over whatever is chosen below and lands on the 0
+    // it was heading for. Order matters: settle first, because it is what can
+    // make `g.visible` false, and the branch below reads that.
+    this._gridFadeSettle?.();
+    this.transitions.cancel('grid-fade');
+    this.gridLitOpacity = v;
+    const g = this.grid;
+    if (!g) return;
+    if (!g.visible) { g.material.opacity = v; return; }
+    const from = g.material.opacity;
+    this.transitions.start('grid-fade', GRID_FADE_MS, p => {
+      g.material.opacity = from + (v - from) * p;
     });
+  }
+
+  /**
+   * NIGHT — the mode for a dark room, not a stage.
+   *
+   * Deliberately touches nothing in the shader. The white specular stays white
+   * and stays keyed to treble (owner's call, 28.08: "leave it, we'll take it
+   * out if it looks bad"), bloom keeps its shipped strength/radius/threshold so
+   * the darkness can still be lifted with it, and no palette or lighting number
+   * moves. What is left is the furniture: the two things that outshine the
+   * mathematics on a dark palette.
+   *
+   * Measured, which is why these two and not others: the starfield composites
+   * to bloom-luma 0.366 and so clears the 0.15 bloom gate at all times, and a
+   * grid line at 0.088 is about 1.5× the body of the darkest NIGHT palette at
+   * rest (0.056). On the shipped bright palettes neither is noticeable.
+   *
+   * The grid is dimmed rather than hidden: it is how a viewer reads which way
+   * the surface is bending, and G stays exactly as it was — the mode changes
+   * what "on" looks like, not what the button does.
+   */
+  setNightly(on) {
+    this.nightly = !!on;
+    this.setGridLitOpacity(this.nightly ? NIGHT_GRID_OPACITY : GRID_OPACITY);
+    // Transparent background hides the stars for its own reason and must win:
+    // it is an output format, not a look. One expression, so the two cannot
+    // disagree about who put them back.
+    this._fadeStars(!this.transparentBg && !this.nightly);
+  }
+
+  /**
+   * Take the starfield where the two owners say it should be, over a fade.
+   *
+   * FIX(night): this used to be a bare boolean, and a clip is where that
+   * shows. `nightly` is part of the snapshot (see presets.js), so a clip whose
+   * steps were saved with the mode on and off alternates it every few seconds
+   * — and 1200 white points cutting in and out is the kind of flashing this
+   * app deliberately damps elsewhere (the shader's onset offset is held at
+   * zero for the same reason). The grid already fades across this toggle, so
+   * this is also what makes the two halves of the mode arrive together.
+   *
+   * The `visible` bookkeeping is the same shape as fadeGrid's, but NOT the
+   * same hazard, and the difference is worth stating because it looks like it
+   * should be. fadeGrid needed its handback published because setGridLitOpacity
+   * pre-empts it while establishing no `visible` of its own. Every pre-emption
+   * here is _setStarsNow, which writes both fields itself — so an abandoned
+   * fade owes nothing and is simply dropped.
+   */
+  _fadeStars(show) {
+    const s = this.stars;
+    if (!s) return;
+    // Only reset to nothing if there is nothing to see yet. Raising `visible`
+    // up front is what makes a fade-in visible at all (fadeGrid's rule), but
+    // doing it to a starfield that is already up would blink it off and fade
+    // it back in for a call that changed nothing.
+    if (show && !s.visible) { s.material.opacity = 0; s.visible = true; }
+    const from    = s.material.opacity;
+    const target  = show ? STARS_OPACITY : 0;
+    const claimed = s.visible;
+    this.transitions.start('stars-fade', STARS_FADE_MS, p => {
+      s.material.opacity = from + (target - from) * p;
+    }, () => {
+      if (s.visible === claimed) s.visible = show;
+      // Hidden stars rest at full opacity, for the reason the grid does: the
+      // restore branch of setTransparentBackground writes only `visible`, and
+      // a starfield left at 0 would come back invisible.
+      if (!show) s.material.opacity = STARS_OPACITY;
+    });
+  }
+
+  /**
+   * Put the starfield where it belongs right now, with no fade.
+   *
+   * setTransparentBackground's half of the ownership. It stays instant on
+   * purpose: it is an output format, not a look, and a fade would leak white
+   * points into the first frames of an alpha capture. So it displaces a NIGHT
+   * fade rather than racing it: take the slot away, then write both fields.
+   * The cancel is not tidiness — a fade nobody stopped goes on writing opacity
+   * one frame later, over the value set here.
+   */
+  _setStarsNow(show) {
+    const s = this.stars;
+    if (!s) return;
+    this.transitions.cancel('stars-fade');
+    s.visible = show;
+    s.material.opacity = STARS_OPACITY;
   }
 
   /**
@@ -2830,8 +2994,9 @@ export class RenderEngine {
       // on→off round trip put a grid into the scene (and into captureStream,
       // the second screen and the recorder) that the user never switched on,
       // leaving the ⊞ GRID button reading the opposite of reality from then
-      // on. Stars need no such care: nothing else writes stars.visible, so
-      // true is always the right answer for them.
+      // on. Stars need no such snapshot, but they are no longer ours alone
+      // either: NIGHT hides them too (setNightly), so the restore below asks
+      // the mode instead of writing `true`. Two writers, one expression.
       //
       // FIX(r2): only on the way IN. Enabling twice — the panel button and the
       // output modal drive the same call — used to re-snapshot the `false` we
@@ -2840,13 +3005,13 @@ export class RenderEngine {
       this.scene.background = null;
       this.scene.fog        = null;
       this.renderer.setClearColor(0x000000, 0);
-      this.stars.visible = false;
+      this._setStarsNow(false);
       this.grid.visible  = false;
     } else {
       this.scene.background = uiColor(0x050515);
       this.scene.fog        = new THREE.FogExp2(uiColor(0x050515), 0.007);
       this.renderer.setClearColor(uiColor(0x050515), 1);
-      this.stars.visible = true;
+      this._setStarsNow(!this.nightly);
       // FIX(r2): give the grid back only if nothing claimed it meanwhile. The
       // snapshot is right for a bare round trip and wrong the moment ⊞ GRID,
       // the G fade or a preset writes grid.visible in between — restoring then

@@ -7,7 +7,7 @@ description: First five minutes with VIMATHIC — load a track, watch it react, 
 
 # Quick Start
 
-VIMATHIC is a mathematical VJ studio that runs in your browser. Drop in a track — a music file, the microphone, a browser tab, or system audio — and 192 mathematical formulas, 38 GPU shaders, and 44 colour schemes come to life, reacting to the music in real time.
+VIMATHIC is a mathematical VJ studio that runs in your browser. Drop in a track — a music file, the microphone, a browser tab, or system audio — and 192 mathematical formulas, 38 GPU shaders, and 54 colour schemes come to life, reacting to the music in real time.
 
 > ⚠️ **Before you start.** VIMATHIC produces rapid flashing visuals — please read [Safety & Privacy](./safety.md) if you have epilepsy, migraines, or motion sickness. The app is tested primarily in **Chrome and Edge on desktop**; other browsers may have reduced functionality. **On mobile** the visualizer renders at a lower frame rate to manage thermal load, but extended use can still warm the device — give it breaks during long sessions. A dedicated mobile app is on the [Roadmap](./roadmap.md).
 
@@ -53,7 +53,7 @@ The control panel on the left exposes the main knobs:
 - **Visual Style** — Surface / Wireframe / Points rendering modes.
 - **Shape** — Pyramid, Sphere, Torus, Icosahedron, and others. The mesh that the math deforms.
 - **Math Formula / GPU Shader** — the equation driving the animation. 192 CPU formulas + 38 GPU shaders.
-- **Color Scheme** — 44 palettes from cinematic to synthwave to scientific to dark.
+- **Color Scheme** — 54 palettes from cinematic to synthwave to scientific to dark, ending in a 10-palette Night collection for a dark room. The **☾ NIGHT** button beside ⟳ AUTO narrows the automatic pickers to those ten, hides the starfield and dims the grid; the dropdown stays free.
 - **Surface Material** — six finishes from Matte to Mirror. SURFACE mode only; the row hides itself in Wireframe and Points, where reflections cannot be drawn.
 - **Particle Style** — the same idea for POINTS mode, and it appears with it: **Squares (large)** is the original look, **Dots (small)** turns each point into a small round particle, and **Smoke trail** keeps those small particles but has them glow and drag a decaying wake behind them. The trail is motion-driven, so it shows best with the camera moving or the music hitting.
 - **⟳ AUTO** — the button beside either of those two lets it drive itself: a new palette (or finish) at random, always as a crossfade, never a cut. With music playing the changes land on the beat — every 8 bars for colour, 16 for material, off the detected BPM; with the track stopped they come on a timer instead. While AUTO is on it owns that parameter: **clip player** steps apply everything else their preset holds but stop overwriting the colour / material it is cycling. Loading a preset by hand still applies both, and RESET ALL switches AUTO off.

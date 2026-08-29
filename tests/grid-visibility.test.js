@@ -65,12 +65,28 @@ let host;
 
 beforeEach(() => {
   clock = 0;
-  host = {
+  // Object.create rather than a bare literal, for the reason
+  // tests/night-mode.test.js gives: setTransparentBackground now reaches a
+  // sibling method (_setStarsNow, which displaces a NIGHT star fade instead of
+  // racing it), so `this` has to carry the prototype. A literal made every
+  // transparent-background case here die with "not a function".
+  host = Object.assign(Object.create(RenderEngine.prototype), {
     transitions: new TransitionManager(),
     grid:  { visible: false, material: { opacity: GRID_OPACITY, transparent: true } },
-    stars: { visible: true },
+    // The starfield fades across a NIGHT toggle now, so it carries a material
+    // the way the grid does; setTransparentBackground parks its opacity.
+    stars: { visible: true, material: { opacity: 0.35, transparent: true } },
     scene: {}, renderer: { setClearColor() {} },
-  };
+    // What a shown grid rests at. The engine sets this in its constructor and
+    // fadeGrid lands on it in both directions; NIGHT is the one thing that
+    // moves it (setGridLitOpacity). Stated here rather than defaulted inside
+    // fadeGrid on purpose — a `?? GRID_OPACITY` fallback there would let an
+    // engine that never initialised the field look correct in every test.
+    gridLitOpacity: GRID_OPACITY,
+    // Read by setTransparentBackground's restore branch, which now asks the
+    // mode instead of writing `true`: the stars have two owners.
+    nightly: false,
+  });
 });
 
 const fadeGrid    = on => RenderEngine.prototype.fadeGrid.call(host, on);
