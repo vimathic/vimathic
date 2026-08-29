@@ -2553,9 +2553,9 @@ const COMPLEX_NUMBERS = {
       f(x, z, t, {amp=1, freq=1}) {
         // FIX(r6): ln|z| runs to −∞ at the origin, and the +1e-9 regulariser
         // turned that into a needle of fixed depth rather than removing it:
-        // wherever the mesh has a vertex at r = 0 — eleven of the twelve odd
+        // wherever the mesh has a vertex at r = 0 — nine of the ten odd
         // grid sizes the app can reach, and the grid is set by the SHAPE and
-        // not by planeSegs: round(sqrt(vertexCount)) takes 24 values from 3 to
+        // not by planeSegs: round(sqrt(vertexCount)) takes 19 values from 3 to
         // 198 over the twenty shapes — one vertex sat 4.14 units
         // below a surface whose own peak is 0.58. The picture therefore had a
         // spike on some machines and not on others, and the depth of the spike

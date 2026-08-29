@@ -1150,6 +1150,130 @@ function buildDiscSurfaceGeo(segs, radius) {
   return geo;
 }
 
+/**
+ * Pull a cylinder's rings from their circle onto a regular polygon, so a
+ * faceted body can be given as many vertices as a smooth one.
+ *
+ * Why this exists. `pyramid` was `CylinderGeometry(0.001, 3.2, 5, 4, lo)`, and
+ * the 4 is radialSegments — the pyramid IS its four flat faces, so the count
+ * could not simply be raised without turning the body into the cone that
+ * `pyramid-smooth` already is. The consequence was that all 423 vertices sat
+ * on four rays, at azimuths 0°, ±90°, 180°, i.e. exactly on the axes x = 0 and
+ * z = 0: a face had no interior vertex at all, only the two edges bounding it.
+ * Everything this app draws it draws by moving vertices, so the height field
+ * had nowhere to land ACROSS a face.
+ *
+ * Not "the formulas were invisible" — an earlier draft of this note said that,
+ * and it is false where it counts. Measured at the factory sliders on the old
+ * mesh, 156 of the 192 kernels still moved the body through 0.2 world units or
+ * more (median span 0.436, on a body 5 tall): a field that varies along four
+ * rays still rakes the whole silhouette. What was missing is narrower and
+ * worse — the DETAIL across a face, which is the only place a two-dimensional
+ * pattern can live. Ten of the 192 lost even the silhouette and collapsed to a
+ * single height: `cantorDust`, `eigenField`, `determinant`, `hessian`,
+ * `productSum`, `lissajous`, `romanSurface`, `crossCap`, `rule90`, `rule184`.
+ * On the meshed body none of the 192 collapses; the smallest span is 0.05 and
+ * the median 0.504.
+ *
+ * For `rule90` it was not close to invisible, it was exactly nothing, and that
+ * took a second coincidence on top of the first. The field is built on a
+ * lattice of round(√vertexCount) per side (math-visualizer, _gridSize), which
+ * was 21 here, and both sampled lines are dead in Rule 90: x = 0 is the seed
+ * column, and the centre cell C(g, g/2) is even for every g ≥ 1, while z = 0 is
+ * generation 17, whose live cells sit at 15, 17, 47, 49 of 64 and the 21-node
+ * lattice steps over all four. Measured on the shipped mesh: h = −0.1·amp on
+ * all 423 vertices, spread 6.25e-16 in the field's own doubles — read back the
+ * way the guard below reads it, off a float32 position attribute standing on a
+ * base Y of ±2.5, the same one level reads 1.19e-7, so quote the basis with the
+ * number. Either way it is one level: the pyramid sank as one rigid body and
+ * showed no pattern whatever. Corroborated in the built app: at amp 0.7 against
+ * amp 3.0 the silhouette matches after a pure 17 px vertical shift, IoU 0.933,
+ * height 460 px against 457 px, i.e. a 4.3× amplification changed nothing but
+ * the depth of the sink.
+ *
+ * The repair keeps the body and adds the vertices: build the mesh with the
+ * SMOOTH segment count and snap each ring vertex out to the polygon, which is
+ * the same trick `buildDiscSurfaceGeo` above plays on the square grid. What
+ * comes out is on exactly the four planes it was on before — measured worst
+ * distance from a lateral vertex to its own face plane is 6.44e-4 both before
+ * and after, and that residue is the 0.001 top radius, not the mapping — with
+ * the same bounding box (±3.2, ±2.5) and the same volume (34.1440 against an
+ * exact 34.1333). The population is what changes: 423 vertices become
+ * 6883 (1843 on mobile), the field lattice goes 21 → 83, and `rule90` goes
+ * from one distinct height to 1181, with 13.0 % of vertices lifted onto the
+ * live level — against 11.6 % live cells in the automaton itself.
+ *
+ * Three things a viewer CAN see, so they are named rather than left to be
+ * discovered. (1) Shading. three's cylinder normals point out of the circle, so
+ * the old pyramid was lit as a cone: 0 of its 1920 lateral vertex-normals
+ * agreed with the normal of the face they sat on. After the recompute 36 966 of
+ * 38 400 do, i.e. 96.3 %, and the four faces read as four flat faces — which is
+ * what a pyramid should look like, but it IS a change. (2) The wireframe, which
+ * is the boot viz mode: 648 triangles become 12 960, so the mesh on the faces
+ * is twenty times denser and at a glance the body is told from `pyramid-smooth`
+ * by its square section alone. (3) COLLAPSE cost. That mode is per-vertex and
+ * synchronous on the main thread (math-visualizer, _tickCollapse), so the
+ * vertex count is paid per frame: measured over all 192 kernels, the median
+ * goes 0.11 → 1.22 ms and one kernel (`windingNumber`) goes 2.32 → 20.49 ms,
+ * i.e. one of the 192 now crosses a 16.7 ms frame where none did. That is not a
+ * new class of cost — it is the class the boot shape is already in: the same
+ * sweep reads 1.09 ms median and 20.48 ms worst on `pyramid-smooth`, and 4.02 /
+ * 76.12 with twelve kernels over budget on `plane`.
+ *
+ * The hard edges survive, which matters more than it looks. A body whose
+ * coincident vertices disagree about their normal keeps the field on the +Y
+ * path rather than following the surface (math-visualizer, _capturePristine,
+ * round 11); the pyramid still disagrees — 482 vertices against 20 before,
+ * worst dot 0.198 against 0.480 — so this changes the shape's vertex count and
+ * nothing about which path its field takes. Name the measure with the numbers,
+ * because there are two and they disagree: these are vertices sharing a
+ * position whose own normal is further than 0.98 from the WELDED one, and the
+ * worst dot is against that welded normal. Asked pairwise inside the group
+ * instead — which is what `normalsDisagree` itself does — the same meshes read
+ * 243 pairs at −0.5192 and 10 at −0.5389. Either measure answers the only
+ * question that matters here the same way: the body is hard-edged, so
+ * `_pristineNormals` is nulled and `medialRadius` is never reached.
+ *
+ * @param {THREE.BufferGeometry} geo    a cylinder-family geometry, axis on Y
+ * @param {number}               sides  corners of the wanted cross-section.
+ *   Must divide the geometry's radialSegments, or the corners themselves get
+ *   no vertex and the silhouette comes out with its points cut off; the two
+ *   values this app passes, 80 and 40, are both multiples of 4. Unchecked here
+ *   and guarded from outside: the bounding-box assertion in
+ *   tests/surface-field-on-shapes.test.js is what catches it — a snap at 42
+ *   segments still lands every vertex on the square's EDGES (worst deviation
+ *   2.3e-7, so the section test passes) and gives itself away only by losing
+ *   the corners, max x 2.977 against 3.2.
+ */
+function snapRingsToPolygon(geo, sides) {
+  const p = geo.attributes.position;
+  const sector = (2 * Math.PI) / sides, half = sector / 2;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    // The axis itself — cap centres — has no direction to be pushed along, and
+    // atan2(0, 0) would hand back a meaningless 0 rather than say so.
+    if (x === 0 && z === 0) continue;
+    // The cylinder's own parameter, not atan2(z, x): three lays its ring out as
+    // x = r·sin θ, z = r·cos θ from θ = 0, so the corners of the shape being
+    // rebuilt are at multiples of `sector` in THIS angle and at multiples of it
+    // plus a quarter turn in the other one.
+    const th  = Math.atan2(x, z);
+    const off = ((th % sector) + sector) % sector - half;
+    // Circumradius over the distance to the polygon edge at this angle: 1 at a
+    // corner, cos(half) at an edge midpoint. Applied to (x, z) rather than
+    // recomputed from r, so a vertex keeps its exact direction.
+    const s = Math.cos(half) / Math.cos(off);
+    p.setXYZ(i, x * s, p.getY(i), z * s);
+  }
+  p.needsUpdate = true;
+  // Recomputed, and they must be: three's cylinder normals point out of the
+  // CIRCLE, which after the snap is no longer the surface. On a non-welded
+  // seam and separate caps this leaves the body hard-edged, which is what the
+  // note above depends on.
+  geo.computeVertexNormals();
+  return geo;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RenderEngine
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2272,7 +2396,11 @@ export class RenderEngine {
       // Cones under other names — the identical three r169 defect. Note
       // 'pyramid-smooth' is the boot shape, so this half-drawn shell is what
       // a first-time viewer has been looking at.
-      case 'pyramid':          return new THREE.CylinderGeometry(0.001,3.2,5, 4, lo);
+      // `pyramid` is built with the smooth count and snapped back onto a
+      // square: same four faces, same box, same volume, 6883 vertices instead
+      // of 423 — see snapRingsToPolygon for what those four rays cost.
+      case 'pyramid':          return snapRingsToPolygon(
+                                 new THREE.CylinderGeometry(0.001,3.2,5, lo, lo), 4);
       case 'pyramid-smooth':   return new THREE.CylinderGeometry(0.001,3.2,5, lo, lo);
       // Polyhedra — detail must be 0 for the shape to actually look like
       // the named polyhedron. The second arg to Tetrahedron/Octahedron/
