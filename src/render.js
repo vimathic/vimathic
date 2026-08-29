@@ -8,6 +8,10 @@ import { AfterimagePass }  from 'three/examples/jsm/postprocessing/AfterimagePas
 import { VS, FS } from './shaders.js';
 import { DEFAULT_SHAPE, normalizeShape } from './shapes.js';
 import { normalizeVizMode } from './viz-mode.js';
+import {
+  buildMobiusGeo, buildKleinGeo, buildCatenoidGeo,
+  buildHelicoidGeo, buildHyperboloidGeo, buildPseudosphereGeo,
+} from './parametric-surfaces.js';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Solar-system procedural assets — surfaces, clouds and ring profiles
@@ -1284,6 +1288,104 @@ function snapRingsToPolygon(geo, sides) {
   return geo;
 }
 
+/**
+ * The Sierpiński tetrahedron — the one body in the catalogue with an INSIDE.
+ *
+ * Why it has to be a shape. Every other entry here is a closed shell: a surface
+ * with nothing behind it. Measured on `pyramid`, the densest faceted body we
+ * have, 0 of its 6563 distinct vertices lie strictly inside its own hull — all
+ * 6563 are on the skin. A formula cannot change that, because a formula moves
+ * vertices and never makes new ones; and the field is a height over the floor,
+ * which has one value per column. So a fractal that is defined by what it
+ * REMOVES from a solid can only arrive as geometry.
+ *
+ * This one arrives with an interior: at depth 5, 780 of its 2050 distinct
+ * vertices (38.0 %) are strictly inside the hull; at depth 6, 4200 of 8194
+ * (51.3 %). That interior is the whole point — it is what makes POINTS mode
+ * show a cloud with depth in it rather than a lit skin, and it is what the
+ * flat `rule90` relief on a pyramid can never be.
+ *
+ * Construction is the IFS: four maps p ↦ (p + vᵢ)/2, applied `depth` times,
+ * giving 4^depth cells and 4·4^depth triangles. Each of the four faces of the
+ * whole body is a Sierpiński triangle — i.e. the space-time diagram of Rule 90
+ * — which is the sense in which this figure is that automaton in three
+ * dimensions. The catalogue's own `rule90` is the one-dimensional automaton and
+ * draws the two-dimensional diagram; this is the step up, and it is a step in
+ * GEOMETRY rather than in the formula list, because the formula signature
+ * f(x, z, t) has no third axis to put the second space dimension on.
+ *
+ * Non-indexed on purpose, and that is what makes POINTS work. THREE.Points here
+ * shares gpuMesh.geometry rather than owning one, so the cloud IS the mesh's
+ * vertex buffer: written out per triangle, every cell contributes its own
+ * twelve and depth 5 draws 12 288 points. An indexed build would weld those
+ * down to the 2050 corners the cells share and thin the cloud by a factor of
+ * six, exactly where the figure is densest.
+ *
+ * Depth is 5 on desktop and 4 on mobile, and the ceiling is not the geometry —
+ * it is COLLAPSE, which is per-vertex and synchronous on the main thread. 12 288
+ * vertices put this between `pyramid` (6883) and `plane` (25 921), i.e. inside
+ * the cost envelope the app already has. Depth 6 would be 49 152, twice the
+ * heaviest body in the catalogue, and its COLLAPSE worst case lands near 150 ms
+ * — a body that cannot be worn at 60 fps is not worth the extra octave.
+ *
+ * Size follows `pyramid`, base circumradius 3.2, because that is the body a
+ * viewer compares it against; a regular tetrahedron then fixes the rest, edge
+ * R√3 and height R√2 = 4.525, and the box is centred on the origin.
+ *
+ * @param {number} depth  IFS iterations
+ * @param {number} baseR  circumradius of the base triangle, world units
+ */
+function buildSierpinskiTetraGeo(depth, baseR) {
+  const H = baseR * Math.SQRT2;
+  // Base flat in XZ with a corner toward +Z, apex on +Y: the pose `pyramid`
+  // stands in, so switching between the two compares like with like.
+  const corner = (k) => {
+    const a = Math.PI / 2 + k * (2 * Math.PI / 3);
+    return [baseR * Math.cos(a), -H / 2, baseR * Math.sin(a)];
+  };
+  const v0 = corner(0), v1 = corner(1), v2 = corner(2), apex = [0, H / 2, 0];
+
+  const pos = new Float32Array(4 ** depth * 4 * 3 * 3);   // cells × faces × verts × xyz
+  let w = 0;
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+
+  // One face, wound so its normal points AWAY from the fourth vertex. Three of
+  // a cell's four faces come out inward-facing otherwise, and since the ramp
+  // reads the normal that shows as a body lit in patches rather than as a
+  // shading bug anyone would name.
+  const face = (a, b, c, opposite) => {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+    const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const out = nx * (opposite[0] - a[0]) + ny * (opposite[1] - a[1]) + nz * (opposite[2] - a[2]) <= 0;
+    const t = out ? [a, b, c] : [a, c, b];
+    for (const p of t) { pos[w++] = p[0]; pos[w++] = p[1]; pos[w++] = p[2]; }
+  };
+
+  const emit = (a, b, c, d, left) => {
+    if (left === 0) {
+      face(a, b, c, d); face(a, b, d, c); face(a, c, d, b); face(b, c, d, a);
+      return;
+    }
+    const ab = mid(a, b), ac = mid(a, c), ad = mid(a, d),
+          bc = mid(b, c), bd = mid(b, d), cd = mid(c, d);
+    emit(a,  ab, ac, ad, left - 1);
+    emit(ab, b,  bc, bd, left - 1);
+    emit(ac, bc, c,  cd, left - 1);
+    emit(ad, bd, cd, d,  left - 1);
+  };
+  emit(v0, v1, v2, apex, depth);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  // On a non-indexed buffer this gives every triangle its own face normal,
+  // which is what a body made of flat cells wants — and it leaves the body
+  // hard-edged, so the height field keeps the +Y path (see the note at
+  // snapRingsToPolygon).
+  geo.computeVertexNormals();
+  return geo;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RenderEngine
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2449,6 +2551,29 @@ export class RenderEngine {
       // 20-face icosahedron above. Name advertises the subdivision.
       case 'icosahedron-smooth': return new THREE.IcosahedronGeometry(3.5, 1);
       case 'dodecahedron':     return new THREE.DodecahedronGeometry(3.5, 0);
+      // The only body here with an interior — see buildSierpinskiTetraGeo for
+      // why that has to come from geometry and cannot come from a formula.
+      // Depth 5/4 was chosen against a cost that turned out not to be the
+      // shape's. Measured on this device from the edge-midpoint axis — the
+      // view the fractal is recognised in — the body draws at 27 FPS on depth
+      // 7 and 30 under a GPU shader; what collapsed was the rule90 family, and
+      // that was cellularRule rebuilding its automaton per sample (fixed in
+      // math-collections.js). Depth 7 is where the silhouette stops reading as
+      // a coarse polyhedron: 16 384 cells against 1 024, matching the
+      // reference images. Mobile keeps one level back — 4 096 cells, the same
+      // ~4× step it had before.
+      case 'sierpinski-tetra': return buildSierpinskiTetraGeo(this.isMobile ? 6 : 7, 3.2);
+      // Surfaces a height field cannot be — see src/parametric-surfaces.js for
+      // the rule that decides which of the two catalogues a body belongs in.
+      // The segment counts halve on mobile the same way `lo` does; none of the
+      // six needs the rotate list above, because every parametrisation is
+      // authored with its axis already on Y.
+      case 'mobius':           return buildMobiusGeo(this.isMobile ? 120 : 240, this.isMobile ? 12 : 24);
+      case 'klein':            return buildKleinGeo(this.isMobile ? 110 : 220, this.isMobile ? 55 : 110);
+      case 'catenoid':         return buildCatenoidGeo(this.isMobile ? 100 : 200, this.isMobile ? 30 : 60);
+      case 'helicoid':         return buildHelicoidGeo(this.isMobile ? 120 : 240, this.isMobile ? 20 : 40);
+      case 'hyperboloid':      return buildHyperboloidGeo(this.isMobile ? 100 : 200, this.isMobile ? 30 : 60);
+      case 'pseudosphere':     return buildPseudosphereGeo(this.isMobile ? 60 : 120, this.isMobile ? 80 : 160);
       case 'star':             return this._buildStarGeo();
       case 'solar':            return new THREE.SphereGeometry(1.2, 64, 64);
       // Not a name this build knows. setShape() resolves every value through

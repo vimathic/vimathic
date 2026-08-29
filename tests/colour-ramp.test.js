@@ -19,11 +19,18 @@
 // spans ±3.5. Measured on the catalogue as render.js builds it (desktop, the
 // same uniforms in silence, uMorphProgress 1), the triangle area landing on a
 // CLAMPED, flat colour went from 0.0 % on every one of the twenty shapes to
-// 73-100 % on FOURTEEN of them, on the first frame: from 73.6 % (torusknot) to
+// 73-100 % on FIFTEEN of them, on the first frame: from 73.6 % (torusknot) to
 // 100 % (octahedron), with solar at 37.7 % and the five flat shapes — plane,
-// disc, circle, hex, tetrahedron — at 0.0 %. 14 + 1 + 5 = 20, and the count is
+// disc, circle, hex, tetrahedron — at 0.0 %. 15 + 1 + 5 = 21, and the count is
 // re-derivable: notes/audits/.../wave3/glsl/probes/P4-clamped-count.txt prints
-// the whole table, and the CONTROL below re-measures the same fourteen.
+// the whole table, and the CONTROL below re-measures the same fifteen.
+// (Fourteen until `sierpinski-tetra` joined the catalogue — a solid body, so it
+// lands in this column like the other solids. The probe file above predates it
+// and lists fourteen; the CONTROL, not the file, is what this count answers to.
+// TWENTY-ONE since the six parametric surfaces arrived: mobius, klein,
+// catenoid, helicoid, hyperboloid and pseudosphere are all bodies with a shape
+// of their own, so they colour like the solids and not like the plates.
+// 21 + 1 + 5 = 27.)
 // (The header used to say "fifteen of them — 81.5 % of the boot shape". The
 // count was wrong and the second half was right: fourteen shapes clear 73 %,
 // and 81.5 % is pyramid-smooth, which IS the boot shape — src/shapes.js's
@@ -382,6 +389,15 @@ function clampedArea(g, vhOf, U) {
 // is NOT in here.
 const FLAT = ['plane', 'disc', 'circle', 'hex', 'tetrahedron'];
 
+// Bodies that are neither plates nor saturating solids under the OLD
+// absolute-height ramp: measured 10.4 % (mobius), 30.9 % (klein) and 50.4 %
+// (pseudosphere) of triangle area on a clamped colour, against 70-100 % for
+// every other solid. The quantity is where a body's AREA sits, not how tall it
+// is — see the CONTROL that pins all three from both sides. Under the ramp the
+// app actually ships they read 0.0 % like everything else, which is the test
+// above this one.
+const THIN = ['mobius', 'klein', 'pseudosphere'];
+
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the built-in vertex program hands the ramp a displacement', () => {
 
@@ -479,19 +495,39 @@ describe('the ramp is back inside its window on the whole catalogue', () => {
 
   test('CONTROL — the same metric reads 73-100 % when fed the absolute height', () => {
     // If this ever comes back quiet, the reading above proves nothing.
-    const solid = SHAPE_NAMES.filter(n => !FLAT.includes(n) && n !== 'solar');
+    const solid = SHAPE_NAMES.filter(n => !FLAT.includes(n) && !THIN.includes(n) && n !== 'solar');
     // The count in this file's header, pinned here so the two cannot drift:
-    // fourteen shapes clear 73 %, solar reads 37.7 %, the five flat ones 0.0 %.
-    assert.equal(solid.length, 14,
-      `the header says fourteen shapes saturate the ramp under absolute-height colouring; this ` +
+    // eighteen shapes clear 70 %, three read in between, solar reads 37.7 %,
+    // the five flat ones 0.0 %. 18 + 3 + 1 + 5 = 27.
+    assert.equal(solid.length, 18,
+      `the header says eighteen shapes saturate the ramp under absolute-height colouring; this ` +
       `control measures ${solid.length} of them (${SHAPE_NAMES.length} shapes, minus ${FLAT.length} ` +
-      `flat ones, minus solar)`);
+      `flat ones, minus ${THIN.length} thin ones, minus solar)`);
     for (const name of solid) {
       const g = buildShape(name);
       const frac = clampedArea(g, ROUND10.gpuVH, SILENCE);
       g.dispose();
       assert.ok(frac >= 0.70,
         `${name} reads only ${(frac * 100).toFixed(1)} % under absolute-height colouring — the metric has gone blind`);
+    }
+  });
+
+  test('CONTROL — and the three thin surfaces read in between, not at either end', () => {
+    // Not an exemption. THIN is a measured fact about where a body's AREA sits,
+    // not about how tall it is: the old ramp coloured by |y|, so a surface whose
+    // area crowds the y = 0 band never reached the clamp however far its
+    // extremes ran. The pseudosphere is ±3.87 tall and still reads 50.4 %,
+    // because most of its area is the wide collar at the cusp.
+    // Pinned at both ends so neither drift can pass: a THIN shape that climbs
+    // past 70 % belongs in `solid`, and one that falls to 0 belongs in FLAT.
+    for (const [name, want] of [['mobius', 10.4], ['klein', 30.9], ['pseudosphere', 50.4]]) {
+      const g = buildShape(name);
+      const frac = clampedArea(g, ROUND10.gpuVH, SILENCE) * 100;
+      g.dispose();
+      assert.ok(frac > 1 && frac < 70,
+        `${name} reads ${frac.toFixed(1)} %, outside the band that put it here`);
+      assert.ok(Math.abs(frac - want) < 1.5,
+        `${name} read ${want} % when it was classified and reads ${frac.toFixed(1)} % now`);
     }
   });
 
