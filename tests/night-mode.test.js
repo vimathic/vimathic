@@ -47,7 +47,6 @@ before(async () => {
   THREE = await import('three');
 });
 
-const realNow = performance.now.bind(performance);
 let clock = 0;
 before(() => { performance.now = () => clock; });
 

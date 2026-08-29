@@ -7,7 +7,7 @@
 // Called once from UIController.bindAll().
 
 import { DOM } from '../dom.js';
-import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam, COLOR_SCHEME_COUNT,
+import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam,
          NIGHT_SCHEME_FIRST, NIGHT_SCHEMES, ALL_SCHEMES, DRAG_FLOOR } from '../params.js';
 import { bindAboutModal, closeAbout, isAboutModalOpen } from './about-modal.js';
 import { AutoCycler } from './auto-cycle.js';
