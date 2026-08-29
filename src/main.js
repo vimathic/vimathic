@@ -11,7 +11,7 @@ import { ShaderEditor, ModelLoader } from './shaders.js';
 import { CameraSystem } from './camera.js';
 import { UIController, ClipPlayer } from './ui/controller.js';
 import { MIDIController, ShuffleBag } from './utils.js';
-import { applyParam, syncParamUI, COLOR_SCHEME_COUNT, PARAMS } from './params.js';
+import { applyParam, syncParamUI, COLOR_SCHEME_COUNT, NIGHT_SCHEMES, ALL_SCHEMES, PARAMS } from './params.js';
 import { OutputManager, SecondScreen } from './outputs.js';
 import { GifRecorder, WebmRecorder } from './recorder.js';
 import { MathVisualizer } from './math-visualizer.js';
@@ -145,7 +145,22 @@ const _shapeBag = new ShuffleBag(SHAPE_NAMES);
 // Color pool size sourced from params.js — single source of truth.
 // Previously a local COLOR_COUNT=36 lived here, which was correct but invited
 // drift if shaders.js gained another palette.
-const _colorBag = new ShuffleBag(Array.from({ length: COLOR_SCHEME_COUNT }, (_, i) => i));
+let _colorBag = new ShuffleBag(ALL_SCHEMES);
+
+// NIGHT narrows R and Q to the NIGHT series. The bag lives here, so the mode
+// asks for the swap rather than reaching in: ui.setNightly calls this hook, and
+// controls.js does the same to its own AUTO COLOUR cycler.
+//
+// Rebuilt, not filtered — a ShuffleBag's no-repeat guard is a dealt deck, and a
+// deck holding schemes that just left the pool would keep dealing them until it
+// emptied.
+ui.onColorPoolChange = night => {
+  _colorBag = new ShuffleBag(night ? NIGHT_SCHEMES : ALL_SCHEMES);
+};
+// bootPersist() above may already have restored a snapshot with NIGHT on, back
+// when this hook did not exist yet. Sync once so the pool matches the mode
+// rather than matching the order of this file.
+ui.onColorPoolChange(render.nightly);
 
 // Formula pool, built once on first use and shared by R and F.
 //

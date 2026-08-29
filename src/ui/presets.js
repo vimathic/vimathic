@@ -24,7 +24,7 @@ const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colo
 // gpuSelVal), so a file carrying only gpuMode tells us nothing we can apply.
 const STATE_FIELDS = [
   'shape', 'vizMode', 'material', 'particleStyle', 'gpuSelVal', 'deformMode',
-  'volumeKey', 'gridVisible', 'camera', 'camScript', 'shader',
+  'volumeKey', 'gridVisible', 'nightly', 'camera', 'camScript', 'shader',
 ];
 
 /**
@@ -224,6 +224,21 @@ export const PresetMixin = {
       deformMode:  mv?._mode      ?? 'surface',
       volumeKey:   mv?._volumeKey ?? null,
       gridVisible: r.grid?.visible ?? true,
+      // NIGHT is part of the look, not a session preference: a snapshot taken
+      // at 3 a.m. that comes back with the starfield on and the panel glowing
+      // is not the snapshot that was taken.
+      //
+      // FIX(night): this used to promise that older files "have no such key
+      // and read as false, which is what they were". They do not. The apply
+      // side is guarded by `s.nightly != null` (_applyStateFields), so a file
+      // written before this key existed leaves the mode exactly as it found
+      // it — load one while NIGHT is on and its bright colorIdx arrives under
+      // a starless sky. That is the same "no opinion, no change" policy the
+      // s.shader branch keeps a few lines further down, and it is the one
+      // corrected here rather than the code: a preset that never recorded the
+      // mode has nothing to say about it, and guessing false for it would be
+      // an opinion the file does not hold.
+      nightly:     r.nightly ?? false,
 
       // ── Camera ──────────────────────────────────────────────────────────
       camera: {
@@ -353,6 +368,11 @@ export const PresetMixin = {
       r.grid.visible = s.gridVisible;
       DOM.btnToggleGrid.style.opacity = s.gridVisible ? '1' : '0.45';
     }
+    // keepPalette: the snapshot's own colorIdx was applied above, through
+    // PARAM_FIELDS. Without it NIGHT would drag a bright-palette snapshot to
+    // scheme 44 on restore — the switch-on nudge is for a hand on the button,
+    // not for a file that already says which palette it wants.
+    if (s.nightly != null) this.setNightly?.(s.nightly, { keepPalette: true });
     // ── Viz mode + surface material ────────────────────────────────────────
     // FIX(#15, r2): ONE decision, not two. WIRE/PTS force Matte and hide the
     // material dropdown (reconstructed normals are degenerate there), so a

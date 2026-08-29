@@ -86,21 +86,21 @@ axes — geometry, formula, colour scheme, render mode, deformation mode —
 multiply out to a state space of this size before any slider, audio input, or
 custom code enters the picture:
 
-<!-- Colour schemes track COLOR_SCHEME_COUNT in src/params.js (44). -->
+<!-- Colour schemes track COLOR_SCHEME_COUNT in src/params.js (54). -->
 | Axis | Count |
 |---|---|
 | 3D shapes (Plane, Sphere, Torus, Icosahedron, and others) | 20 |
 | Formulas (192 CPU + 38 GPU shaders) | 230 |
-| Colour schemes | 44 |
+| Colour schemes | 54 |
 | Render modes (surface / wireframe / points) | 3 |
 | Deformation modes (surface / volume / collapse) | 3 |
 | Volume vector fields (when Volume mode is active) | 6 |
 
 <!-- (2 deform modes × 230 formulas + 6 volume fields) × 20 shapes ×
-     3 render modes × 44 schemes = 1 230 240. Recompute if any factor moves. -->
+     3 render modes × 54 schemes = 1 509 840. Recompute if any factor moves. -->
 Counting these combinations honestly — accounting for the fact that Volume
 mode replaces the formula slot with one of 6 vector fields, while Surface and
-Collapse use the chosen formula — gives **roughly 1.2 million distinct base
+Collapse use the chosen formula — gives **roughly 1.5 million distinct base
 states**.
 
 That's before:
@@ -144,8 +144,8 @@ waves, turbulence, and a spectrum family driven by the three audio bands — run
 in real time on the GPU with audio-reactive uniforms. Which branch computes which
 object is listed in [MATHEMATICAL_ACCURACY.md](./MATHEMATICAL_ACCURACY.md).
 
-### 44 Colour Schemes
-Cinematic, Synthwave, Scientific, Premium, Monochrome, Trending, a 12-palette "New" collection (cyberpunkGold, arcticFire, bloodMoon, cosmicDust, toxicWaste, cherryBlossom, midnightChrome, solarFlare, deepSpace, acidRain, volcanic, bioluminescence), and an 8-palette "Dark" collection (charcoalSmoke, slateIndigo, mossStone, petrol, emberBlack, burgundyVelvet, midnightForest, coalPlum).
+### 54 Colour Schemes
+Cinematic, Synthwave, Scientific, Premium, Monochrome, Trending, a 12-palette "New" collection (cyberpunkGold, arcticFire, bloodMoon, cosmicDust, toxicWaste, cherryBlossom, midnightChrome, solarFlare, deepSpace, acidRain, volcanic, bioluminescence), an 8-palette "Dark" collection (charcoalSmoke, slateIndigo, mossStone, petrol, emberBlack, burgundyVelvet, midnightForest, coalPlum), and a 10-palette "Night" collection (burgundyBlack, crimsonAbyss, tarnishedGold, fathomBlue, cedarSmoke, fernShadow, orchidAsh, driedRose, deepJade, rustSlate) built for a dark room: dark enough at rest to stay under the bloom threshold, bright enough on peaks to cross it.
 
 ### Deformation Modes
 - **Surface** — classic height-field displacement along Y axis
@@ -193,7 +193,7 @@ Share it as a file attachment. Open from USB. Works offline.
 src/
   main.js              — bootstrap, event loop, hotkeys
   render.js            — Three.js renderer, geometry, animation, post-processing
-  shaders.js           — GLSL shaders (44 colour schemes, 38 GPU formulas)
+  shaders.js           — GLSL shaders (54 colour schemes, 38 GPU formulas)
   math-collections.js  — 192 CPU formula implementations + 6 volume vector fields
   math-visualizer.js   — CPU math engine (worker/sync hybrid)
   math-worker.js       — Web Worker for off-main-thread evaluation

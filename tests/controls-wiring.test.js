@@ -167,7 +167,15 @@ globalThis.localStorage = { getItem: () => '1', setItem() {}, removeItem() {} };
 globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {} }) };
 
 let bindControls;
-before(async () => { ({ bindControls } = await import('../src/ui/controls.js')); });
+// The two palette pools NIGHT swaps between, and where the series starts.
+// Imported rather than written out: the point of the assertions below is that
+// the panel hands the cycler the pool params.js declares, not that the pool
+// happens to be ten numbers today.
+let NIGHT_SCHEMES, ALL_SCHEMES, NIGHT_SCHEME_FIRST;
+before(async () => {
+  ({ bindControls } = await import('../src/ui/controls.js'));
+  ({ NIGHT_SCHEMES, ALL_SCHEMES, NIGHT_SCHEME_FIRST } = await import('../src/params.js'));
+});
 
 /** Fire the listener the app registered, the way the browser would. */
 const fire = (id, type, extra = {}) => {
@@ -209,7 +217,13 @@ function makeUi() {
       camera: {
         fov: 60, position: { set() {} }, up: { set() {} }, updateProjectionMatrix() {},
       },
-      U: { uAmp: { value: 0.7 }, uWI: { value: 1 } },
+      // uCM / uCMNext / uCMBlend are the pair NIGHT's switch-on guard reads to
+      // find out what is actually on screen, as opposed to where the palette
+      // is headed. A stub without them would send that guard down its
+      // `?? a.colorIdx` fallback, i.e. back to the very question the fix
+      // stopped asking, and the tests below would pass on the old code.
+      U: { uAmp: { value: 0.7 }, uWI: { value: 1 },
+           uCM: { value: 16 }, uCMNext: { value: 16 }, uCMBlend: { value: 0 } },
       bloomPass: { strength: 0.6, radius: 0.4, threshold: 0.85 },
       setShapeAnimated: s => calls.push(['setShapeAnimated', s]),
       setSurfaceMaterial: (m, ms) => calls.push(['setSurfaceMaterial', m, ms]),
@@ -226,6 +240,12 @@ function makeUi() {
       flatFrame() { const q = this._queued; this._queued = []; q.forEach(fn => fn()); },
       setShape: s => calls.push(['setShape', s]),
       fadeGrid: on => calls.push(['fadeGrid', on]),
+      // NIGHT. The engine half is tested against the real method in
+      // tests/night-mode.test.js; what matters here is that the panel drives
+      // it and that `nightly` is where the click handler reads the current
+      // state from, so the stub keeps the flag rather than only recording.
+      nightly: false,
+      setNightly(on) { this.nightly = !!on; calls.push(['render.setNightly', !!on]); },
     },
     // resetScript, setCamPhysics and buildTimeline are what the RESET ALL
     // handler calls; the mirror below is deliberately thin — it copies only the
@@ -1093,8 +1113,165 @@ describe('RESET ALL — the camera programmer goes back to defaults for real', (
 });
 
 
+// ── NIGHT: the half of the mode that lives in the panel ─────────────────────
+//
+// tests/night-mode.test.js covers RenderEngine.setNightly — four lines of
+// furniture. Everything the mode actually claims is here instead: which pool
+// the unattended pickers draw from, what the switch-on does to the palette,
+// and whether the mode is a mode (something RESET ALL clears) or a value.
+// None of it had a test, which is how the three defects below survived review.
+describe('NIGHT — what the panel switch owns', () => {
+
+  test('turning it on narrows AUTO COLOUR to the NIGHT series, and off widens it back', () => {
+    fire('night-btn', 'click');
+    assert.deepEqual(ui.autoColor.pool, NIGHT_SCHEMES,
+      'AUTO COLOUR is still free to draw a bright palette inside a mode whose claim is that it does not');
+    fire('night-btn', 'click');
+    assert.deepEqual(ui.autoColor.pool, ALL_SCHEMES);
+  });
+
+  test('switching on over a bright palette moves it to the first NIGHT scheme', () => {
+    ui.audio.colorIdx = 16;                 // Amber — the shipped default
+    ui.render.U.uCM.value = 16;
+    fire('night-btn', 'click');
+
+    assert.equal(ui.audio.colorIdx, NIGHT_SCHEME_FIRST);
+    assert.deepEqual(ui.called('setColorSchemeAnimated').at(-1), ['setColorSchemeAnimated', NIGHT_SCHEME_FIRST]);
+    assert.equal(byId('color-sel').value, String(NIGHT_SCHEME_FIRST),
+      'the dropdown must follow the engine, or the panel reports a palette that is not on screen');
+  });
+
+  test('a NIGHT destination that has not arrived yet is kept, not overwritten', () => {
+    // AUTO COLOUR writes a.colorIdx at fire time and the fade now fills the
+    // whole period, so "where we are going" and "what is on screen" can differ
+    // for a minute. Reading the destination alone said "nothing to do" while
+    // the screen was still glaring — and reading it alone the other way would
+    // throw away a NIGHT palette the cycler or the operator had just chosen.
+    ui.audio.colorIdx     = 47;   // bound for a NIGHT scheme...
+    ui.render.U.uCM.value = 16;   // ...but still showing Amber
+    ui.render.U.uCMNext.value = 47;
+    fire('night-btn', 'click');
+
+    assert.equal(ui.audio.colorIdx, 47, 'the chosen NIGHT palette was overwritten with 44');
+    assert.deepEqual(ui.called('setColorSchemeAnimated').at(-1), ['setColorSchemeAnimated', 47],
+      'the mode arrived with a bright palette still on screen for the rest of the fade');
+  });
+
+  test('control — with a NIGHT palette already on screen the switch writes no palette at all', () => {
+    ui.audio.colorIdx     = 47;
+    ui.render.U.uCM.value = 47;
+    ui.render.U.uCMNext.value = 47;
+    fire('night-btn', 'click');
+
+    assert.equal(ui.called('setColorSchemeAnimated').length, 0,
+      'a switch-on that restarts a fade nobody needed is a visible flicker');
+  });
+
+  test('it paints the panel and the button, not just the engine', () => {
+    // body.nightly is what brings the three accent hues down with the picture
+    // (index.html) — in a dark room the panel is the brightest thing on
+    // screen, so a mode that dims the scene and not the chrome is half a mode.
+    fire('night-btn', 'click');
+    assert.equal(document.body.classList.contains('nightly'), true);
+    assert.equal(byId('night-btn').classList.contains('active'), true);
+
+    fire('night-btn', 'click');
+    assert.equal(document.body.classList.contains('nightly'), false);
+    assert.equal(byId('night-btn').classList.contains('active'), false,
+      'the button reads ON in a session where the mode is off');
+  });
+
+  test('keepPalette — a snapshot brings its own palette, so the switch-on leaves it', () => {
+    // The preset and ClipPlayer path. applyState has already applied the
+    // snapshot's colorIdx through PARAM_FIELDS; the switch-on nudge is for a
+    // hand on the button, not for a file that has already said which palette
+    // it wants. The pool must still narrow — that is about what the app picks
+    // unattended, which the snapshot says nothing about.
+    ui.audio.colorIdx = 16;
+    ui.render.U.uCM.value = 16;
+
+    ui.setNightly(true, { keepPalette: true });
+
+    assert.equal(ui.audio.colorIdx, 16, "the snapshot's own palette was dragged to 44");
+    assert.equal(ui.called('setColorSchemeAnimated').length, 0);
+    assert.deepEqual(ui.autoColor.pool, NIGHT_SCHEMES);
+  });
+
+  test('re-asserting the mode leaves both shuffle decks alone', () => {
+    // What a preset click, an import, a boot restore and every ClipPlayer step
+    // do: captureState writes `nightly` unconditionally, so applyState calls
+    // setNightly with the value it already has. Each call used to build two
+    // fresh ShuffleBags, and a fresh bag is a fresh deck — so the no-repeat
+    // guarantee both pools advertise restarted several times a minute during a
+    // clip, which is exactly where it matters most.
+    let poolCalls = 0;
+    ui.onColorPoolChange = () => { poolCalls++; };
+
+    fire('night-btn', 'click');                     // NIGHT on — a real change
+    const bag = ui.autoColor._bag;
+    const afterRealChange = poolCalls;
+    assert.ok(bag, 'precondition: the cycler has a deck to protect');
+
+    ui.setNightly(true, { keepPalette: true });     // ...and now the no-op apply
+    ui.setNightly(true, { keepPalette: true });
+
+    assert.equal(ui.autoColor._bag, bag,
+      'the deck was rebuilt by an apply that changed nothing');
+    assert.equal(poolCalls, afterRealChange,
+      'the R/Q bag in main.js was rebuilt by an apply that changed nothing');
+  });
+
+  test('control — a real change still swaps both pools', () => {
+    let poolCalls = 0;
+    ui.onColorPoolChange = () => { poolCalls++; };
+
+    fire('night-btn', 'click');
+    const bag = ui.autoColor._bag;
+    fire('night-btn', 'click');                     // ...and back off
+
+    assert.notEqual(ui.autoColor._bag, bag, 'the early-out swallowed a real change');
+    assert.equal(poolCalls, 2);
+    assert.deepEqual(ui.autoColor.pool, ALL_SCHEMES);
+  });
+
+  test('the switch-on defers AUTO COLOUR, like every other hand-driven colour write', () => {
+    // Assigning DOM.colorSel.value from script fires no change event, so the
+    // dropdown\'s own deferring handler cannot rescue this path. Without the
+    // call, AUTO could crossfade the mode\'s opening palette away a fraction of
+    // a second later — the defect main.js:196 already fixed for Q, E and R.
+    const deferred = [];
+    ui.autoColor.defer = () => deferred.push(1);
+    ui.audio.colorIdx = 16;
+    ui.render.U.uCM.value = 16;
+    fire('night-btn', 'click');
+
+    assert.equal(deferred.length, 1, 'the mode\'s own palette pick did not get its full period');
+  });
+});
+
 // ── Round 11: RESET ALL has to reset ────────────────────────────────────────
 describe('RESET ALL leaves the state it advertises', () => {
+
+  test('NIGHT is a mode, so the reset clears it', () => {
+    // The button's own comment calls AUTO COLOUR and AUTO MATERIAL "modes, not
+    // values" and switches them off for that reason. NIGHT is one by the same
+    // test, and the reset did not restore it: it left bright Amber under a
+    // starless sky with both unattended pickers still locked to the NIGHT ten,
+    // and the panel's autosave then persisted that across a reload.
+    // (`volumeKey` is also unrestored, and separately so — a pre-existing gap
+    // this test does not speak for.)
+    fire('night-btn', 'click');
+    assert.equal(ui.render.nightly, true, 'precondition: the mode is on');
+
+    fire('btn-reset-all', 'click');
+
+    assert.equal(ui.render.nightly, false, 'RESET ALL ended in a mode it never announced');
+    assert.deepEqual(ui.autoColor.pool, ALL_SCHEMES,
+      'the reset left the unattended pickers confined to the NIGHT ten');
+    assert.equal(byId('night-btn').classList.contains('active'), false,
+      'the button still reads ON after a reset that says "back to the startup state"');
+  });
+
 
   test('auto-rotate is OFF afterwards, as the button\'s own comment promises', () => {
     ui.camera.autoRot = true;

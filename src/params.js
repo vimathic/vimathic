@@ -49,7 +49,24 @@ import { DOM } from './dom.js';
 //
 // Layout: 0..23 original schemes · 24..35 NEW (Cyberpunk Gold..Bioluminescence)
 //         36..43 DARK series (Charcoal Smoke..Coal Plum)
-export const COLOR_SCHEME_COUNT = 44;
+//         44..53 NIGHT series (Burgundy Black..Rust Slate)
+//
+// The five enumerations that have to move with this number — _COLOR_FUNS,
+// getColor(), #color-sel, and the two catalogue comments in shaders.js — are
+// checked against it by tests/palette-catalogue.test.js. Bumping it alone
+// turns that test red in five places, on purpose.
+export const COLOR_SCHEME_COUNT = 54;
+
+// Where the NIGHT series starts. NIGHT mode draws only from here up — the
+// automatic pickers, that is: the dropdown stays free, because the mode is
+// about what the app chooses unattended, not about what the operator may
+// choose. Derived rather than written out twice so a future series appended
+// after NIGHT joins the pool by construction instead of by remembering — the
+// same mistake the R shape pool made for eleven shapes.
+export const NIGHT_SCHEME_FIRST = 44;
+export const NIGHT_SCHEMES = Array.from(
+  { length: COLOR_SCHEME_COUNT - NIGHT_SCHEME_FIRST }, (_, i) => NIGHT_SCHEME_FIRST + i);
+export const ALL_SCHEMES = Array.from({ length: COLOR_SCHEME_COUNT }, (_, i) => i);
 
 // Floor for hold-and-drag. Some params allow min = 0 (bassSens, trebleSens,
 // bloom), and dragging one to exactly 0 makes the visualiser go silent, which

@@ -109,6 +109,64 @@ describe('AutoCycler — cadence', () => {
     assert.equal(cycler.fadeMs(1000),   600);  //  350 asked for → floor
     assert.equal(cycler.fadeMs(4000),  1400);  // in between, untouched
   });
+
+  test('by default the fade IS the period — the palette never stands still', () => {
+    // The shipped defaults changed: 0.35 under a 3 s ceiling meant 3 s of
+    // crossfade and 13 s of a still picture at the 8-bar cadence, which reads
+    // as a switch rather than as drift. Pinned because it is a look decision,
+    // not an implementation detail — anyone restoring a ceiling here is
+    // restoring the dwell.
+    const { cycler } = makeCycler();
+    for (const period of [4000, 16000, 32000, 120000]) {
+      assert.equal(cycler.fadeMs(period), period,
+        `a ${period} ms period left ${period - cycler.fadeMs(period)} ms of dwell`);
+    }
+  });
+
+  test('the floor survives, because a fade longer than its period cancels itself', () => {
+    // Nothing reaches a sub-600 ms cadence in practice — 8 bars at 3200 BPM —
+    // but with no ceiling the floor is the only clamp left, and without it a
+    // fast enough cadence would have every change pre-empt the one before it
+    // half way through.
+    const { cycler } = makeCycler();
+    assert.equal(cycler.fadeMs(100), 600);
+  });
+});
+
+describe('AutoCycler — swapping the pool', () => {
+  // NIGHT narrows AUTO COLOUR to its own palettes and widens it again.
+  test('draws come only from the new pool', () => {
+    const { cycler } = makeCycler({ opts: { pool: [0, 1, 2, 3] } });
+    cycler.setPool([44, 45, 46]);
+    for (let i = 0; i < 30; i++) {
+      const v = cycler.next?.() ?? cycler._bag.next();
+      assert.ok([44, 45, 46].includes(v), `dealt ${v}, which is not in the new pool`);
+    }
+  });
+
+  test('the old deck does not keep dealing after the swap', () => {
+    // The reason setPool rebuilds instead of filtering: a ShuffleBag's
+    // no-repeat guard is a dealt deck. Filtering the pool would leave the deck
+    // holding values that had just left it, and they would keep coming out
+    // until it emptied — worst case a full deck of bright palettes inside a
+    // mode whose one claim is that it does not choose them.
+    const { cycler } = makeCycler({ opts: { pool: [0, 1, 2, 3, 4, 5, 6, 7] } });
+    cycler._bag.next(); cycler._bag.next();       // part-way through a deck
+    cycler.setPool([44, 45]);
+    const seen = new Set();
+    for (let i = 0; i < 20; i++) seen.add(cycler._bag.next());
+    assert.deepEqual([...seen].sort((a, b) => a - b), [44, 45]);
+  });
+
+  test('an empty pool makes AUTO a no-op instead of throwing', () => {
+    // Same contract the constructor already keeps: ShuffleBag throws on an
+    // empty pool, and that must not escape from a UI event handler.
+    const { cycler } = makeCycler({ opts: { pool: [0, 1] } });
+    cycler.setPool([]);
+    assert.equal(cycler._bag, null);
+    assert.doesNotThrow(() => cycler.enable());
+    cycler.disable();
+  });
 });
 
 describe('AutoCycler — what it draws', () => {
