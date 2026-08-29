@@ -505,23 +505,68 @@ function lorenzY(x, z, t, sigma=10, rho=28, beta=2.667) {
   return cy * 0.018;
 }
 
-/** Rule-n 1D cellular automaton row → value at position x */
-function cellularRule(rule, x, z, time) {
-  const width = 64;
-  const gen = Math.floor((z + 3.5) / 7 * 32) + 1;
-  let row = new Uint8Array(width);
-  row[Math.floor(width/2)] = 1;
+const CA_WIDTH = 64;
+
+/**
+ * The automaton's row after `gen` generations from a single centre cell.
+ *
+ * Split out of cellularRule because the row depends on NOTHING ELSE: `time` is
+ * not read at all, and `x` only picks a cell out of the finished row.
+ */
+function cellularRow(rule, gen) {
+  let row = new Uint8Array(CA_WIDTH);
+  row[Math.floor(CA_WIDTH / 2)] = 1;
   for (let g = 0; g < gen; g++) {
-    const next = new Uint8Array(width);
-    for (let i = 0; i < width; i++) {
-      const l = row[(i-1+width)%width], c = row[i], r = row[(i+1)%width];
-      const idx = (l<<2)|(c<<1)|r;
+    const next = new Uint8Array(CA_WIDTH);
+    for (let i = 0; i < CA_WIDTH; i++) {
+      const l = row[(i - 1 + CA_WIDTH) % CA_WIDTH], c = row[i], r = row[(i + 1) % CA_WIDTH];
+      const idx = (l << 2) | (c << 1) | r;
       next[i] = (rule >> idx) & 1;
     }
     row = next;
   }
-  const ix = Math.floor((x + 3.5) / 7 * width);
-  return row[clamp(ix, 0, width-1)] ? 0.4 : -0.1;
+  return row;
+}
+
+// FIX: the rows are memoised, and that is a repair rather than a tuning knob.
+// z ∈ [−3.5, 3.5] gives gen ∈ [1, 33], so a whole field needs at most 33 rows
+// per rule — but the row was rebuilt from the seed on EVERY sample, with two
+// Uint8Array allocations per generation. generateSurfaceFromFormula evaluates
+// on a gridSize² lattice and gridSize is sqrt(the mesh's vertex count), so the
+// cost grew with the mesh for no reason: on `sierpinski-tetra` at IFS depth 7
+// (196 608 vertices → grid 443) those 33 rows were computed 196 249 times a
+// frame. Measured on this device, same mesh, same grid: rule90 4.6 FPS against
+// `mandelbrot`'s 31.2 — the entire gap was this rebuild.
+//
+// The values cannot change: the row is a pure function of (rule, gen), and both
+// are integers. tests/cellular-rule-cache.test.js pins that against a fresh
+// uncached recomputation over the whole reachable range, so a cache that ever
+// returned a stale or shared-and-mutated row fails there.
+const caRowCache = new Map();
+
+// Keys stay bounded so a coordinate far outside the field extent — a body
+// bigger than ±3.5, an audio param gone wild — cannot grow the map without
+// limit. Out-of-range generations still get the right answer, just uncached.
+const CA_GEN_MAX = 4096;
+
+/** Rule-n 1D cellular automaton row → value at position x */
+function cellularRule(rule, x, z, time) {
+  const gen = Math.floor((z + 3.5) / 7 * 32) + 1;
+  let row;
+  if (gen >= 0 && gen <= CA_GEN_MAX) {
+    const key = rule * (CA_GEN_MAX + 1) + gen;
+    row = caRowCache.get(key);
+    if (row === undefined) {
+      row = cellularRow(rule, gen);
+      caRowCache.set(key, row);
+    }
+  } else {
+    // NaN lands here too, and NaN < 0 is false in the loop above, so this
+    // returns the seed row — exactly what the uncached code did.
+    row = cellularRow(rule, gen);
+  }
+  const ix = Math.floor((x + 3.5) / 7 * CA_WIDTH);
+  return row[clamp(ix, 0, CA_WIDTH - 1)] ? 0.4 : -0.1;
 }
 
 // ── Hydrogen wavefunctions |ψ|² for (n,l,m) ─────────────────────────────────

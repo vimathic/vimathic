@@ -149,10 +149,19 @@ Formulas labelled as running "on a 64×64 grid" or similar in this document refe
   of them then pointed at something unrelated. `grep -n 'Math.round(Math.sqrt'
   src/math-visualizer.js` finds the five and cannot go stale.
   Over the twenty shapes in `#shape-sel` that is
-  **21 distinct grids — 3, 5, 8, 10, 15, 18, 24, 43, 45, 52, 55, 63, 65,
-  74, 81, 83, 100, 111, 114, 161, 198** — twelve odd and nine even. 55 and 111
-  are the newest, and they are `sierpinski-tetra` on its two configurations —
-  the twenty-first shape, and the first with an interior. This list is
+  **21 distinct grids — 3, 5, 8, 10, 15, 18, 24, 43, 45, 52, 63, 65,
+  74, 81, 83, 100, 114, 161, 198, 222, 443** — eleven odd and ten even. 222 and
+  443 are the newest, and they are `sierpinski-tetra` on its two configurations
+  — the twenty-first shape, and the first with an interior. They read 222 and
+  443 rather than the 55 and 111 published before because the body's IFS now
+  recurses to depth 7 on desktop and 6 on mobile instead of 5 and 4: at depth 5
+  the silhouette still read as a coarse polyhedron rather than as the fractal.
+  They are also the two largest grids in the list by a wide margin, and that is
+  a consequence worth naming — the grid is `sqrt(the mesh's vertex count)`, so
+  this body asks the CPU-formula path for 443² samples a frame where the next
+  shape down asks for 198². That is affordable only because the automaton
+  kernels stopped rebuilding themselves per sample (see `cellularRow` in
+  `src/math-collections.js`). This list is
   produced by walking the real `setShape` at both `planeSegs`, not maintained by
   hand, and the previous revision of it named 22 including **9 and 13**, which
   no shape in the tree produced on either configuration — measured on the

@@ -185,19 +185,20 @@ function tetraHullInterior(g) {
 test('sierpinski-tetra is the one shape with vertices strictly inside its own hull', () => {
   const g = build('sierpinski-tetra', false);
   const { inside, total } = tetraHullInterior(g);
-  assert.equal(total, 2050, `depth 5 has 2050 distinct corners; this build has ${total}`);
-  assert.equal(inside, 780,
-    `${inside} of ${total} vertices are strictly inside the hull; depth 5 gives 780 (38.0 %), and ` +
+  assert.equal(total, 32770, `depth 7 has 32770 distinct corners; this build has ${total}`);
+  assert.equal(inside, 20412,
+    `${inside} of ${total} vertices are strictly inside the hull; depth 7 gives 20412 (62.3 %), and ` +
     'a body whose vertices are all on the skin cannot draw a cloud with depth in it');
   // POINTS shares the mesh buffer, so the cloud is the un-welded count: the
-  // figure is written out per triangle precisely so those 780 are not welded
+  // figure is written out per triangle precisely so those 20 412 are not welded
   // away with the rest.
-  assert.equal(g.attributes.position.count, 12288);
+  assert.equal(g.attributes.position.count, 196608);
 
   const m = build('sierpinski-tetra', true);
   const mob = tetraHullInterior(m);
-  assert.equal(mob.inside, 120, `mobile depth 4 gives 120 interior of 514; measured ${mob.inside}`);
-  assert.equal(m.attributes.position.count, 3072);
+  assert.equal(mob.total, 8194, `mobile depth 6 has 8194 distinct corners; measured ${mob.total}`);
+  assert.equal(mob.inside, 4200, `mobile depth 6 gives 4200 interior of 8194; measured ${mob.inside}`);
+  assert.equal(m.attributes.position.count, 49152);
 });
 
 test('CONTROL — the plain tetrahedron has none, on the identical measurement', () => {

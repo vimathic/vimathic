@@ -2549,7 +2549,16 @@ export class RenderEngine {
       case 'dodecahedron':     return new THREE.DodecahedronGeometry(3.5, 0);
       // The only body here with an interior — see buildSierpinskiTetraGeo for
       // why that has to come from geometry and cannot come from a formula.
-      case 'sierpinski-tetra': return buildSierpinskiTetraGeo(this.isMobile ? 4 : 5, 3.2);
+      // Depth 5/4 was chosen against a cost that turned out not to be the
+      // shape's. Measured on this device from the edge-midpoint axis — the
+      // view the fractal is recognised in — the body draws at 27 FPS on depth
+      // 7 and 30 under a GPU shader; what collapsed was the rule90 family, and
+      // that was cellularRule rebuilding its automaton per sample (fixed in
+      // math-collections.js). Depth 7 is where the silhouette stops reading as
+      // a coarse polyhedron: 16 384 cells against 1 024, matching the
+      // reference images. Mobile keeps one level back — 4 096 cells, the same
+      // ~4× step it had before.
+      case 'sierpinski-tetra': return buildSierpinskiTetraGeo(this.isMobile ? 6 : 7, 3.2);
       case 'star':             return this._buildStarGeo();
       case 'solar':            return new THREE.SphereGeometry(1.2, 64, 64);
       // Not a name this build knows. setShape() resolves every value through
