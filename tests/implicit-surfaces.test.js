@@ -786,11 +786,21 @@ describe('the field may travel along these bodies\' own normals', () => {
     //
     // A body that took a different path on a phone than on a desktop would be a
     // defect of its own, so both are asserted rather than one.
+    //
+    // `assert.ok(x === null)` and never `assert.equal(x, null)` — the rule three
+    // other files in this suite already carry (shape-hook-lifetime.test.js:384,
+    // recorder-capture-lifetime, blend-from-state), and the one place it was
+    // forgotten cost two VMs. _pristineNormals is a Float32Array of 121 569
+    // floats on the desktop gyroid, so the FAILING branch of assert.equal
+    // formats it through util.inspect and diffs it: measured 2.4 GB of resident
+    // memory in under six seconds, which is enough for the host to kill the
+    // whole guest before node reaches its own heap limit. The trap only springs
+    // when the test is RIGHT, which is the worst possible time for it.
     for (const name of NAMES) {
       for (const isMobile of [false, true]) {
         const { viz } = vizFor(name, isMobile);
         const where = isMobile ? 'mobile' : 'desktop';
-        assert.equal(viz._pristineNormals, null,
+        assert.ok(viz._pristineNormals === null,
           `${name} (${where}) went down the normal path with a cap of ${viz._pristineDepth}`);
       }
     }
