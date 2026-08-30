@@ -312,10 +312,18 @@ function medialRadius(positions, normals) {
  * on every one of these bodies, including one whose real limit is 1.3. Weighting
  * by area and taking the point where a ten-thousandth of the surface has turned
  * over answers the question a viewer would ask. Calibrated against the
- * catalogue: at that threshold sphere, torus, icosahedron-smooth, catenoid and
- * hyperboloid return Infinity (they never fold), helicoid returns 0.185 against
- * its medial 0.405, and the five implicit bodies return 0.013 to 0.043 against
- * medial caps of 0.5 to 1.5.
+ * catalogue at desktop resolution: sphere, torus, icosahedron-smooth, catenoid,
+ * hyperboloid and solar answer 3.500, 1.100, 3.500, 1.500, 1.600 and 1.200 —
+ * every one of them ABOVE the medial cap that already bound it, so the bodies
+ * already following their normals lose nothing. helicoid answers 0.185 against
+ * a medial cap of 0.405, and the five implicit bodies 0.011 to 0.034 against
+ * medial caps of 0.507 to 1.485.
+ *
+ * Infinity comes out of here only for a mesh of fewer than four triangles: the
+ * walk always reaches `total`, and `total >= budget`, so some triangle always
+ * answers. An earlier draft of this paragraph claimed the six above return
+ * Infinity "because they never fold", and that was never measurable — what
+ * they return is the radius at which each closes on itself.
  *
  * @param {Float32Array} positions  pristine, xyz per vertex
  * @param {Float32Array} normals    welded, xyz per vertex
@@ -1361,10 +1369,12 @@ export class MathVisualizer {
         // answers only "how far is the nearest sheet facing back". A surface
         // also folds against its own curvature with no second sheet in sight —
         // see foldRadius for the measurements. Taking the MINIMUM of the two is
-        // what keeps the change surgical: every body already on this path
-        // returns Infinity from foldRadius (sphere, torus, icosahedron-smooth,
-        // catenoid, hyperboloid, solar — none of them inverts a triangle at any
-        // amplitude up to 4), so their caps and their pixels are unchanged. The
+        // what keeps the change surgical: on every body already on this path
+        // foldRadius answers ABOVE the medial cap that already bound it — sphere
+        // 3.500 against 2.656, torus 1.100 against 0.837, icosahedron-smooth
+        // 3.500 against 2.663, catenoid 1.500 against 1.141, hyperboloid 1.600
+        // against 1.217, solar 1.200 against 0.911 — so the minimum is still the
+        // medial one and their caps and their pixels are unchanged. The
         // two that move are `helicoid`, which was folding 20 of its 19 200
         // triangles under 33 of the 192 kernels, and the five implicit bodies,
         // which would have folded far harder.
