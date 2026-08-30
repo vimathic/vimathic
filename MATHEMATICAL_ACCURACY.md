@@ -148,10 +148,18 @@ Formulas labelled as running "on a 64×64 grid" or similar in this document refe
   gave four line numbers, round 10 inserted code above all four, and every one
   of them then pointed at something unrelated. `grep -n 'Math.round(Math.sqrt'
   src/math-visualizer.js` finds the five and cannot go stale.
-  Over the twenty shapes in `#shape-sel` that is
-  **31 distinct grids — 3, 5, 8, 10, 15, 18, 24, 40, 43, 45, 50, 52, 56, 63, 65,
-  70, 74, 78, 79, 81, 83, 99, 100, 111, 114, 140, 157, 161, 198, 222, 443** — fifteen odd and sixteen even.
-  Ten of those arrived with the six parametric
+  Over the thirty-two shapes in `#shape-sel` that is
+  **40 distinct grids — 3, 5, 8, 10, 15, 18, 24, 40, 43, 45, 50, 52, 56, 63, 65,
+  70, 71, 74, 78, 79, 81, 83, 95, 97, 99, 100, 111, 114, 129, 135, 140, 152, 157,
+  161, 179, 180, 198, 201, 222, 443** — twenty-two odd and eighteen even.
+  Nine of those arrived with the five implicit bodies of wave B (71, 95, 97, 129,
+  135, 152, 179, 180, 201 — two configurations each, with `schwarz-p` and
+  `chmutov` sharing 135 on mobile). Their grids do not halve between the two
+  configurations the way the rest of the catalogue's do, because these bodies are
+  not sampled on a u-v grid at all: the vertex count of a marching-cubes mesh is
+  the number of lattice edges the surface crosses, which grows with the surface's
+  AREA and roughly as the square of the resolution rather than as its cube.
+  Ten more arrived with the six parametric
   surfaces (40, 50, 56, 70, 78, 79, 99, 111, 140, 157 — two configurations each,
   with `catenoid` and `hyperboloid` sharing both of theirs), and 111 is a
   returning value rather than a new one: it was `sierpinski-tetra` at IFS depth
@@ -188,12 +196,16 @@ Formulas labelled as running "on a 64×64 grid" or similar in this document refe
   f = sin(1.3x) + cos(0.9z) + 0.2xz on each shape's own grid, the drawn
   displacement correlates **1.000000** with f(x, z) — that is, r ≥ 0.9999995,
   which is what rounds to six nines; only `plane` and `octahedron` read a bit-
-  exact 1.000000000 — on **sixteen** of the twenty-seven, and **≥ 0.997** on
+  exact 1.000000000 — on **twenty-one** of the thirty-two, and **≥ 0.997** on
   **nine** more. Five of the six parametric surfaces land in the first column and
   one in the second, which is the answer worth taking from this census: a body
   that no height field can BE still carries a height field faithfully, because
   the field travels along the normal and does not care how the body was
-  authored. The pair has moved twice before that, and the two moves are one story told at two
+  authored. Wave B sharpened that: **all five** implicit bodies land in the first
+  column and none on the 0.997 shelf, so `near` did not move when they arrived.
+  A marching-cubes mesh has no u-v grid whatever — its vertices sit wherever the
+  surface crosses a lattice edge — and the field still lands where it belongs.
+  The pair has moved twice before that, and the two moves are one story told at two
   scales, so they are read in order rather than as competing claims about "what
   it was before".
   (Most recently it was nine and nine, until `pyramid` stopped being a body with

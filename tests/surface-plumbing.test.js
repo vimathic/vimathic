@@ -53,6 +53,7 @@ globalThis.Worker ??= class { postMessage() {} terminate() {} };
 
 const { RenderEngine } = await import('../src/render.js');
 const { weldNormals, MathVisualizer } = await import('../src/math-visualizer.js');
+const { SHAPE_NAMES } = await import('../src/shapes.js');
 
 /** The geometry the app itself builds for a shape name, through RenderEngine.setShape. */
 const buildShape = name => {
@@ -669,23 +670,41 @@ describe('the field follows the surface only where that is safe', () => {
     return n;
   };
 
-  // The table IS the rule, and every row of it was measured.
-  const FOLLOWS  = ['sphere', 'torus', 'icosahedron-smooth', 'solar'];
-  const VERTICAL = ['plane', 'circle', 'disc', 'hex', 'ring', 'star',      // plates
-                    'box', 'cylinder', 'cone', 'pyramid', 'pyramid-smooth', // hard edges
-                    'tetrahedron', 'octahedron', 'icosahedron', 'dodecahedron',
-                    'torusknot'];                                           // 0.222 of clearance
+  // The table is PRODUCED by walking the catalogue, not written by hand.
+  //
+  // It was two hand-written literals of four and sixteen names until wave B,
+  // and by then the tree held twenty-seven shapes and seven followers. Nothing
+  // went red: the lists simply stopped covering the catalogue, and seven bodies
+  // — sierpinski-tetra, mobius, klein, catenoid, helicoid, hyperboloid,
+  // pseudosphere — appeared in neither. That is not a cosmetic gap. The
+  // negative-field guard below iterates FOLLOWS, so it did not run on `helicoid`
+  // at all, and `helicoid` was inverting 20 of its 19 200 triangles under 33 of
+  // the 192 shipped kernels. A list that has to be edited by hand when the
+  // catalogue grows is a list that will be forgotten again, so this one is
+  // derived the same way the grid list in tests/surface-field-on-shapes.test.js
+  // is: by asking the shipped code.
+  const classify = () => {
+    const follows = [], vertical = [];
+    for (const name of SHAPE_NAMES) {
+      const { viz } = vizFor(name);
+      (viz._pristineNormals ? follows : vertical).push(name);
+    }
+    return { follows, vertical };
+  };
+  const { follows: FOLLOWS, vertical: VERTICAL } = classify();
 
-  test('the four bodies that can carry it, and the sixteen that keep the vertical rule', () => {
+  test('every shape is on one of the two rules, and the split is the measured one', () => {
+    assert.equal(FOLLOWS.length + VERTICAL.length, SHAPE_NAMES.length,
+      'a shape reached neither rule, which cannot happen unless the walk is broken');
+    // Pinned by name, because WHICH bodies follow their normals is a product
+    // fact and not an implementation detail: a body silently changing rules is
+    // a body that starts deforming differently on screen.
+    assert.deepEqual(FOLLOWS,
+      ['sphere', 'torus', 'icosahedron-smooth', 'catenoid', 'hyperboloid', 'solar'],
+      'the set of bodies that carry the field along their own normals has changed');
     for (const name of FOLLOWS) {
       const { viz } = vizFor(name);
-      assert.ok(viz._pristineNormals, `${name} should follow its own surface`);
       assert.ok(viz._pristineDepth > 0.3, `${name}: depth cap ${viz._pristineDepth}`);
-    }
-    for (const name of VERTICAL) {
-      const { viz } = vizFor(name);
-      assert.equal(viz._pristineNormals, null,
-        `${name} must keep the vertical rule — it has hard edges, is a plate, or has no room`);
     }
   });
 
@@ -703,7 +722,7 @@ describe('the field follows the surface only where that is safe', () => {
     }
   });
 
-  test('the sixteen on the vertical rule are bit-identical to what main draws', () => {
+  test('the bodies on the vertical rule are bit-identical to what main draws', () => {
     // Not "close": the same numbers. This is the guarantee that narrowing the
     // change left everything else where it was.
     for (const name of VERTICAL) {
