@@ -22,7 +22,19 @@ export default defineConfig({
   // the smaller factors as the typical case — the budget has to cover the worst
   // one, and a test killed by its budget reports the step it was on rather than
   // the reason.
-  timeout: process.env.CI ? 150_000 : 30_000,
+  //
+  // 31.08.2026: the local half was 30_000 and had gone stale in exactly the way
+  // the paragraph above warns about. The clip-camera specs grew an 8 s hold to
+  // settle a race, and three of them now sit ON the old line — measured alone on
+  // this machine: "still wins" 28.6 s, "keeps the Hold(s) value" 29.9 s, and
+  // "hands the camera back" needs 48.9 s because two of its waits are written as
+  // 3 × stepMs(8000). The last one could not pass locally at ANY speed, and its
+  // report — "AUTO-ROTATE: OFF after 8 polls" — accused the product of a camera
+  // bug that a DIAG trace then disproved (`autoRot -> true` fires on cam-b's
+  // step, exactly as intended). It was carried as an inherited red across two
+  // waves. 90 s restores the margin the CI half has (3× the slowest full-file
+  // run) without blunting a genuine hang, and the CI number is untouched.
+  timeout: process.env.CI ? 150_000 : 90_000,
   // Same reasoning for assertions, same factor: the 5 s default is measured
   // against a machine rendering at 60 FPS, and every wait budget has to scale
   // with the machine, not just the outer one. Per-assertion timeouts written
