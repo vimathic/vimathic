@@ -5394,6 +5394,30 @@ export function generateVolumeFromFormula(fn, params = {}, gridSize = 90, extent
  * @param {{bands: Float32Array, depth: number, radius: number}|null} layer
  * @returns {number} 0 when the layer is off, so callers need no branch
  */
+const bandSmoothstep = (a, b, x) => {
+  const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
+
+/**
+ * HOW a band moves a point, not only how far — the CPU half of bandMotion() in
+ * src/shaders.js, and the two must stay identical or the same formula gestures
+ * differently depending on which render mode the user is in.
+ *
+ * Breathe where the formula is broad, a travelling ripple where it has middling
+ * texture, zero-mean turbulence where it is finely corrugated. Crossfaded, never
+ * switched: a hard boundary between two gestures reads as a seam.
+ */
+function bandMotion(amp, u, rr, tb, t) {
+  const breathe = amp;
+  const ripple  = amp * Math.sin(rr * 9 - t * 3 + u * 12);
+  const shatter = amp * (tb - 0.9) * 1.7 * Math.sin(t * 2 + u * 10);
+  const toRipple  = bandSmoothstep(0.25, 0.60, u);
+  const toShatter = bandSmoothstep(0.60, 0.92, u);
+  const mid = breathe + (ripple - breathe) * toRipple;
+  return mid + (shatter - mid) * toShatter;
+}
+
 export function bandRingValue(layer, x, z, vertexIndex) {
   if (!layer || !layer.bands || !(layer.depth > 0)) return 0;
   const last = layer.bands.length - 1;
@@ -5410,9 +5434,20 @@ export function bandRingValue(layer, x, z, vertexIndex) {
   const u = layer.u !== undefined && vertexIndex !== undefined
     ? layer.u[vertexIndex]
     : Math.min(1, Math.sqrt(x * x + z * z) / Math.max(layer.radius, 1e-3));
-  const t = Math.min(1, Math.max(0, u)) * last;
+  const uc = Math.min(1, Math.max(0, u));
+  const t = uc * last;
   const i0 = Math.floor(t), i1 = Math.min(i0 + 1, last), fr = t - i0;
-  return (layer.bands[i0] + (layer.bands[i1] - layer.bands[i0]) * fr) * layer.depth;
+  const amp = layer.bands[i0] + (layer.bands[i1] - layer.bands[i0]) * fr;
+  // The gesture rides the character map, so it appears exactly where the map
+  // does — under the radius rule there is nothing about the formula to give a
+  // gesture to, and the layer stays the plain push it always was.
+  // The gesture needs the two time-independent halves the map precomputed. If a
+  // caller has a map but no gesture data — an older layer object — the plain
+  // push is the honest fallback rather than a second, different gesture.
+  if (layer.u !== undefined && layer.time !== undefined && layer.r && layer.tb) {
+    return bandMotion(amp, uc, layer.r[vertexIndex], layer.tb[vertexIndex], layer.time) * layer.depth;
+  }
+  return amp * layer.depth;
 }
 
 /**

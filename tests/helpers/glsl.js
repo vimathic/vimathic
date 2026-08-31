@@ -937,10 +937,38 @@ function isBandTerm(tree, bare = false) {
 function isScaledLookup(a) {
   if (!(a && a.k === 'bin' && a.op === '*')) return false;
   if (!(a.r.k === 'id' && a.r.v === 'uBandDepth')) return false;
-  const call = a.l;
-  if (!(call.k === 'call' && (call.n === 'bandAtU' || call.n === 'bandAtRadius'))) return false;
-  if (call.args.length !== 1) return false;
-  return isBandCoord(call.args[0], call.n === 'bandAtRadius');
+  return isBandTermInner(a.l);
+}
+
+/**
+ * The band value before uBandDepth scales it: a lookup, optionally wrapped in
+ * the gesture, optionally chosen between the two by uBandMode.
+ *
+ * `bandMotion` is allowed to wrap the lookup because HOW a band moves a point is
+ * still that band's value — but its first two arguments have to be the lookup
+ * and the SAME coordinate that lookup used. A gesture driven by one coordinate
+ * while the amplitude comes from another would be unreadable on screen and
+ * unreadable here, so it fails.
+ */
+function isBandTermInner(n) {
+  if (!n) return false;
+  if (n.k === 'tern') {
+    const guard = n.c && n.c.k === 'bin' && n.c.op === '==' &&
+      [n.c.l, n.c.r].some(x => x.k === 'id' && x.v === 'uBandMode') &&
+      [n.c.l, n.c.r].some(x => x.k === 'num' && Number(x.v) === 1);
+    return !!(guard && isBandTermInner(n.a) && isBandTermInner(n.b));
+  }
+  if (n.k === 'call' && n.n === 'bandMotion') {
+    if (n.args.length < 2) return false;
+    if (!isBandTermInner(n.args[0])) return false;          // amplitude is a lookup
+    const lookup = n.args[0];
+    const coordOfLookup = lookup.k === 'call' ? lookup.args[0] : null;
+    return !!(coordOfLookup && print(coordOfLookup) === print(n.args[1]));
+  }
+  if (n.k === 'call' && (n.n === 'bandAtU' || n.n === 'bandAtRadius')) {
+    return n.args.length === 1 && isBandCoord(n.args[0], n.n === 'bandAtRadius');
+  }
+  return false;
 }
 
 /** One of the two coordinates, or a `uBandMode` choice between them. */

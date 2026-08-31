@@ -1718,6 +1718,11 @@ export class MathVisualizer {
       depth,
       radius: this.render.U?.uBandR?.value ?? 3.5,
       u: wantMap ? (this._bandMap ?? undefined) : undefined,
+      r: wantMap ? this._bandMapR : undefined,
+      tb: wantMap ? this._bandMapTb : undefined,
+      // The live clock, for the gesture only — the MAP is built at a frozen
+      // reference time so the layout does not crawl, but the motion has to move.
+      time: wantMap ? this._lastTickTime : undefined,
     };
   }
 
@@ -1741,6 +1746,8 @@ export class MathVisualizer {
   _rebuildBandMap() {
     this._bandMapDirty = false;
     this._bandMap = null;
+    this._bandMapR = null;
+    this._bandMapTb = null;
     const base = this._pristinePositions;
     if (!base || !this._formulaFn) return;
 
@@ -1753,8 +1760,10 @@ export class MathVisualizer {
       const field = generateSurfaceFromFormula(
         this._formulaFn, { amp: 1, freq: 1, comp: 0.5 },
         ANALYSIS_GRID, FIELD_EXTENT, BAND_MAP_REF_TIME);
-      const { u } = buildBandMap(field, ANALYSIS_GRID, FIELD_EXTENT, { x, z, R });
+      const { u, r, tb } = buildBandMap(field, ANALYSIS_GRID, FIELD_EXTENT, { x, z, R });
       this._bandMap = u;
+      this._bandMapR = r;
+      this._bandMapTb = tb;
     } catch (_) {
       // A formula that throws on this lattice keeps the radius rule rather than
       // taking the layer down with it.

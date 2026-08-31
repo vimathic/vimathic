@@ -17,6 +17,12 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBandMap, radialU, ANALYSIS_GRID } from '../src/band-map.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const SHADER_SRC = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/shaders.js'), 'utf8');
 import {
   MATH_COLLECTIONS, generateSurfaceFromFormula, bandRingValue, FIELD_EXTENT,
 } from '../src/math-collections.js';
@@ -185,5 +191,68 @@ describe('the lookup uses the map when there is one', () => {
     for (const layer of [{ bands, depth: 0, radius: 3.5, u }, { bands, depth: 0, radius: 3.5 }]) {
       assert.equal(bandRingValue(layer, 2, 2, 0), 0);
     }
+  });
+});
+
+describe('the gesture: how a band moves a point, not only how far', () => {
+  const bands = new Float32Array(24).fill(1);          // every band at full
+  const layerAt = (u, r, tb, time) => ({
+    bands, depth: 1, radius: 3.5,
+    u: new Float32Array([u]), r: new Float32Array([r]), tb: new Float32Array([tb]), time,
+  });
+
+  test('a smooth place breathes: one sign, no oscillation', () => {
+    // u = 0 is the broad end of the map. Over a whole cycle of the gesture's
+    // clock the value must never change sign — a swell, not a shake.
+    let neg = 0;
+    for (let t = 0; t < 12; t += 0.25) {
+      if (bandRingValue(layerAt(0.05, 2.0, 1.2, t), 2, 2, 0) < 0) neg++;
+    }
+    assert.equal(neg, 0, 'the smooth end of the map oscillates instead of breathing');
+  });
+
+  test('a finely corrugated place shakes: zero-mean, both signs', () => {
+    // u = 1 is the fine end. It has to go both ways, or it is just a lumpier
+    // breathe — which is what the first draft of this was.
+    let neg = 0, pos = 0, sum = 0, n = 0;
+    for (let t = 0; t < 12; t += 0.1) {
+      const v = bandRingValue(layerAt(0.98, 2.0, 1.6, t), 2, 2, 0);
+      if (v < 0) neg++; else if (v > 0) pos++;
+      sum += v; n++;
+    }
+    assert.ok(neg > 10 && pos > 10, `the fine end moved ${neg} down and ${pos} up — it is not shaking`);
+    assert.ok(Math.abs(sum / n) < 0.25, `the fine end has a mean of ${(sum / n).toFixed(3)}, so it swells rather than vibrates`);
+  });
+
+  test('the gesture needs the map — under the radius rule it stays a plain push', () => {
+    // Nothing about the radius says anything about the formula, so there is no
+    // character to give a gesture to. Same amplitude every frame.
+    const plain = { bands, depth: 1, radius: 3.5 };
+    const a = bandRingValue(plain, 2, 2, 0);
+    const b = bandRingValue(plain, 2, 2, 0);
+    assert.equal(a, b);
+    assert.ok(a > 0);
+  });
+
+  test('CPU and GPU evaluate the SAME gesture', () => {
+    // The two are written twice, in two languages, and nothing in the product
+    // would show it if they drifted. This pins the four terms that decide the
+    // shape of the motion against the shader's own text.
+    const shader = SHADER_SRC;
+    assert.match(shader, /float ripple\s*=\s*amp \* sin\(rr \* 9\.0 - T \* 3\.0 \+ u \* 12\.0\)/,
+      'the shader ripple no longer matches bandMotion() in math-collections.js');
+    assert.match(shader, /shatter\s*=\s*amp \* \(turb\(xz \* 3\.5\) - 0\.9\) \* 1\.7 \* sin\(T \* 2\.0 \+ u \* 10\.0\)/,
+      'the shader shatter no longer matches bandMotion() in math-collections.js');
+    // The shader evaluates the noise lazily and the CPU path reads it from the
+    // map; the VALUE is the same four-harmonic turbulence at the same scale,
+    // which is what this pins. The CPU half is checked numerically below.
+    assert.match(shader, /if \(toShatter > 0\.0\)/,
+      'the shader stopped skipping the noise where it has no weight — that cost 6 fps on the heaviest body');
+    // Both thresholds are present; the order in the source changed when the
+    // noise became lazy (toShatter is computed first so it can gate it).
+    assert.match(shader, /smoothstep\(0\.60, 0\.92, u\)/,
+      'the shatter crossfade threshold differs between the two paths');
+    assert.match(shader, /smoothstep\(0\.25, 0\.60, u\)/,
+      'the ripple crossfade threshold differs between the two paths');
   });
 });

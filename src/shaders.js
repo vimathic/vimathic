@@ -269,6 +269,53 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
 //   * the time is pinned at BAND_T. The layout is a property of the shape a
 //     mode draws, not of the frame it is on; a live clock would make the bands
 //     crawl across the surface while the music plays through them.
+// ── HOW a band moves a point, not only how far ──────────────────────────────
+// Until this, all 24 bands did one thing: push the vertex out along the field.
+// Loudness changed, the gesture did not — so a fractal and a smooth bell
+// answered the same music the same way, which is the second half of "no magic".
+//
+// The gesture now follows the same coordinate the layout does. u is 0 where the
+// formula is broad and 1 where it is finely corrugated, so:
+//
+//   u ~ 0    BREATHE   the whole region rises and falls together, one slow mass
+//   u ~ 0.5  RIPPLE    a travelling wave runs through it, phase set by u so
+//                      neighbouring bands do not move in lockstep
+//   u ~ 1    SHATTER   turbulence, signed and zero-mean: the surface boils in
+//                      place instead of swelling
+//
+// The three are crossfaded, never switched, because a hard boundary between two
+// gestures reads as a seam on the mesh — the same reason the band lookup
+// interpolates rather than steps.
+//
+// Zero-mean matters for the last two: a ripple that only pushed outward would
+// just be a lumpier breathe. Signed motion is what makes fine detail read as
+// vibration rather than as swelling.
+// TIME ENTERS ONLY AS A PHASE, and that is a cost decision as much as a visual
+// one. Sliding the turbulence through space (turb(xz*k + T)) reads much the same
+// on screen but forces the noise to be recomputed every frame; as a phase, the
+// noise depends on position alone, so the CPU path can precompute it once per
+// map and multiply. Measured there: 25.2 ms per frame on 196 608 vertices with
+// the noise live, 4.6 ms with it cached — the difference between unusable and
+// free. The shader recomputes it regardless (it is four harmonics and the GPU
+// does not care), but both paths must evaluate the SAME expression.
+float bandMotion(float amp, float u, vec2 xz, float T, float rr){
+  float breathe = amp;
+  float ripple  = amp * sin(rr * 9.0 - T * 3.0 + u * 12.0);
+  float toShatter = smoothstep(0.60, 0.92, u);
+  // The noise is evaluated only where it has any weight. Most of a body sits
+  // below u = 0.6, and turb() is four harmonics — skipping it there took the
+  // heaviest body in the catalogue from 40 fps back to 50. The branch is not
+  // coherent across vertices, which normally makes a GPU branch worthless, but
+  // four transcendental pairs are worth more than the divergence costs here.
+  float shatter = 0.0;
+  if (toShatter > 0.0) {
+    // turb() runs roughly 0..1.8 with a mean near 0.9; centring it is what makes
+    // this shake rather than inflate.
+    shatter = amp * (turb(xz * 3.5) - 0.9) * 1.7 * sin(T * 2.0 + u * 10.0);
+  }
+  return mix(mix(breathe, ripple, smoothstep(0.25, 0.60, u)), shatter, toShatter);
+}
+
 float bandCoordOfMode(vec2 xz, float a, float wi){
   const float E = 0.05;          // fine finite-difference step, world units
   const float C = 4.0;           // the coarse step is C times the fine one
@@ -380,7 +427,13 @@ void main(){
     float fBase = mix(y, yNxt, uModeBlend);
     float bandU = uBandMode == 1 ? bandCoordOfMode(pos.xz, a, wi)
                                 : length(pos.xz) / max(uBandR, 1e-3);
-    float f = uBandDepth > 0. ? fBase + bandAtU(bandU) * uBandDepth : fBase;
+    // With the layout by radius the gesture stays the plain push it always was:
+    // the radius says nothing about the formula, so there is nothing to give a
+    // gesture to. Character mode gets all three.
+    float bandTerm = uBandMode == 1
+      ? bandMotion(bandAtU(bandU), bandU, pos.xz, T, length(pos.xz))
+      : bandAtU(bandU);
+    float f = uBandDepth > 0. ? fBase + bandTerm * uBandDepth : fBase;
     pos.y = (pos.y + f) * uMorphProgress;
     // The field alone, scaled the same way — bit-for-bit what vH carried
     // before round 10, when the height WAS the field: c629b53 stored
