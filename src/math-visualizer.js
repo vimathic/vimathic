@@ -274,6 +274,126 @@ function medialRadius(positions, normals) {
   return best;
 }
 
+/**
+ * How far the field may push before the surface folds against its OWN curvature.
+ *
+ * medialRadius above answers a different question — how far away the nearest
+ * sheet FACING BACK is — and until wave B that was the only one the catalogue
+ * needed, because a three primitive's radius of curvature is comfortably larger
+ * than its medial radius. An isosurface's is not, and the gap is not small:
+ * measured with a constant field of -0.4, the gyroid turns 4.81 % of its area
+ * inside out at a medial cap of 0.507, Schwarz P 2.57 % at 0.562, the Chmutov
+ * surface 4.76 % at 0.587 and the Cayley cubic 5.25 % at 1.485 — while sphere,
+ * torus, icosahedron-smooth, catenoid and hyperboloid invert NOTHING at any
+ * amplitude up to 4. No second sheet is involved in any of those folds. Push a
+ * patch inward past the centre of its own curvature and it turns over on its
+ * own.
+ *
+ * `helicoid` was the catalogue's own warning and nobody read it: it inverts 20
+ * of its 19 200 triangles at -0.4 and 33 of the 192 shipped kernels reach that,
+ * because its rulings converge on its axis where the surface's focal distance
+ * is the screw pitch 0.42 — a quantity medialRadius (0.506 there) cannot see.
+ *
+ * ── What is computed, and why it is exact rather than a proxy ───────────────
+ * Displace every vertex by d along its own normal and a triangle's normal
+ * becomes a QUADRATIC in d:
+ *
+ *   N(d) = (B + d.NB) x (C + d.NC),   B = b-a, C = c-a, NB = nb-na, NC = nc-na
+ *   N(d).N(0) = |N0|^2 + d.((B x NC + NB x C).N0) + d^2.((NB x NC).N0)
+ *
+ * so the exact d at which that triangle turns over is the root of a quadratic
+ * nearest to zero — in either direction, because the field has both signs. No
+ * curvature estimate, no discretisation of a derivative.
+ *
+ * ── Why a quantile and not the minimum ──────────────────────────────────────
+ * The minimum is useless and that was measured before this was written. A
+ * marching-cubes mesh carries slivers — triangles of tiny but non-zero area
+ * whose normal is numerically unstable — so SOME triangle inverts at d = 1e-4
+ * on every one of these bodies, including one whose real limit is 1.3. Weighting
+ * by area and taking the point where a ten-thousandth of the surface has turned
+ * over answers the question a viewer would ask. Calibrated against the
+ * catalogue at desktop resolution: sphere, torus, icosahedron-smooth, catenoid,
+ * hyperboloid and solar answer 3.500, 1.100, 3.500, 1.500, 1.600 and 1.200 —
+ * every one of them ABOVE the medial cap that already bound it, so the bodies
+ * already following their normals lose nothing. helicoid answers 0.185 against
+ * a medial cap of 0.405, and the five implicit bodies 0.011 to 0.034 against
+ * medial caps of 0.507 to 1.485.
+ *
+ * Infinity comes out of here only for a mesh of fewer than four triangles: the
+ * walk always reaches `total`, and `total >= budget`, so some triangle always
+ * answers. An earlier draft of this paragraph claimed the six above return
+ * Infinity "because they never fold", and that was never measurable — what
+ * they return is the radius at which each closes on itself.
+ *
+ * @param {Float32Array} positions  pristine, xyz per vertex
+ * @param {Float32Array} normals    welded, xyz per vertex
+ * @param {ArrayLike<number>|null} index  triangle list, or null for a soup
+ */
+function foldRadius(positions, normals, index) {
+  const nTri = index ? index.length / 3 : positions.length / 9;
+  if (nTri < 4) return Infinity;
+  const dist = new Float64Array(nTri);
+  const area = new Float64Array(nTri);
+  let total = 0;
+
+  for (let t = 0; t < nTri; t++) {
+    const ia = index ? index[t * 3] : t * 3;
+    const ib = index ? index[t * 3 + 1] : t * 3 + 1;
+    const ic = index ? index[t * 3 + 2] : t * 3 + 2;
+    const bx = positions[ib * 3] - positions[ia * 3];
+    const by = positions[ib * 3 + 1] - positions[ia * 3 + 1];
+    const bz = positions[ib * 3 + 2] - positions[ia * 3 + 2];
+    const cx = positions[ic * 3] - positions[ia * 3];
+    const cy = positions[ic * 3 + 1] - positions[ia * 3 + 1];
+    const cz = positions[ic * 3 + 2] - positions[ia * 3 + 2];
+    const ux = normals[ib * 3] - normals[ia * 3];
+    const uy = normals[ib * 3 + 1] - normals[ia * 3 + 1];
+    const uz = normals[ib * 3 + 2] - normals[ia * 3 + 2];
+    const vx = normals[ic * 3] - normals[ia * 3];
+    const vy = normals[ic * 3 + 1] - normals[ia * 3 + 1];
+    const vz = normals[ic * 3 + 2] - normals[ia * 3 + 2];
+
+    const n0x = by * cz - bz * cy, n0y = bz * cx - bx * cz, n0z = bx * cy - by * cx;
+    const A = n0x * n0x + n0y * n0y + n0z * n0z;
+    area[t] = Math.sqrt(A) / 2;
+    total += area[t];
+    if (A < 1e-24) { dist[t] = 0; continue; }      // already degenerate
+
+    // B x NC + NB x C, dotted into N0
+    const p1x = by * vz - bz * vy, p1y = bz * vx - bx * vz, p1z = bx * vy - by * vx;
+    const p2x = uy * cz - uz * cy, p2y = uz * cx - ux * cz, p2z = ux * cy - uy * cx;
+    const B1 = (p1x + p2x) * n0x + (p1y + p2y) * n0y + (p1z + p2z) * n0z;
+    // NB x NC, dotted into N0
+    const q1x = uy * vz - uz * vy, q1y = uz * vx - ux * vz, q1z = ux * vy - uy * vx;
+    const C1 = q1x * n0x + q1y * n0y + q1z * n0z;
+
+    let best = Infinity;
+    if (Math.abs(C1) < 1e-18) {
+      if (Math.abs(B1) > 1e-18) best = Math.abs(A / B1);
+    } else {
+      const disc = B1 * B1 - 4 * C1 * A;
+      if (disc >= 0) {
+        const rt = Math.sqrt(disc);
+        for (const r of [(-B1 + rt) / (2 * C1), (-B1 - rt) / (2 * C1)]) {
+          if (Math.abs(r) < best) best = Math.abs(r);
+        }
+      }
+    }
+    dist[t] = best;
+  }
+
+  // The area quantile: sort by fold distance and walk until a ten-thousandth
+  // of the surface has turned over.
+  const order = Array.from({ length: nTri }, (_, i) => i).sort((i, j) => dist[i] - dist[j]);
+  const budget = total * 1e-4;
+  let acc = 0;
+  for (const i of order) {
+    acc += area[i];
+    if (acc >= budget) return dist[i];
+  }
+  return Infinity;
+}
+
 export function weldNormals(positions, normals) {
   return weldWithGroups(positionGroups(positions), normals);
 }
@@ -1239,8 +1359,37 @@ export class MathVisualizer {
         this._pristineNormals = null;                 // and no weld: it would be discarded
       } else {
         this._pristineNormals = weldWithGroups(rep, this._pristineNormals);
-        const r = medialRadius(this._pristinePositions, this._pristineNormals);
-        this._pristineDepth = Number.isFinite(r) ? r * 0.8 : Infinity;
+        // Two caps, cheapest first — the same ordering principle as the three
+        // questions above, and here it pays twice over. foldRadius is one pass
+        // and a sort; medialRadius is 400 sources against every vertex, which on
+        // the gyroid is 16 million distance tests. A body the fold rule already
+        // rejects never pays for the medial one.
+        //
+        // FIX(wave B): until this, the cap was the medial radius alone, and it
+        // answers only "how far is the nearest sheet facing back". A surface
+        // also folds against its own curvature with no second sheet in sight —
+        // see foldRadius for the measurements. Taking the MINIMUM of the two is
+        // what keeps the change surgical: on every body already on this path
+        // foldRadius answers ABOVE the medial cap that already bound it — sphere
+        // 3.500 against 2.656, torus 1.100 against 0.837, icosahedron-smooth
+        // 3.500 against 2.663, catenoid 1.500 against 1.141, hyperboloid 1.600
+        // against 1.217, solar 1.200 against 0.911 — so the minimum is still the
+        // medial one and their caps and their pixels are unchanged. The
+        // two that move are `helicoid`, which was folding 20 of its 19 200
+        // triangles under 33 of the 192 kernels, and the five implicit bodies,
+        // which would have folded far harder.
+        // No 0.8 on the fold distance, unlike the medial one below, and the
+        // asymmetry is deliberate. medialRadius samples 400 sources, so its
+        // answer can overstate the clearance and is bought down. foldRadius is
+        // exact for every triangle; its only softening is the area quantile,
+        // which is already the margin. A second one would double-count it.
+        const f = foldRadius(this._pristinePositions, this._pristineNormals,
+                             geo.index ? geo.index.array : null);
+        this._pristineDepth = f;
+        if (this._pristineDepth >= MIN_USEFUL_DEPTH) {
+          const r = medialRadius(this._pristinePositions, this._pristineNormals);
+          this._pristineDepth = Math.min(f, Number.isFinite(r) ? r * 0.8 : Infinity);
+        }
         // And a body with almost no room keeps the vertical rule too. The knot's
         // strands leave 0.222 between them, and a cap that tight both hides the
         // field and still leaves the surface crossing itself somewhere the sample

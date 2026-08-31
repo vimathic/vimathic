@@ -30,7 +30,9 @@
 // TWENTY-ONE since the six parametric surfaces arrived: mobius, klein,
 // catenoid, helicoid, hyperboloid and pseudosphere are all bodies with a shape
 // of their own, so they colour like the solids and not like the plates.
-// 21 + 1 + 5 = 27.)
+// 21 + 1 + 5 = 27. TWENTY-SIX since the five implicit bodies arrived — gyroid,
+// schwarz-p and chmutov clear 70 % while clebsch reads 64.2 % and cayley
+// 66.5 %, so the split is 21 saturating + 5 thin. 26 + 1 + 5 = 32.)
 // (The header used to say "fifteen of them — 81.5 % of the boot shape". The
 // count was wrong and the second half was right: fourteen shapes clear 73 %,
 // and 81.5 % is pyramid-smooth, which IS the boot shape — src/shapes.js's
@@ -396,7 +398,16 @@ const FLAT = ['plane', 'disc', 'circle', 'hex', 'tetrahedron'];
 // is — see the CONTROL that pins all three from both sides. Under the ramp the
 // app actually ships they read 0.0 % like everything else, which is the test
 // above this one.
-const THIN = ['mobius', 'klein', 'pseudosphere'];
+// The two cubics joined them in wave B — clebsch 64.2 %, cayley 66.5 % — and
+// they are this list's clearest demonstration of its own rule that the quantity
+// is WHERE THE AREA SITS and not how tall the body is. The two sit at opposite
+// ends of the height range: clebsch is 3.21 half-tall, taller than the sphere's
+// own reach, and cayley only 2.00, yet they read within two points of each
+// other. Both are algebraic bodies whose area is carried by four arms leaving
+// the middle of the frame, so neither banks enough area near its own extremes
+// to clamp. The two triply periodic bodies, which look far more like the
+// original THIN members, do clamp — see the note in the CONTROL below.
+const THIN = ['mobius', 'klein', 'pseudosphere', 'clebsch', 'cayley'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the built-in vertex program hands the ramp a displacement', () => {
@@ -497,10 +508,21 @@ describe('the ramp is back inside its window on the whole catalogue', () => {
     // If this ever comes back quiet, the reading above proves nothing.
     const solid = SHAPE_NAMES.filter(n => !FLAT.includes(n) && !THIN.includes(n) && n !== 'solar');
     // The count in this file's header, pinned here so the two cannot drift:
-    // eighteen shapes clear 70 %, three read in between, solar reads 37.7 %,
-    // the five flat ones 0.0 %. 18 + 3 + 1 + 5 = 27.
-    assert.equal(solid.length, 18,
-      `the header says eighteen shapes saturate the ramp under absolute-height colouring; this ` +
+    // twenty-one shapes clear 70 %, five read in between, solar reads 37.7 %,
+    // the five flat ones 0.0 %. 21 + 5 + 1 + 5 = 32.
+    //
+    // Eighteen until the five implicit bodies arrived, and the split among them
+    // came out the opposite way from the expectation — which had a reason, so
+    // the correction is worth keeping. A triply periodic surface crowds its area
+    // near y = 0 by construction, which is what put `mobius` and `klein` in
+    // THIN, so `gyroid` and `schwarz-p` looked like the THIN candidates and the
+    // two cubics like solids. It went the other way: the TPMS pair clamps,
+    // because the old ramp clamps on |y| and a TPMS is periodic in y as well —
+    // its area is spread over every band rather than banked in the middle one —
+    // while both cubics fall short. Predicting this from the shape's
+    // description does not work; measuring it does.
+    assert.equal(solid.length, 21,
+      `the header says twenty-one shapes saturate the ramp under absolute-height colouring; this ` +
       `control measures ${solid.length} of them (${SHAPE_NAMES.length} shapes, minus ${FLAT.length} ` +
       `flat ones, minus ${THIN.length} thin ones, minus solar)`);
     for (const name of solid) {
@@ -520,7 +542,8 @@ describe('the ramp is back inside its window on the whole catalogue', () => {
     // because most of its area is the wide collar at the cusp.
     // Pinned at both ends so neither drift can pass: a THIN shape that climbs
     // past 70 % belongs in `solid`, and one that falls to 0 belongs in FLAT.
-    for (const [name, want] of [['mobius', 10.4], ['klein', 30.9], ['pseudosphere', 50.4]]) {
+    for (const [name, want] of [['mobius', 10.4], ['klein', 30.9], ['pseudosphere', 50.4],
+                                ['clebsch', 64.2], ['cayley', 66.5]]) {
       const g = buildShape(name);
       const frac = clampedArea(g, ROUND10.gpuVH, SILENCE) * 100;
       g.dispose();

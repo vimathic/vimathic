@@ -107,8 +107,16 @@ describe('a shared proxy adds no work (FIX #52)', () => {
     // The proxy shares the mesh's buffers, so the mesh's own snapshots ARE its
     // snapshots; a second byte-identical Float32Array (~1.2 MB at 161²) is the
     // memory half of the same duplication.
-    assert.equal(viz._pristinePtsPositions, null);
-    assert.equal(viz._basePtsPositions, null);
+    // And `assert.ok(x === null)`, never `assert.equal(x, null)`, for the very
+    // buffer the line above names: assert.equal formats a failing Float32Array
+    // through util.inspect and diffs it. This fixture's GRID is 9, so today
+    // that would be 243 words — but the size this test is ABOUT is 77 763, and
+    // one edit to GRID is all that stands between here and the form that took
+    // two VM boots down on 2026-08-30.
+    assert.ok(viz._pristinePtsPositions === null,
+      'the shared proxy kept its own copy of the pristine positions — same buffers, twice');
+    assert.ok(viz._basePtsPositions === null,
+      'the shared proxy kept its own copy of the base positions — same buffers, twice');
   });
 });
 

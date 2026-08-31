@@ -53,6 +53,11 @@ export const SHAPE_NAMES = Object.freeze([
   // curvature (pseudosphere). See src/parametric-surfaces.js for why each one
   // earns a slot instead of being left to the 192 kernels.
   'mobius', 'klein', 'catenoid', 'helicoid', 'hyperboloid', 'pseudosphere',
+  // Bodies that have an equation but no parametrisation: two triply periodic
+  // surfaces (gyroid, schwarz-p), a Chebyshev quartic (chmutov) and two cubics
+  // (clebsch, cayley). See src/implicit-surfaces.js for what each one claims
+  // and src/marching-cubes.js for the instrument that meshes them.
+  'gyroid', 'schwarz-p', 'chmutov', 'clebsch', 'cayley',
   'star', 'solar',
 ]);
 

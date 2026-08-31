@@ -53,6 +53,7 @@ globalThis.Worker ??= class { postMessage() {} terminate() {} };
 
 const { RenderEngine } = await import('../src/render.js');
 const { weldNormals, MathVisualizer } = await import('../src/math-visualizer.js');
+const { SHAPE_NAMES } = await import('../src/shapes.js');
 
 /** The geometry the app itself builds for a shape name, through RenderEngine.setShape. */
 const buildShape = name => {
@@ -79,6 +80,36 @@ import {
   generateVolumeFromFormula,
   generateCollapseScalarField,
 } from '../src/math-collections.js';
+
+/**
+ * `assert.deepEqual` over two long numeric arrays, without handing them to the
+ * differ. The verdict is identical — this file imports node:assert/strict, so
+ * deepEqual IS deepStrictEqual, which compares primitives with Object.is — but
+ * what reaches `assert` is two counts instead of two arrays.
+ *
+ * The difference is not cosmetic. deepStrictEqual formats BOTH sides through
+ * util.inspect (depth 1000, maxArrayLength Infinity) and then runs a line diff
+ * costing O(N·D) in the number D of differing lines. The arrays compared below
+ * are long: sierpinski-tetra brings 589 824 words, gyroid 121 569, box 118 098.
+ * Measured under a 2500 MB cgroup cap: at N = 589 824 a ten-line divergence
+ * costs 521 MiB, a hundred lines 2143 MiB, a thousand lines is killed outright.
+ * A real regression in applyHeightField moves thousands of vertices, so the mine
+ * is armed exactly when the guard is RIGHT — which is how two VM boots died on
+ * 2026-08-30, on this same form in tests/implicit-surfaces.test.js. The message
+ * is also more use than the wall of numbers it replaces: how many words differ
+ * and where the first one is, instead of a diff nobody can read.
+ */
+const sameWords = (got, want, what) => {
+  assert.equal(got.length, want.length, `${what}: ${got.length} words against ${want.length}`);
+  let off = 0, first = -1;
+  for (let i = 0; i < want.length; i++) {
+    if (!Object.is(got[i], want[i])) { off++; if (first < 0) first = i; }
+  }
+  if (off) {
+    assert.fail(`${what}: ${off} of ${want.length} words differ, first at index ${first} — ` +
+                `${got[first]} against ${want[first]}`);
+  }
+};
 
 const BASELINE = { amp: 1, freq: 1, comp: 0.5 };
 
@@ -613,7 +644,7 @@ describe('a height field deforms a closed body instead of shearing it', () => {
     applyHeightField(geo, f, pos, 3.5, nrm);
     const twice = Array.from(geo.attributes.position.array);
 
-    assert.deepEqual(twice, once, 'the same field applied twice from the same base moved the mesh');
+    sameWords(twice, once, 'the same field applied twice from the same base moved the mesh');
   });
 });
 
@@ -669,24 +700,179 @@ describe('the field follows the surface only where that is safe', () => {
     return n;
   };
 
-  // The table IS the rule, and every row of it was measured.
-  const FOLLOWS  = ['sphere', 'torus', 'icosahedron-smooth', 'solar'];
-  const VERTICAL = ['plane', 'circle', 'disc', 'hex', 'ring', 'star',      // plates
-                    'box', 'cylinder', 'cone', 'pyramid', 'pyramid-smooth', // hard edges
-                    'tetrahedron', 'octahedron', 'icosahedron', 'dodecahedron',
-                    'torusknot'];                                           // 0.222 of clearance
+  // The table is PRODUCED by walking the catalogue, not written by hand.
+  //
+  // It was two hand-written literals of four and sixteen names until wave B,
+  // and by then the tree held twenty-seven shapes and seven followers. Nothing
+  // went red: the lists simply stopped covering the catalogue, and seven bodies
+  // — sierpinski-tetra, mobius, klein, catenoid, helicoid, hyperboloid,
+  // pseudosphere — appeared in neither. That is not a cosmetic gap. The
+  // negative-field guard below iterates FOLLOWS, so it did not run on `helicoid`
+  // at all, and `helicoid` was inverting 20 of its 19 200 triangles under 33 of
+  // the 192 shipped kernels. A list that has to be edited by hand when the
+  // catalogue grows is a list that will be forgotten again, so this one is
+  // derived the same way the grid list in tests/surface-field-on-shapes.test.js
+  // is: by asking the shipped code.
+  const classify = () => {
+    const follows = [], vertical = [];
+    for (const name of SHAPE_NAMES) {
+      const { viz } = vizFor(name);
+      (viz._pristineNormals ? follows : vertical).push(name);
+    }
+    return { follows, vertical };
+  };
+  const { follows: FOLLOWS, vertical: VERTICAL } = classify();
 
-  test('the four bodies that can carry it, and the sixteen that keep the vertical rule', () => {
+  test('every shape is on one of the two rules, and the split is the measured one', () => {
+    assert.equal(FOLLOWS.length + VERTICAL.length, SHAPE_NAMES.length,
+      'a shape reached neither rule, which cannot happen unless the walk is broken');
+    // Pinned by name, because WHICH bodies follow their normals is a product
+    // fact and not an implementation detail: a body silently changing rules is
+    // a body that starts deforming differently on screen.
+    assert.deepEqual(FOLLOWS,
+      ['sphere', 'torus', 'icosahedron-smooth', 'catenoid', 'hyperboloid', 'solar'],
+      'the set of bodies that carry the field along their own normals has changed');
     for (const name of FOLLOWS) {
       const { viz } = vizFor(name);
-      assert.ok(viz._pristineNormals, `${name} should follow its own surface`);
       assert.ok(viz._pristineDepth > 0.3, `${name}: depth cap ${viz._pristineDepth}`);
     }
-    for (const name of VERTICAL) {
-      const { viz } = vizFor(name);
-      assert.equal(viz._pristineNormals, null,
-        `${name} must keep the vertical rule — it has hard edges, is a plate, or has no room`);
-    }
+  });
+
+  test('one sliver does not take a body off its own normals, thirty of them do', () => {
+    // WHY this is not measured on a catalogue shape: nothing in the catalogue
+    // can see the difference. foldRadius sorts the triangles by the distance at
+    // which each turns over and walks until a ten-thousandth of the AREA has
+    // folded; replacing that budget with zero turns it into the plain minimum.
+    // Walked over all 32 shapes, that mutation moves the answer on exactly six
+    // bodies — helicoid 0.1846 → 0.1584 and the five implicit ones (gyroid
+    // 1.117e-2 → 1.479e-4, schwarz-p 1.309e-2 → 1.061e-4, chmutov 1.355e-2 →
+    // 1.376e-5, clebsch 3.411e-2 → 7.424e-5, cayley 1.321e-2 → 2.463e-4) — and
+    // all six are already below MIN_USEFUL_DEPTH and already on the vertical
+    // rule, so not one classification moves. The six bodies that DO follow
+    // their normals carry no slivers and answer identically either way (sphere
+    // 3.49998, torus 1.10000, icosahedron-smooth 3.50000, catenoid 1.49995,
+    // hyperboloid 1.59993, solar 1.20000). The split asserted above is
+    // therefore blind to the quantile, and so is the rest of the suite.
+    //
+    // So the body is built here for the question: a sphere the field may follow
+    // with room to spare, carrying triangles 0.03 across whose normals stand 42°
+    // off the local one and 56° off each other — the marching-cubes sliver,
+    // which folds at 0.039 where the sphere itself folds at 1.5. ONE of them is
+    // 1.39e-5 of the area and the rule must ignore it; THIRTY are 4.18e-4 and
+    // the rule must not. The pair brackets the ten-thousandth from both sides,
+    // so this reads red whether the budget is dropped to zero — the minimum,
+    // where one unstable triangle caps the whole sphere at 0.039 and sends it
+    // down the vertical rule — or raised past a thousandth, where the thirty
+    // stop counting.
+    const EDGE = 0.03, R = 1.5;
+
+    /** A smooth sphere, plus `count` identical slivers spread over it. */
+    const sphereWithSlivers = (count) => {
+      const base = new THREE.SphereGeometry(R, 24, 16);
+      const pos = Array.from(base.attributes.position.array);
+      const nrm = Array.from(base.attributes.normal.array);
+      const idx = Array.from(base.index.array);
+      const smoothTris = idx.length / 3;
+      base.dispose();
+
+      const golden = Math.PI * (3 - Math.sqrt(5));
+      for (let s = 0; s < count; s++) {
+        // A site on the sphere and two unit tangents there, off the Fibonacci
+        // spiral so that no two slivers can land on one another.
+        const y = 1 - (2 * s + 1) / count, ring = Math.sqrt(Math.max(0, 1 - y * y)), a = golden * s;
+        const c = [R * ring * Math.cos(a), R * y, R * ring * Math.sin(a)];
+        const t1 = [-Math.sin(a), 0, Math.cos(a)];
+        const t2 = [(c[1] * t1[2] - c[2] * t1[1]) / R, (c[2] * t1[0] - c[0] * t1[2]) / R,
+                    (c[0] * t1[1] - c[1] * t1[0]) / R];
+        // Three corners EDGE apart, three normals 42°/56° apart. The tilt is what
+        // makes it a sliver and not merely a small triangle: what is unstable
+        // on a marching-cubes mesh is the normal field, not the size.
+        const corner = [[0, 0], [EDGE, 0], [EDGE * 0.5, EDGE * 0.866]];
+        const tilt   = [[0, 0], [0.9, 0], [0, 0.9]];
+        for (let v = 0; v < 3; v++) {
+          const p = [0, 1, 2].map(k => c[k] + corner[v][0] * t1[k] + corner[v][1] * t2[k]);
+          const n = [0, 1, 2].map(k => c[k] / R + tilt[v][0] * t1[k] + tilt[v][1] * t2[k]);
+          const pl = Math.hypot(...p) / R, nl = Math.hypot(...n);
+          pos.push(p[0] / pl, p[1] / pl, p[2] / pl);      // corners back onto the sphere
+          nrm.push(n[0] / nl, n[1] / nl, n[2] / nl);
+        }
+        const b = pos.length / 3 - 3;
+        idx.push(b, b + 1, b + 2);
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(pos), 3));
+      geo.setAttribute('normal', new THREE.BufferAttribute(Float32Array.from(nrm), 3));
+      geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(idx), 1));
+      return { geo, smoothTris };
+    };
+
+    /** The share of the surface the slivers carry — the quantity the rule weighs. */
+    const sliverShare = (geo, smoothTris) => {
+      const p = geo.attributes.position.array, ix = geo.index.array;
+      let total = 0, slivers = 0;
+      for (let t = 0; t < ix.length / 3; t++) {
+        const a = ix[t * 3], b = ix[t * 3 + 1], c = ix[t * 3 + 2];
+        const ux = p[b * 3] - p[a * 3], uy = p[b * 3 + 1] - p[a * 3 + 1], uz = p[b * 3 + 2] - p[a * 3 + 2];
+        const vx = p[c * 3] - p[a * 3], vy = p[c * 3 + 1] - p[a * 3 + 1], vz = p[c * 3 + 2] - p[a * 3 + 2];
+        const area = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+        total += area;
+        if (t >= smoothTris) slivers += area;
+      }
+      return slivers / total;
+    };
+
+    /** The shipped decision, driven through the shipped entry point. */
+    const capture = (geo) => {
+      const render = {
+        isMobile: false,
+        U: { uMathMode: { value: 0 }, uMorphProgress: { value: 1 }, uVHField: { value: 0 } },
+        gpuMesh: { geometry: geo }, gpuPtsProxy: null, cb: {},
+      };
+      const viz = new MathVisualizer(render, { bass: 0, mid: 0, treble: 0, beatInt: 0, amp: 0.7, waveInt: 1 });
+      viz._workerReady = false;
+      viz.onShapeChange();
+      return viz;
+    };
+
+    // CONTROL. Without the slivers this body is on the normal path with a cap
+    // of 1.138, so whatever the two cases below do differently, the slivers did.
+    const clean = capture(sphereWithSlivers(0).geo);
+    assert.ok(clean._pristineNormals !== null,
+      `the sliver-free sphere is on the VERTICAL rule with a cap of ${clean._pristineDepth} — this test ` +
+      'can say nothing about slivers until its own control body follows its normals');
+
+    const one  = sphereWithSlivers(1);
+    const many = sphereWithSlivers(30);
+    const shareOne  = sliverShare(one.geo, one.smoothTris);
+    const shareMany = sliverShare(many.geo, many.smoothTris);
+    // Preconditions, so that a drift in the geometry shows up as itself rather
+    // than as a silent pass: the two bodies sit on opposite sides of the budget.
+    assert.ok(shareOne < 1e-4 / 4,
+      `the single sliver is ${shareOne.toExponential(3)} of the area, not comfortably under the ` +
+      'ten-thousandth this test needs it to be under');
+    assert.ok(shareMany > 1e-4 * 4,
+      `the thirty slivers are ${shareMany.toExponential(3)} of the area, not comfortably over the ` +
+      'ten-thousandth this test needs them to be over');
+
+    // `assert.ok(x === null)` and never `assert.equal(x, null)`: _pristineNormals
+    // is a Float32Array, and the failing branch of assert.equal formats it
+    // through util.inspect and diffs it. See implicit-surfaces.test.js:793.
+    const few = capture(one.geo);
+    assert.ok(few._pristineNormals !== null,
+      `a single sliver — ${shareOne.toExponential(3)} of the surface, folding at 0.039 where the body ` +
+      `folds at ${R} — took the whole sphere off its own normals. The control body above cleared the ` +
+      'same plate and hard-edge gates, so what rejected this one is a fold depth below ' +
+      'MIN_USEFUL_DEPTH. The fold depth is an AREA quantile for exactly that reason: the worst ' +
+      'triangle of a marching-cubes mesh is numerically unstable rather than physically tight, and ' +
+      'letting it decide alone puts bodies on the vertical rule for a fold no viewer could ever see.');
+
+    const lots = capture(many.geo);
+    assert.ok(lots._pristineNormals === null,
+      `thirty slivers — ${shareMany.toExponential(3)} of the surface, four times the budget — left the ` +
+      `sphere on the normal path with a cap of ${lots._pristineDepth}. Then the quantile is not weighing ` +
+      'area at all, and a body that really does fold over a measurable part of itself will be pushed ' +
+      'through its own surface.');
   });
 
   test('a NEGATIVE field inverts no triangle on the bodies that follow the surface', () => {
@@ -703,7 +889,7 @@ describe('the field follows the surface only where that is safe', () => {
     }
   });
 
-  test('the sixteen on the vertical rule are bit-identical to what main draws', () => {
+  test('the bodies on the vertical rule are bit-identical to what main draws', () => {
     // Not "close": the same numbers. This is the guarantee that narrowing the
     // change left everything else where it was.
     for (const name of VERTICAL) {
@@ -717,7 +903,7 @@ describe('the field follows the surface only where that is safe', () => {
       applyHeightField(geo, f, viz._pristinePositions, 3.5, null);   // the rule main ships
       const mainRule = Array.from(geo.attributes.position.array);
 
-      assert.deepEqual(branch, mainRule, `${name} moved away from the vertical rule`);
+      sameWords(branch, mainRule, `${name} moved away from the vertical rule`);
     }
   });
 

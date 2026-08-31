@@ -93,7 +93,13 @@ describe('an imported model owns the stage', () => {
     stage([modelMesh()]);
     vizMode('points');
 
-    assert.equal(host.gpuPtsProxy, null,
+    // `assert.ok(x === null)` and not `assert.equal(x, null)`: gpuPtsProxy is a
+    // THREE.Points holding a geometry, a material and a path back to the scene,
+    // and the failing branch of assert.equal formats it through util.inspect at
+    // depth 1000 and diffs it. Cheap here only by accident — this fixture's
+    // gpuMesh.geometry is a stub, so it costs 201 lines; the same proxy over a
+    // real 161² plane costs 361 241, which is how two VM boots died 2026-08-30.
+    assert.ok(host.gpuPtsProxy === null,
       'a points proxy over hidden geometry is a second invisible drawer');
     assert.equal(host.U.uPtStyle.value, 0,
       'gl_PointCoord is undefined for the model triangles — a raised mask discards them');
@@ -107,7 +113,8 @@ describe('an imported model owns the stage', () => {
 
     stage([modelMesh()]);
     assert.equal(host.U.uPtStyle.value, 0, 'the model must not be drawn through the sprite mask');
-    assert.equal(host.gpuPtsProxy, null);
+    assert.ok(host.gpuPtsProxy === null,
+      'the points proxy survived the import and still draws the hidden geometry');
   });
 
   test('picking a particle style while a model is up does not raise the mask', () => {

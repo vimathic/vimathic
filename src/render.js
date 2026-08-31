@@ -12,6 +12,10 @@ import {
   buildMobiusGeo, buildKleinGeo, buildCatenoidGeo,
   buildHelicoidGeo, buildHyperboloidGeo, buildPseudosphereGeo,
 } from './parametric-surfaces.js';
+import {
+  buildGyroidGeo, buildSchwarzPGeo, buildChmutovGeo,
+  buildClebschGeo, buildCayleyGeo,
+} from './implicit-surfaces.js';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Solar-system procedural assets — surfaces, clouds and ring profiles
@@ -2574,6 +2578,22 @@ export class RenderEngine {
       case 'helicoid':         return buildHelicoidGeo(this.isMobile ? 120 : 240, this.isMobile ? 20 : 40);
       case 'hyperboloid':      return buildHyperboloidGeo(this.isMobile ? 100 : 200, this.isMobile ? 30 : 60);
       case 'pseudosphere':     return buildPseudosphereGeo(this.isMobile ? 60 : 120, this.isMobile ? 80 : 160);
+      // Bodies given by an equation rather than a parametrisation — see
+      // src/implicit-surfaces.js. The single argument is the marching-cubes
+      // resolution in CELLS per axis, so the sample count is (res+1)^3 and the
+      // vertex count falls by about 4/3 octaves rather than 4x when it halves;
+      // 64/48 rather than a halving because the topology of every one of the
+      // five is identical at both (checked at res 32 through 96), and going
+      // below 48 buys little: the mobile gyroid is 23 027 vertices at 48 and
+      // the mobile `box` is 10 086, but the mobile `sierpinski-tetra` is
+      // 49 152. Like the six above, none of these needs the rotate list — a
+      // marching-cubes lattice has no natural up, so each field is written with
+      // the body already standing the way the catalogue stands.
+      case 'gyroid':           return buildGyroidGeo(this.isMobile ? 48 : 64);
+      case 'schwarz-p':        return buildSchwarzPGeo(this.isMobile ? 48 : 64);
+      case 'chmutov':          return buildChmutovGeo(this.isMobile ? 48 : 64);
+      case 'clebsch':          return buildClebschGeo(this.isMobile ? 48 : 64);
+      case 'cayley':           return buildCayleyGeo(this.isMobile ? 48 : 64);
       case 'star':             return this._buildStarGeo();
       case 'solar':            return new THREE.SphereGeometry(1.2, 64, 64);
       // Not a name this build knows. setShape() resolves every value through

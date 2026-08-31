@@ -337,7 +337,14 @@ describe('the paths the app takes and the guards above do not', () => {
     // a height field faithfully, because the field is applied along the normal
     // and does not care how the body was authored. The two that fall short are
     // still the same two, with the same values.
-    assert.equal(ones, 16, `the document says sixteen shapes round to 1.000000; this tree gives ${ones}`);
+    //
+    // Twenty-one and nine since the five implicit bodies arrived, and the
+    // interesting half of that is that ALL FIVE land on 1.000000 — none went to
+    // the 0.997 shelf. A marching-cubes mesh has no u-v grid at all, its
+    // vertices sit wherever the surface crosses a lattice edge, and the field
+    // still lands where it should. `near` did not move, so the shelf is the
+    // same nine bodies it was.
+    assert.equal(ones, 21, `the document says twenty-one shapes round to 1.000000; this tree gives ${ones}`);
     assert.equal(near, 9, `the document says nine more clear 0.997; this tree gives ${near}`);
     assert.deepEqual(below, ['tetrahedron 0.407', 'star 0.954'],
       'the document names exactly these two as falling short, with these values');
@@ -393,8 +400,13 @@ describe('the paths the app takes and the guards above do not', () => {
     // so the regexp became `** — undefined odd and undefined even` and the test
     // failed while BOTH the document and the tree were right. A guard that
     // cannot express the answer is not a stricter guard, it is a broken one.
+    // Extended again for wave B: the split reached twenty-two and eighteen, and
+    // the table stopped at twenty. Same lesson as last time, so this run puts
+    // ten spare on the end rather than exactly the one it needs.
     const words = ('zero one two three four five six seven eight nine ten eleven twelve thirteen ' +
-                   'fourteen fifteen sixteen seventeen eighteen nineteen twenty').split(' ');
+                   'fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one ' +
+                   'twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven ' +
+                   'twenty-eight twenty-nine thirty').split(' ');
     const odd = produced.filter(g => g % 2).length;
     const even = produced.length - odd;
     assert.ok(words[odd] && words[even],
