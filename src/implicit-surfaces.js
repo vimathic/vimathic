@@ -175,12 +175,19 @@ export function buildSchwarzPGeo(res = 64) {
 /**
  * The scale that makes the Chmutov surface exactly 3.2 across.
  *
- * On the x axis the other two terms are T_4(0) = 1 each, so the surface is
- * where T_4(x/s) = -2. Outside [-1, 1] the Chebyshev polynomial is
- * cosh(4 arccosh u), so u = cosh(arccosh(2)/4) is the largest |x/s| the body
- * reaches — 1.05447. Dividing 3.2 by it puts the extreme point at exactly 3.2,
- * which is why this body needs no clipping at all: the box only has to be
- * bigger than the body, and 3.3 is.
+ * The extreme point is NOT on an axis, and saying it is gets the right number
+ * for the wrong reason. |x| is largest where the other two terms are as small
+ * as they can be: T_4 bottoms out at -1, at |y/s| = |z/s| = 1/sqrt2, so the
+ * surface reaches its widest where T_4(x/s) = +2. Outside [-1, 1] the Chebyshev
+ * polynomial is cosh(4 arccosh u), so that x is s * cosh(arccosh(2)/4) =
+ * 1.0546907 * s, and dividing 3.2 by that factor puts the extreme point at
+ * exactly 3.2 — measured on the shipped mesh, the bounding box is 3.2 on all
+ * three axes. Hence no clipping shell and no rim: the sampling box only has to
+ * be bigger than the body, and 3.3 is.
+ *
+ * On the x axis itself the body does not exist at all. There T_4(0) = 1 twice
+ * over, so the surface would need T_4(x/s) = -2, and T_4 >= -1 everywhere on
+ * R — the axis passes through the gap between the lobes and never meets them.
  */
 const CHMUTOV_S = 3.2 / Math.cosh(Math.acosh(2) / 4);
 
@@ -220,12 +227,10 @@ const CHMUTOV_S = 3.2 / Math.cosh(Math.acosh(2) / 4);
  * vertices and a 188 ms COLLAPSE. At d = 6 the deformation verdict lands 5.7 %
  * from its gate, decided by an estimator with a larger spread than that.
  *
- * This is the only body here whose extent is derived rather than clipped. On
- * the x axis the other two terms are T_4(0) = 1 each, so the surface is where
- * T_4(x/s) = -2; outside [-1, 1] the Chebyshev polynomial is cosh(4 arccosh u),
- * so the largest |x/s| reached is cosh(arccosh(2)/4) = 1.054691 exactly, and
- * dividing 3.2 by it puts the extreme point on 3.2. Measured on the shipped
- * mesh: 3.1999. Hence no clipping shell and no rim.
+ * This is the only body here whose extent is derived rather than clipped — see
+ * CHMUTOV_S above for the derivation, and for why the widest point is at
+ * |y/s| = |z/s| = 1/sqrt2 rather than on an axis. Measured on the shipped mesh:
+ * 3.1999. Hence no clipping shell and no rim.
  */
 export function buildChmutovGeo(res = 64) {
   const s = CHMUTOV_S;
