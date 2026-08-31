@@ -554,14 +554,8 @@ describe('the Chmutov surface of degree four', () => {
 // ── The two triply periodic surfaces ────────────────────────────────────────
 
 describe('the gyroid and Schwarz P', () => {
-  const lattice = (f) => {
-    const out = [];
-    for (let i = 0; i < 24; i++) for (let j = 0; j < 24; j++) for (let k = 0; k < 24; k++) {
-      // Offset off the grid so no sample lands on a zero of either field.
-      out.push(f(0.017 + i * 0.31, 0.031 + j * 0.31, 0.043 + k * 0.31));
-    }
-    return out;
-  };
+  // Every walk below steps the same lattice inline: 24^3 points at 0.31 apart,
+  // offset off the grid so no sample lands on a zero of either field.
 
   test('both fields are invariant under the 3-cycle (x, y, z) -> (y, z, x)', () => {
     for (const [name, F] of [['gyroid', gyroid], ['schwarz-p', schwarzP]]) {
