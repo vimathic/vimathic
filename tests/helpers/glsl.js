@@ -830,7 +830,7 @@ const VH_PATS = compiled(VH_FORMS);
  * list that one case. Here the name is irrelevant: the expression is resolved to
  * its definition first and then has to be one of two things.
  */
-export function displacementKind(tree, symbols, interpName) {
+export function displacementKind(tree, symbols, interpName, allowBand = true) {
   if (reads(tree, 'pos', 'y')) return null;              // that is a height, not a displacement
   if (tree.k === 'id' && symbols.get(tree.v) === 'interp') {
     // `interp` means only "a ${…} ran between this name's definition and here",
@@ -859,15 +859,41 @@ export function displacementKind(tree, symbols, interpName) {
     return 'the blend of computeMode(uMode, pos.xz, …) and computeMode(uModeNext, pos.xz, …)';
   }
   // A displacement PLUS the band layer is still a displacement, and the
-  // addition is checked rather than waved through: the left operand has to be
-  // a displacement in its own right by the rules above, and the right one has
-  // to be the band term and nothing else. So a program that quietly replaced
-  // the field with the bands — or added anything else here — still fails.
-  if (tree.k === 'bin' && tree.op === '+') {
-    const base = displacementKind(tree.l, symbols, interpName);
+  // addition is checked rather than waved through: the left operand has to be a
+  // displacement in its own right by the rules above, and the right one has to
+  // be the band term and nothing else. So a program that quietly replaced the
+  // field with the bands — or added anything else here — still fails.
+  //
+  // `allowBand` is passed false into the left operand, which is what keeps the
+  // rule to ONE band layer. Without it the case is recursively composable and
+  // `(field + band) + band` certifies: the inner call approves `field + band`
+  // and the outer one approves a second copy, so a shader stacking the
+  // displacement twice would pass a guard meant to certify it once. Found by an
+  // external review of this very addition.
+  if (allowBand && tree.k === 'bin' && tree.op === '+') {
+    const base = displacementKind(tree.l, symbols, interpName, false);
     if (base && isBandTerm(tree.r)) return `${base}, plus the 24-band layer`;
   }
+  // The shipped form: the whole addition is conditional on uBandDepth, so that
+  // "off" is bit-exact rather than "off" being a +0.0 added to the field. Both
+  // arms have to be understood — the else arm must be the displacement alone,
+  // and the then arm must be that SAME displacement plus the band term — so a
+  // ternary that draws something else when the layer is off cannot slip past.
+  if (allowBand && tree.k === 'tern' && isBandGuard(tree.c)) {
+    const off = displacementKind(tree.b, symbols, interpName, false);
+    if (off && tree.a.k === 'bin' && tree.a.op === '+' &&
+        print(tree.a.l) === print(tree.b) && isBandTerm(tree.a.r, true)) {
+      return `${off}, plus the 24-band layer when it is switched on`;
+    }
+  }
   return null;
+}
+
+/** `uBandDepth > 0.` — the guard that makes "off" cost nothing. */
+function isBandGuard(c) {
+  return !!(c && c.k === 'bin' && c.op === '>' &&
+            c.l.k === 'id' && c.l.v === 'uBandDepth' &&
+            c.r.k === 'num' && Number(c.r.v) === 0);
 }
 
 /**
@@ -879,16 +905,26 @@ export function displacementKind(tree, symbols, interpName) {
  * axis, which is the whole claim the layer makes; and the else-branch is a
  * literal zero rather than a small number.
  */
-function isBandTerm(tree) {
+function isBandTerm(tree, bare = false) {
   // No symbol lookup here: resolve() has already substituted every local by its
   // definition before classify() runs, so a `bandY` written in the program
-  // arrives as the ternary itself.
+  // arrives as its definition.
+  //
+  // `bare` means the guard lives one level up (the shipped form puts the
+  // ternary around the whole addition), so what is expected here is the scaled
+  // lookup on its own rather than the guarded ternary.
+  const zero = n => n && n.k === 'num' && Number(n.v) === 0;
+  if (bare) return isScaledLookup(tree);
   const t = tree;
   if (!t || t.k !== 'tern') return false;
   const c = t.c, a = t.a, b = t.b;
-  const zero = n => n && n.k === 'num' && Number(n.v) === 0;
   const isGuard = c && c.k === 'bin' && c.op === '>' &&
     c.l.k === 'id' && c.l.v === 'uBandDepth' && zero(c.r);
+  return !!(isGuard && isScaledLookup(a) && zero(b));
+}
+
+/** `bandAtRadius(length(pos.xz)) * uBandDepth`, and nothing else. */
+function isScaledLookup(a) {
   const isScaled = a && a.k === 'bin' && a.op === '*' &&
     a.l.k === 'call' && a.l.n === 'bandAtRadius' && a.l.args.length === 1 &&
     a.l.args[0].k === 'call' && a.l.args[0].n === 'length' &&
@@ -896,7 +932,7 @@ function isBandTerm(tree) {
     a.l.args[0].args[0].f === 'xz' && a.l.args[0].args[0].o.k === 'id' &&
     a.l.args[0].args[0].o.v === 'pos' &&
     a.r.k === 'id' && a.r.v === 'uBandDepth';
-  return !!(isGuard && isScaled && zero(b));
+  return !!isScaled;
 }
 
 function classify(pats, write, interpName) {

@@ -17,9 +17,19 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { applyHeightField, generateSurfaceFromFormula, FIELD_EXTENT } from '../src/math-collections.js';
+import {
+  applyHeightField, applyDisplacementField, applyCollapseField,
+  generateSurfaceFromFormula, FIELD_EXTENT,
+} from '../src/math-collections.js';
 import { BAND_COUNT } from '../src/audio.js';
 import { BAND_GLSL } from '../src/shaders.js';
+import * as G from './helpers/glsl.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const SHADER_SRC = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/shaders.js'), 'utf8');
 
 const GRID = 41;
 
@@ -136,6 +146,65 @@ describe('the radius picks the band', () => {
     }
     assert.ok(Math.abs(worst) < 1e-6,
       `a vertex well beyond the radius read ${(1 + worst).toFixed(3)} instead of the top band's 1.0`);
+  });
+});
+
+describe('every door into the geometry carries the layer', () => {
+  // There are four, and three of them were missed at first. The slider moved,
+  // its readout counted, presets stored the value — and nothing on screen
+  // changed, which is the worst way for a feature to be absent.
+  test('the editor template applies the layer, not just declares it', () => {
+    // SE_VS_TEMPLATE interpolates BAND_GLSL, so a user shader COMPILES the
+    // lookup; for a while it never called it. Spectrum Rings then worked in
+    // CPU/formula mode (applyHeightField bakes the layer in before any shader
+    // runs) and silently did nothing in GPU mode — one control, two answers.
+    // Read the same way the other shader guards read it — the template's own
+    // text, bounded by its literal delimiters, rather than a call this module
+    // does not export.
+    const src = G.templateLiteral(SHADER_SRC, 'SE_VS_TEMPLATE').replace(/\s+/g, ' ');
+    assert.match(src, /bandAtRadius\(length\(pos\.xz\)\)\s*\*\s*uBandDepth/,
+      'the editor template declares the band uniforms but never applies them');
+    assert.match(src, /uBandDepth\s*>\s*0\./,
+      'the template applies the layer unconditionally — "off" would stop being bit-exact');
+  });
+
+  test('VOLUME and COLLAPSE move with the layer too', () => {
+    // Both DEFORM modes have their own writer into the position attribute and
+    // neither took the layer at first.
+    const bands = onlyBand(3, 1);
+    const layer = { bands, depth: 0.8, radius: 3.5 };
+
+    const gV = plate(24), gV0 = plate(24);
+    const df = new Float32Array(gV.attributes.position.count * 3);
+    applyDisplacementField(gV0, df, positionsOf(plate(24)), null);
+    applyDisplacementField(gV,  df, positionsOf(plate(24)), layer);
+    assert.notDeepStrictEqual(Array.from(positionsOf(gV)), Array.from(positionsOf(gV0)),
+      'VOLUME ignored the band layer');
+
+    const gC = plate(24), gC0 = plate(24);
+    const base = positionsOf(plate(24));
+    const nrm = new Float32Array(base.length);
+    for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1;          // flat plate: +Y
+    const sf = new Float32Array(gC.attributes.position.count);
+    applyCollapseField(gC0, sf, base, nrm, 1, null);
+    applyCollapseField(gC,  sf, base, nrm, 1, layer);
+    assert.notDeepStrictEqual(Array.from(positionsOf(gC)), Array.from(positionsOf(gC0)),
+      'COLLAPSE ignored the band layer');
+  });
+
+  test('CONTROL — with the layer off, all three writers are bit-exact', () => {
+    // The other half of the claim above: reaching more doors must not mean
+    // touching anything when the slider is at zero.
+    const off = { bands: onlyBand(3, 1), depth: 0, radius: 3.5 };
+    const base = positionsOf(plate(24));
+
+    for (const layer of [null, off]) {
+      const g = plate(24), g0 = plate(24);
+      const df = new Float32Array(g.attributes.position.count * 3);
+      applyDisplacementField(g0, df, base, null);
+      applyDisplacementField(g,  df, base, layer);
+      assert.deepStrictEqual(Array.from(positionsOf(g)), Array.from(positionsOf(g0)));
+    }
   });
 });
 

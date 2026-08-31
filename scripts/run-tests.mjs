@@ -51,11 +51,24 @@ if (import.meta.main) await main();
 
 async function main() {
 const MEM_MAX = process.env.VIMATHIC_TEST_MEM || '2500M';
-const nodeArgs = ['--test', '--test-concurrency=2', ...process.argv.slice(2)];
-if (!process.argv.slice(2).length) nodeArgs.push(TEST_GLOB);
+const passed  = process.argv.slice(2);
 
+// The glob is added unless the caller named FILES — not merely "unless the
+// caller passed something". `npm test -- --test-name-pattern=foo` passes an
+// option, not a target, and the first version treated it as one: the glob was
+// dropped, node --test was left with no paths at all, and it fell back to its
+// own recursive discovery. That silently runs a DIFFERENT set (everything
+// matching node's default test patterns anywhere in the tree, e2e specs
+// included) while reporting success. Found by an external review.
+const namesFiles = passed.some(a => !a.startsWith('-'));
+const nodeArgs = ['--test', '--test-concurrency=2', ...passed];
+if (!namesFiles) nodeArgs.push(TEST_GLOB);
+
+// Both properties the real invocation uses, not just the first: a systemd that
+// accepts MemoryMax and rejects MemorySwapMax would pass this probe and then
+// fail the actual run, instead of falling back to the uncapped path.
 const canCap = spawnSync('systemd-run',
-  ['--user', '--scope', '-q', '-p', `MemoryMax=${MEM_MAX}`, '--', 'true'],
+  ['--user', '--scope', '-q', '-p', `MemoryMax=${MEM_MAX}`, '-p', 'MemorySwapMax=0', '--', 'true'],
   { stdio: 'ignore' }).status === 0;
 
 // The glob is expanded by this process, not a shell: spawn does no globbing,
@@ -64,7 +77,16 @@ const files = [];
 for (const a of nodeArgs) {
   if (!a.includes('*')) { files.push(a); continue; }
   const { globSync } = await import('node:fs');
-  files.push(...globSync(a).sort());
+  const hit = globSync(a).sort();
+  // A glob that matches nothing is a broken suite specification, and it has to
+  // be LOUD. Left to itself, node --test with no paths goes back to recursive
+  // discovery and a repository whose tests had all been renamed would still
+  // report a green run.
+  if (!hit.length) {
+    console.error(`[run-tests] ${a} matched no files — refusing to fall back to node's own discovery`);
+    process.exit(1);
+  }
+  files.push(...hit);
 }
 
 const cmd = canCap

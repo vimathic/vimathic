@@ -26,10 +26,24 @@ function bandRadiusOf(geo) {
   const p = geo?.attributes?.position;
   if (!p) return 3.5;
   const n = p.count;
-  const r = new Float64Array(n);
-  for (let i = 0; i < n; i++) r[i] = Math.hypot(p.getX(i), p.getZ(i));
+  // Sampled, not exhaustive, and squared rather than rooted. Sorting every
+  // vertex cost 20.6 ms on sierpinski-tetra's 196 608 — measured on this
+  // machine, against ~9 ms to build the geometry in the first place, i.e. the
+  // measurement was more expensive than the thing measured, and it ran inside a
+  // shape swap where a dropped frame shows. A stride keeps at most 16 384
+  // samples; measured against the full sort on three radius distributions
+  // (uniform disc, ring, fractal) the p95 moves by 0.007-0.101 %, which is
+  // millimetres on a body three units across.
+  const CAP = 16384;
+  const stride = Math.max(1, Math.ceil(n / CAP));
+  const m = Math.ceil(n / stride);
+  const r = new Float64Array(m);
+  for (let i = 0, k = 0; k < m; i += stride, k++) {
+    const x = p.getX(i), z = p.getZ(i);
+    r[k] = x * x + z * z;                    // compare squares, root once at the end
+  }
   r.sort();
-  const q = r[Math.min(n - 1, Math.floor(n * 0.95))];
+  const q = Math.sqrt(r[Math.min(m - 1, Math.floor(m * 0.95))]);
   // A body with no XZ extent at all (a degenerate import) must not divide by
   // zero and must not collapse every band onto vertex 0.
   return q > 1e-3 ? q : 3.5;
@@ -2217,6 +2231,25 @@ export class RenderEngine {
    */
   setExternalModel(meshes) {
     this.modelMeshes = meshes ?? [];
+    // The band layer measures the body it is drawn on, and an imported model
+    // never passes through setShape(), so without this it inherited whatever
+    // radius the last procedural shape had: import after `solar` (uBandR ~1.2)
+    // and most of the model clamps onto band 23; import after a wide plane
+    // (~4.7) and it only ever reaches the low bands. Measured across every mesh
+    // of the model, so a multi-mesh file is scaled by what it occupies as a
+    // whole rather than by whichever mesh happens to be first. Found by an
+    // external review; the shipped catalogue could not show it because every
+    // catalogue shape does go through setShape.
+    // Both directions. `setExternalModel(null)` is how "✕ CLEAR MODEL" and a
+    // failed import get back to the procedural shape, and guarding only on
+    // `length` left the model's radius standing until the next shape change —
+    // a model exported in millimetres measures in the hundreds, which collapses
+    // the whole catalogue onto band 0 with nothing on screen to explain it.
+    if (this.U?.uBandR) {
+      this.U.uBandR.value = this.modelMeshes.length
+        ? Math.max(...this.modelMeshes.map(m => bandRadiusOf(m.geometry)))
+        : bandRadiusOf(this.gpuMesh?.geometry);
+    }
     // Re-running the current mode is the whole implementation: it hides or
     // shows the procedural mesh, drops or rebuilds the points proxy, and puts
     // the particle mask where it belongs — all in one place that already knows

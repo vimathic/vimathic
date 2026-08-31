@@ -6301,7 +6301,15 @@ describe('Round 11 — the visible label against the drawn object', () => {
     // still counts as equal and ±0 still differ), one line of output. See the
     // note in tests/surface-plumbing.test.js for the measured cost of the form
     // this replaces.
+    // -3 container mismatch, -2 length mismatch, -1 equal, otherwise the index.
+    // The container check is what keeps the verdict the same as deepStrictEqual's:
+    // that rejects a Float32Array against a plain array even when every element
+    // matches, and a counted walk would happily call them equal. Both operands
+    // here are Array.from(...) today, so this changes nothing now — it is there
+    // so the helper stays honest if a caller stops converting. (An external
+    // review pointed at the gap.)
     const firstDiff = (a, b) => {
+      if (a.constructor !== b.constructor) return -3;
       if (a.length !== b.length) return -2;
       for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return i;
       return -1;
@@ -6314,9 +6322,9 @@ describe('Round 11 — the visible label against the drawn object', () => {
         const now = at(t);
         const i = firstDiff(now, base);
         assert.ok(i === -1,
-          i === -2
-            ? `${key} changed grid size between t = 0 and t = ${t}`
-            : `${key} moved between t = 0 and t = ${t}: value ${i} went ${base[i]} -> ${now[i]}`);
+          i === -3 ? `${key} changed container type between t = 0 and t = ${t}`
+          : i === -2 ? `${key} changed grid size between t = 0 and t = ${t}`
+          : `${key} moved between t = 0 and t = ${t}: value ${i} went ${base[i]} -> ${now[i]}`);
       }
     }
     // Control: the probe can see a clock. wavePacket carries one by design, so

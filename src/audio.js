@@ -57,12 +57,74 @@ export const BAND_COUNT = BARK_EDGES.length - 1;
  * So a tone lights its band and leaves the others where they were, which is the
  * claim the whole layer rests on.
  */
+/**
+ * The smoothing pole, as a TIME CONSTANT rather than a per-frame fraction.
+ *
+ * The first version wrote `bands[i] = bands[i]*0.3 + norm*0.7` once per rendered
+ * frame, which makes the filter's speed a property of the display: tau came out
+ * 27.7 ms at 30 fps, 13.8 at 60, 6.9 at 120 and 5.8 at 144 — a 4.8x spread, so
+ * the same track visibly behaved differently on two machines. This project has
+ * already fixed that exact class twice (the beat fade in FIX(r11), the formula
+ * clock in FIX(#50)); this is the third.
+ *
+ * 60 ms is chosen against two requirements that pull opposite ways. A beat at
+ * 120 BPM is 2 Hz and has to come through: |H| = 0.80 there. Hi-hats and 16ths
+ * sit near 8 Hz, and this layer reaches the COLOUR ramp as well as the geometry
+ * (bands enter the field, the field is vH, vH is the palette parameter), so
+ * coherent modulation up there is a flicker risk — the same concern that keeps
+ * uBeat pinned to 0 in the vertex shader. At 60 ms, 8 Hz is attenuated to 0.31
+ * and the corner sits at 2.65 Hz.
+ */
+const BAND_TAU = 0.06;
+
+/**
+ * Below this raw level a band gets no tilt.
+ *
+ * The tilt is an addition, and for bands above 1720 Hz it is LARGER than
+ * BAND_REF_FLOOR (0.129 to 0.244 against 0.12) — so for half the spectrum the
+ * floor stopped being a floor: one nonzero byte anywhere up there made that band
+ * the loudest tilted band, which made it the reference, which normalised it to
+ * 1.0. Measured on the real engine: a spectrum of all-ones (-84.7 dBFS, i.e.
+ * silence) read 0.02 at band 0 rising monotonically to 1.00 at band 23. A
+ * microphone in a quiet room would have stood the body up as a static cone.
+ * The gate fades the tilt in over the bottom of the range instead, so a band has
+ * to carry something before it is treated as though it carried something.
+ */
+const BAND_TILT_GATE = 0.06;
+
+/**
+ * Raw level below which a band is treated as carrying nothing at all.
+ *
+ * The gate above stops the tilt from inflating near-silence, but it cannot fix
+ * the other half: the reference is the loudest tilted band, so SOMETHING is
+ * always normalised to 1.0 — including, on an almost-flat spectrum, whatever
+ * happens to be marginally loudest. Measured after the gate alone, a spectrum
+ * of all-eights (-82.6 dBFS, inaudible) still drove a band to 1.000.
+ *
+ * 0.06 of the byte scale is -80.5 dBFS in this analyser's window. Nothing
+ * musical lives below that, and subtracting it means a band has to clear the
+ * noise before it competes for the reference at all. A real tone is untouched:
+ * the 60 Hz probe tone reads raw 0.87, so it loses 7 % of its level and none of
+ * its rank.
+ */
+const BAND_NOISE_FLOOR = 0.06;
+
 const BAND_TILT_DB_PER_OCT = 3;
 const BAND_TILT_REF_HZ     = 200;
 /** The analyser window, in dB, that getByteFrequencyData stretches over 0-255. */
 const BAND_DB_SPAN         = 75;
-/** Floor under the shared reference, so silence cannot become full scale. */
-const BAND_REF_FLOOR       = 0.12;
+/**
+ * Floor under the shared reference, so quiet material cannot become full scale.
+ *
+ * It has to sit ABOVE the largest tilt (0.244 at band 23), and the first value
+ * did not: at 0.12 any band above 1720 Hz could clear the floor on its tilt
+ * alone, become the loudest tilted band, become the reference, and normalise
+ * itself to 1.0. 0.35 leaves the tilt no way to do that by itself while staying
+ * below anything a real mix reaches — a tone at -12 dBFS reads 0.81 here, and
+ * even a quiet passage peaking near -55 dBFS reads 0.33 to 0.57, so the
+ * adaptive part of the reference still does its job on soft material.
+ */
+const BAND_REF_FLOOR       = 0.35;
 const BAND_REF_HALFLIFE    = 1.5;
 
 /** Per-band tilt in raw units (0-1), from the band's geometric centre. */
@@ -118,7 +180,6 @@ export class AudioEngine {
     this.bands     = new Float32Array(BAND_COUNT);
     /** The one reference all 24 are measured against. See BAND_TILT. */
     this._bandRef = BAND_REF_FLOOR;
-    this._lastBandMs = undefined;
 
     // Live capture (mic / display) — orthogonal to file playback
     this._liveStream = null;
@@ -898,7 +959,11 @@ export class AudioEngine {
     // above so a frame in which playback stopped decays rather than holding the
     // last spectrum on screen.
     if (dt > 0 && dt < 1) {
-      if (this.analyser && this.fftData && this.isPlaying) this._updateBands(dt);
+      // The 4096-point FFT is skipped entirely while the layer is off, which is
+      // the shipped default — no reason to pay for a spectrum nothing reads.
+      // The decay branch still runs, so switching the slider on starts from
+      // rest rather than from a spectrum frozen whenever it was last computed.
+      if (this.analyser && this.fftData && this.isPlaying && this.bandDepth > 0) this._updateBands(dt);
       else this._decayBands(dt);
     }
   }
@@ -935,17 +1000,33 @@ export class AudioEngine {
     const tilted = this._bandScratch ??= new Float32Array(BAND_COUNT);
     let loudest = 0;
     for (let i = 0; i < BAND_COUNT; i++) {
-      // Half-open [lo, hi): a bin on a boundary belongs to the band above, so
-      // no bin is counted twice and none is skipped.
-      const lo = Math.floor(BARK_EDGES[i] / this._bandFpb);
+      // Half-open [lo, hi), and CEIL AT BOTH ENDS — which is what makes that
+      // true. The first draft floored the lower edge and ceiled the upper one,
+      // so each band's last bin was also the next band's first: measured, 23 of
+      // 23 boundaries overlapped at 44.1 kHz and 22 of 23 at 48 kHz, and band 0
+      // reached down to 10.8 Hz, below its own 20 Hz edge. A tone sitting on a
+      // boundary lit two rings instead of one. Ceiling both ends makes each
+      // band end exactly where the next begins: no bin counted twice, none
+      // skipped, and band 0 starts at 21.5 Hz rather than under its edge.
+      // Found by an external review; the unit tests could not see it because
+      // their own tone() helper built spectra with the same floor/ceil pair.
+      const lo = Math.ceil(BARK_EDGES[i] / this._bandFpb);
       const hi = Math.min(fft.length, Math.ceil(BARK_EDGES[i + 1] / this._bandFpb));
       let s = 0, c = 0;
+      // hi < lo when the band is entirely above Nyquist — an 8 kHz context (some
+      // Bluetooth headsets force one) has nothing at all above band 17. The loop
+      // simply does not run and the band reads 0, which is the truth about it.
       for (let k = lo; k < hi; k++) { s += fft[k]; c++; }
       // The mean, not the sum: bands are 9 bins wide at the bottom and 650 at
       // the top, and a sum would hand the outer rings a head start that has
       // nothing to do with what is audible.
       const raw = c ? s / c / 255 : 0;
-      const v = raw > 0 ? raw + BAND_TILT[i] : 0;   // silence stays silent
+      // Noise subtracted first, then the tilt faded in with what is left. Both
+      // are needed: the subtraction decides whether a band competes for the
+      // shared reference at all, the gate decides how much the tilt may inflate
+      // a band that only just does.
+      const q = raw - BAND_NOISE_FLOOR;
+      const v = q > 0 ? q + BAND_TILT[i] * Math.min(1, q / BAND_TILT_GATE) : 0;
       tilted[i] = v;
       if (v > loudest) loudest = v;
     }
@@ -953,9 +1034,12 @@ export class AudioEngine {
     // Pass two: one reference, decaying, with a floor under it.
     this._bandRef = Math.max(loudest, this._bandRef * Math.pow(0.5, dt / BAND_REF_HALFLIFE), BAND_REF_FLOOR);
     const ref = this._bandRef;
+    // One pole, in SECONDS — see BAND_TAU. Wall-clock rather than per-frame, so
+    // the rings behave the same at 30, 60 and 144 Hz.
+    const k = 1 - Math.exp(-dt / BAND_TAU);
     for (let i = 0; i < BAND_COUNT; i++) {
       const norm = Math.min(1, Math.max(0, tilted[i] / ref));
-      this.bands[i] = this.bands[i] * 0.3 + norm * 0.7;
+      this.bands[i] += (norm - this.bands[i]) * k;
     }
   }
 

@@ -5246,10 +5246,9 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
   // The 24-band layer, when the user has turned it on. Read once here rather
   // than per vertex, and left null-ish when off so the loop below is the same
   // arithmetic it has always been — the CPU path has bit-exactness tests too.
-  const bands     = bandLayer && bandLayer.depth > 0 ? bandLayer.bands : null;
-  const bandDepth = bands ? bandLayer.depth : 0;
-  const bandR     = bands ? Math.max(bandLayer.radius, 1e-3) : 1;
-  const bandLast  = bands ? bands.length - 1 : 0;
+  // bandRingValue returns 0 for a null or switched-off layer, so the loop below
+  // needs no branch — and with the layer off the arithmetic is what it was
+  // before the layer existed.
   const step = grid > 1 ? (extent * 2) / (grid - 1) : 0;
   const base = (basePositions && basePositions.length === n * 3) ? basePositions : null;
   // FIX(r11): the field moves the vertex along its own normal when the caller
@@ -5300,11 +5299,7 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
     // and GPU paths cannot drift into drawing two different pictures. Added to
     // the field before the cap below, deliberately: these rings can fold a
     // surface through itself exactly the way the formula can.
-    if (bands) {
-      const x = Math.min(1, Math.max(0, Math.hypot(bx, bz) / bandR)) * bandLast;
-      const i0 = Math.floor(x), i1 = Math.min(i0 + 1, bandLast), fr = x - i0;
-      h += (bands[i0] + (bands[i1] - bands[i0]) * fr) * bandDepth;
-    }
+    if (bandLayer) h += bandRingValue(bandLayer, bx, bz);
     // Capped by the caller's measure of how far this surface can travel before
     // it meets itself — the local medial radius, not the bounding box.
     if (norm && h < -maxDepth) h = -maxDepth;
@@ -5388,6 +5383,27 @@ export function generateVolumeFromFormula(fn, params = {}, gridSize = 90, extent
 }
 
 /**
+ * The 24-band ring value at a point, in world units — the one lookup all three
+ * CPU displacement paths share.
+ *
+ * Written once because it has to agree with bandAtRadius() in src/shaders.js
+ * term for term, and three copies of an agreement are three chances to break
+ * it. Interpolates between neighbouring bands rather than stepping: at 161
+ * segments a stepped lookup creases visibly at each of the 23 boundaries.
+ *
+ * @param {{bands: Float32Array, depth: number, radius: number}|null} layer
+ * @returns {number} 0 when the layer is off, so callers need no branch
+ */
+export function bandRingValue(layer, x, z) {
+  if (!layer || !layer.bands || !(layer.depth > 0)) return 0;
+  const last = layer.bands.length - 1;
+  if (last < 1) return 0;
+  const t = Math.min(1, Math.max(0, Math.hypot(x, z) / Math.max(layer.radius, 1e-3))) * last;
+  const i0 = Math.floor(t), i1 = Math.min(i0 + 1, last), fr = t - i0;
+  return (layer.bands[i0] + (layer.bands[i1] - layer.bands[i0]) * fr) * layer.depth;
+}
+
+/**
  * Apply a displacement field to a Three.js BufferGeometry.
  * Adds displacement to stored base positions — non-destructive.
  *
@@ -5395,14 +5411,25 @@ export function generateVolumeFromFormula(fn, params = {}, gridSize = 90, extent
  * @param {Float32Array}         df           — [dx0,dy0,dz0, ...] length = count*3
  * @param {Float32Array}         basePositions — [x0,y0,z0, ...] original positions
  */
-export function applyDisplacementField(geometry, df, basePositions) {
+export function applyDisplacementField(geometry, df, basePositions, bandLayer = null) {
   const pos = geometry.attributes.position;
   for (let i = 0; i < pos.count; i++) {
+    const bx = basePositions[i * 3], bz = basePositions[i * 3 + 2];
+    // VOLUME has no surface normal to travel along — its field is already a free
+    // 3-vector — so the rings go outward from the axis, which is the direction
+    // the radius picked them by. Zero on the axis itself, where "outward" has no
+    // meaning.
+    const ring = bandRingValue(bandLayer, bx, bz);
+    let rx = 0, rz = 0;
+    if (ring !== 0) {
+      const r = Math.hypot(bx, bz);
+      if (r > 1e-6) { rx = (bx / r) * ring; rz = (bz / r) * ring; }
+    }
     pos.setXYZ(
       i,
-      basePositions[i * 3]     + (df[i * 3]     ?? 0),
+      basePositions[i * 3]     + (df[i * 3]     ?? 0) + rx,
       basePositions[i * 3 + 1] + (df[i * 3 + 1] ?? 0),
-      basePositions[i * 3 + 2] + (df[i * 3 + 2] ?? 0),
+      basePositions[i * 3 + 2] + (df[i * 3 + 2] ?? 0) + rz,
     );
   }
   pos.needsUpdate = true;
@@ -5419,10 +5446,14 @@ export function applyDisplacementField(geometry, df, basePositions) {
  * @param baseNormals   — flat Float32Array [nx0,ny0,nz0,...]
  * @param strength      — multiplier applied uniformly (default 1)
  */
-export function applyCollapseField(geometry, scalarField, basePositions, baseNormals, strength = 1) {
+export function applyCollapseField(geometry, scalarField, basePositions, baseNormals, strength = 1, bandLayer = null) {
   const pos = geometry.attributes.position;
   for (let i = 0; i < pos.count; i++) {
-    const s  = (scalarField[i] ?? 0) * strength;
+    // COLLAPSE already travels along the normal, so the rings ride the same
+    // direction the mode's own field does — the same rule the SURFACE path
+    // follows.
+    const s  = (scalarField[i] ?? 0) * strength
+             + bandRingValue(bandLayer, basePositions[i * 3], basePositions[i * 3 + 2]);
     const bx = basePositions[i * 3],     by = basePositions[i * 3 + 1], bz = basePositions[i * 3 + 2];
     const nx = baseNormals[i * 3],       ny = baseNormals[i * 3 + 1],   nz = baseNormals[i * 3 + 2];
     pos.setXYZ(i, bx + nx * s, by + ny * s, bz + nz * s);

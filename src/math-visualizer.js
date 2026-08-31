@@ -1058,7 +1058,7 @@ export class MathVisualizer {
 
     applyCollapseField(
       this.render.gpuMesh.geometry, sf,
-      this._basePositions, this._baseNormals, strength
+      this._basePositions, this._baseNormals, strength, this._bandLayer()
     );
     const ptsGeo = this._ownPtsGeometry();
     if (ptsGeo && this._basePtsPositions && this._basePtsNormals) {
@@ -1069,7 +1069,7 @@ export class MathVisualizer {
       );
       applyCollapseField(
         ptsGeo, sfPts,
-        this._basePtsPositions, this._basePtsNormals, strength
+        this._basePtsPositions, this._basePtsNormals, strength, this._bandLayer()
       );
     }
   }
@@ -1117,10 +1117,15 @@ export class MathVisualizer {
       this._basePositions
     );
 
-    applyDisplacementField(this.render.gpuMesh.geometry, df, this._basePositions);
+    // The band layer reaches VOLUME and COLLAPSE too. It did not at first, and
+    // the symptom was the worst kind of nothing: the slider moved, its readout
+    // counted, presets and autosave stored the value, and not one pixel changed
+    // — because both DEFORM modes have their own door into the geometry and
+    // neither had been given the layer. Found by a review sweep.
+    applyDisplacementField(this.render.gpuMesh.geometry, df, this._basePositions, this._bandLayer());
     const ptsGeo = this._ownPtsGeometry();
     if (ptsGeo) {
-      applyDisplacementField(ptsGeo, df, this._basePtsPositions ?? this._basePositions);
+      applyDisplacementField(ptsGeo, df, this._basePtsPositions ?? this._basePositions, this._bandLayer());
     }
   }
 

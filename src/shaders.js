@@ -314,12 +314,20 @@ void main(){
     // The branch, not a multiply, is what makes "off" bit-exact: adding 0.0
     // would flip a -0.0 field to +0.0, and tests/colour-ramp.test.js compares
     // float32 words. Guarded, the catalogue is untouched until this is turned on.
-    // Written as one expression rather than a conditional re-assignment of f:
+    // The whole ADDITION is conditional, not just the band value. An external
+    // review caught the first version claiming more than it did: it guarded the
+    // lookup but still evaluated mix(...) + bandY unconditionally, and adding
+    // +0.0 turns a -0.0 field into +0.0 — precisely the case the guard was
+    // written for, left in place by it. With the ternary around the sum, depth 0
+    // yields the identical expression this line carried before the band layer
+    // existed, so "off is bit-exact" is true rather than nearly true.
+    //
+    // Still one expression rather than a conditional re-assignment of f:
     // tests/helpers/glsl.js resolves a local to its DEFINITION, and a local that
     // is defined once and then amended cannot be resolved at all — the guard
     // would stop being able to say what this program draws.
-    float bandY = uBandDepth > 0. ? bandAtRadius(length(pos.xz)) * uBandDepth : 0.;
-    float f = mix(y, yNxt, uModeBlend) + bandY;
+    float fBase = mix(y, yNxt, uModeBlend);
+    float f = uBandDepth > 0. ? fBase + bandAtRadius(length(pos.xz)) * uBandDepth : fBase;
     pos.y = (pos.y + f) * uMorphProgress;
     // The field alone, scaled the same way — bit-for-bit what vH carried
     // before round 10, when the height WAS the field: c629b53 stored
@@ -863,7 +871,18 @@ void main(){vec3 pos=position;
   // branch that is the body's own y, which is bit-for-bit what vH was here
   // before round 10, when the template stored y*uMorphProgress as the height
   // and copied that into vH.
-  if(uMathMode==0){pos.y=(pos.y+y)*uMorphProgress;vH=y*uMorphProgress;}else{vH=(uVHField==2)?aField*uMorphProgress:(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
+  // The band layer reaches a user shader too, mirroring the built-in term for
+  // term. It was missing here at first, and the effect was worse than "a
+  // feature does not apply": with a custom shader live, Spectrum Rings did
+  // nothing in GPU mode and the slider looked broken, while the SAME slider
+  // kept working in CPU/formula mode — where applyHeightField bakes the layer
+  // into the position attribute before any shader runs. One control, two
+  // answers, depending on a mode the user was not thinking about. Found by an
+  // external review.
+  //
+  // The ternary wraps the whole sum, so at depth 0 this is bit-identical to the
+  // plain y it carried before, and vH gets the same value the geometry does.
+  if(uMathMode==0){float fB=uBandDepth>0.?y+bandAtRadius(length(pos.xz))*uBandDepth:y;pos.y=(pos.y+fB)*uMorphProgress;vH=fB*uMorphProgress;}else{vH=(uVHField==2)?aField*uMorphProgress:(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
   // An editor shader is now installed on the POINTS proxy too, and a vertex
   // program that leaves gl_PointSize unwritten draws points of undefined size.
   // Mirrors the built-in VS; harmless in WIRE/SURF, which ignore it.

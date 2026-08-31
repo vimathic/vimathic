@@ -15,7 +15,7 @@ import { normalizeVizMode, DEFAULT_VIZ_MODE } from '../viz-mode.js';
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
 // preset JSON until we've thought about migration.
-const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx'];
+const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx', 'bandDepth'];
 
 // FIX(#18, r2): the non-param fields applyState() reads. With PARAM_FIELDS this
 // defines "looks like a preset" for migratePreset(), so keep it in step with
@@ -97,7 +97,7 @@ function cameraTweenTarget(c) {
 // guards already read it as undefined. On a bump, add the matching
 // `if (v < N)` block to migratePreset(); blocks run in sequence, so a v1 file
 // picks up every step up to CURRENT.
-export const CURRENT_PRESET_VERSION = 2;
+export const CURRENT_PRESET_VERSION = 3;
 
 /**
  * Normalize an incoming snapshot to the current schema version.
@@ -163,6 +163,13 @@ export function migratePreset(s) {
   //   if (v < 3) { out = { ...out, gpuModeIdx: out.gpuMode }; delete out.gpuSelVal; }
   // FIX(#18): blocks must copy, not mutate — `s` belongs to the caller.
   let out = s;
+
+  // v2 → v3: `bandDepth` (Spectrum Rings) joined PARAM_FIELDS. Writing it into
+  // older snapshots is not decoration — applyState only applies a field that is
+  // PRESENT, so without this a v2 preset loaded while the rings were up would
+  // leave them up, and the preset would render as something it never was. Zero
+  // is what every v2 snapshot was captured under, the layer not existing yet.
+  if (v < 3) out = { ...out, bandDepth: out.bandDepth ?? 0 };
 
   // FIX(#18): unconditional stamp — what makes the @returns promise true even
   // while the chain above is empty; the spread is also the no-mutation guarantee.
