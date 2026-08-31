@@ -232,6 +232,14 @@ export class AudioEngine {
      * params.js binds it exactly the way it binds those.
      */
     this.bandDepth  = 0.0;
+    /**
+     * Whether the 24 bands are laid out by the FORMULA's own texture (true) or
+     * by distance from the axis (false). Ships on, because the rings-everywhere
+     * layout is the thing being replaced — but the switch stays, since for a
+     * genuinely radial formula (a Bessel function) rings are the right answer
+     * and the comparison is the only way to see it.
+     */
+    this.bandCharacter = true;
     this.colorIdx   = 0;
 
     // Beat detector

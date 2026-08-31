@@ -5299,7 +5299,7 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
     // and GPU paths cannot drift into drawing two different pictures. Added to
     // the field before the cap below, deliberately: these rings can fold a
     // surface through itself exactly the way the formula can.
-    if (bandLayer) h += bandRingValue(bandLayer, bx, bz);
+    if (bandLayer) h += bandRingValue(bandLayer, bx, bz, i);
     // Capped by the caller's measure of how far this surface can travel before
     // it meets itself — the local medial radius, not the bounding box.
     if (norm && h < -maxDepth) h = -maxDepth;
@@ -5394,11 +5394,23 @@ export function generateVolumeFromFormula(fn, params = {}, gridSize = 90, extent
  * @param {{bands: Float32Array, depth: number, radius: number}|null} layer
  * @returns {number} 0 when the layer is off, so callers need no branch
  */
-export function bandRingValue(layer, x, z) {
+export function bandRingValue(layer, x, z, vertexIndex) {
   if (!layer || !layer.bands || !(layer.depth > 0)) return 0;
   const last = layer.bands.length - 1;
   if (last < 1) return 0;
-  const t = Math.min(1, Math.max(0, Math.hypot(x, z) / Math.max(layer.radius, 1e-3))) * last;
+  // The band coordinate comes from the CHARACTER MAP when there is one — a
+  // per-vertex ranking of how finely the formula is corrugated there, built
+  // once per formula/shape change in src/band-map.js. Without a map this is the
+  // radius rule, which is also what the map itself degrades to on a field with
+  // no structure to spend 24 bands on.
+  //
+  // Math.sqrt, not Math.hypot: hypot guards against overflow for arguments near
+  // 1e154, which these are not, and it measured 2.3 ms of the 3.6 ms this
+  // function cost on a 196k-vertex body — more than the whole band layer.
+  const u = layer.u !== undefined && vertexIndex !== undefined
+    ? layer.u[vertexIndex]
+    : Math.min(1, Math.sqrt(x * x + z * z) / Math.max(layer.radius, 1e-3));
+  const t = Math.min(1, Math.max(0, u)) * last;
   const i0 = Math.floor(t), i1 = Math.min(i0 + 1, last), fr = t - i0;
   return (layer.bands[i0] + (layer.bands[i1] - layer.bands[i0]) * fr) * layer.depth;
 }
@@ -5419,7 +5431,7 @@ export function applyDisplacementField(geometry, df, basePositions, bandLayer = 
     // 3-vector — so the rings go outward from the axis, which is the direction
     // the radius picked them by. Zero on the axis itself, where "outward" has no
     // meaning.
-    const ring = bandRingValue(bandLayer, bx, bz);
+    const ring = bandRingValue(bandLayer, bx, bz, i);
     let rx = 0, rz = 0;
     if (ring !== 0) {
       const r = Math.hypot(bx, bz);
@@ -5453,7 +5465,7 @@ export function applyCollapseField(geometry, scalarField, basePositions, baseNor
     // direction the mode's own field does — the same rule the SURFACE path
     // follows.
     const s  = (scalarField[i] ?? 0) * strength
-             + bandRingValue(bandLayer, basePositions[i * 3], basePositions[i * 3 + 2]);
+             + bandRingValue(bandLayer, basePositions[i * 3], basePositions[i * 3 + 2], i);
     const bx = basePositions[i * 3],     by = basePositions[i * 3 + 1], bz = basePositions[i * 3 + 2];
     const nx = baseNormals[i * 3],       ny = baseNormals[i * 3 + 1],   nz = baseNormals[i * 3 + 2];
     pos.setXYZ(i, bx + nx * s, by + ny * s, bz + nz * s);

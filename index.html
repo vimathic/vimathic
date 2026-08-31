@@ -1345,6 +1345,13 @@
            the shape looks exactly as it always has until this is raised. -->
       <div class="cg xp"><label>Spectrum Rings <span id="bdv" class="vd">0.00</span></label>
         <input type="range" id="band-depth" min="0" max="1" step="0.02" value="0"></div>
+      <!-- Where the 24 bands land. Unchecked: concentric rings from the axis —
+           the same layout under every figure. Checked: the layout is built from
+           the FORMULA's own texture, so each formula pulses in its own places. -->
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer;padding:2px 0 6px;user-select:none">
+        <input type="checkbox" id="band-character" class="neon" checked>
+        <span style="font-size:10px;color:#778">Rings follow the formula</span>
+      </label>
 
       <!-- ── Track name overlay toggle ──────────────────────────────────── -->
       <label style="display:flex;align-items:center;gap:7px;cursor:pointer;padding:4px 0;user-select:none">

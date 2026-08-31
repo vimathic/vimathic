@@ -54,6 +54,18 @@ import {
   VOLUME_FORMULAS,
   FIELD_EXTENT,
 } from './math-collections.js';
+import { buildBandMap, ANALYSIS_GRID } from './band-map.js';
+
+/**
+ * The moment the character map is sampled at.
+ *
+ * Fixed rather than "now": the map has to be reproducible, so a preset, a clip
+ * step and a reload all draw the same layout for the same formula. 7.0 rather
+ * than 0 because a good many formulas are quiet at t = 0 by construction (a
+ * travelling wave starts flat, several quantum states start at a node) and a
+ * map built on a flat frame would fall through to rings for no good reason.
+ */
+const BAND_MAP_REF_TIME = 7.0;
 
 // ── Worker bootstrap ───────────────────────────────────────────────────────
 // Returns the Worker instance, or null if construction fails. A failure here
@@ -659,6 +671,7 @@ export class MathVisualizer {
     }
 
     this._generation++;
+    this._invalidateBandMap();
 
     // Snapshot the field the mesh is carrying, so the blend has a "from"
     // state. That field is _lastHF — the one _applyHF wrote — and NOT the live
@@ -1314,6 +1327,9 @@ export class MathVisualizer {
   }
 
   _capturePristine() {
+    // New geometry means new vertices to sample the formula at, so the map that
+    // was built for the previous body no longer describes this one.
+    this._invalidateBandMap();
     const geo = this.render.gpuMesh.geometry;
     const pos = geo.attributes.position;
     const n   = pos.count;
@@ -1691,7 +1707,59 @@ export class MathVisualizer {
   _bandLayer() {
     const depth = this.audio?.bandDepth ?? 0;
     if (!(depth > 0) || !this.audio?.bands) return null;
-    return { bands: this.audio.bands, depth, radius: this.render.U?.uBandR?.value ?? 3.5 };
+    // Lazily: the map is only worth building for someone who has the layer on,
+    // and the layer ships off. A user who never touches the slider never pays
+    // the rebuild, and the first thing they pay when they do touch it is one
+    // map rather than one per formula they had browsed past.
+    const wantMap = this.audio.bandCharacter !== false;
+    if (wantMap && this._bandMapDirty) this._rebuildBandMap();
+    return {
+      bands: this.audio.bands,
+      depth,
+      radius: this.render.U?.uBandR?.value ?? 3.5,
+      u: wantMap ? (this._bandMap ?? undefined) : undefined,
+    };
+  }
+
+  /**
+   * Mark the character map stale. Called wherever the two things it is built
+   * from change: the formula (a different field) and the body (different
+   * vertices to sample it at).
+   */
+  _invalidateBandMap() {
+    this._bandMapDirty = true;
+  }
+
+  /**
+   * Build the per-vertex band coordinate for the live formula and body.
+   *
+   * The field is sampled at a FIXED reference time, not the live one — see the
+   * note in src/band-map.js. Two things follow: the layout does not crawl while
+   * the music plays through it, and the audio-driven parameters cannot feed
+   * back into the choice of which band a point listens to.
+   */
+  _rebuildBandMap() {
+    this._bandMapDirty = false;
+    this._bandMap = null;
+    const base = this._pristinePositions;
+    if (!base || !this._formulaFn) return;
+
+    const V = base.length / 3;
+    const x = new Float32Array(V), z = new Float32Array(V);
+    for (let i = 0; i < V; i++) { x[i] = base[i * 3]; z[i] = base[i * 3 + 2]; }
+    const R = this.render.U?.uBandR?.value ?? FIELD_EXTENT;
+
+    try {
+      const field = generateSurfaceFromFormula(
+        this._formulaFn, { amp: 1, freq: 1, comp: 0.5 },
+        ANALYSIS_GRID, FIELD_EXTENT, BAND_MAP_REF_TIME);
+      const { u } = buildBandMap(field, ANALYSIS_GRID, FIELD_EXTENT, { x, z, R });
+      this._bandMap = u;
+    } catch (_) {
+      // A formula that throws on this lattice keeps the radius rule rather than
+      // taking the layer down with it.
+      this._bandMap = null;
+    }
   }
 
   _applyHF(hf) {

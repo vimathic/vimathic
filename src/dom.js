@@ -76,6 +76,7 @@ const REQUIRED = {
   bsv:               'bsv',
   bandDepth:         'band-depth',
   bdv:               'bdv',
+  bandCharacter:     'band-character',
   trebleSens:        'treble-sens',
   tsv:               'tsv',
   bloom:             'bloom',
