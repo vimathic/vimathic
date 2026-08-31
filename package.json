@@ -19,7 +19,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test --test-concurrency=2 tests/*.test.js",
+    "test": "node scripts/run-tests.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {
