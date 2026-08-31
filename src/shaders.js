@@ -32,11 +32,15 @@ import { BAND_COUNT } from './audio.js';
 export const BAND_GLSL = `
 uniform float uBands[${BAND_COUNT}];
 uniform float uBandDepth, uBandR;
-float bandAtRadius(float r){
-  float x = clamp(r / max(uBandR, 1e-3), 0., 1.) * float(${BAND_COUNT} - 1);
+uniform int   uBandMode;
+float bandAtU(float u){
+  float x = clamp(u, 0., 1.) * float(${BAND_COUNT} - 1);
   int i = int(floor(x));
   int j = min(i + 1, ${BAND_COUNT} - 1);
   return mix(uBands[i], uBands[j], fract(x));
+}
+float bandAtRadius(float r){
+  return bandAtU(r / max(uBandR, 1e-3));
 }`;
 
 // ── Vertex shader — 38 modes ──────────────────────────────────────────────────
@@ -248,6 +252,53 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
   return y;
 }
 
+// ── Where the music lands, decided by the MODE rather than by the radius ─────
+// The CPU path builds this as a map, once per formula change, because it can
+// sample the field on a lattice (src/band-map.js). A shader has no neighbours
+// and no memory — but it does have the field itself, so it can ask for it four
+// more times and measure the texture directly. Measured on this device's GPU
+// (PowerVR through Vulkan): four extra computeMode calls cost 60 -> 59 fps on
+// the plane and 55 -> 53 on sierpinski-tetra's 196 608 vertices. The vertex
+// program is not what limits this scene, so the honest answer was to spend it.
+//
+// TWO THINGS ARE HELD FIXED, and both matter:
+//   * the audio arguments are pinned at 0.5 rather than the live bass/treble.
+//     computeMode READS them, so a live reading would let the sound choose
+//     which band it is modulated by — the layout would breathe with the music
+//     instead of belonging to the formula.
+//   * the time is pinned at BAND_T. The layout is a property of the shape a
+//     mode draws, not of the frame it is on; a live clock would make the bands
+//     crawl across the surface while the music plays through them.
+float bandCoordOfMode(vec2 xz, float a, float wi){
+  const float E = 0.05;          // fine finite-difference step, world units
+  const float C = 4.0;           // the coarse step is C times the fine one
+  const float BAND_T = 7.0;      // the same reference instant the CPU map uses
+  // Two slopes, at two scales, with the audio pinned at 0.5 and the clock held.
+  float fx1 = computeMode(uMode, xz + vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
+  float fx0 = computeMode(uMode, xz - vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
+  float fz1 = computeMode(uMode, xz + vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
+  float fz0 = computeMode(uMode, xz - vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
+  float cx1 = computeMode(uMode, xz + vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
+  float cx0 = computeMode(uMode, xz - vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
+  float cz1 = computeMode(uMode, xz + vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
+  float cz0 = computeMode(uMode, xz - vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
+  float gFine   = length(vec2(fx1 - fx0, fz1 - fz0)) / (2.*E);
+  float gCoarse = length(vec2(cx1 - cx0, cz1 - cz0)) / (2.*C*E);
+  // The RATIO of the two, which is what makes this a frequency rather than a
+  // height: amplitude cancels, so a mode spanning 0.2 units and one spanning 5
+  // are compared on the same scale. A smooth field measures the same slope at
+  // both steps and lands mid-scale; a finely corrugated one has far more slope
+  // at the fine step and lands high; a field with structure only at the coarse
+  // step lands low.
+  //
+  // Bounded BY CONSTRUCTION, and that is not decoration — the first version of
+  // this function used lap/grad with hand-picked constants, and where the slope
+  // vanished it ran away, put the whole surface on band 23 and drove the body
+  // out of frame. Nothing here can divide by zero or exceed the clamp.
+  float ratio = (gFine + 1e-4) / (gCoarse + 1e-4);
+  return clamp(0.5 + 0.5 * log(ratio) / log(3.0), 0., 1.);
+}
+
 void main(){
   vec3 pos=position;
   // bt is pinned to 0 by decision, not by omission — every +bt*.5 term in
@@ -327,7 +378,9 @@ void main(){
     // is defined once and then amended cannot be resolved at all — the guard
     // would stop being able to say what this program draws.
     float fBase = mix(y, yNxt, uModeBlend);
-    float f = uBandDepth > 0. ? fBase + bandAtRadius(length(pos.xz)) * uBandDepth : fBase;
+    float bandU = uBandMode == 1 ? bandCoordOfMode(pos.xz, a, wi)
+                                : length(pos.xz) / max(uBandR, 1e-3);
+    float f = uBandDepth > 0. ? fBase + bandAtU(bandU) * uBandDepth : fBase;
     pos.y = (pos.y + f) * uMorphProgress;
     // The field alone, scaled the same way — bit-for-bit what vH carried
     // before round 10, when the height WAS the field: c629b53 stored

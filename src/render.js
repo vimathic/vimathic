@@ -1694,6 +1694,10 @@ export class RenderEngine {
                uBands:        { value: new Float32Array(BAND_COUNT) },
                uBandDepth:    { value: 0.0 },
                uBandR:        { value: 3.5 },
+               // 0 = rings from the axis, 1 = the mode's own texture decides.
+               // The CPU path gets the same choice through MathVisualizer's
+               // band map; this is the GPU half of one checkbox.
+               uBandMode:     { value: 1   },
                // Colour channel — which value the vertex program hands the ramp.
                // 0 = pos.y as written (GPU mode, and the Volume/Collapse CPU
                // modes, which have always coloured by base + displacement).
@@ -1847,6 +1851,7 @@ export class RenderEngine {
     // the band layer being present.
     if (this.U.uBands && audio.bands) this.U.uBands.value.set(audio.bands);
     if (this.U.uBandDepth) this.U.uBandDepth.value = audio.bandDepth ?? 0;
+    if (this.U.uBandMode) this.U.uBandMode.value = audio.bandCharacter === false ? 0 : 1;
     // uCM is NOT updated here during a color crossfade — setColorSchemeAnimated()
     // manages uCM/uCMNext/uCMBlend directly.
 

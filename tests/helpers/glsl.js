@@ -923,17 +923,57 @@ function isBandTerm(tree, bare = false) {
   return !!(isGuard && isScaledLookup(a) && zero(b));
 }
 
-/** `bandAtRadius(length(pos.xz)) * uBandDepth`, and nothing else. */
+/**
+ * The band term: a lookup of ONE band coordinate, scaled by uBandDepth.
+ *
+ * The coordinate is checked, not waved through, and exactly two are allowed:
+ *   * `bandCoordOfMode(pos.xz, …)` — the mode's own local texture, and
+ *   * `length(pos.xz) / max(uBandR, …)` — the radius rule it replaces,
+ * either alone or the two selected by `uBandMode`. Anything else — a coordinate
+ * read from an attribute nobody fills, a constant, the radius of something that
+ * is not pos — fails, which is the point of reading the tree rather than the
+ * text.
+ */
 function isScaledLookup(a) {
-  const isScaled = a && a.k === 'bin' && a.op === '*' &&
-    a.l.k === 'call' && a.l.n === 'bandAtRadius' && a.l.args.length === 1 &&
-    a.l.args[0].k === 'call' && a.l.args[0].n === 'length' &&
-    a.l.args[0].args.length === 1 && a.l.args[0].args[0].k === 'field' &&
-    a.l.args[0].args[0].f === 'xz' && a.l.args[0].args[0].o.k === 'id' &&
-    a.l.args[0].args[0].o.v === 'pos' &&
-    a.r.k === 'id' && a.r.v === 'uBandDepth';
-  return !!isScaled;
+  if (!(a && a.k === 'bin' && a.op === '*')) return false;
+  if (!(a.r.k === 'id' && a.r.v === 'uBandDepth')) return false;
+  const call = a.l;
+  if (!(call.k === 'call' && (call.n === 'bandAtU' || call.n === 'bandAtRadius'))) return false;
+  if (call.args.length !== 1) return false;
+  return isBandCoord(call.args[0], call.n === 'bandAtRadius');
 }
+
+/** One of the two coordinates, or a `uBandMode` choice between them. */
+function isBandCoord(c, radiusOnly = false) {
+  if (!c) return false;
+  // bandAtRadius() takes the radius already divided by uBandR inside itself.
+  if (radiusOnly) return isPosXZLength(c);
+  if (c.k === 'tern') {
+    const guard = c.c && c.c.k === 'bin' && c.c.op === '==' &&
+      [c.c.l, c.c.r].some(n => n.k === 'id' && n.v === 'uBandMode') &&
+      [c.c.l, c.c.r].some(n => n.k === 'num' && Number(n.v) === 1);
+    return !!(guard && isModeTexture(c.a) && isRadiusOverR(c.b));
+  }
+  return isModeTexture(c) || isRadiusOverR(c) || isPosXZLength(c);
+}
+
+const isPosXZLength = (n) =>
+  !!(n && n.k === 'call' && n.n === 'length' && n.args.length === 1 &&
+     n.args[0].k === 'field' && n.args[0].f === 'xz' &&
+     n.args[0].o.k === 'id' && n.args[0].o.v === 'pos');
+
+const isModeTexture = (n) =>
+  !!(n && n.k === 'call' && n.n === 'bandCoordOfMode' && n.args.length >= 1 &&
+     isPosXZ(n.args[0]));
+
+const isPosXZ = (n) =>
+  !!(n && n.k === 'field' && n.f === 'xz' && n.o.k === 'id' && n.o.v === 'pos');
+
+/** `length(pos.xz) / max(uBandR, …)` */
+const isRadiusOverR = (n) =>
+  !!(n && n.k === 'bin' && n.op === '/' && isPosXZLength(n.l) &&
+     n.r.k === 'call' && n.r.n === 'max' && n.r.args.length === 2 &&
+     n.r.args[0].k === 'id' && n.r.args[0].v === 'uBandR');
 
 function classify(pats, write, interpName) {
   if (!write.tree) return { ...write, kind: null };

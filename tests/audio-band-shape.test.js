@@ -214,13 +214,19 @@ describe('the CPU and the GPU compute the same rings', () => {
   // and it is what can be done without a GL context; the shape tests above pin
   // the JS side's behaviour, so a drift shows up as this comparison failing.
   test('the shader interpolates between neighbouring bands, exactly as the CPU does', () => {
+    // The lookup now takes a band COORDINATE rather than a radius — the radius
+    // is one of the two things that can produce it, and the mode's own texture
+    // is the other. What is pinned here is the part both paths must share: the
+    // 0..1 coordinate spans bands 0..23 and neighbours are interpolated.
     const src = BAND_GLSL.replace(/\s+/g, ' ');
-    assert.match(src, /float x = clamp\(r \/ max\(uBandR, 1e-3\), 0\., 1\.\) \* float\(24 - 1\)/,
-      'the shader no longer maps [0,R] onto bands 0..23 the way applyHeightField does');
+    assert.match(src, /float x = clamp\(u, 0\., 1\.\) \* float\(24 - 1\)/,
+      'the shader no longer maps [0,1] onto bands 0..23 the way applyHeightField does');
     assert.match(src, /int i = int\(floor\(x\)\)/);
     assert.match(src, /int j = min\(i \+ 1, 24 - 1\)/);
     assert.match(src, /mix\(uBands\[i\], uBands\[j\], fract\(x\)\)/,
       'the shader stopped interpolating; the CPU path still does, so the two now draw different rings');
+    assert.match(src, /bandAtRadius\(float r\)[\s\S]*?bandAtU\(r \/ max\(uBandR, 1e-3\)\)/,
+      'the radius rule is no longer expressed through the same lookup, so the two can drift apart');
   });
 
   test('the JS half of that pair is linear between bands, not stepped', () => {
