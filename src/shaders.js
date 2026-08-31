@@ -316,19 +316,28 @@ float bandMotion(float amp, float u, vec2 xz, float T, float rr){
   return mix(mix(breathe, ripple, smoothstep(0.25, 0.60, u)), shatter, toShatter);
 }
 
-float bandCoordOfMode(vec2 xz, float a, float wi){
-  const float E = 0.05;          // fine finite-difference step, world units
+float bandCoordOfMode(int mode, vec2 xz, float a, float wi){
+  // 0.03 rather than 0.05. A centred difference answers a sinusoid with
+  // sin(kE)/E, which NULLS at kE = n*pi: at E = 0.05 the first null sits at
+  // k = 63, and several modes reach that inside the Wave Intensity range (mode
+  // 35's fourth harmonic is k = 32*wi, so wi ~ 1.96 makes its finest detail
+  // read as perfectly smooth — the character inverted). At 0.03 the first null
+  // moves to k = 105, past what the catalogue reaches at the top of the slider.
+  // It cannot be removed, only pushed out: that is the honest limit of a
+  // two-point estimate, and it is why the coarse step is a RATIO partner rather
+  // than an independent measurement. Found by an external review.
+  const float E = 0.03;          // fine finite-difference step, world units
   const float C = 4.0;           // the coarse step is C times the fine one
   const float BAND_T = 7.0;      // the same reference instant the CPU map uses
   // Two slopes, at two scales, with the audio pinned at 0.5 and the clock held.
-  float fx1 = computeMode(uMode, xz + vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
-  float fx0 = computeMode(uMode, xz - vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
-  float fz1 = computeMode(uMode, xz + vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
-  float fz0 = computeMode(uMode, xz - vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
-  float cx1 = computeMode(uMode, xz + vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
-  float cx0 = computeMode(uMode, xz - vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
-  float cz1 = computeMode(uMode, xz + vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
-  float cz0 = computeMode(uMode, xz - vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
+  float fx1 = computeMode(mode, xz + vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
+  float fx0 = computeMode(mode, xz - vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
+  float fz1 = computeMode(mode, xz + vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
+  float fz0 = computeMode(mode, xz - vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
+  float cx1 = computeMode(mode, xz + vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
+  float cx0 = computeMode(mode, xz - vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
+  float cz1 = computeMode(mode, xz + vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
+  float cz0 = computeMode(mode, xz - vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
   float gFine   = length(vec2(fx1 - fx0, fz1 - fz0)) / (2.*E);
   float gCoarse = length(vec2(cx1 - cx0, cz1 - cz0)) / (2.*C*E);
   // The RATIO of the two, which is what makes this a frequency rather than a
@@ -344,6 +353,27 @@ float bandCoordOfMode(vec2 xz, float a, float wi){
   // out of frame. Nothing here can divide by zero or exceed the clamp.
   float ratio = (gFine + 1e-4) / (gCoarse + 1e-4);
   return clamp(0.5 + 0.5 * log(ratio) / log(3.0), 0., 1.);
+}
+
+/**
+ * The whole band term for the character path: coordinate, amplitude, gesture.
+ *
+ * One function so the coordinate is computed ONCE — it costs eight computeMode
+ * calls — and so the caller can put the whole thing inside a branch. That
+ * matters: the layer ships OFF, and the first version evaluated the coordinate
+ * before the depth test, so every user paid for eight extra formula
+ * evaluations per vertex to render a feature they had not switched on. Found by
+ * an external review.
+ *
+ * The coordinate is blended across a mode crossfade, the same way the surface
+ * is. Without it the layout stayed on the outgoing mode for the whole fade and
+ * then snapped to the incoming one in a single frame; the second coordinate is
+ * only computed while a fade is actually running, which is under a second.
+ */
+float bandTermOfMode(vec2 xz, float a, float wi, float T){
+  float u = bandCoordOfMode(uMode, xz, a, wi);
+  if (uModeBlend > 0.) u = mix(u, bandCoordOfMode(uModeNext, xz, a, wi), uModeBlend);
+  return bandMotion(bandAtU(u), u, xz, T, length(xz));
 }
 
 void main(){
@@ -425,15 +455,14 @@ void main(){
     // is defined once and then amended cannot be resolved at all — the guard
     // would stop being able to say what this program draws.
     float fBase = mix(y, yNxt, uModeBlend);
-    float bandU = uBandMode == 1 ? bandCoordOfMode(pos.xz, a, wi)
-                                : length(pos.xz) / max(uBandR, 1e-3);
-    // With the layout by radius the gesture stays the plain push it always was:
-    // the radius says nothing about the formula, so there is nothing to give a
-    // gesture to. Character mode gets all three.
-    float bandTerm = uBandMode == 1
-      ? bandMotion(bandAtU(bandU), bandU, pos.xz, T, length(pos.xz))
-      : bandAtU(bandU);
-    float f = uBandDepth > 0. ? fBase + bandTerm * uBandDepth : fBase;
+    // Everything the layer costs now sits INSIDE the depth test, so a scene with
+    // the slider at zero pays nothing at all. With the layout by radius the
+    // gesture stays the plain push it always was: the radius says nothing about
+    // the formula, so there is nothing to give a gesture to.
+    float f = uBandDepth > 0.
+      ? fBase + (uBandMode == 1 ? bandTermOfMode(pos.xz, a, wi, T)
+                                : bandAtU(length(pos.xz) / max(uBandR, 1e-3))) * uBandDepth
+      : fBase;
     pos.y = (pos.y + f) * uMorphProgress;
     // The field alone, scaled the same way — bit-for-bit what vH carried
     // before round 10, when the height WAS the field: c629b53 stored

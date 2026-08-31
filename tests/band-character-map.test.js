@@ -234,25 +234,65 @@ describe('the gesture: how a band moves a point, not only how far', () => {
     assert.ok(a > 0);
   });
 
-  test('CPU and GPU evaluate the SAME gesture', () => {
-    // The two are written twice, in two languages, and nothing in the product
-    // would show it if they drifted. This pins the four terms that decide the
-    // shape of the motion against the shader's own text.
-    const shader = SHADER_SRC;
-    assert.match(shader, /float ripple\s*=\s*amp \* sin\(rr \* 9\.0 - T \* 3\.0 \+ u \* 12\.0\)/,
-      'the shader ripple no longer matches bandMotion() in math-collections.js');
-    assert.match(shader, /shatter\s*=\s*amp \* \(turb\(xz \* 3\.5\) - 0\.9\) \* 1\.7 \* sin\(T \* 2\.0 \+ u \* 10\.0\)/,
-      'the shader shatter no longer matches bandMotion() in math-collections.js');
-    // The shader evaluates the noise lazily and the CPU path reads it from the
-    // map; the VALUE is the same four-harmonic turbulence at the same scale,
-    // which is what this pins. The CPU half is checked numerically below.
-    assert.match(shader, /if \(toShatter > 0\.0\)/,
-      'the shader stopped skipping the noise where it has no weight — that cost 6 fps on the heaviest body');
-    // Both thresholds are present; the order in the source changed when the
-    // noise became lazy (toShatter is computed first so it can gate it).
-    assert.match(shader, /smoothstep\(0\.60, 0\.92, u\)/,
-      'the shatter crossfade threshold differs between the two paths');
-    assert.match(shader, /smoothstep\(0\.25, 0\.60, u\)/,
-      'the ripple crossfade threshold differs between the two paths');
+  test('CPU and GPU evaluate the SAME gesture — checked numerically', () => {
+    // The first version of this test matched regexes against the shader text
+    // and claimed, in its own comment, that "the CPU half is checked
+    // numerically below". It was not: every assertion read SHADER_SRC, so any
+    // coefficient could be changed on the CPU side and the test stayed green.
+    // An external review pointed that out.
+    //
+    // Now the shader's numbers are PARSED out of its own bandMotion body and
+    // fed to an independent model, which is compared against what the CPU
+    // actually computes through bandRingValue. A change on either side that is
+    // not matched on the other turns this red.
+    const body = SHADER_SRC.slice(SHADER_SRC.indexOf('float bandMotion('));
+    const num = (re, what) => {
+      const m = body.match(re);
+      assert.ok(m, `could not find ${what} in the shader's bandMotion`);
+      return Number(m[1]);
+    };
+    const rk   = num(/ripple\s*=\s*amp \* sin\(rr \* ([\d.]+)/, 'the ripple wavenumber');
+    const rw   = num(/ripple[^;]*- T \* ([\d.]+)/, 'the ripple time rate');
+    const ru   = num(/ripple[^;]*\+ u \* ([\d.]+)/, 'the ripple phase-by-u');
+    const tbC  = num(/shatter\s*=\s*amp \* \(turb\([^)]*\) - ([\d.]+)/, 'the turbulence centre');
+    const tbG  = num(/shatter[^;]*\) \* ([\d.]+) \* sin/, 'the shatter gain');
+    const shw  = num(/shatter[^;]*sin\(T \* ([\d.]+)/, 'the shatter time rate');
+    const shu  = num(/shatter[^;]*\+ u \* ([\d.]+)\)/, 'the shatter phase-by-u');
+    // The ripple crossfade lives inside the return's nested mix(); the shatter
+    // one is hoisted into toShatter so the noise can be skipped.
+    const t1a  = num(/mix\(breathe, ripple, smoothstep\(([\d.]+),/, 'the ripple crossfade start');
+    const t1b  = num(/mix\(breathe, ripple, smoothstep\([\d.]+, ([\d.]+),/, 'the ripple crossfade end');
+    const t2a  = num(/toShatter = smoothstep\(([\d.]+)/, 'the shatter crossfade start');
+    const t2b  = num(/toShatter = smoothstep\([\d.]+, ([\d.]+)/, 'the shatter crossfade end');
+
+    const ss = (a0, b0, x) => { const t = Math.min(1, Math.max(0, (x - a0) / (b0 - a0))); return t * t * (3 - 2 * t); };
+    const model = (amp, u, rr, tb, t) => {
+      const breathe = amp;
+      const ripple  = amp * Math.sin(rr * rk - t * rw + u * ru);
+      const shatter = amp * (tb - tbC) * tbG * Math.sin(t * shw + u * shu);
+      const mid = breathe + (ripple - breathe) * ss(t1a, t1b, u);
+      return mid + (shatter - mid) * ss(t2a, t2b, u);
+    };
+
+    const bands = new Float32Array(24).fill(1);   // amplitude 1 at every band
+    let worst = 0, worstAt = '';
+    for (const u of [0, 0.13, 0.3, 0.5, 0.62, 0.8, 1]) {
+      for (const rr of [0.4, 2.1, 3.5]) {
+        for (const tb of [0.2, 0.9, 1.7]) {
+          for (const t of [0, 1.7, 9.4]) {
+            const layer = {
+              bands, depth: 1, radius: 3.5,
+              u: new Float32Array([u]), r: new Float32Array([rr]), tb: new Float32Array([tb]), time: t,
+            };
+            const got = bandRingValue(layer, 0, 0, 0);
+            const want = model(1, u, rr, tb, t);
+            const d = Math.abs(got - want);
+            if (d > worst) { worst = d; worstAt = `u=${u} rr=${rr} tb=${tb} t=${t}: cpu ${got.toFixed(5)} vs shader-model ${want.toFixed(5)}`; }
+          }
+        }
+      }
+    }
+    assert.ok(worst < 1e-6,
+      `the CPU gesture differs from the shader's own numbers — worst ${worst.toExponential(2)} at ${worstAt}`);
   });
 });

@@ -731,6 +731,11 @@ export class MathVisualizer {
    * @param {string} key — key into VOLUME_FORMULAS
    */
   setVolumeFormula(key) {
+    // A volume formula is a different field, so the character map built for the
+    // previous surface formula does not describe it. Without this, VOLUME wore
+    // whichever map happened to precede it — the same field pulsing in different
+    // places depending on session history.
+    this._invalidateBandMap();
     const f = VOLUME_FORMULAS[key];
     if (!f) {
       console.warn(`[MathVisualizer] Unknown volume formula: ${key}`);
@@ -763,6 +768,11 @@ export class MathVisualizer {
    * @param {Function} fn — f(x, y, z, t, params) → { dx, dy, dz }
    */
   setVolumeFn(fn) {
+    // A volume formula is a different field, so the character map built for the
+    // previous surface formula does not describe it. Without this, VOLUME wore
+    // whichever map happened to precede it — the same field pulsing in different
+    // places depending on session history.
+    this._invalidateBandMap();
     if (typeof fn !== 'function') return;
     this._generation++;
     this._pendingHF  = null;
@@ -982,6 +992,14 @@ export class MathVisualizer {
    */
   tick(time) {
     if (!this.active) return;
+
+    // The gesture's clock. Kept apart from _lastTickTime, which belongs to the
+    // volume accumulator and is only written by _tickVolume — a fact that cost
+    // the gesture its motion in SURFACE and COLLAPSE, the two modes it is most
+    // often seen in: `time` came through as null, coerced to 0, and every
+    // ripple and shatter sat frozen at phase zero. Written here, before the
+    // dispatch, so all three modes share one clock.
+    this._bandClock = time;
 
     // Geometry can be rebuilt under us when the user changes shape. The
     // vertex count and grid size change, so worker state and snapshots
@@ -1712,6 +1730,13 @@ export class MathVisualizer {
     // the rebuild, and the first thing they pay when they do touch it is one
     // map rather than one per formula they had browsed past.
     const wantMap = this.audio.bandCharacter !== false;
+    // The radius the map was equalised against is part of what it IS, and it can
+    // change without any of the invalidation hooks firing: importing a model or
+    // clearing one rewrites uBandR from RenderEngine, which the visualiser never
+    // hears about. Comparing it here catches that without wiring the two
+    // modules together — and catches anything else that moves the radius too.
+    const liveR = this.render.U?.uBandR?.value ?? FIELD_EXTENT;
+    if (wantMap && this._bandMap && this._bandMapBuiltR !== liveR) this._invalidateBandMap();
     if (wantMap && this._bandMapDirty) this._rebuildBandMap();
     return {
       bands: this.audio.bands,
@@ -1722,7 +1747,7 @@ export class MathVisualizer {
       tb: wantMap ? this._bandMapTb : undefined,
       // The live clock, for the gesture only — the MAP is built at a frozen
       // reference time so the layout does not crawl, but the motion has to move.
-      time: wantMap ? this._lastTickTime : undefined,
+      time: wantMap ? (this._bandClock ?? undefined) : undefined,
     };
   }
 
@@ -1748,6 +1773,7 @@ export class MathVisualizer {
     this._bandMap = null;
     this._bandMapR = null;
     this._bandMapTb = null;
+    this._bandMapBuiltR = null;
     const base = this._pristinePositions;
     if (!base || !this._formulaFn) return;
 
@@ -1764,6 +1790,7 @@ export class MathVisualizer {
       this._bandMap = u;
       this._bandMapR = r;
       this._bandMapTb = tb;
+      this._bandMapBuiltR = R;
     } catch (_) {
       // A formula that throws on this lattice keeps the radius rule rather than
       // taking the layer down with it.

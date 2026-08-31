@@ -5444,7 +5444,21 @@ export function bandRingValue(layer, x, z, vertexIndex) {
   // The gesture needs the two time-independent halves the map precomputed. If a
   // caller has a map but no gesture data — an older layer object — the plain
   // push is the honest fallback rather than a second, different gesture.
-  if (layer.u !== undefined && layer.time !== undefined && layer.r && layer.tb) {
+  //
+  // The index is checked against the map's own length, not assumed to be in it.
+  // A points proxy can carry its OWN geometry with a different vertex count
+  // (the comment in MathVisualizer._tickCollapse says so), and the same layer
+  // object is handed to both it and the mesh — so an index past the end used to
+  // read undefined, turn the displacement into NaN, and take the vertex with
+  // it. Falling back to the radius here keeps such a proxy drawn rather than
+  // destroyed; the map it deserves is a separate question from not exploding.
+  if (layer.u !== undefined && vertexIndex !== undefined && vertexIndex >= layer.u.length) {
+    const r = Math.min(1, Math.sqrt(x * x + z * z) / Math.max(layer.radius, 1e-3));
+    const tr = r * last;
+    const j0 = Math.floor(tr), j1 = Math.min(j0 + 1, last), jf = tr - j0;
+    return (layer.bands[j0] + (layer.bands[j1] - layer.bands[j0]) * jf) * layer.depth;
+  }
+  if (layer.u !== undefined && Number.isFinite(layer.time) && layer.r && layer.tb) {
     return bandMotion(amp, uc, layer.r[vertexIndex], layer.tb[vertexIndex], layer.time) * layer.depth;
   }
   return amp * layer.depth;

@@ -172,10 +172,30 @@ function estimatorH(h, g, s, r) {
 
 const SUB = 8192;
 const _scratch = new Float32Array(SUB);
+
+/**
+ * A subsample for the percentiles, spread by a multiplicative hash rather than
+ * by a fixed stride.
+ *
+ * A stride is the obvious way and the wrong one here: mesh vertex buffers are
+ * periodic — rings, seams, duplicated edge columns — and a stride that shares a
+ * factor with that period samples the same structural position over and over.
+ * In the worst case every sampled vertex sits on a seam, and the percentiles
+ * describe the seam rather than the body; reordering the same geometry would
+ * then change the map. Knuth's multiplicative constant is coprime with any
+ * power of two and mixes the low bits, so the sample is spread over the whole
+ * array while staying完全 deterministic — the same input gives the same map,
+ * which presets and clip steps depend on. Found by an external review.
+ */
 function sortedSample(a) {
-  const step = Math.max(1, Math.ceil(a.length / SUB));
+  const n = a.length;
+  const take = Math.min(SUB, n);
   let m = 0;
-  for (let i = 0; i < a.length; i += step) { const v = a[i]; if (Number.isFinite(v)) _scratch[m++] = v; }
+  for (let k = 0; k < take; k++) {
+    const i = (Math.imul(k, 2654435761) >>> 0) % n;
+    const v = a[i];
+    if (Number.isFinite(v)) _scratch[m++] = v;
+  }
   const s = _scratch.subarray(0, m);
   s.sort();
   return s;
@@ -272,18 +292,38 @@ export function buildBandMap(field, g, extent, verts) {
   for (const [name, fn] of [['K', estimatorK], ['G', estimatorG], ['H', estimatorH]]) {
     if (conf >= 0.999) break;
     const raw = fn(field, g, s, BOX_R);
+    // A formula that returns NaN or Infinity somewhere (a pole, a domain edge)
+    // contaminates its whole box neighbourhood. Those cells are counted, and if
+    // there are enough of them the stage is refused outright rather than having
+    // its non-finite cells quietly become the estimator's minimum — which is
+    // what happened before, and which turned an invalid region into a coherent
+    // band stripe that looked deliberate. Found by an external review.
+    let bad = 0;
+    for (let i = 0; i < raw.length; i++) if (!Number.isFinite(raw[i])) bad++;
+    if (bad > raw.length * 0.02) continue;
     // A soft floor in the estimator's own units: an exactly flat patch makes the
     // estimator 0, and log(0) would hand the whole range to one degenerate value.
+    // The floor has to stay RELATIVE to the estimator, or the map starts
+    // depending on the formula's amplitude rather than on its shape. A
+    // piecewise-flat field has a zero median — more than half its slopes are
+    // exactly zero — and falling back to an absolute 1 there meant the same
+    // spatial pattern at 1e-3 and at 1e3 produced different maps. The 90th
+    // percentile is the scale of what the estimator DID find.
     const med = percentile(raw, 0.5);
-    const flr = (Number.isFinite(med) && med > 0 ? med : 1) * 0.01;
+    const scale = Number.isFinite(med) && med > 0 ? med : percentile(raw, 0.9);
+    const flr = (Number.isFinite(scale) && scale > 0 ? scale : 1) * 0.01;
     const e = new Float32Array(raw.length);
     for (let i = 0; i < raw.length; i++) {
       const v = raw[i];
       e[i] = Math.log((Number.isFinite(v) && v > 0 ? v : 0) + flr);
     }
     const spread = robustSpread(e);
-    // How much this stage has to say. Below 0.25 of a decade it is noise; above
-    // 0.9 it is a genuine range of scales.
+    // How much this stage has to say, in NATURAL logs — not decades, which is
+    // what an earlier version of this comment claimed. 0.25 is a factor of 1.28
+    // between the 10th and 90th percentile of local frequency, which is noise;
+    // 0.9 is a factor of 2.46, which is a real range of scales. Measured over
+    // the catalogue those thresholds put 3 formulas of 12 at full confidence on
+    // K alone and leave the rest to the cascade, which is the intended shape.
     const stageConf = smoothstep(0.25, 0.9, spread);
     if (stageConf <= 0.001) continue;
     const w = (1 - conf) * stageConf / (spread + 1e-9);

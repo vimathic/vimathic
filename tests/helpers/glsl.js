@@ -952,22 +952,48 @@ function isScaledLookup(a) {
  */
 function isBandTermInner(n) {
   if (!n) return false;
+  // The uBandMode choice, and the two branches are told apart rather than both
+  // being run through the same predicate. Validating them identically let
+  // `uBandMode == 1 ? radius : radius` certify — a switch that switches
+  // nothing — which an external review pointed out.
   if (n.k === 'tern') {
     const guard = n.c && n.c.k === 'bin' && n.c.op === '==' &&
       [n.c.l, n.c.r].some(x => x.k === 'id' && x.v === 'uBandMode') &&
       [n.c.l, n.c.r].some(x => x.k === 'num' && Number(x.v) === 1);
-    return !!(guard && isBandTermInner(n.a) && isBandTermInner(n.b));
+    return !!(guard && isCharacterTerm(n.a) && isRadiusTerm(n.b));
+  }
+  return isCharacterTerm(n) || isRadiusTerm(n);
+}
+
+/** The character path: the mode's own texture, optionally wrapped in a gesture. */
+function isCharacterTerm(n) {
+  if (!n) return false;
+  if (n.k === 'call' && n.n === 'bandTermOfMode') {
+    // The whole term in one call — coordinate, lookup and gesture inside. Its
+    // first argument has to be the position it is displacing.
+    return n.args.length >= 1 && isPosXZ(n.args[0]);
   }
   if (n.k === 'call' && n.n === 'bandMotion') {
+    // A gesture may wrap a lookup ONCE — not another gesture, which the
+    // recursive form used to accept — and its coordinate has to be the one the
+    // lookup used.
     if (n.args.length < 2) return false;
-    if (!isBandTermInner(n.args[0])) return false;          // amplitude is a lookup
     const lookup = n.args[0];
-    const coordOfLookup = lookup.k === 'call' ? lookup.args[0] : null;
-    return !!(coordOfLookup && print(coordOfLookup) === print(n.args[1]));
+    if (!(lookup && lookup.k === 'call' && lookup.n === 'bandAtU' && lookup.args.length === 1)) return false;
+    if (!isModeTexture(lookup.args[0])) return false;
+    return print(lookup.args[0]) === print(n.args[1]);
   }
-  if (n.k === 'call' && (n.n === 'bandAtU' || n.n === 'bandAtRadius')) {
-    return n.args.length === 1 && isBandCoord(n.args[0], n.n === 'bandAtRadius');
-  }
+  if (n.k === 'call' && n.n === 'bandAtU' && n.args.length === 1) return isModeTexture(n.args[0]);
+  return false;
+}
+
+/** The radius rule: the normalised radius, through either lookup. */
+function isRadiusTerm(n) {
+  if (!(n && n.k === 'call')) return false;
+  if (n.n === 'bandAtRadius') return n.args.length === 1 && isPosXZLength(n.args[0]);
+  // bandAtU takes a 0..1 coordinate, so a RAW length is wrong here — most of the
+  // surface would clamp onto band 23. Only the normalised form counts.
+  if (n.n === 'bandAtU') return n.args.length === 1 && isRadiusOverR(n.args[0]);
   return false;
 }
 
@@ -990,9 +1016,11 @@ const isPosXZLength = (n) =>
      n.args[0].k === 'field' && n.args[0].f === 'xz' &&
      n.args[0].o.k === 'id' && n.args[0].o.v === 'pos');
 
+// bandCoordOfMode(mode, pos.xz, a, wi) — the mode it measures and the position
+// it measures at are both load-bearing, so both are checked.
 const isModeTexture = (n) =>
-  !!(n && n.k === 'call' && n.n === 'bandCoordOfMode' && n.args.length >= 1 &&
-     isPosXZ(n.args[0]));
+  !!(n && n.k === 'call' && n.n === 'bandCoordOfMode' && n.args.length === 4 &&
+     isPosXZ(n.args[1]));
 
 const isPosXZ = (n) =>
   !!(n && n.k === 'field' && n.f === 'xz' && n.o.k === 'id' && n.o.v === 'pos');
