@@ -7,6 +7,70 @@
 
 import { fmt } from './utils.js';
 
+/**
+ * The 24 critical bands of hearing (Zwicker 1961), as 25 edges in Hz.
+ *
+ * Why these and not "24 equal slices of the spectrum": a critical band is the
+ * width over which the ear integrates energy into one loudness, so equal steps
+ * ALONG this list are equal steps to a listener. A linear split would spend
+ * twenty of its bands above 5 kHz, where music has little and hearing resolves
+ * least, and put the entire bass — every kick and bassline — inside band 0.
+ *
+ * The top edge is 15 500 rather than the textbook's 20 500: the band above it
+ * is empty on every lossy-encoded source (a 128 kbps MP3 is low-passed near
+ * 16 kHz, AAC near 17), so a 25th band would read zero on most material and
+ * look like a dead ring on the shape.
+ */
+export const BARK_EDGES = Object.freeze([
+  20, 100, 200, 300, 400, 510, 630, 770, 920, 1080, 1270, 1480,
+  1720, 2000, 2320, 2700, 3150, 3700, 4400, 5300, 6400, 7700, 9500, 12000, 15500,
+]);
+
+/** How many bands the shape can address. 24 is not a choice; it is BARK_EDGES. */
+export const BAND_COUNT = BARK_EDGES.length - 1;
+
+/**
+ * How the 24 band levels are scaled, and why it is NOT a per-band AGC.
+ *
+ * The first draft normalised each band against its own running floor and peak,
+ * so every band reported where it sat in its own range. It passed its unit
+ * tests and was wrong in the product, which a probe caught and no unit test
+ * could have: driven with a 60 Hz tone and then a 9 kHz one, the rings looked
+ * the SAME (difference-from-off centroid 0.346 vs 0.312 of the frame radius).
+ * Per-band normalisation divides out exactly the thing the layer exists to
+ * show. A band carrying nothing but the spectral leakage of a tone three
+ * octaves away still has a range of its own, so it still reaches 1.0, and 24
+ * bands all reading 1.0 are one band.
+ *
+ * What ships instead has no per-band feedback at all:
+ *
+ *   1. A fixed perceptual TILT. getByteFrequencyData is a dB scale mapped onto
+ *      0-255 across the analyser's -85..-10 window, so one byte is 0.294 dB and
+ *      a tilt is an ADDITION, not a multiply. Music is roughly pink - about
+ *      -3 dB per octave - so +3 dB per octave above 200 Hz is the amount that
+ *      makes a cymbal and a kick comparable without pretending they are equal.
+ *   2. ONE reference for all 24, tracking the loudest tilted band with a 1.5 s
+ *      decay. A quiet passage lifts every band together, which is what a
+ *      listener hears, and a band with nothing in it stays dark because the
+ *      reference is not its own.
+ *
+ * So a tone lights its band and leaves the others where they were, which is the
+ * claim the whole layer rests on.
+ */
+const BAND_TILT_DB_PER_OCT = 3;
+const BAND_TILT_REF_HZ     = 200;
+/** The analyser window, in dB, that getByteFrequencyData stretches over 0-255. */
+const BAND_DB_SPAN         = 75;
+/** Floor under the shared reference, so silence cannot become full scale. */
+const BAND_REF_FLOOR       = 0.12;
+const BAND_REF_HALFLIFE    = 1.5;
+
+/** Per-band tilt in raw units (0-1), from the band's geometric centre. */
+const BAND_TILT = Object.freeze(BARK_EDGES.slice(0, -1).map((lo, i) => {
+  const fc = Math.sqrt(lo * BARK_EDGES[i + 1]);
+  return Math.max(0, Math.log2(fc / BAND_TILT_REF_HZ)) * BAND_TILT_DB_PER_OCT / BAND_DB_SPAN;
+}));
+
 // AudioEngine
 // ─────────────────────────────────────────────────────────────────────────────
 // Single owner of all audio state. Web Audio graph, file playback, crossfade,
@@ -35,6 +99,26 @@ export class AudioEngine {
     this.audioCtx  = null;
     this.analyser  = null;
     this.fftData   = null;
+
+    // ── The 24-band tap ───────────────────────────────────────────────────
+    // A SECOND analyser, and the separation is the point. `analyser` above is
+    // sized 1024 because the beat detector reads it: 1024 samples is a 23 ms
+    // window at 44.1 kHz, short enough for a kick's attack to stand out from
+    // the bar around it. Bark band 0 is 20–100 Hz, which at that size is THREE
+    // bins of 43 Hz — the bass would be a step function of three numbers.
+    // Widening the shared analyser to 4096 fixes the bands and breaks the beat
+    // (a 93 ms window smears the very transient the detector exists to find),
+    // so the two jobs get two nodes. The band node is never connected to the
+    // destination: an AnalyserNode analyses what reaches its input whether or
+    // not its output goes anywhere, so this costs one FFT and no audio path.
+    this._bandAnalyser = null;
+    this._bandFft      = null;
+    this._bandFpb      = 0;
+    /** Smoothed, self-normalised band levels, 0…1. Read by the renderer. */
+    this.bands     = new Float32Array(BAND_COUNT);
+    /** The one reference all 24 are measured against. See BAND_TILT. */
+    this._bandRef = BAND_REF_FLOOR;
+    this._lastBandMs = undefined;
 
     // Live capture (mic / display) — orthogonal to file playback
     this._liveStream = null;
@@ -78,6 +162,15 @@ export class AudioEngine {
     this.beatPunch  = 1.0;
     this.waveInt    = 1.0;
     this.amp        = 0.7;
+    /**
+     * How far the 24-band layer may push a vertex, in world units. 0 is off,
+     * and off is the default: the band layer changes what every shape looks
+     * like, so it is something the user turns on rather than something that
+     * arrives with an update and makes their saved presets render differently.
+     * Lives here, next to bassSens and amp, because it is a response curve —
+     * params.js binds it exactly the way it binds those.
+     */
+    this.bandDepth  = 0.0;
     this.colorIdx   = 0;
 
     // Beat detector
@@ -162,6 +255,24 @@ export class AudioEngine {
         // the "recompute" on this line reproduced the placeholder bit for bit.
         this._nyq = this.audioCtx.sampleRate / 2;
         this._fpb = this._nyq / (this.analyser.frequencyBinCount);
+
+        // The band tap. 4096 points is 2048 bins, i.e. 10.8 Hz each at
+        // 44.1 kHz, so Bark band 0 (20–100 Hz) is built from 9 bins instead of
+        // the 3 the 1024-point analyser can offer. Fed FROM the main
+        // analyser rather than from each source: analyser nodes pass their
+        // input through unchanged, so this picks up file playback, crossfades
+        // and live capture without any of those paths knowing it exists.
+        this._bandAnalyser = this.audioCtx.createAnalyser();
+        this._bandAnalyser.fftSize = 4096;
+        this._bandAnalyser.minDecibels = this.analyser.minDecibels;
+        this._bandAnalyser.maxDecibels = this.analyser.maxDecibels;
+        // Its own smoothing is off: the 0.3/0.7 pole in _updateBands is the one
+        // that shapes these, and two smoothers in series would make the outer
+        // rings lag the beat by a visible amount.
+        this._bandAnalyser.smoothingTimeConstant = 0;
+        this._bandFft = new Uint8Array(this._bandAnalyser.frequencyBinCount);
+        this._bandFpb = this._nyq / this._bandAnalyser.frequencyBinCount;
+        this.analyser.connect(this._bandAnalyser);
       }
       // Chromium auto-suspends contexts created before the first user
       // gesture. Resuming here is the canonical fix.
@@ -781,6 +892,15 @@ export class AudioEngine {
     const dt = this._lastBeatFadeMs === undefined ? 1 / 60 : (nowMs - this._lastBeatFadeMs) / 1000;
     this._lastBeatFadeMs = nowMs;
     if (dt > 0 && dt < 1) this.beatInt = Math.max(0, this.beatInt - dt / 0.4);
+
+    // The bands ride the same wall clock and the same guard against a hidden
+    // tab handing back one enormous delta. They are updated after the block
+    // above so a frame in which playback stopped decays rather than holding the
+    // last spectrum on screen.
+    if (dt > 0 && dt < 1) {
+      if (this.analyser && this.fftData && this.isPlaying) this._updateBands(dt);
+      else this._decayBands(dt);
+    }
   }
 
   // ── Analysis helpers ──────────────────────────────────────────────────────
@@ -799,6 +919,55 @@ export class AudioEngine {
    * and power = 10^(dB/10). Used by the beat detector; the display bands stay
    * on the byte average, which is the perceptual curve they want.
    */
+  /**
+   * Fill `this.bands` from the 4096-point tap: 24 Bark bands, each normalised
+   * against its own decaying peak, then smoothed with the same 0.3/0.7 pole the
+   * three legacy bands use.
+   *
+   * @param {number} dt seconds since the previous call, for the peak decay
+   */
+  _updateBands(dt) {
+    const fft = this._bandFft, a = this._bandAnalyser;
+    if (!fft || !a || !this._bandFpb) return;
+    a.getByteFrequencyData(fft);
+
+    // Pass one: the tilted level of every band, and the loudest of them.
+    const tilted = this._bandScratch ??= new Float32Array(BAND_COUNT);
+    let loudest = 0;
+    for (let i = 0; i < BAND_COUNT; i++) {
+      // Half-open [lo, hi): a bin on a boundary belongs to the band above, so
+      // no bin is counted twice and none is skipped.
+      const lo = Math.floor(BARK_EDGES[i] / this._bandFpb);
+      const hi = Math.min(fft.length, Math.ceil(BARK_EDGES[i + 1] / this._bandFpb));
+      let s = 0, c = 0;
+      for (let k = lo; k < hi; k++) { s += fft[k]; c++; }
+      // The mean, not the sum: bands are 9 bins wide at the bottom and 650 at
+      // the top, and a sum would hand the outer rings a head start that has
+      // nothing to do with what is audible.
+      const raw = c ? s / c / 255 : 0;
+      const v = raw > 0 ? raw + BAND_TILT[i] : 0;   // silence stays silent
+      tilted[i] = v;
+      if (v > loudest) loudest = v;
+    }
+
+    // Pass two: one reference, decaying, with a floor under it.
+    this._bandRef = Math.max(loudest, this._bandRef * Math.pow(0.5, dt / BAND_REF_HALFLIFE), BAND_REF_FLOOR);
+    const ref = this._bandRef;
+    for (let i = 0; i < BAND_COUNT; i++) {
+      const norm = Math.min(1, Math.max(0, tilted[i] / ref));
+      this.bands[i] = this.bands[i] * 0.3 + norm * 0.7;
+    }
+  }
+
+  /** Let every band fall back to rest — used when nothing is playing. */
+  _decayBands(dt) {
+    // A 0.15 s half-life, so a band is under a twentieth of its value one
+    // second after the music stops rather than still visibly standing.
+    const k = Math.pow(0.5, dt / 0.15);
+    for (let i = 0; i < BAND_COUNT; i++) this.bands[i] *= k;
+    this._bandRef = Math.max(BAND_REF_FLOOR, this._bandRef * Math.pow(0.5, dt / BAND_REF_HALFLIFE));
+  }
+
   _energyLinear(lo, hi) {
     if (!this.fftData || !this.analyser) return 0;
     const min = this.analyser.minDecibels ?? -100, max = this.analyser.maxDecibels ?? -30;

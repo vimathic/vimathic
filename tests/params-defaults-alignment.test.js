@@ -233,7 +233,7 @@ describe('each set() reaches every engine field the registry says it owns', () =
     // get and set have to name the same storage; a set() that wrote a shadow
     // field would make preset capture record a value the engine never held.
     const probe = { amp: 1.1, waveInt: 2.2, bassSens: 0.9, trebleSens: 1.7,
-                    bloom: 0.8, colorIdx: 7, rotSpeed: 0.0007 };
+                    bloom: 0.8, colorIdx: 7, rotSpeed: 0.0007, bandDepth: 0.65 };
     for (const [id, p] of Object.entries(PARAMS)) {
       const ctx = makeCtx();
       assert.ok(id in probe, `PARAMS.${id} has no probe value — add one`);

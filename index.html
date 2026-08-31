@@ -1340,6 +1340,11 @@
         <input type="range" id="bass-sens" min="0" max="2.5" step="0.05" value="1.2"></div>
       <div class="cg xp"><label>Treble Sensitivity <span id="tsv" class="vd">1.00</span></label>
         <input type="range" id="treble-sens" min="0" max="2.5" step="0.05" value="1.0"></div>
+      <!-- Spectrum Rings: the 24 Bark bands laid across the body's radius —
+           centre listens to the kick, rim to the cymbals. Ships at 0 (off), so
+           the shape looks exactly as it always has until this is raised. -->
+      <div class="cg xp"><label>Spectrum Rings <span id="bdv" class="vd">0.00</span></label>
+        <input type="range" id="band-depth" min="0" max="1" step="0.02" value="0"></div>
 
       <!-- ── Track name overlay toggle ──────────────────────────────────── -->
       <label style="display:flex;align-items:center;gap:7px;cursor:pointer;padding:4px 0;user-select:none">

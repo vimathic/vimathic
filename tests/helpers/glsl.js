@@ -858,7 +858,45 @@ export function displacementKind(tree, symbols, interpName) {
       tree.args[2].k === 'id' && tree.args[2].v === 'uModeBlend') {
     return 'the blend of computeMode(uMode, pos.xz, …) and computeMode(uModeNext, pos.xz, …)';
   }
+  // A displacement PLUS the band layer is still a displacement, and the
+  // addition is checked rather than waved through: the left operand has to be
+  // a displacement in its own right by the rules above, and the right one has
+  // to be the band term and nothing else. So a program that quietly replaced
+  // the field with the bands — or added anything else here — still fails.
+  if (tree.k === 'bin' && tree.op === '+') {
+    const base = displacementKind(tree.l, symbols, interpName);
+    if (base && isBandTerm(tree.r)) return `${base}, plus the 24-band layer`;
+  }
   return null;
+}
+
+/**
+ * The band term: `uBandDepth > 0. ? bandAtRadius(length(pos.xz)) * uBandDepth : 0.`
+ *
+ * Written out in full rather than matched loosely, because every part of it is
+ * load-bearing. The guard is `> 0.` so that "off" costs nothing and stays
+ * bit-exact; the radius is `length(pos.xz)`, i.e. distance from the body's own
+ * axis, which is the whole claim the layer makes; and the else-branch is a
+ * literal zero rather than a small number.
+ */
+function isBandTerm(tree) {
+  // No symbol lookup here: resolve() has already substituted every local by its
+  // definition before classify() runs, so a `bandY` written in the program
+  // arrives as the ternary itself.
+  const t = tree;
+  if (!t || t.k !== 'tern') return false;
+  const c = t.c, a = t.a, b = t.b;
+  const zero = n => n && n.k === 'num' && Number(n.v) === 0;
+  const isGuard = c && c.k === 'bin' && c.op === '>' &&
+    c.l.k === 'id' && c.l.v === 'uBandDepth' && zero(c.r);
+  const isScaled = a && a.k === 'bin' && a.op === '*' &&
+    a.l.k === 'call' && a.l.n === 'bandAtRadius' && a.l.args.length === 1 &&
+    a.l.args[0].k === 'call' && a.l.args[0].n === 'length' &&
+    a.l.args[0].args.length === 1 && a.l.args[0].args[0].k === 'field' &&
+    a.l.args[0].args[0].f === 'xz' && a.l.args[0].args[0].o.k === 'id' &&
+    a.l.args[0].args[0].o.v === 'pos' &&
+    a.r.k === 'id' && a.r.v === 'uBandDepth';
+  return !!(isGuard && isScaled && zero(b));
 }
 
 function classify(pats, write, interpName) {

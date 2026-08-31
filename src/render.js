@@ -6,6 +6,34 @@ import { ShaderPass }      from 'three/examples/jsm/postprocessing/ShaderPass.js
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass }  from 'three/examples/jsm/postprocessing/AfterimagePass.js';
 import { VS, FS } from './shaders.js';
+import { BAND_COUNT } from './audio.js';
+
+/**
+ * The radius the band layer spreads its 24 bands over: how far this body
+ * actually reaches from its own axis.
+ *
+ * The bounding SPHERE would be wrong here — it includes y, and a tall thin body
+ * (cylinder, pseudosphere) would then map its whole spectrum into a narrow
+ * annulus near the axis, leaving bands 12-23 on nothing. This measures the XZ
+ * extent, which is what `length(pos.xz)` in the shader compares against.
+ *
+ * The 95th percentile rather than the maximum: a single stray vertex — the tip
+ * of a star, the far corner of a rim — would otherwise set the scale for the
+ * whole body and squeeze every band into the inner two thirds. Measured on the
+ * catalogue, max/p95 runs 1.00 on the round bodies and 1.31 on `star`.
+ */
+function bandRadiusOf(geo) {
+  const p = geo?.attributes?.position;
+  if (!p) return 3.5;
+  const n = p.count;
+  const r = new Float64Array(n);
+  for (let i = 0; i < n; i++) r[i] = Math.hypot(p.getX(i), p.getZ(i));
+  r.sort();
+  const q = r[Math.min(n - 1, Math.floor(n * 0.95))];
+  // A body with no XZ extent at all (a degenerate import) must not divide by
+  // zero and must not collapse every band onto vertex 0.
+  return q > 1e-3 ? q : 3.5;
+}
 import { DEFAULT_SHAPE, normalizeShape } from './shapes.js';
 import { normalizeVizMode } from './viz-mode.js';
 import {
@@ -1639,6 +1667,19 @@ export class RenderEngine {
                uCMNext:       { value: 0   },
                uCMBlend:      { value: 0.0 },
                uPointSize:    { value: 1.0 },
+               // ── The 24-band spectrum, laid across the radius ──────────────
+               // uBands is written every frame from AudioEngine.bands; the
+               // array identity never changes, so three.js uploads the same
+               // buffer rather than reallocating one per frame.
+               // uBandDepth 0 means the term is not merely small but absent —
+               // the shader guards on it — so the whole catalogue is bit-exact
+               // until the user asks for this.
+               // uBandR is the body's own radius in XZ, rewritten per shape
+               // change: band 23 has to land on the rim of what is on screen,
+               // not at a distance a small body never reaches.
+               uBands:        { value: new Float32Array(BAND_COUNT) },
+               uBandDepth:    { value: 0.0 },
+               uBandR:        { value: 3.5 },
                // Colour channel — which value the vertex program hands the ramp.
                // 0 = pos.y as written (GPU mode, and the Volume/Collapse CPU
                // modes, which have always coloured by base + displacement).
@@ -1781,6 +1822,17 @@ export class RenderEngine {
     this.U.uBeat.value   = audio.beatInt;
     this.U.uAmp.value    = audio.amp;
     this.U.uWI.value     = audio.waveInt;
+    // The band array is COPIED into the uniform's own buffer rather than having
+    // the uniform point at the engine's. three.js uploads a uniform array by
+    // reading whatever object is in `.value` at draw time, so aliasing the
+    // engine's live array would work — until an engine that reallocates its
+    // buffer (a sample-rate change rebuilds the tap) left the uniform pointing
+    // at the old one, and the rings would freeze with no error anywhere.
+    // Optional, for the same reason uBandR is — probes and unit stands build a
+    // U with only the uniforms they are about, and a frame must not depend on
+    // the band layer being present.
+    if (this.U.uBands && audio.bands) this.U.uBands.value.set(audio.bands);
+    if (this.U.uBandDepth) this.U.uBandDepth.value = audio.bandDepth ?? 0;
     // uCM is NOT updated here during a color crossfade — setColorSchemeAnimated()
     // manages uCM/uCMNext/uCMBlend directly.
 
@@ -2467,6 +2519,10 @@ export class RenderEngine {
     // before this callback runs.
     this.gpuMesh.geometry = newGeo;
     if (this.gpuPtsProxy) this.gpuPtsProxy.geometry = newGeo;
+    // Optional-chained because setShape is called by probes and tests against a
+    // stub whose U carries only the uniforms that probe is about; a shape swap
+    // must not depend on the band layer existing.
+    if (this.U?.uBandR) this.U.uBandR.value = bandRadiusOf(newGeo);
 
     requestAnimationFrame(() => {
       // Guard against double-dispose: a rapid second swap may have already

@@ -108,6 +108,27 @@ export const PARAMS = {
     midi: true,
   },
 
+  bandDepth: {
+    label:   'Spectrum Rings',
+    slider:  'bandDepth',
+    display: 'bdv',
+    // 0 is off, and off is the shipped default — see AudioEngine.bandDepth for
+    // why this arrives switched off rather than switched on quietly.
+    //
+    // The top of the plain range is 1.0 world unit, which is about a third of
+    // the catalogue's envelope radius (~3.2) and roughly two thirds of the
+    // amplitude the formula field itself reaches at the factory sliders. Past
+    // that the rings stop reading as the body's own texture and start reading
+    // as a second object; the extended range is there for VJ use where that is
+    // the point.
+    min: 0, max: 1.0, default: 0,
+    extendedMax: 2.5,
+    format: v => v.toFixed(2),
+    get: ctx => ctx.audio.bandDepth,
+    set: (ctx, v) => { ctx.audio.bandDepth = v; },
+    midi: true,
+  },
+
   bassSens: {
     label:   'Bass Sensitivity',
     slider:  'bassSens',

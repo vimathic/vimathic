@@ -74,6 +74,8 @@ const REQUIRED = {
   wiv:               'wiv',
   bassSens:          'bass-sens',
   bsv:               'bsv',
+  bandDepth:         'band-depth',
+  bdv:               'bdv',
   trebleSens:        'treble-sens',
   tsv:               'tsv',
   bloom:             'bloom',

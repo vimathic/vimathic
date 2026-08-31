@@ -1673,6 +1673,22 @@ export class MathVisualizer {
    * the call it rides along with. Both are machine numbers; the durable claim
    * is the ratio, and it is the reason this fix costs nothing to take.
    */
+  /**
+   * The 24-band layer as applyHeightField wants it, or null when it is off.
+   *
+   * Reads the SAME two numbers the shader is given — the engine's live band
+   * array and the renderer's uBandR — rather than measuring the body a second
+   * time here. Two independent measurements of "how wide is this shape" would
+   * agree until the day one of them was updated and the other was not, and the
+   * symptom would be the CPU and GPU paths drawing their rings at different
+   * radii on the same body.
+   */
+  _bandLayer() {
+    const depth = this.audio?.bandDepth ?? 0;
+    if (!(depth > 0) || !this.audio?.bands) return null;
+    return { bands: this.audio.bands, depth, radius: this.render.U?.uBandR?.value ?? 3.5 };
+  }
+
   _applyHF(hf) {
     if (!this._lastHFBuf || this._lastHFBuf.length !== hf.length) {
       this._lastHFBuf = new Float32Array(hf.length);
@@ -1685,12 +1701,14 @@ export class MathVisualizer {
     // _capturePristine). Without them the field could only push along +Y, and
     // on a closed body that moves the top and the bottom of every column the
     // same way: the shape shears and never changes thickness.
-    applyHeightField(geo, hf, this._pristinePositions, FIELD_EXTENT, this._pristineNormals, this._pristineDepth);
+    applyHeightField(geo, hf, this._pristinePositions, FIELD_EXTENT, this._pristineNormals, this._pristineDepth,
+                     this._bandLayer());
     // FIX(#52): same guard as everywhere else, through the one helper — this
     // site is where the pattern was born (FIX(r11)).
     const ptsGeo = this._ownPtsGeometry();
     if (ptsGeo) {
-      applyHeightField(ptsGeo, hf, this._pristinePtsPositions, FIELD_EXTENT, this._pristinePtsNormals, this._pristineDepth);
+      applyHeightField(ptsGeo, hf, this._pristinePtsPositions, FIELD_EXTENT, this._pristinePtsNormals, this._pristineDepth,
+                       this._bandLayer());
     }
   }
 }

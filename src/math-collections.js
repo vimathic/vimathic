@@ -5239,10 +5239,17 @@ function sampleHeightField(heightField, grid, extent, step, x, z) {
  *                                  a caller that passes neither cannot mismatch
  *                                  them; a caller that passes one must pass both.
  */
-export function applyHeightField(geometry, heightField, basePositions = null, extent = FIELD_EXTENT, baseNormals = null, maxDepth = Infinity) {
+export function applyHeightField(geometry, heightField, basePositions = null, extent = FIELD_EXTENT, baseNormals = null, maxDepth = Infinity, bandLayer = null) {
   const pos  = geometry.attributes.position;
   const n    = pos.count;
   const grid = Math.max(1, Math.floor(Math.sqrt(heightField.length)));
+  // The 24-band layer, when the user has turned it on. Read once here rather
+  // than per vertex, and left null-ish when off so the loop below is the same
+  // arithmetic it has always been — the CPU path has bit-exactness tests too.
+  const bands     = bandLayer && bandLayer.depth > 0 ? bandLayer.bands : null;
+  const bandDepth = bands ? bandLayer.depth : 0;
+  const bandR     = bands ? Math.max(bandLayer.radius, 1e-3) : 1;
+  const bandLast  = bands ? bands.length - 1 : 0;
   const step = grid > 1 ? (extent * 2) / (grid - 1) : 0;
   const base = (basePositions && basePositions.length === n * 3) ? basePositions : null;
   // FIX(r11): the field moves the vertex along its own normal when the caller
@@ -5288,6 +5295,16 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
     const by = base ? base[i * 3 + 1] : 0;
     const bz = base ? base[i * 3 + 2] : pos.getZ(i);
     let h = sampleHeightField(heightField, grid, extent, step, bx, bz);
+    // The spectrum across the radius — the same quantity, the same lookup and
+    // the same interpolation as bandAtRadius() in src/shaders.js, so the CPU
+    // and GPU paths cannot drift into drawing two different pictures. Added to
+    // the field before the cap below, deliberately: these rings can fold a
+    // surface through itself exactly the way the formula can.
+    if (bands) {
+      const x = Math.min(1, Math.max(0, Math.hypot(bx, bz) / bandR)) * bandLast;
+      const i0 = Math.floor(x), i1 = Math.min(i0 + 1, bandLast), fr = x - i0;
+      h += (bands[i0] + (bands[i1] - bands[i0]) * fr) * bandDepth;
+    }
     // Capped by the caller's measure of how far this surface can travel before
     // it meets itself — the local medial radius, not the bounding box.
     if (norm && h < -maxDepth) h = -maxDepth;

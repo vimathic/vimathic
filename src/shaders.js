@@ -8,6 +8,36 @@
 import * as THREE from 'three';
 import { OBJLoader }  from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { BAND_COUNT } from './audio.js';
+
+/**
+ * The band lookup, shared by the built-in vertex shader and by the one the
+ * editor compiles, so a user-written shader can read the spectrum the same way.
+ *
+ * A uniform array rather than a texture: 24 floats is far inside the smallest
+ * vertex-uniform budget WebGL2 guarantees (1024 components), needs no format
+ * negotiation and no filtering rules, and — unlike a texture fetch — is exact.
+ *
+ * The lookup INTERPOLATES between neighbouring bands instead of stepping. Both
+ * were tried on the plane at 161 segments: stepping puts a visible crease at
+ * each of the 23 band boundaries, because two adjacent rings of vertices get
+ * levels that differ by whatever the music does, and a mesh cannot hide a
+ * discontinuity that large. Interpolating keeps the rings legible — the band
+ * structure is still what you see — without the seams.
+ *
+ * uBandR is the radius the body actually occupies, written per shape change, so
+ * band 23 lands on the rim of whatever is on screen rather than at a fixed
+ * distance that a small body never reaches.
+ */
+export const BAND_GLSL = `
+uniform float uBands[${BAND_COUNT}];
+uniform float uBandDepth, uBandR;
+float bandAtRadius(float r){
+  float x = clamp(r / max(uBandR, 1e-3), 0., 1.) * float(${BAND_COUNT} - 1);
+  int i = int(floor(x));
+  int j = min(i + 1, ${BAND_COUNT} - 1);
+  return mix(uBands[i], uBands[j], fract(x));
+}`;
 
 // ── Vertex shader — 38 modes ──────────────────────────────────────────────────
 // Transition uniforms added:
@@ -62,6 +92,7 @@ varying float vH;
 // derivatives. Both varyings are written unconditionally — they're cheap, and
 // the FS only consumes them when uLighting==1.
 varying vec3  vWorldPos;
+${BAND_GLSL}
 varying vec3  vViewDir;
 
 // ── Helper functions ──────────────────────────────────────────────────────────
@@ -264,7 +295,31 @@ void main(){
     // float32 vertices differ across progress 0/.25/.5/.75/1. That total is
     // the desktop plane's 25921 vertices and circle's 162, five progress
     // values each: 129605 + 810. Mobile is 33215 the same way.
-    float f = mix(y, yNxt, uModeBlend);
+    // ── The spectrum, laid across the radius ─────────────────────────────────
+    // Everything above answers to three scalars — uBass, uMid, uTreble — and
+    // each is the same number at every vertex, so the body can only breathe in
+    // and out as a whole. This adds what that arrangement cannot express: WHERE
+    // in the spectrum a given point listens. Distance from the axis picks a
+    // Bark band, so the middle answers to the kick and the rim to the cymbals,
+    // and a chord becomes a standing pattern of rings instead of one swell.
+    //
+    // Added INTO the field rather than displacing the vertex separately, which
+    // is what the first draft did. Three things follow from being part of the
+    // field and none of them from being beside it: the depth cap that keeps a
+    // surface from folding through itself applies to these rings too, the
+    // colour ramp sees them (vH is the field), and the CPU path in
+    // applyHeightField can do the identical thing to the identical quantity
+    // rather than approximate it.
+    //
+    // The branch, not a multiply, is what makes "off" bit-exact: adding 0.0
+    // would flip a -0.0 field to +0.0, and tests/colour-ramp.test.js compares
+    // float32 words. Guarded, the catalogue is untouched until this is turned on.
+    // Written as one expression rather than a conditional re-assignment of f:
+    // tests/helpers/glsl.js resolves a local to its DEFINITION, and a local that
+    // is defined once and then amended cannot be resolved at all — the guard
+    // would stop being able to say what this program draws.
+    float bandY = uBandDepth > 0. ? bandAtRadius(length(pos.xz)) * uBandDepth : 0.;
+    float f = mix(y, yNxt, uModeBlend) + bandY;
     pos.y = (pos.y + f) * uMorphProgress;
     // The field alone, scaled the same way — bit-for-bit what vH carried
     // before round 10, when the height WAS the field: c629b53 stored
@@ -754,6 +809,7 @@ attribute float aBaseY;
 attribute float aField;
 varying float vH;
 varying vec3  vWorldPos;
+${BAND_GLSL}
 varying vec3  vViewDir;
 float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;for(int n=-6;n<=6;n++){float fn=float(n);s+=cos(a*fn)*exp(-r*.28*fn*fn);}return tanh(s*.7);}
