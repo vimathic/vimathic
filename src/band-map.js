@@ -234,6 +234,186 @@ export function radialU(x, z, R) {
   return Math.min(1, Math.sqrt(x * x + z * z) / Math.max(R, 1e-3));
 }
 
+// ── The body's own share of the coordinate ──────────────────────────────────
+//
+// Everything above measures the FORMULA. The body was in it only passively: it
+// decided which (x, z) columns got sampled, and nothing else. So one formula on
+// a gyroid and on a sphere produced two slices of the same picture rather than
+// two pictures — the geometry the viewer is actually looking at had no say in
+// where the music landed on it.
+//
+// What the body contributes is the same quantity the formula does: a local
+// spatial FREQUENCY. For a surface that is a curvature, and the estimate needs
+// no adjacency and no welding — the signed normal curvature along a triangle's
+// edge is
+//
+//     k_n = ((n_i - n_j) · (v_i - v_j)) / |v_i - v_j|²
+//
+// and the RMS of the three is the surface's own rms wavenumber, the analogue of
+// the estimator K above. For a sphere of radius R it is 1/R for any
+// triangulation; for a plane, 0.
+//
+// ── What was measured, and what was only argued ─────────────────────────────
+// Three candidates were prototyped and run over the real catalogue. Only one of
+// the two rejections is backed by a measurement, and saying which is which
+// matters more than the choice:
+//
+//   * max |Δn| / |Δv| over a triangle's edges — REJECTED BY MEASUREMENT. It
+//     reports the LARGEST principal curvature, which on any tube is constant
+//     along the tube: torus read 0.909 at every vertex and torusknot 1.538, a
+//     p10-to-p90 range of exactly zero. Blind to the second principal direction
+//     by construction.
+//   * the signed MEAN curvature H — rejected on an ARGUMENT that the
+//     measurements do NOT support, and the argument is left here only so that
+//     nobody re-derives it and believes it. The theory says H cancels on a
+//     saddle and is identically 0 on a minimal surface, so the gyroid, the
+//     catenoid and the helicoid would vanish. On the catalogue's actual
+//     triangulations it does not happen: discretised H is nowhere near zero,
+//     |mean H| and the rms give the same set of speaking bodies, quantiles
+//     within a few percent of each other, and the same spatial coherence on the
+//     gyroid (edge-to-random ratio 0.66 against 0.62). The two are empirically
+//     interchangeable here. The rms ships because it is the surface analogue of
+//     the rms wavenumber the FORMULA's estimator K already computes, which is a
+//     reason of consistency, not of measured behaviour — and no test pins the
+//     difference, because there is no difference to pin.
+//
+// What the measurement does establish is which bodies have something to say.
+// Thirteen speak — cylinder, cone, mobius, klein, catenoid, helicoid,
+// hyperboloid, pseudosphere and all five implicit bodies — while plane, sphere,
+// icosahedron-smooth, box and the flat-shaded polyhedra correctly say nothing.
+// Torus and torusknot sit under the threshold at a p10-to-p90 range of 1.21x
+// and 1.14x: a tube of those proportions really is nearly uniformly curved.
+// Fatten it (r 1.1 -> 1.9 at R 2.4) and it speaks.
+//
+// ── What this cannot see, said plainly ──────────────────────────────────────
+// A flat-shaded body — every polyhedron, sierpinski-tetra — carries one normal
+// per FACE, so all three corners of a triangle agree and k is 0 everywhere. Its
+// curvature lives entirely in the edges, which a per-triangle estimate cannot
+// reach and which no amount of arithmetic can recover from a normal buffer that
+// has thrown it away. Those bodies get no body term, which is the same answer
+// they would get from a smooth estimator applied to a flat face: honest, and
+// the same graceful degradation the K → G → H cascade already performs.
+
+/** How far the body may move a point, in bands out of 24. */
+export const BODY_SHIFT_BANDS = 4;
+
+/**
+ * The body's contribution to the band coordinate, per vertex, in [-1, 1].
+ *
+ * NORMALISED AGAINST THE BODY'S OWN SPREAD, which is the decision worth
+ * defending. An absolute scale — "a tighter body listens higher" — is tempting
+ * and wrong here: it would move a sphere's whole surface onto one part of the
+ * spectrum and waste the other bands, which is exactly the failure the
+ * histogram equalisation above exists to prevent. Normalised, a body with no
+ * curvature TEXTURE contributes nothing (a sphere is equally curved everywhere,
+ * and has nothing to say about where band 3 should go rather than band 19),
+ * while a body whose geometry varies redistributes the layout by that variation.
+ *
+ * So under one formula a gyroid and a sphere differ in the way that can actually
+ * be seen: the gyroid's necks and saddles pull the layout around, the sphere's
+ * uniform dome leaves it to the formula. That is the honest version of "the
+ * body has a say", not "every body is shifted by a constant".
+ *
+ * @param {Float32Array} positions  xyz per vertex, undisplaced
+ * @param {Float32Array} normals    xyz per vertex, as the geometry was built
+ * @param {?ArrayLike<number>} index  triangle indices, or null for a soup
+ * @returns {?Float32Array} one value per vertex, or null when the body has no
+ *          curvature texture to report — a plane, a flat-shaded polyhedron, a
+ *          geometry with no triangles.
+ */
+export function buildBodyCurvature(positions, normals, index) {
+  if (!positions || !normals || positions.length !== normals.length) return null;
+  const V = positions.length / 3;
+  if (!(V > 2)) return null;
+  const tri = index && index.length >= 3 ? index : null;
+  const T = tri ? Math.floor(tri.length / 3) : Math.floor(V / 3);
+  if (!(T > 0)) return null;
+
+  const sum = new Float32Array(V), cnt = new Float32Array(V);
+  const at = (t, c) => (tri ? tri[t * 3 + c] : t * 3 + c);
+  for (let t = 0; t < T; t++) {
+    const a = at(t, 0), b = at(t, 1), c = at(t, 2);
+    if (a >= V || b >= V || c >= V) continue;
+    let acc = 0, m = 0;
+    for (const [i, j] of [[a, b], [b, c], [c, a]]) {
+      const dnx = normals[i * 3]     - normals[j * 3];
+      const dny = normals[i * 3 + 1] - normals[j * 3 + 1];
+      const dnz = normals[i * 3 + 2] - normals[j * 3 + 2];
+      const dvx = positions[i * 3]     - positions[j * 3];
+      const dvy = positions[i * 3 + 1] - positions[j * 3 + 1];
+      const dvz = positions[i * 3 + 2] - positions[j * 3 + 2];
+      const l2 = dvx * dvx + dvy * dvy + dvz * dvz;
+      // A degenerate edge divides by nothing and would report an infinite
+      // curvature — marching cubes produces them wherever the surface grazes a
+      // lattice node, and one such vertex would take a whole band with it.
+      if (!(l2 > 1e-12)) continue;
+      const kn = (dnx * dvx + dny * dvy + dnz * dvz) / l2;
+      if (Number.isFinite(kn)) { acc += kn * kn; m++; }
+    }
+    if (!m) continue;
+    // The rms over the triangle's own directions, spread to its corners.
+    // Squared first: signed curvatures of opposite sign would otherwise cancel,
+    // and a saddle is precisely where they do.
+    const r = Math.sqrt(acc / m);
+    sum[a] += r; cnt[a]++;
+    sum[b] += r; cnt[b]++;
+    sum[c] += r; cnt[c]++;
+  }
+
+  const k = new Float32Array(V);
+  for (let i = 0; i < V; i++) k[i] = cnt[i] > 0 ? sum[i] / cnt[i] : 0;
+
+  // Log space and a RELATIVE floor, for the same reason the cascade uses them:
+  // curvature is a ratio quantity, and a floor in absolute units would make the
+  // answer depend on how big the body happens to be built.
+  const hi = percentile(k, 0.9);
+  if (!(hi > 0)) return null;                 // a plane, or a flat-shaded soup
+  const flr = hi * 0.01;
+  const e = new Float32Array(V);
+  for (let i = 0; i < V; i++) e[i] = Math.log((k[i] > 0 ? k[i] : 0) + flr);
+
+  const spread = robustSpread(e);
+  // The same two thresholds the cascade uses for "how much has this stage to
+  // say", on the same quantity in the same units, and a smoothstep rather than a
+  // cut: at a hard boundary a body whose spread sat on the line would flip
+  // between two layouts on a parameter nobody touched. Measured over the
+  // catalogue this leaves torus at 0.189 and torusknot at 0.133 contributing
+  // essentially nothing, and the gyroid at 1.93 contributing in full.
+  const say = smoothstep(0.25, 0.9, spread);
+  if (!(say > 0.001) || !(spread > 1e-9)) return null;
+  const mid = percentile(e, 0.5);
+  const out = new Float32Array(V);
+  for (let i = 0; i < V; i++) {
+    const v = (e[i] - mid) / spread;
+    out[i] = say * (v < -1 ? -1 : v > 1 ? 1 : v);
+  }
+  return out;
+}
+
+/**
+ * The one law both paths apply, so that "the body has a say" means the same
+ * thing on the CPU and in the shader.
+ *
+ * The two paths build their base coordinate differently and always have — the
+ * CPU equalises a cascade over the body's vertices, the shader reads a clamped
+ * log-ratio of two finite differences — and neither is convertible into the
+ * other. What IS shared is the measurement (one buildBodyCurvature, uploaded
+ * once as an attribute and passed once to buildBandMap) and this law, which is
+ * why it is written here in one place and mirrored in bandTermOfMode by name.
+ *
+ * The cost of applying it after the coordinate is formed, stated rather than
+ * hidden: on the CPU the histogram above hands every band an equal share of the
+ * surface, and a shift applied afterwards perturbs that. Bounded at four bands
+ * of twenty-four it redistributes rather than collapses — but "every band gets
+ * an equal share" becomes "every band gets a share", and the test that measures
+ * it is written to the weaker claim on purpose.
+ */
+export function applyBodyShift(u, bodyK) {
+  const s = BODY_SHIFT_BANDS / 23;
+  const v = u + s * bodyK;
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
 /**
  * Build the band coordinate for every vertex of a body.
  *
@@ -241,8 +421,11 @@ export function radialU(x, z, R) {
  *                               reference time — see the note on freezing below
  * @param {number} g             lattice size (ANALYSIS_GRID)
  * @param {number} extent        half-width the lattice covers, in world units
- * @param {{x: Float32Array, z: Float32Array, R: number}} verts
- * @returns {{u: Float32Array, r: Float32Array, tb: Float32Array, conf: number, stages: string[]}}
+ * @param {{x: Float32Array, z: Float32Array, R: number, k: ?Float32Array}} verts
+ *        k is the body's own curvature term from buildBodyCurvature, in
+ *        [-1, 1], or null/absent for a body that has no curvature texture.
+ * @returns {{u: Float32Array, r: Float32Array, tb: Float32Array, conf: number,
+ *            stages: string[], body: boolean}}
  *          u ∈ [0,1] per vertex — multiply by 23 to get the band;
  *          r and tb are the two time-independent halves of the gesture (the
  *          vertex's radius and the turbulence sampled there), precomputed here
@@ -281,7 +464,12 @@ export function buildBandMap(field, g, extent, verts) {
   }
   const fallbackToRadius = () => {
     for (let i = 0; i < V; i++) u[i] = radialU(verts.x[i], verts.z[i], verts.R);
-    return { u, r: rr, tb, conf: 0, stages: ['radius'] };
+    // No body term here, deliberately. This is the path a formula with no
+    // structure takes, and the promise it carries is that the layer degrades
+    // into exactly the rings that shipped before the map existed — a body shift
+    // on top of that would be a new picture in the one place the code promises
+    // an old one. The body speaks when the formula does.
+    return { u, r: rr, tb, conf: 0, stages: ['radius'], body: false };
   };
   if (!field || !field.length || !V) return fallbackToRadius();
 
@@ -365,11 +553,18 @@ export function buildBandMap(field, g, extent, verts) {
 
   // Blend toward the radius rule by confidence: a field the cascade barely
   // understood keeps most of the old behaviour rather than inventing structure.
+  //
+  // The body's shift is applied LAST, to the finished coordinate, because that
+  // is the only form the shader also has — see applyBodyShift. A body with no
+  // curvature texture (a plane, a flat-shaded polyhedron, a uniform sphere)
+  // hands back null and this loop is bit-for-bit what it was.
+  const bk = verts.k && verts.k.length === V ? verts.k : null;
   for (let i = 0; i < V; i++) {
     const mapped = cdf[bin[i]];
-    u[i] = conf * mapped + (1 - conf) * radialU(verts.x[i], verts.z[i], verts.R);
+    const base = conf * mapped + (1 - conf) * radialU(verts.x[i], verts.z[i], verts.R);
+    u[i] = bk ? applyBodyShift(base, bk[i]) : base;
   }
-  return { u, r: rr, tb, conf, stages };
+  return { u, r: rr, tb, conf, stages, body: !!bk };
 }
 
 /**

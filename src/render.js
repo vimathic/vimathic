@@ -1156,6 +1156,13 @@ function attachBaseY(geo) {
   // Zero-filled, and it stays zero unless a CPU writer fills it: in GPU mode the
   // vertex program recovers the same quantity as f - fBase and never reads this.
   geo.setAttribute('aBand', new THREE.BufferAttribute(new Float32Array(n), 1));
+  // The body's own share of the band coordinate, in [-1, 1] — see
+  // buildBodyCurvature. Created here because the shader reads it in GPU math
+  // mode, where MathVisualizer is deactivated and would never get the chance to
+  // add an attribute of its own; filled by _capturePristine, which is the one
+  // hook that fires on every shape change in both modes. Zero is the value that
+  // makes the shift a no-op, so an unfilled buffer is the old behaviour.
+  geo.setAttribute('aBodyK', new THREE.BufferAttribute(new Float32Array(n), 1));
 }
 
 /**
@@ -1763,6 +1770,10 @@ export class RenderEngine {
     // right leftover twice over: an imported model has no band map, and uPtBand
     // is forced to 0 while one is on stage anyway.
     this.gpuMat.defaultAttributeValues.aBand = [0];
+    // And the body's curvature term. 0 is the no-op value for the shift, so an
+    // imported model — which has no band map and no curvature measurement —
+    // keeps the layout the formula alone decides.
+    this.gpuMat.defaultAttributeValues.aBodyK = [0];
     this.gpuMesh = new THREE.Mesh(gpuGeo, this.gpuMat);
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
@@ -2365,6 +2376,8 @@ export class RenderEngine {
       // disagree about what the missing case means.
       ptsMat.defaultAttributeValues.aBaseY = [0];
       ptsMat.defaultAttributeValues.aField = [0];
+      ptsMat.defaultAttributeValues.aBand  = [0];
+      ptsMat.defaultAttributeValues.aBodyK = [0];
       // Geometry is deliberately shared with gpuMesh, not cloned — see the
       // dispose note at the top of this method.
       this.gpuPtsProxy = new THREE.Points(this.gpuMesh.geometry, ptsMat);

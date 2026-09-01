@@ -54,7 +54,7 @@ import {
   VOLUME_FORMULAS,
   FIELD_EXTENT,
 } from './math-collections.js';
-import { buildBandMap, ANALYSIS_GRID } from './band-map.js';
+import { buildBandMap, buildBodyCurvature, ANALYSIS_GRID } from './band-map.js';
 
 /**
  * The moment the character map is sampled at.
@@ -1365,6 +1365,26 @@ export class MathVisualizer {
       this._pristineNormals[i * 3 + 1] = nrm.getY(i);
       this._pristineNormals[i * 3 + 2] = nrm.getZ(i);
     }
+    // ── The body's own share of the band coordinate ─────────────────────────
+    // Computed HERE and not in _rebuildBandMap, and the reason is the GPU. In
+    // GPU math mode this visualiser is deactivated and nothing of it ticks, so
+    // a map rebuilt lazily on the CPU would never run — yet the shader is
+    // exactly where the body's say is most missing, because there the layout is
+    // derived from the formula alone with no map at all. This hook is the one
+    // place that fires on every shape change in BOTH modes.
+    //
+    // It is also the only place the RAW normals still exist: three lines below,
+    // _pristineNormals is nulled for a thin body and welded for the rest, and
+    // the weld is exactly what would erase the disagreement this measures.
+    //
+    // Cost: one pass over the triangles and two Float32Arrays, no hashing and no
+    // adjacency — which is what makes it affordable unconditionally, unlike the
+    // positionGroups below that a plate is deliberately spared.
+    this._bodyCurv = buildBodyCurvature(
+      this._pristinePositions, this._pristineNormals,
+      geo.index ? geo.index.array : null);
+    this._uploadBodyCurv(geo, n);
+
     // Which bodies the field may follow, decided by measurement rather than by
     // shape name — names change, and round 10 spent a wave on that lesson.
     //
@@ -1470,6 +1490,28 @@ export class MathVisualizer {
       this._pristinePtsPositions = null;
       this._pristinePtsNormals   = null;
     }
+  }
+
+  /**
+   * Hand the body's curvature term to the shader, in the attribute the vertex
+   * program reads it from.
+   *
+   * The attribute is created by attachBaseY and arrives zero-filled, which is
+   * the value that makes the shift a no-op — so a body with no curvature
+   * texture, or a geometry that predates the attribute, simply gets the layout
+   * the formula alone decides. Writing zeros explicitly rather than leaving the
+   * previous shape's numbers in place is the whole job here: the buffer is
+   * reallocated by setShape on a vertex-count change but REUSED when the count
+   * happens to match, and a stale curvature map is a picture that looks
+   * deliberate.
+   */
+  _uploadBodyCurv(geo, n) {
+    const a = geo.attributes.aBodyK;
+    if (!a || !a.array || a.array.length !== n) return;
+    const k = this._bodyCurv;
+    if (k && k.length === n) a.array.set(k);
+    else a.array.fill(0);
+    a.needsUpdate = true;
   }
 
   /**
@@ -1792,7 +1834,13 @@ export class MathVisualizer {
       const field = generateSurfaceFromFormula(
         this._formulaFn, { amp: 1, freq: 1, comp: 0.5 },
         ANALYSIS_GRID, FIELD_EXTENT, BAND_MAP_REF_TIME);
-      const { u, r, tb } = buildBandMap(field, ANALYSIS_GRID, FIELD_EXTENT, { x, z, R });
+      // The SAME curvature array the shader was handed in aBodyK — measured
+      // once in _capturePristine, spent twice. Two independent measurements of
+      // "how curved is this body here" would agree until the day one of them
+      // was updated, and the symptom would be the CPU and GPU paths laying the
+      // spectrum out differently on one shape under one slider.
+      const k = (this._bodyCurv && this._bodyCurv.length === V) ? this._bodyCurv : null;
+      const { u, r, tb } = buildBandMap(field, ANALYSIS_GRID, FIELD_EXTENT, { x, z, R, k });
       this._bandMap = u;
       this._bandMapR = r;
       this._bandMapTb = tb;

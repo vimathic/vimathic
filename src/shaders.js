@@ -102,6 +102,16 @@ attribute float aField;
 // the writers hand it over here instead. Zero-filled by attachBaseY, so a
 // geometry that predates the layer reads 0 and the points stay a plain cloud.
 attribute float aBand;
+// ── The body's own share of the band coordinate ─────────────────────────────
+// Everything the shader can measure by itself is the FORMULA: bandCoordOfMode
+// samples computeMode around pos.xz and knows nothing about the shape those
+// samples are being drawn on. A vertex shader cannot see its neighbours, so a
+// curvature it computed itself is not available at any price — the value is
+// measured once on the CPU in MathVisualizer._capturePristine and uploaded,
+// exactly as aBaseY is, and exactly the same array is handed to the CPU map.
+// In [-1, 1]; 0 means this body has no curvature texture to spend, which is the
+// honest answer for a plane and for every flat-shaded polyhedron.
+attribute float aBodyK;
 // 1 while the points proxy is the thing being drawn, 0 otherwise — set beside
 // uPointSize in setVizModeGPU, for the same reason and with the same lifetime.
 // It cannot be inferred inside the shader: uPtStyle is 0 both outside PTS and
@@ -403,10 +413,19 @@ float bandCoordOfMode(int mode, vec2 xz, float a, float wi){
  * is. Without it the layout stayed on the outgoing mode for the whole fade and
  * then snapped to the incoming one in a single frame; the second coordinate is
  * only computed while a fade is actually running, which is under a second.
+ *
+ * THE BODY'S SHIFT, and why it is a fifth argument rather than something read
+ * off a uniform: it is per VERTEX. bodyK is aBodyK at the call site, measured on
+ * the CPU because a vertex program cannot see its neighbours, and the shift is
+ * bounded at BODY_SHIFT_BANDS of 24 — 4/23 of the coordinate — so the body
+ * redistributes the layout without ever taking it over. src/band-map.js's
+ * applyBodyShift is this same law on the CPU side, and the two are mirrored by
+ * name so a change to one names the other.
  */
-float bandTermOfMode(vec2 xz, float a, float wi, float T){
+float bandTermOfMode(vec2 xz, float a, float wi, float T, float bodyK){
   float u = bandCoordOfMode(uMode, xz, a, wi);
   if (uModeBlend > 0.) u = mix(u, bandCoordOfMode(uModeNext, xz, a, wi), uModeBlend);
+  u = clamp(u + (4.0 / 23.0) * bodyK, 0., 1.);
   return bandMotion(bandAtU(u), u, xz, T, length(xz));
 }
 
@@ -499,7 +518,7 @@ void main(){
     // gesture stays the plain push it always was: the radius says nothing about
     // the formula, so there is nothing to give a gesture to.
     float f = uBandDepth > 0.
-      ? fBase + (uBandMode == 1 ? bandTermOfMode(pos.xz, a, wi, T)
+      ? fBase + (uBandMode == 1 ? bandTermOfMode(pos.xz, a, wi, T, aBodyK)
                                 : bandAtU(length(pos.xz) / max(uBandR, 1e-3))) * uBandDepth
       : fBase;
     // f minus the field it was built from IS the band term — the difference of
@@ -1576,6 +1595,7 @@ export class ModelLoader {
       // before, and a model is exactly the geometry attachBaseY never sees.
       mat.defaultAttributeValues.aField = [0];
       mat.defaultAttributeValues.aBand  = [0];
+      mat.defaultAttributeValues.aBodyK = [0];
       child.material = mat;
       this._meshes.push(child);
     });

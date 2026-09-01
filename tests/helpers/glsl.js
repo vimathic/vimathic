@@ -971,7 +971,21 @@ function isCharacterTerm(n) {
   if (n.k === 'call' && n.n === 'bandTermOfMode') {
     // The whole term in one call — coordinate, lookup and gesture inside. Its
     // first argument has to be the position it is displacing.
-    return n.args.length >= 1 && isPosXZ(n.args[0]);
+    if (!(n.args.length >= 1 && isPosXZ(n.args[0]))) return false;
+    // And the BODY's shift, if one is passed, has to be the body — the
+    // attribute measured on the CPU and nothing else. The arity used to be
+    // unchecked past the first argument, which was harmless while there were
+    // only four; the fifth decides where on the spectrum a vertex listens, and
+    // anything audio-driven in that slot (uBass, a band level) would let the
+    // sound choose which sound it is modulated by. That feedback loop is the
+    // one thing the frozen map and the pinned audio arguments in
+    // bandCoordOfMode exist to prevent, and it would be very hard to read as a
+    // bug on screen.
+    if (n.args.length >= 5) {
+      const k = n.args[4];
+      if (!(k && k.k === 'id' && k.v === 'aBodyK')) return false;
+    }
+    return true;
   }
   if (n.k === 'call' && n.n === 'bandMotion') {
     // A gesture may wrap a lookup ONCE — not another gesture, which the
