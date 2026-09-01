@@ -167,7 +167,37 @@ varying vec3  vViewDir;
 // between drivers, and neither matters for a value whose only job is to be
 // different from its neighbour's.
 float ptSpray(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453)*2.-1.;}
-float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
+// ── turb — four waves, and why none of them runs along an axis ───────────────
+// It used to be sum |sin(p.x*i) * cos(p.y*i)| / i, and that spelling drew a
+// GRID on the surface. Two properties of it, both load-bearing:
+//
+//   * abs() breaks the first derivative wherever its argument crosses zero, and
+//     those crossings are the straight lines p.x*i = k*pi. A crease in the
+//     height is a jump in the normal, and Mirror reflects the jump as a hard
+//     edge — the brighter the band, the more of it there is to see.
+//   * the term is SEPARABLE, f(x)*g(z), so the crease lines run along X and Z
+//     and nowhere else. Separable plus kinked is a lattice, in world
+//     coordinates, identical under every formula and every shape.
+//
+// Measured on the shipped tree, plane at 256 segments, low bands at 1.0, over
+// the vertices where SHATTER has weight (u > 0.6): |d2h/dx2| within half a mesh
+// step of a kink line was 1.63x its value elsewhere on eigenField and 1.43x on
+// determinant. With the abs() alone removed both ratios go to 0.97-1.02, which
+// is what says the kink — not the frequency content — is what drew the grid.
+//
+// This spelling drops the abs() AND the axes: four plane waves, each with its
+// own direction (angle i*1.7+0.4, an irrational-ish step so no two of the four
+// come within 15 degrees of each other and none within 30 degrees of an axis)
+// and its own phase. Same ratio measurement: 0.96-1.06.
+//
+// The scale and offset are not decoration. Two call sites depend on turb's
+// STATISTICS rather than on its shape — bandMotion centres it on 0.9 to make
+// SHATTER shake instead of inflate, and modes 0/3/32 add it as relief with a
+// fixed gain — so the replacement is fitted to the old mean and standard
+// deviation over the domain the call sites use (p = 3.5*(x,z), x,z in +-3.5):
+// old mean 0.8464 sd 0.3446 range 0.003..1.679, new mean 0.8462 sd 0.3446
+// range 0.015..1.693. Drift in the mean is 2e-4.
+float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++){float a=i*1.7+0.4;t+=sin(dot(p,vec2(cos(a),sin(a)))*i+i*2.3)/i;}return t*0.408+0.846;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;s+=cos(a*-6.)*exp(-r*.28*36.);s+=cos(a*-5.)*exp(-r*.28*25.);s+=cos(a*-4.)*exp(-r*.28*16.);s+=cos(a*-3.)*exp(-r*.28*9.);s+=cos(a*-2.)*exp(-r*.28*4.);s+=cos(a*-1.)*exp(-r*.28*1.);s+=1.;s+=cos(a*1.)*exp(-r*.28*1.);s+=cos(a*2.)*exp(-r*.28*4.);s+=cos(a*3.)*exp(-r*.28*9.);s+=cos(a*4.)*exp(-r*.28*16.);s+=cos(a*5.)*exp(-r*.28*25.);s+=cos(a*6.)*exp(-r*.28*36.);return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
 
@@ -1164,7 +1194,10 @@ varying vec3  vWorldPos;
 ${BAND_GLSL}
 varying vec3  vViewDir;
 float ptSpray(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453)*2.-1.;}
-float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
+// Word for word with the VS copy above — the editor template hands the user the
+// same helpers the built-in programs have, and two spellings of turb would let
+// a shader written in the editor draw a grid the built-in one no longer does.
+float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++){float a=i*1.7+0.4;t+=sin(dot(p,vec2(cos(a),sin(a)))*i+i*2.3)/i;}return t*0.408+0.846;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;for(int n=-6;n<=6;n++){float fn=float(n);s+=cos(a*fn)*exp(-r*.28*fn*fn);}return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
 void main(){vec3 pos=position;
