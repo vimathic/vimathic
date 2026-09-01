@@ -224,14 +224,36 @@ export class AudioEngine {
     this.waveInt    = 1.0;
     this.amp        = 0.7;
     /**
-     * How far the 24-band layer may push a vertex, in world units. 0 is off,
-     * and off is the default: the band layer changes what every shape looks
-     * like, so it is something the user turns on rather than something that
-     * arrives with an update and makes their saved presets render differently.
+     * How far the 24-band layer may push a vertex, in world units.
+     *
+     * This shipped at 0 — off — on the argument that the layer changes what
+     * every shape looks like, so it should be something a user turns on rather
+     * than something an update turns on for them. The owner overruled that, and
+     * the reason the argument was weak is worth writing down: a feature that
+     * ships off and lives three clicks deep in ADVANCED has an impact of exactly
+     * zero for everyone who does not go looking, which is nearly everyone. The
+     * whole point of the layer is that the body answers the SPECTRUM rather than
+     * three lumped numbers, and that cannot be seen from a slider at rest.
+     *
+     * The half of the old argument that was real — "makes their saved presets
+     * render differently" — does not survive contact with the preset format:
+     * bandDepth has been in PARAM_FIELDS since v3, and presets older than that
+     * are migrated to an explicit 0 (see ui/presets.js). A saved preset restores
+     * the depth it was saved with, whatever this line says. Only a session that
+     * has never loaded a preset sees this number.
+     *
+     * 0.30 rather than the 0.5 the slider's midpoint would suggest: at 0.30 the
+     * rings read as the body's own texture against a formula field that reaches
+     * roughly 1.5 at the factory sliders, so the shape is still the formula's
+     * with the music in it. Past ~0.7 the layer starts to be the thing you see
+     * first — see the range note in params.js.
+     *
      * Lives here, next to bassSens and amp, because it is a response curve —
-     * params.js binds it exactly the way it binds those.
+     * params.js binds it exactly the way it binds those. index.html's slider
+     * value= and its <span> are the third copy; tests/params-defaults-alignment
+     * pins all three together.
      */
-    this.bandDepth  = 0.0;
+    this.bandDepth  = 0.3;
     /**
      * Whether the 24 bands are laid out by the FORMULA's own texture (true) or
      * by distance from the axis (false). Ships on, because the rings-everywhere

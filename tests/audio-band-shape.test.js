@@ -7,12 +7,18 @@
 //   node --test tests/audio-band-shape.test.js
 //
 // ── Why this file ────────────────────────────────────────────────────────────
-// The layer ships switched off, so the thing most likely to go wrong is not a
-// wrong picture — it is a picture that changes for everyone who never asked for
-// one. The first group here is therefore about zero, and the rest is about the
-// CPU and GPU paths computing the SAME rings: they are two implementations of
-// one formula, in two languages, and nothing in the product would show it if
-// they drifted apart by half a band.
+// The first group here is about ZERO: depth 0 has to leave the field alone to
+// the bit, in all three writers. That was written when the layer also SHIPPED
+// at zero, and it is worth being clear that those are two different promises.
+// The layer now ships at 0.30 — see AudioEngine.bandDepth — so "off is bit-
+// exact" is no longer a statement about what a new user sees; it is the
+// guarantee that a user who drags the slider back to 0, or loads a preset saved
+// at 0, gets exactly the picture the catalogue had before the layer existed.
+// That promise got MORE load-bearing when the default moved, not less.
+//
+// The rest is about the CPU and GPU paths computing the SAME rings: they are two
+// implementations of one formula, in two languages, and nothing in the product
+// would show it if they drifted apart by half a band.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -248,5 +254,54 @@ describe('the CPU and the GPU compute the same rings', () => {
     assert.ok(best < 0.05, 'no vertex close enough to the midpoint to test');
     assert.ok(Math.abs(got - 0.5) < 0.12,
       `midway between a dark band and a lit one reads ${got.toFixed(3)}, not ~0.5 — stepped, not interpolated`);
+  });
+});
+
+// ── The layer has to be VISIBLE, not merely present ─────────────────────────
+// Everything above this line tests a layer that is switched on by the caller.
+// None of it can tell whether anyone will ever switch it on, and for the first
+// version of this feature the answer was "almost nobody": it shipped at 0 and
+// its slider sat inside a collapsed <details>. A feature nobody finds has the
+// same value as a feature that does not work, and the code cannot tell the
+// difference — so the two facts that make it reachable are pinned here.
+//
+// Both assertions are about SHIPPED STATE, which is exactly the kind of thing a
+// later edit undoes without noticing: dropping a default back to 0 while
+// refactoring, or tidying the panel by sweeping a control into ADVANCED, both
+// leave every other test in this file green.
+describe('the layer arrives where a user will meet it', () => {
+  const HTML = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '../index.html'), 'utf8');
+
+  test('the engine boots with the layer already doing something', async () => {
+    const { AudioEngine } = await import('../src/audio.js');
+    const depth = new AudioEngine().bandDepth;
+    assert.ok(depth > 0,
+      `AudioEngine boots at bandDepth ${depth} — the 24-band layer is off out of the box, ` +
+      'so a user who never opens a panel never sees any of it');
+    // Not just "nonzero": a token 0.02 would pass the line above and be
+    // invisible. The lower bound is a tenth of the plain slider range, which is
+    // where the rings first read as motion rather than as dither. The upper one
+    // is the promise that the FORMULA is still the thing on screen — past ~0.7
+    // the layer is what you see first. (params.js carries the range reasoning.)
+    assert.ok(depth >= 0.1 && depth <= 0.7,
+      `bandDepth boots at ${depth}, outside the 0.1..0.7 band where the layer is ` +
+      'both visible and still subordinate to the formula');
+  });
+
+  test('its slider is reachable without opening ADVANCED', () => {
+    // Structural rather than positional: the ADVANCED block is the collapsed
+    // one, so "before it opens" is precisely "visible on load". Comparing
+    // offsets beats matching the surrounding markup, which would break on any
+    // reflow of the panel and would say nothing about visibility.
+    const adv = HTML.indexOf('<details class="adv-section">');
+    assert.ok(adv > 0, 'the ADVANCED <details> is gone — this guard no longer measures anything');
+    for (const id of ['band-depth', 'band-character']) {
+      const at = HTML.indexOf(`id="${id}"`);
+      assert.ok(at > 0, `index.html no longer ships a control with id="${id}"`);
+      assert.ok(at < adv,
+        `#${id} sits inside the collapsed ADVANCED block — the 24-band layer is ` +
+        'back to being a feature only someone already looking for it can find');
+    }
   });
 });

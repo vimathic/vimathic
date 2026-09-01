@@ -359,11 +359,17 @@ float bandCoordOfMode(int mode, vec2 xz, float a, float wi){
  * The whole band term for the character path: coordinate, amplitude, gesture.
  *
  * One function so the coordinate is computed ONCE — it costs eight computeMode
- * calls — and so the caller can put the whole thing inside a branch. That
- * matters: the layer ships OFF, and the first version evaluated the coordinate
- * before the depth test, so every user paid for eight extra formula
+ * calls — and so the caller can put the whole thing inside a branch. When this
+ * was written the layer shipped OFF, and the first version evaluated the
+ * coordinate before the depth test, so every user paid for eight extra formula
  * evaluations per vertex to render a feature they had not switched on. Found by
  * an external review.
+ *
+ * The layer ships ON now (0.30), which changes who pays but not the argument:
+ * the branch is what keeps the cost proportional to the feature being used, and
+ * it is the difference between the slider at 0 costing nothing and costing eight
+ * computeMode calls per vertex. Dragging the layer off has to give the frame
+ * time back, or "off" is only off on screen.
  *
  * The coordinate is blended across a mode crossfade, the same way the surface
  * is. Without it the layout stayed on the outgoing mode for the whole fade and

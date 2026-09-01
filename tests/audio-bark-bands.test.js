@@ -366,9 +366,12 @@ describe('each band is normalised against its own history', () => {
   });
 
   test('the tap is idle while the layer is off', () => {
-    // The 4096-point FFT is the cost of a feature that ships switched off, so it
-    // is not paid until the slider moves. The bands decay to rest instead of
-    // holding whatever spectrum was last computed.
+    // The layer ships ON at 0.30 now, so this is no longer "a default session
+    // never pays the 4096-point FFT" — it is that dragging the slider to 0 must
+    // give the cost back. A feature that keeps running after it is switched off
+    // is a feature that cannot be switched off. The bands also decay to rest
+    // rather than holding whatever spectrum was last computed, so the shape
+    // settles instead of freezing mid-pulse.
     const e = makeEngine();
     settle(e, tone(BARK_EDGES[6], BARK_EDGES[7]));
     assert.ok(e.bands[6] > 0.5, 'the band never rose, so its decay proves nothing');

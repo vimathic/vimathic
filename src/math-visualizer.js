@@ -1725,10 +1725,12 @@ export class MathVisualizer {
   _bandLayer() {
     const depth = this.audio?.bandDepth ?? 0;
     if (!(depth > 0) || !this.audio?.bands) return null;
-    // Lazily: the map is only worth building for someone who has the layer on,
-    // and the layer ships off. A user who never touches the slider never pays
-    // the rebuild, and the first thing they pay when they do touch it is one
-    // map rather than one per formula they had browsed past.
+    // Lazily, and it still matters even though the layer now ships ON at 0.30.
+    // The saving is no longer "a default session never pays" — it is that the
+    // map is rebuilt on DEMAND rather than on every invalidation: browsing ten
+    // formulas with the slider at 0, or with the layer dragged off, costs one
+    // rebuild when it comes back rather than ten along the way. The early
+    // return above is the same guard from the other side.
     const wantMap = this.audio.bandCharacter !== false;
     // The radius the map was equalised against is part of what it IS, and it can
     // change without any of the invalidation hooks firing: importing a model or

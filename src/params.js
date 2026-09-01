@@ -112,8 +112,8 @@ export const PARAMS = {
     label:   'Spectrum Rings',
     slider:  'bandDepth',
     display: 'bdv',
-    // 0 is off, and off is the shipped default — see AudioEngine.bandDepth for
-    // why this arrives switched off rather than switched on quietly.
+    // 0 is off; the shipped default is 0.30 — see AudioEngine.bandDepth for why
+    // it stopped being 0, and why saved presets are unaffected by the change.
     //
     // The top of the plain range is 1.0 world unit, which is about a third of
     // the catalogue's envelope radius (~3.2) and roughly two thirds of the
@@ -121,7 +121,7 @@ export const PARAMS = {
     // that the rings stop reading as the body's own texture and start reading
     // as a second object; the extended range is there for VJ use where that is
     // the point.
-    min: 0, max: 1.0, default: 0,
+    min: 0, max: 1.0, default: 0.3,
     extendedMax: 2.5,
     format: v => v.toFixed(2),
     get: ctx => ctx.audio.bandDepth,
