@@ -220,6 +220,13 @@ test.describe('Reset', () => {
     // audio.js boots at 1.2 and the slider ships value="1.2" — RESET ALL
     // silently dropped bass sensitivity below the startup value.
     await expect(page.locator('#bass-sens')).toHaveValue('1.2');
+    // Spectrum Rings ships ON at 0.30 and no longer needs revealControl — it
+    // moved out of ADVANCED to sit beside Wave Intensity. Both halves of that
+    // change are checked here through the real DOM: a slider that came back to
+    // 0 after RESET ALL, or one that could not be reached without expanding a
+    // panel, would both be the feature quietly switching itself off again.
+    await expect(page.locator('#band-depth')).toBeVisible();
+    await expect(page.locator('#band-depth')).toHaveValue('0.3');
     await expect(page.locator('#bloom')).toHaveValue('0.55');
     await expect(page.locator('#gpu-sel')).toHaveValue('m:differentialEqs:pendulumNonLinear');
   });
