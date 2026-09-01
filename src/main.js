@@ -323,12 +323,15 @@ window.addEventListener('keydown', e => {
     case 'g': render.fadeGrid(!render.grid.visible); break;
     case 'h': DOM.hotkeyHint.classList.toggle('visible'); break;
 
-    // Note: the letters L K J N B V C A X Z are all reserved for hold-and-
-    // drag parameter control (see controls.js _fsParams). They deliberately
+    // Note: the letters L K J N B V C A X Z and S are all reserved for hold-
+    // and-drag parameter control (see controls.js _fsParams). They deliberately
     // have no tap-action — the drag handler owns them. Adding a tap-action
     // for any of them here would fight the drag arming via preventDefault.
+    //
+    // S joined that list on 01.09 (owner's request: it drives Spectrum Rings),
+    // which is why the glitch below answers to Y and not to S any more.
 
-    case 's': {
+    case 'y': {
       e.preventDefault();
       render.triggerGlitch(200);
       // The punch lives on the engine that owns bloom — see punchBloom. The

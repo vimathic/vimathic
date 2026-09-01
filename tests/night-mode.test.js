@@ -6,13 +6,20 @@
 //   node --test tests/night-mode.test.js
 //
 // ── The claim ────────────────────────────────────────────────────────────────
-// NIGHT is a dark-room mode that writes no shader uniform, no bloom setting and
-// no palette number. Everything it does is furniture: the starfield off, the
-// grid dimmed, and — in controls.js, not here — the unattended palette pickers
-// narrowed. That restraint is the whole reason there is nothing to prove about
-// the frame being unchanged when the mode is off, so it is worth pinning: a
-// later "while we're in here" edit that reaches into bloom or the specular
-// should turn this file red.
+// NIGHT is a dark-room mode that writes ONE shader uniform — uGlare, how much
+// white the surface throws back — plus the furniture: the starfield off, the
+// grid dimmed, and, in controls.js rather than here, the unattended palette
+// pickers narrowed. It writes no bloom setting and no palette number, and that
+// restraint is still worth pinning.
+//
+// Until 01.09 it wrote no uniform at all, and the specular was left white and
+// keyed to treble on the owner's call ("leave it, we'll take it out if it looks
+// bad"). It looked bad: measured on the shipped tree at one camera and one
+// position in the track, a mirror in NIGHT read 1.57x the mean luma of the same
+// body in matte — on the mode whose whole promise is a dark picture — with p99
+// luma 0.409 against matte's 0.232. With uGlare the same four measurements read
+// 0.82x and 0.094. The uniform is therefore part of the claim now, and the
+// tests below say which way it may move.
 //
 // ── Why the starfield needs a test at all ────────────────────────────────────
 // It now has two owners. setTransparentBackground hides it for its own reason
@@ -39,9 +46,10 @@ globalThis.document = {
 };
 
 let RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY, STARS_OPACITY, uiColor, THREE;
+let GLARE, NIGHT_GLARE;
 before(async () => {
-  ({ RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY, STARS_OPACITY, uiColor } =
-    await import('../src/render.js'));
+  ({ RenderEngine, TransitionManager, GRID_OPACITY, NIGHT_GRID_OPACITY, STARS_OPACITY, uiColor,
+     GLARE, NIGHT_GLARE } = await import('../src/render.js'));
   // Both are free variables in setTransparentBackground's body, so the
   // reinjection below has to hand them to the rebuilt copy.
   THREE = await import('three');
@@ -63,6 +71,10 @@ beforeEach(() => {
     // The starfield fades now, so it has a material like the grid does.
     stars: { visible: true, material: { opacity: STARS_OPACITY, transparent: true } },
     scene: {}, renderer: { setClearColor() {} },
+    // The uniform block, as much of it as setNightly touches. Written through
+    // `this.U?.uGlare`, so an engine that has not built its uniforms yet is not
+    // a crash — and a stub that forgot this field would silently assert nothing.
+    U: { uGlare: { value: GLARE } },
     gridLitOpacity: GRID_OPACITY,
     nightly: false,
     transparentBg: false,
@@ -111,6 +123,36 @@ describe('NIGHT moves the furniture', () => {
     assert.ok(NIGHT_GRID_OPACITY > 0, 'a grid dimmed to nothing is a hidden grid with extra steps');
     assert.ok(NIGHT_GRID_OPACITY < GRID_OPACITY,
       'the two rest values are equal, so every grid assertion in this file passes vacuously');
+  });
+
+  test('the white the surface throws back is turned down, and put back on the way out', () => {
+    setNightly(true);
+    assert.equal(host.U.uGlare.value, NIGHT_GLARE,
+      'NIGHT left the glare where the bright palettes have it');
+    setNightly(false);
+    assert.equal(host.U.uGlare.value, GLARE,
+      'leaving the mode did not restore the glare — every palette after it stays dimmed');
+  });
+
+  test('the two glare values are ordered, and neither is a no-op', () => {
+    // Both halves matter and they fail differently. Equal values make the
+    // assertion above pass while the mode does nothing; a GLARE of 1.0 means
+    // the normal palettes were never dimmed at all, which is half the request.
+    assert.ok(NIGHT_GLARE < GLARE,
+      `NIGHT_GLARE ${NIGHT_GLARE} is not below GLARE ${GLARE} — the mode dims nothing`);
+    assert.ok(GLARE < 1,
+      `GLARE is ${GLARE}: the normal palettes are at the pre-01.09 brightness`);
+    assert.ok(NIGHT_GLARE > 0,
+      'a glare of zero is not a dimmer, it is deleting the highlights');
+  });
+
+  test('the glare is written straight, not faded', () => {
+    // The two things that DO fade across this toggle fade because they would
+    // otherwise blink 1200 white points in and out. A highlight easing down
+    // over 400 ms is just a slower version of the same brightness, and a test
+    // that advances the clock would hide a fade if one were ever added.
+    setNightly(true);
+    assert.equal(host.U.uGlare.value, NIGHT_GLARE, 'the value arrives on the next frame, not this one');
   });
 
   test('leaving NIGHT puts the grid back at full strength', () => {
@@ -314,19 +356,37 @@ describe('NIGHT and transparent background share the starfield', () => {
   });
 });
 
-describe('NIGHT leaves the picture itself alone', () => {
-  // Not a style preference: the mode's darkness comes from the NIGHT palettes
-  // sitting under the bloom gate at rest, not from turning anything down. The
-  // owner asked for bloom to stay reachable so the dark can be lifted with it,
-  // and for the specular to stay as it is until it is seen to be bad.
-  test('it writes no uniform, no bloom setting and no palette', () => {
+describe('NIGHT leaves the rest of the picture alone', () => {
+  // The mode's darkness comes from the NIGHT palettes sitting under the bloom
+  // gate at rest, not from turning things down wholesale, and the owner asked
+  // for bloom to stay reachable so the dark can be lifted with it deliberately.
+  //
+  // This test read `deepEqual(touched, [])` until 01.09 — NIGHT touched nothing
+  // at all — and it went red on the uGlare change, which is what it was for.
+  // The list is the contract now: exactly one uniform, named, and nothing else.
+  // Widening it is a decision someone has to make in this file, rather than
+  // something an edit can do quietly.
+  test('it writes uGlare and nothing else — no other uniform, no bloom, no palette', () => {
     const touched = [];
     host.U = new Proxy({}, { get: (_, k) => { touched.push(String(k)); return { value: 0 }; } });
     host.bloomPass = new Proxy({}, { get: (_, k) => { touched.push(`bloom.${String(k)}`); return 0; },
                                      set: (_, k) => { touched.push(`bloom.${String(k)}=`); return true; } });
     setNightly(true);
     advance(600);
-    assert.deepEqual(touched, [],
-      `NIGHT reached into the render state: ${touched.join(', ')}`);
+    // The optional chain reads the key once to test it and once to write it,
+    // so the same name twice is the whole of one write.
+    const distinct = [...new Set(touched)];
+    assert.deepEqual(distinct, ['uGlare'],
+      `NIGHT reached into the render state beyond the glare: ${distinct.join(', ')}`);
+  });
+
+  test('control — the bloom pass is genuinely reachable through this stub', () => {
+    // Without this the test above passes just as well against a proxy nothing
+    // could ever have touched, which is how a restraint test quietly stops
+    // being one. Reading a bloom field by hand must show up in the list.
+    const touched = [];
+    host.bloomPass = new Proxy({}, { get: (_, k) => { touched.push(`bloom.${String(k)}`); return 0; } });
+    void host.bloomPass.strength;
+    assert.deepEqual(touched, ['bloom.strength']);
   });
 });

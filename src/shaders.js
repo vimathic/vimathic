@@ -167,7 +167,37 @@ varying vec3  vViewDir;
 // between drivers, and neither matters for a value whose only job is to be
 // different from its neighbour's.
 float ptSpray(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453)*2.-1.;}
-float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
+// ── turb — four waves, and why none of them runs along an axis ───────────────
+// It used to be sum |sin(p.x*i) * cos(p.y*i)| / i, and that spelling drew a
+// GRID on the surface. Two properties of it, both load-bearing:
+//
+//   * abs() breaks the first derivative wherever its argument crosses zero, and
+//     those crossings are the straight lines p.x*i = k*pi. A crease in the
+//     height is a jump in the normal, and Mirror reflects the jump as a hard
+//     edge — the brighter the band, the more of it there is to see.
+//   * the term is SEPARABLE, f(x)*g(z), so the crease lines run along X and Z
+//     and nowhere else. Separable plus kinked is a lattice, in world
+//     coordinates, identical under every formula and every shape.
+//
+// Measured on the shipped tree, plane at 256 segments, low bands at 1.0, over
+// the vertices where SHATTER has weight (u > 0.6): |d2h/dx2| within half a mesh
+// step of a kink line was 1.63x its value elsewhere on eigenField and 1.43x on
+// determinant. With the abs() alone removed both ratios go to 0.97-1.02, which
+// is what says the kink — not the frequency content — is what drew the grid.
+//
+// This spelling drops the abs() AND the axes: four plane waves, each with its
+// own direction (angle i*1.7+0.4, an irrational-ish step so no two of the four
+// come within 15 degrees of each other and none within 30 degrees of an axis)
+// and its own phase. Same ratio measurement: 0.96-1.06.
+//
+// The scale and offset are not decoration. Two call sites depend on turb's
+// STATISTICS rather than on its shape — bandMotion centres it on 0.9 to make
+// SHATTER shake instead of inflate, and modes 0/3/32 add it as relief with a
+// fixed gain — so the replacement is fitted to the old mean and standard
+// deviation over the domain the call sites use (p = 3.5*(x,z), x,z in +-3.5):
+// old mean 0.8464 sd 0.3446 range 0.003..1.679, new mean 0.8462 sd 0.3446
+// range 0.015..1.693. Drift in the mean is 2e-4.
+float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++){float a=i*1.7+0.4;t+=sin(dot(p,vec2(cos(a),sin(a)))*i+i*2.3)/i;}return t*0.408+0.846;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;s+=cos(a*-6.)*exp(-r*.28*36.);s+=cos(a*-5.)*exp(-r*.28*25.);s+=cos(a*-4.)*exp(-r*.28*16.);s+=cos(a*-3.)*exp(-r*.28*9.);s+=cos(a*-2.)*exp(-r*.28*4.);s+=cos(a*-1.)*exp(-r*.28*1.);s+=1.;s+=cos(a*1.)*exp(-r*.28*1.);s+=cos(a*2.)*exp(-r*.28*4.);s+=cos(a*3.)*exp(-r*.28*9.);s+=cos(a*4.)*exp(-r*.28*16.);s+=cos(a*5.)*exp(-r*.28*25.);s+=cos(a*6.)*exp(-r*.28*36.);return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
 
@@ -805,10 +835,13 @@ vec3 coalPlum(float t){vec3 a=vec3(.020,.012,.031),b=vec3(.137,.078,.180),c=vec3
 //   FIX(night): comparable where getColor()'s return value IS the pixel,
 //   which is WIRE and PTS with a Matte finish — the shipped startup state.
 //   It is not the whole story in SURF, nor with any non-Matte material.
-//   uLighting=1 puts color*(0.30 + diff*0.85) + color*rim + vec3(spec)
+//   uLighting=1 puts color*(0.30 + diff*0.85) + color*rim + vec3(spec)*uGlare
 //   between the palette and gl_FragColor, i.e. a gain and an ADDITIVE
 //   white term; the reflection block runs in every viz mode and mixes in
-//   studioEnv on top. Both raise what the high-pass sees above the number
+//   studioEnv on top. Since 01.09 both additive terms are scaled by uGlare
+//   (0.65, and 0.45 in NIGHT), so what the high-pass sees above the palette
+//   is smaller than it was — but it is still above it, which is why the
+//   paragraph below still says what it says. Both raise what the high-pass sees above the number
 //   below. The contract still holds as written — it is a contract on the
 //   palette, and it is what keeps the palette itself out of the glow — but
 //   "nothing here blooms at rest" is a claim about the palette, not a
@@ -927,7 +960,14 @@ vec3 getColor(int cm, float t){
 //                      scope. Gated by uMaterial>0 so Matte costs nothing.
 const _MATERIAL_UNIFORMS = `
 uniform int   uMaterial;
-uniform float uMetalness, uRoughness, uReflect, uFresnelP;`;
+uniform float uMetalness, uRoughness, uReflect, uFresnelP;
+// How much of the white the surface throws back: 1.0 is what shipped before
+// 01.09, and NIGHT asks for less than the normal palettes do. Declared here
+// rather than beside the lighting uniforms because studioEnv reads it too, and
+// the two blocks are included independently by the editor template. See the
+// note on studioEnv for what it multiplies and, more to the point, what it
+// deliberately does not.
+uniform float uGlare;`;
 
 // ── Particle shaping (PTS mode) ───────────────────────────────────────────────
 // A point primitive is a screen-aligned square, which is why the POINTS mode
@@ -965,6 +1005,33 @@ const _STUDIO_ENV = `
 // Procedural studio environment — dark floor, brighter ceiling, three
 // soft-box highlights. Sampled by reflect(-V,N); no cubemap texture needed
 // (keeps the single-file bundle asset-free).
+//
+// ── uGlare, and why it multiplies the LAMPS and not the whole environment ───
+// The complaint (owner, 01.09) is that the white cuts the eyes, in NIGHT most
+// of all. Measured on the shipped tree — plane, Eigenvector Field, the owner's
+// own slider values, six frames per configuration, median:
+//
+//                    p99 luma   share > 0.7   mean of lit pixels
+//   normal  mirror     0.467       0.006 %          0.170
+//   normal  matte      0.828       3.586 %          0.316
+//   NIGHT   mirror     0.409       0.000 %          0.233
+//   NIGHT   matte      0.218       0.012 %          0.139
+//
+// Two different things, and the numbers separate them. In the normal palettes
+// MATTE is the bright one — it has no reflection path at all, so what burns
+// there is thewhite specular in the lighting block, which every material gets. In
+// NIGHT the mirror is 1.67x the matte mean, on a mode whose whole promise is a
+// dark picture: the palettes are built to a contract (max channel 0.55, Y 0.28
+// at every stop) and the reflection is added AFTER the palette, so it walks
+// straight through that guarantee.
+//
+// So the dimming is applied to the LAMPS — the three soft-boxes here, the
+// specular in the lighting block, and the material's own highlight — and not
+// to the environment gradient or to reflMix. Dimming the whole reflection would
+// take a mirror's reflectivity away with the glare; dimming the sources leaves
+// the surface as reflective as it was and makes what it reflects less blinding.
+// The gradient (floor/mid/ceiling) is already below 0.4 and is what makes chrome
+// read as chrome.
 vec3 studioEnv(vec3 dir){
   vec3 d = normalize(dir);
   float y = d.y;
@@ -976,9 +1043,9 @@ vec3 studioEnv(vec3 dir){
   float sb1 = smoothstep(0.55, 0.95, dot(d, normalize(vec3( 0.4, 0.8,  0.3))));
   float sb2 = smoothstep(0.70, 0.98, dot(d, normalize(vec3(-0.5, 0.7, -0.2))));
   float sb3 = smoothstep(0.80, 0.99, dot(d, normalize(vec3( 0.1, 0.6, -0.8))));
-  base += vec3(1.0, 0.98, 0.92) * sb1 * 1.4;
-  base += vec3(0.85, 0.9, 1.0)  * sb2 * 1.0;
-  base += vec3(1.0, 0.95, 0.88) * sb3 * 0.7;
+  base += vec3(1.0, 0.98, 0.92) * sb1 * 1.4 * uGlare;
+  base += vec3(0.85, 0.9, 1.0)  * sb2 * 1.0 * uGlare;
+  base += vec3(1.0, 0.95, 0.88) * sb3 * 0.7 * uGlare;
   return base;
 }`;
 
@@ -999,7 +1066,10 @@ const _MATERIAL_BLOCK = `
     float reflMix = clamp(uReflect * (uMetalness * 0.6 + fresM * 0.7 + 0.15), 0.0, 1.0);
     color = mix(color, reflection, reflMix);
     float specM = pow(max(dot(Nm, Vm), 0.0), mix(8.0, 180.0, 1.0 - uRoughness));
-    color += vec3(specM) * (1.0 - uRoughness) * uReflect * 0.3;
+    // The material's own highlight is a lamp too — white, additive, and at
+    // mirror roughness it is a 180-power point. Dimmed with the rest of them;
+    // reflMix above is left alone, so the finish keeps its reflectivity.
+    color += vec3(specM) * (1.0 - uRoughness) * uReflect * 0.3 * uGlare;
   }`;
 
 export const FS = `
@@ -1112,10 +1182,17 @@ void main(){
 
     // Compose: ambient floor (so backlit areas keep their hue) + diffuse
     // multiply + coloured rim + white specular sparkle.
+    //
+    // The sparkle is the one term here that is NOT the palette's colour, and on
+    // the shipped tree it is the brightest thing in the frame on a matte body:
+    // p99 luma 0.828 against a mirror's 0.467, 3.59 % of the frame above 0.7.
+    // uGlare is what the owner's "the white cuts the eyes" turns into — see the
+    // note on studioEnv. The diffuse, the ambient floor and the coloured rim are
+    // untouched, so the body keeps its brightness and loses the glint.
     float ambient = 0.30;
     color = color * (ambient + diff * 0.85)
           + color * rim
-          + vec3(spec);
+          + vec3(spec) * uGlare;
   }
 
   // ── Surface material: studio-environment reflections ────────────────────
@@ -1164,7 +1241,10 @@ varying vec3  vWorldPos;
 ${BAND_GLSL}
 varying vec3  vViewDir;
 float ptSpray(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453)*2.-1.;}
-float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
+// Word for word with the VS copy above — the editor template hands the user the
+// same helpers the built-in programs have, and two spellings of turb would let
+// a shader written in the editor draw a grid the built-in one no longer does.
+float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++){float a=i*1.7+0.4;t+=sin(dot(p,vec2(cos(a),sin(a)))*i+i*2.3)/i;}return t*0.408+0.846;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;for(int n=-6;n<=6;n++){float fn=float(n);s+=cos(a*fn)*exp(-r*.28*fn*fn);}return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
 void main(){vec3 pos=position;

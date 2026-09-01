@@ -596,9 +596,22 @@ export function buildBandMap(field, g, extent, verts) {
  * The same four-harmonic turbulence src/shaders.js uses, term for term. Sampled
  * once per vertex per map: it depends on position only, because time enters the
  * gesture as a phase rather than as a spatial slide.
+ *
+ * Four PLANE WAVES, each with its own direction and phase — not the separable
+ * sum |sin(px*i) * cos(pz*i)| / i this used to be. That spelling put a kink
+ * (from the abs) on lines that ran along X and Z (from the separability), and a
+ * kink in the height is a jump in the normal: on a mirror finish the band layer
+ * drew a rectangular GRID over the body, at pitch pi/3.5 and its harmonics,
+ * identical under every formula and every shape, brightening with the music
+ * because the whole gesture scales with the band. The full reasoning and the
+ * numbers are in the comment on turb() in src/shaders.js — this is the CPU half
+ * of the same expression and the two must not drift.
  */
 function motionTurb(px, pz) {
   let t = 0;
-  for (let i = 1; i < 5; i++) t += Math.abs(Math.sin(px * i) * Math.cos(pz * i)) / i;
-  return t;
+  for (let i = 1; i < 5; i++) {
+    const a = i * 1.7 + 0.4;
+    t += Math.sin((px * Math.cos(a) + pz * Math.sin(a)) * i + i * 2.3) / i;
+  }
+  return t * 0.408 + 0.846;
 }

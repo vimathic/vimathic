@@ -995,6 +995,15 @@ export function bindControls(ui) {
     'v': 'amp',
     'c': 'waveInt',
     'a': 'bloom',
+    // Spectrum Rings, by the owner's request (01.09). It has no alias in the
+    // other cluster because the letter next to it is taken; S sits by the left
+    // cluster, where the fingers already are.
+    //
+    // S had a tap-action before this — glitch + bloom punch + beat-ring flash —
+    // and that moved to Y rather than being dropped. A letter cannot hold both:
+    // arming a drag calls preventDefault, and the tap-action would fire on
+    // every arm.
+    's': 'bandDepth',
   };
   let _dragKey = null;
 

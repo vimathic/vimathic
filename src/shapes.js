@@ -13,8 +13,8 @@
 // '— select —' with no error anywhere.
 //
 // Where that '— select —' comes from, since #shape-sel's markup has no such
-// <option>: makeSearchable() (index.html:1972) hides the <select> with
-// display:none and puts a text input in front of it whose placeholder is
+// <option>: makeDropdown() (index.html, bottom) hides the <select> with
+// display:none and puts a read-only input in front of it whose placeholder is
 // `sel.options[sel.selectedIndex]?.text || '— select —'` (index.html:2004,
 // :2027). An unknown value leaves selectedIndex at -1, so that literal is what
 // a viewer reads. The <select> is never the thing on screen.

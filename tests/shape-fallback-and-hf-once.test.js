@@ -17,7 +17,7 @@
 // Measured: 161 distinct (x,z) sample points against the 25921 a real 'plane'
 // gives, the picker showing '— select —', and no error anywhere. That
 // '— select —' is real and was measured on the built app in Chromium — it is
-// makeSearchable()'s placeholder, not an <option>; see the header of
+// makeDropdown()'s placeholder, not an <option>; see the header of
 // src/shapes.js. It stopped appearing when selectShape() took over the
 // picker write; tests/shape-picker-agrees-with-engine.test.js guards that.
 //

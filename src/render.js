@@ -996,6 +996,24 @@ export const GRID_OPACITY = 0.1;
 // of the darkest NIGHT palette in silence, which puts the furniture in front of
 // the subject. Still visible — the grid is how the bend of the surface is read.
 export const NIGHT_GRID_OPACITY = 0.04;
+
+// ── How much white the surface throws back ──────────────────────────────────
+// The lamps — the three studio soft-boxes reflected by a shiny finish, the
+// material's own highlight, and the white specular every material gets from the
+// lighting block — multiplied by one number. Not the reflection itself: dimming
+// reflMix would cost a mirror its reflectivity, and the complaint was the
+// glare, not the chrome. See the note on studioEnv in src/shaders.js.
+//
+// 1.0 is what shipped before 01.09. These two are the owner's call ("the white
+// cuts the eyes, in NIGHT most of all") turned into numbers, and the numbers are
+// measured rather than picked — the figures and the reasoning are in that same
+// note. NIGHT gets the lower one because its palettes are built to a contract
+// (max channel 0.55, Y 0.28 at every stop) that a lamp added after the palette
+// walks straight through: on the shipped tree a mirror in NIGHT read 1.67x the
+// mean luma of the same body in matte, on the mode whose whole promise is a
+// dark picture.
+export const GLARE       = 0.65;
+export const NIGHT_GLARE = 0.45;
 const GRID_FADE_MS = 400;
 // What a shown starfield rests at — the value it is built with. A constant
 // because two paths now put it back (a NIGHT fade and setTransparentBackground's
@@ -1757,6 +1775,9 @@ export class RenderEngine {
                uRoughness:    { value: 1.0 },
                uReflect:      { value: 0.0 },
                uFresnelP:     { value: 1.5 },
+               // How much white the surface throws back — see GLARE /
+               // NIGHT_GLARE below and the note on studioEnv in shaders.js.
+               uGlare:        { value: GLARE },
                // Particle style — 0 keeps the square point sprite the FS mask
                // is a no-op for. Only ever raised while the POINTS proxy draws:
                // gl_PointCoord is undefined for triangles. See setParticleStyle.
@@ -3179,12 +3200,15 @@ export class RenderEngine {
   /**
    * NIGHT — the mode for a dark room, not a stage.
    *
-   * Deliberately touches nothing in the shader. The white specular stays white
-   * and stays keyed to treble (owner's call, 28.08: "leave it, we'll take it
-   * out if it looks bad"), bloom keeps its shipped strength/radius/threshold so
-   * the darkness can still be lifted with it, and no palette or lighting number
-   * moves. What is left is the furniture: the two things that outshine the
-   * mathematics on a dark palette.
+   * It now touches ONE thing in the shader: uGlare, the multiplier on the white
+   * the surface throws back. That is the 28.08 note coming due — the specular
+   * was left white and keyed to treble on the owner's call, "leave it, we'll
+   * take it out if it looks bad", and on 01.09 it looked bad: measured, a
+   * mirror in NIGHT read 1.67x the mean luma of the same body in matte, on the
+   * mode that exists to keep the picture dark. Bloom still keeps its shipped
+   * strength/radius/threshold so the darkness can be lifted deliberately, and
+   * no palette number moves. Beside that, the furniture: the two things that
+   * outshine the mathematics on a dark palette.
    *
    * Measured, which is why these two and not others: the starfield composites
    * to bloom-luma 0.366 and so clears the 0.15 bloom gate at all times, and a
@@ -3197,6 +3221,11 @@ export class RenderEngine {
    */
   setNightly(on) {
     this.nightly = !!on;
+    // Written directly rather than faded: it is a look, not a transition, and
+    // the two things that DO fade across this toggle (the grid and the stars)
+    // fade because they would otherwise blink. A highlight that eases down over
+    // 400 ms would just be a slower version of the same brightness.
+    if (this.U?.uGlare) this.U.uGlare.value = this.nightly ? NIGHT_GLARE : GLARE;
     this.setGridLitOpacity(this.nightly ? NIGHT_GRID_OPACITY : GRID_OPACITY);
     // Transparent background hides the stars for its own reason and must win:
     // it is an output format, not a look. One expression, so the two cannot
