@@ -1163,6 +1163,14 @@ function attachBaseY(geo) {
   // hook that fires on every shape change in both modes. Zero is the value that
   // makes the shift a no-op, so an unfilled buffer is the old behaviour.
   geo.setAttribute('aBodyK', new THREE.BufferAttribute(new Float32Array(n), 1));
+  // WHICH band this vertex listens to, 0…1 — the colour tint's channel, and a
+  // different question from aBand's "how far is it being pushed". Filled to -1
+  // rather than 0, because 0 is band 0 and a real answer: the shader has to be
+  // able to tell "the lowest band" from "no layer here". applyHeightField and
+  // the two other CPU writers overwrite it every frame the layer is on.
+  const bu = new Float32Array(n);
+  bu.fill(-1);
+  geo.setAttribute('aBandU', new THREE.BufferAttribute(bu, 1));
 }
 
 /**
@@ -1774,6 +1782,9 @@ export class RenderEngine {
     // imported model — which has no band map and no curvature measurement —
     // keeps the layout the formula alone decides.
     this.gpuMat.defaultAttributeValues.aBodyK = [0];
+    // -1, not 0: 0 is band 0 and a real answer, so a geometry with no layer has
+    // to be able to say "none" rather than "the lowest one".
+    this.gpuMat.defaultAttributeValues.aBandU = [-1];
     this.gpuMesh = new THREE.Mesh(gpuGeo, this.gpuMat);
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
@@ -2378,6 +2389,7 @@ export class RenderEngine {
       ptsMat.defaultAttributeValues.aField = [0];
       ptsMat.defaultAttributeValues.aBand  = [0];
       ptsMat.defaultAttributeValues.aBodyK = [0];
+      ptsMat.defaultAttributeValues.aBandU = [-1];
       // Geometry is deliberately shared with gpuMesh, not cloned — see the
       // dispose note at the top of this method.
       this.gpuPtsProxy = new THREE.Points(this.gpuMesh.geometry, ptsMat);

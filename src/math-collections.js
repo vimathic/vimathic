@@ -5287,6 +5287,10 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
   // existed, or a points proxy with its own buffers, simply does not get one.
   const ba   = geometry.attributes.aBand;
   const band = (ba && ba.array && ba.array.length === n) ? ba : null;
+  // WHICH band, as opposed to how loud it is — the colour tint's channel. Same
+  // optional treatment for the same reason.
+  const ua   = geometry.attributes.aBandU;
+  const bandU = (ua && ua.array && ua.array.length === n) ? ua : null;
 
   for (let i = 0; i < n; i++) {
     // Sampled at the BASE coordinate, not the live one. With Y-only
@@ -5325,10 +5329,12 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
     // BEFORE the cap deliberately: the cap is about the surface folding through
     // itself, and a point that has left the surface is not folding anything.
     if (band) band.array[i] = bv;
+    if (bandU) bandU.array[i] = bandCoordValue(bandLayer, bx, bz, i);
   }
   pos.needsUpdate = true;
   if (field) field.needsUpdate = true;
   if (band) band.needsUpdate = true;
+  if (bandU) bandU.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 
@@ -5430,6 +5436,27 @@ function bandMotion(amp, u, rr, tb, t) {
   return mid + (shatter - mid) * toShatter;
 }
 
+/**
+ * WHICH band a point listens to, 0…1, with no reference to how loud it is.
+ *
+ * Split out of bandRingValue rather than duplicated, because two callers now
+ * need it and they must not be allowed to disagree: the displacement (below)
+ * and the colour tint, which hands this to the fragment shader so that a zone's
+ * hue says which part of the spectrum it belongs to. Two spellings of "which
+ * band is this" would show up as a body coloured by one layout and moving by
+ * another, and nothing would throw.
+ *
+ * Returns -1 for a layer that is off or absent — the value the shader reads as
+ * "no tint", and distinguishable from band 0, which is a real answer.
+ */
+export function bandCoordValue(layer, x, z, vertexIndex) {
+  if (!layer || !layer.bands || !(layer.depth > 0) || layer.bands.length < 2) return -1;
+  const u = layer.u !== undefined && vertexIndex !== undefined && vertexIndex < layer.u.length
+    ? layer.u[vertexIndex]
+    : Math.min(1, Math.sqrt(x * x + z * z) / Math.max(layer.radius, 1e-3));
+  return Math.min(1, Math.max(0, u));
+}
+
 export function bandRingValue(layer, x, z, vertexIndex) {
   if (!layer || !layer.bands || !(layer.depth > 0)) return 0;
   const last = layer.bands.length - 1;
@@ -5494,6 +5521,8 @@ export function applyDisplacementField(geometry, df, basePositions, bandLayer = 
   const pos = geometry.attributes.position;
   const ba = geometry.attributes.aBand;
   const band = (ba && ba.array && ba.array.length === pos.count) ? ba : null;
+  const ua = geometry.attributes.aBandU;
+  const bandU = (ua && ua.array && ua.array.length === pos.count) ? ua : null;
   for (let i = 0; i < pos.count; i++) {
     const bx = basePositions[i * 3], bz = basePositions[i * 3 + 2];
     // VOLUME has no surface normal to travel along — its field is already a free
@@ -5517,9 +5546,11 @@ export function applyDisplacementField(geometry, df, basePositions, bandLayer = 
     // its own direction from the vertex normal, and what it needs from here is
     // how loudly this vertex is being driven.
     if (band) band.array[i] = ring;
+    if (bandU) bandU.array[i] = bandCoordValue(bandLayer, bx, bz, i);
   }
   pos.needsUpdate = true;
   if (band) band.needsUpdate = true;
+  if (bandU) bandU.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 
@@ -5537,6 +5568,8 @@ export function applyCollapseField(geometry, scalarField, basePositions, baseNor
   const pos = geometry.attributes.position;
   const ba = geometry.attributes.aBand;
   const band = (ba && ba.array && ba.array.length === pos.count) ? ba : null;
+  const ua = geometry.attributes.aBandU;
+  const bandU = (ua && ua.array && ua.array.length === pos.count) ? ua : null;
   for (let i = 0; i < pos.count; i++) {
     // COLLAPSE already travels along the normal, so the rings ride the same
     // direction the mode's own field does — the same rule the SURFACE path
@@ -5548,9 +5581,11 @@ export function applyCollapseField(geometry, scalarField, basePositions, baseNor
     pos.setXYZ(i, bx + nx * s, by + ny * s, bz + nz * s);
     // The band's share, for the PTS cloud — see applyHeightField.
     if (band) band.array[i] = ring;
+    if (bandU) bandU.array[i] = bandCoordValue(bandLayer, bx, bz, i);
   }
   pos.needsUpdate = true;
   if (band) band.needsUpdate = true;
+  if (bandU) bandU.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 

@@ -1178,6 +1178,25 @@ export function colourRamps(src) {
         off: Number(nums[0].v), gain: Number(nums[1].v),
         lo: Number(nums[2].v), hi: Number(nums[3].v),
         span: [at + s, at + e],
+        // Everything else in this main() that writes the SAME name after the
+        // ramp did. The ramp pattern above is anchored on vH, so a second
+        // statement — `t = clamp(t + …, …)` — is invisible to it, and a model
+        // built from the ramp alone would describe a shader that no longer
+        // exists. That is the exact failure this reader was written against,
+        // one level down. Reported here as raw statements; deciding which of
+        // them are legal belongs to the caller.
+        // The NAME, not the declaration: the ramp statement's left side is
+        // `float t`, and asking assignsTo for a path of "float t" matches
+        // nothing at all — which is how this arrived reporting an empty list
+        // and looking correct.
+        after: (() => {
+          const lhsToks = stmt.slice(0, eq).filter(t => t.t === 'id');
+          const name = lhsToks.length ? lhsToks[lhsToks.length - 1].v : null;
+          if (!name) return [];
+          return splitStatements(body)
+            .filter(s2 => s2[0].p > stmt[0].p && assignsTo(s2, [name]))
+            .map(text);
+        })(),
       });
     }
   }

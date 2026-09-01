@@ -271,7 +271,10 @@ describe('the shift is bounded, and bounded by one number', () => {
     // The whole map is frozen at a reference time and its audio arguments are
     // pinned, so that the sound cannot choose which sound it is modulated by.
     // A live value in this argument would reopen exactly that loop.
-    assert.match(SHADER_SRC, /bandTermOfMode\(pos\.xz,\s*a,\s*wi,\s*T,\s*aBodyK\)/,
+    // The fifth argument, whatever comes after it. A sixth was added for the
+    // colour tint's out-parameter, and the guard is about which value decides
+    // where a vertex listens — not about how many arguments the call has.
+    assert.match(SHADER_SRC, /bandTermOfMode\(pos\.xz,\s*a,\s*wi,\s*T,\s*aBodyK\s*[,)]/,
       'the GPU call no longer hands bandTermOfMode the body attribute');
     assert.match(SHADER_SRC, /attribute float aBodyK;/,
       'aBodyK is not declared in VS — the program would not link');
