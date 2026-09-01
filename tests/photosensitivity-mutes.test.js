@@ -124,6 +124,38 @@ describe('the beat drives nothing in either shipped vertex program', () => {
       'the reader invents a definition for a name that is absent');
   });
 
+  test('uBeat reaches the geometry through bt and nowhere else', () => {
+    // The two tests above pin the value of `bt` and nothing more, and an
+    // external review named the mutation that walks past them: leave `bt = 0.`
+    // exactly as it is and write `y += uBeat` further down, or multiply a
+    // displacement term by it inside a mode. The stated guarantee is "the beat
+    // drives nothing", not "one local is zero".
+    //
+    // So the name is counted. In both shipped programs uBeat occurs exactly
+    // ONCE with comments stripped — in its own declaration — and any second
+    // occurrence is a read, which is the thing being refused. Blunt, and it has
+    // to be: there are 38 modes and a hundred ways to spend a uniform, and a
+    // reader that tried to classify them would be the thing that gets it wrong.
+    for (const [label, src] of programs()) {
+      const hits = (G.stripComments(src).match(/\buBeat\b/g) || []).length;
+      assert.equal(hits, 1,
+        `${label}: uBeat appears ${hits} times outside comments. One is the declaration; a ` +
+        'second is something reading the beat, and beat-driven displacement is the rapid ' +
+        'flashing DISCLAIMER.md warns photosensitive users about. If a legitimate read is ' +
+        'being added, it is a decision to take deliberately and to record here');
+    }
+  });
+
+  test('CONTROL — the counter can see a second occurrence, and ignores comments', () => {
+    const decl = 'uniform float uBeat;\nvoid main(){ float bt=0.;\n  gl_Position=vec4(0.); }';
+    const count = src => (G.stripComments(src).match(/\buBeat\b/g) || []).length;
+    assert.equal(count(decl), 1);
+    assert.equal(count(decl.replace('gl_Position=vec4(0.);', 'gl_Position=vec4(uBeat);')), 2,
+      'a read of uBeat was not counted, so the guard above passes for free');
+    assert.equal(count(decl.replace('void main(){', '// uBeat uBeat uBeat\nvoid main(){')), 1,
+      'the counter reads prose as code, so any comment mentioning uBeat turns the guard red');
+  });
+
   test('uBeat stays declared, because the mute is per-shader and not at the source', () => {
     // The choice is meant to be reversible BY A USER in their own shader, which
     // is why the beat is still detected, still uploaded every frame

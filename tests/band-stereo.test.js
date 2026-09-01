@@ -1,25 +1,31 @@
 // tests/band-stereo.test.js
 //
 // Left against right. An AnalyserNode analyses a mono down-mix of its input, so
-// until the side tap every number this app computed — every band, the beat, the
-// BPM — was the sum of both channels and knew nothing about where a sound sits
-// between the speakers.
+// until the side taps every number this app computed — every band, the beat,
+// the BPM — was the sum of both channels and knew nothing about where a sound
+// sits between the speakers.
 //
 // Run:
 //   node --test tests/band-stereo.test.js
 //
-// ── The failure this file is mostly about ────────────────────────────────────
-// Not "the pan is a bit off". It is that a MONO track reads as hard left.
+// ── The three failures this file is written against ──────────────────────────
+// None of them is "the pan is a bit off".
 //
-// The design leans on one piece of spec behaviour that cannot be checked from
-// Node: a ChannelSplitterNode has channelCountMode "explicit", so a one-channel
-// input is up-mixed to two identical channels rather than leaving output 1
-// silent. If that is wrong — a browser that does not, a graph that drops the
-// connection — then every band's side tap reads zero, every band reports full
-// left, and the whole catalogue leans over with no error anywhere. So the
-// engine refuses that reading outright, and the refusal is what most of this
-// file is written about: a claim that rests on an assumption gets a guard for
-// the assumption being false, not only for it being true.
+//   1. A MONO track reading as hard left. The design rests on a splitter
+//      up-mixing a one-channel input to two identical channels, which cannot be
+//      checked from Node — so the engine also refuses the one reading that says
+//      the assumption failed, and the refusal is tested from both sides.
+//   2. HARD-LEFT material being erased BY that refusal. The first version
+//      measured only the right channel, so "R is silent" was both "no second
+//      channel arrived" and "everything is on the left" and the code had to
+//      guess. An external review found it. With both channels measured the two
+//      readings are different — both silent against one silent — and the guess
+//      is gone; the test for it is the one that would have caught the erasure.
+//   3. PHASE. The same first version compared R against the mono DOWN-MIX,
+//      which sums the channels as signals before the FFT: two equal channels in
+//      antiphase cancel there, and the band would have read hard-panned with
+//      nothing panned anywhere. Comparing L against R directly cannot do that,
+//      and it is why the claim this file pins is about the estimator alone.
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,12 +50,7 @@ beforeEach(() => {
 });
 afterEach(() => { globalThis.performance = realPerf; });
 
-/**
- * The engine with BOTH taps standing. `side` is the byte spectrum the right
- * channel reads; the mono tap reads `mono`. A real graph would derive one from
- * the other, and driving them independently is the point — it is the only way
- * to say "this band is 8 dB louder on the right" without a browser.
- */
+/** The engine with all three taps standing: the mono band tap, and L and R. */
 function makeEngine({ withSide = true } = {}) {
   const e = new AudioEngine();
   e.cb.onEQ = () => {};
@@ -69,11 +70,10 @@ function makeEngine({ withSide = true } = {}) {
     getByteFrequencyData(a) { a.set(this._bytes); },
   };
   if (withSide) {
-    e._bandSideFft = new Uint8Array(BAND_BINS);
-    e._bandSide = {
-      _bytes: new Uint8Array(BAND_BINS),
-      getByteFrequencyData(a) { a.set(this._bytes); },
-    };
+    e._bandLFft = new Uint8Array(BAND_BINS);
+    e._bandRFft = new Uint8Array(BAND_BINS);
+    e._bandL = { _bytes: new Uint8Array(BAND_BINS), getByteFrequencyData(a) { a.set(this._bytes); } };
+    e._bandR = { _bytes: new Uint8Array(BAND_BINS), getByteFrequencyData(a) { a.set(this._bytes); } };
   }
   e.isPlaying = true;
   e.bandDepth = 1;
@@ -90,10 +90,23 @@ function tone(loHz, hiHz, level = 200, floor = 4) {
   return b;
 }
 
-function run(e, mono, side, frames = 60) {
+/**
+ * Drive the three taps. `mono` is what the down-mix reads (it is what gates the
+ * pan and what the geometry moves by); `l` and `r` are the two channels.
+ *
+ * They are supplied independently rather than derived from one another, and the
+ * limit that puts on this file is worth naming: nothing here exercises the Web
+ * Audio down-mix or the FFT itself, so these tests pin the ESTIMATOR — given
+ * these three spectra, what pan comes out — and not the browser's arithmetic
+ * upstream of it. An external review made that point about the previous
+ * version, where it mattered more: the estimator then compared R against the
+ * mono mix, so the down-mix WAS part of the claim. Comparing L against R
+ * directly moves the claim inside what this file can see.
+ */
+function run(e, mono, l, r, frames = 60) {
   for (let i = 0; i < frames; i++) {
     e._bandAnalyser._bytes = mono;
-    if (e._bandSide) e._bandSide._bytes = side ?? mono;
+    if (e._bandL) { e._bandL._bytes = l ?? mono; e._bandR._bytes = r ?? mono; }
     nowMs += 1000 / 60;
     e.update(nowMs / 1000);
   }
@@ -105,11 +118,11 @@ const LO = BARK_EDGES[BAND], HI = BARK_EDGES[BAND + 1];
 describe('the side tap says which way a band leans', () => {
   test('the same spectrum on both sides is centred, to zero', () => {
     // The mono case, and the one that decides whether this feature is safe to
-    // ship: R equal to the down-mix is a centred band, and a centred band must
+    // ship: two identical channels are a centred band, and a centred band must
     // multiply the displacement by exactly 1.
     const e = makeEngine();
     const t = tone(LO, HI);
-    run(e, t, t);
+    run(e, t, t, t);
     assert.ok(e.bands[BAND] > 0.3, 'the band never rose, so its pan proves nothing');
     for (let i = 0; i < BAND_COUNT; i++) {
       assert.ok(Math.abs(e.bandPan[i]) < 1e-3,
@@ -118,15 +131,15 @@ describe('the side tap says which way a band leans', () => {
   });
 
   test('louder on the right leans right, louder on the left leans left', () => {
-    // R above the down-mix is R above L, whatever the dB mapping does to the
-    // magnitudes — that is the whole reason one side tap is enough.
+    // Two magnitude spectra through one dB mapping, so R above L in bytes is R
+    // above L in level. Nothing about the phase between them enters.
     const right = makeEngine();
-    run(right, tone(LO, HI, 200), tone(LO, HI, 240));
+    run(right, tone(LO, HI, 200), tone(LO, HI, 160), tone(LO, HI, 240));
     assert.ok(right.bandPan[BAND] > 0.2,
       `a band 40 bytes louder on the right reads ${right.bandPan[BAND].toFixed(3)}`);
 
     const left = makeEngine();
-    run(left, tone(LO, HI, 200), tone(LO, HI, 160));
+    run(left, tone(LO, HI, 200), tone(LO, HI, 240), tone(LO, HI, 160));
     assert.ok(left.bandPan[BAND] < -0.2,
       `a band 40 bytes quieter on the right reads ${left.bandPan[BAND].toFixed(3)}`);
 
@@ -137,7 +150,7 @@ describe('the side tap says which way a band leans', () => {
 
   test('it clamps rather than running away', () => {
     const e = makeEngine();
-    run(e, tone(LO, HI, 130), tone(LO, HI, 255));
+    run(e, tone(LO, HI, 130), tone(LO, HI, 0), tone(LO, HI, 255));
     for (let i = 0; i < BAND_COUNT; i++) {
       assert.ok(e.bandPan[i] >= -1 && e.bandPan[i] <= 1,
         `band ${i} left the range at ${e.bandPan[i]}`);
@@ -161,7 +174,8 @@ describe('the side tap says which way a band leans', () => {
     const mono = tone(LO, HI, 200, 0);
     const side = tone(LO, HI, 200, 0);
     for (let b = lo; b < hi; b++) { mono[b] = 8; side[b] = 30; }
-    run(e, mono, side);
+    const other = tone(LO, HI, 200, 0);
+    run(e, mono, other, side);
     assert.ok(e.bands[dead] < 0.05,
       `the "silent" band reads level ${e.bands[dead].toFixed(3)} — it is not silent, so this ` +
       'test is not about a silent band');
@@ -171,14 +185,14 @@ describe('the side tap says which way a band leans', () => {
   });
 });
 
-describe('the refusal: a missing second channel must not read as hard left', () => {
-  test('side silent while the mix is not gives centre, not left', () => {
-    // The assumption this feature rests on, negated. If the splitter did not
-    // up-mix a mono source, this is exactly what the engine would see — and
-    // "everything is on the left" is a picture a viewer would notice and would
-    // have no way to explain.
+describe('the refusal, and the thing it must not swallow', () => {
+  test('BOTH channels silent while the mix is not gives centre', () => {
+    // The assumption this feature rests on, negated. If the splitter delivered
+    // nothing, this is exactly what the engine would see — and any lean at all
+    // would be a picture a viewer would notice and would have no way to
+    // explain.
     const e = makeEngine();
-    run(e, tone(LO, HI, 200), new Uint8Array(BAND_BINS));
+    run(e, tone(LO, HI, 200), new Uint8Array(BAND_BINS), new Uint8Array(BAND_BINS));
     for (let i = 0; i < BAND_COUNT; i++) {
       assert.ok(Math.abs(e.bandPan[i]) < 1e-3,
         `band ${i} reads ${e.bandPan[i].toFixed(3)} with the side tap dead — the body would ` +
@@ -186,33 +200,64 @@ describe('the refusal: a missing second channel must not read as hard left', () 
     }
   });
 
-  test('CONTROL — the refusal is about SILENCE, not about being quiet', () => {
-    // A side tap that is merely quiet is a real hard-left signal and must still
-    // read as one, or the guard above would have deleted the feature.
+  test('CONTROL — a genuinely hard-left band still leans left', () => {
+    // The case an external review found the previous design erasing: with only
+    // a right tap, one silent channel was indistinguishable from a missing one,
+    // so the refusal above swallowed real hard-panned material. Here the left
+    // channel is loud and the right is SILENT — exactly the reading that used
+    // to be refused — and it must come out at hard left.
     const e = makeEngine();
     const side = new Uint8Array(BAND_BINS).fill(0);
     for (let i = 0; i < BAND_BINS; i++) if ((i + 0.5) * BAND_FPB >= LO && (i + 0.5) * BAND_FPB < HI) side[i] = 120;
-    run(e, tone(LO, HI, 200), side);
-    assert.ok(e.bandPan[BAND] < -0.5,
-      `a genuinely left-panned band reads ${e.bandPan[BAND].toFixed(3)} — the refusal above is ` +
-      'swallowing real signal');
+    run(e, tone(LO, HI, 200), side, new Uint8Array(BAND_BINS));
+    assert.ok(e.bandPan[BAND] < -0.9,
+      `a band with a loud left and a SILENT right reads ${e.bandPan[BAND].toFixed(3)} — with one ` +
+      'tap this reading was refused outright and hard-left material had no effect at all');
+    // …and the other bands, which carry only the tone's floor, are not dragged
+    // along with it: the silence is per band, not a property of the frame.
+    assert.ok(Math.abs(e.bandPan[0]) < 0.2,
+      `band 0 leans ${e.bandPan[0].toFixed(3)} on a signal that is not in it`);
   });
 
   test('an engine with no side tap at all keeps every band centred', () => {
     // A browser without createChannelSplitter, or the catch in ensureCtx.
     const e = makeEngine({ withSide: false });
     run(e, tone(LO, HI, 200));
-    assert.ok(e.bands[BAND] > 0.3, 'the levels stopped working without the side tap');
+    assert.ok(e.bands[BAND] > 0.3, 'the levels stopped working without the side taps');
     for (let i = 0; i < BAND_COUNT; i++) {
       assert.equal(e.bandPan[i], 0, `band ${i} acquired a pan with no side tap`);
     }
+  });
+
+  test('the reading is monotone in the imbalance, and saturates rather than folding', () => {
+    // A sign test and a clamp test between them still allow an estimator that
+    // is right at the ends and wrong in the middle — one that folded back, or
+    // that jumped. Sweeping the imbalance is what says the number MEANS
+    // something at every point, which is what a viewer reads it as.
+    const seen = [];
+    for (const r of [40, 80, 120, 160, 200, 240]) {
+      const e = makeEngine();
+      run(e, tone(LO, HI, 200), tone(LO, HI, 140), tone(LO, HI, r));
+      seen.push(e.bandPan[BAND]);
+    }
+    for (let i = 1; i < seen.length; i++) {
+      assert.ok(seen[i] >= seen[i - 1] - 1e-6,
+        `pan fell from ${seen[i - 1].toFixed(3)} to ${seen[i].toFixed(3)} as the right channel ` +
+        `got LOUDER: ${seen.map(v => v.toFixed(3)).join(' ')}`);
+    }
+    assert.ok(seen[0] < -0.5 && seen[seen.length - 1] > 0.5,
+      `the sweep never left the middle: ${seen.map(v => v.toFixed(3)).join(' ')}`);
+    // And it saturates: the two loudest steps are both clamped, not still
+    // climbing, which is what "26 bytes is a sensitivity, not a maximum" means.
+    assert.ok(Math.abs(seen[seen.length - 1] - seen[seen.length - 2]) < 0.2,
+      'the top of the sweep is still climbing steeply — the clamp is not where the comment says');
   });
 
   test('the pan settles when the music stops', () => {
     // Left holding its last value, the first band to come back would arrive
     // already leaning, from a track that is no longer playing.
     const e = makeEngine();
-    run(e, tone(LO, HI, 200), tone(LO, HI, 245));
+    run(e, tone(LO, HI, 200), tone(LO, HI, 150), tone(LO, HI, 245));
     const held = e.bandPan[BAND];
     assert.ok(held > 0.2, 'the pan never rose, so its decay proves nothing');
     e.isPlaying = false;
