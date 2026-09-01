@@ -1741,7 +1741,11 @@ export class MathVisualizer {
     if (wantMap && this._bandMap && this._bandMapBuiltR !== liveR) this._invalidateBandMap();
     if (wantMap && this._bandMapDirty) this._rebuildBandMap();
     return {
-      bands: this.audio.bands,
+      // The profile-weighted copy, the same array the shader is handed — see
+      // BAND_DEPTH_PROFILE. Reading `bands` here and `bandsShaped` there would
+      // give the CPU and GPU paths two different bodies under one slider, which
+      // is exactly the drift the rest of this method is written to avoid.
+      bands: this.audio.bandsShaped ?? this.audio.bands,
       depth,
       radius: this.render.U?.uBandR?.value ?? 3.5,
       u: wantMap ? (this._bandMap ?? undefined) : undefined,

@@ -1682,8 +1682,15 @@ export class RenderEngine {
                uCMBlend:      { value: 0.0 },
                uPointSize:    { value: 1.0 },
                // ── The 24-band spectrum, laid across the radius ──────────────
-               // uBands is written every frame from AudioEngine.bands; the
-               // array identity never changes, so three.js uploads the same
+               // uBands is written every frame from AudioEngine.bandsShaped —
+               // the levels already weighted by BAND_DEPTH_PROFILE, so bass
+               // moves the body further than treble for the same loudness. The
+               // weighting is applied on the CPU rather than in here on purpose:
+               // it is 24 multiplies once per frame against 24 more uniforms
+               // and a second lookup per vertex, and doing it before the upload
+               // is also what keeps the CPU and GPU paths reading one array
+               // instead of two that could disagree.
+               // The array identity never changes, so three.js uploads the same
                // buffer rather than reallocating one per frame.
                // uBandDepth 0 means the term is not merely small but absent —
                // the shader guards on it — so the whole catalogue is bit-exact
@@ -1849,7 +1856,11 @@ export class RenderEngine {
     // Optional, for the same reason uBandR is — probes and unit stands build a
     // U with only the uniforms they are about, and a frame must not depend on
     // the band layer being present.
-    if (this.U.uBands && audio.bands) this.U.uBands.value.set(audio.bands);
+    // bandsShaped, not bands — see the uniform's declaration. The fallback is
+    // for a stand that builds a bare engine-shaped object rather than a real
+    // AudioEngine; a real one always has both, written together.
+    const bandsForShape = audio.bandsShaped ?? audio.bands;
+    if (this.U.uBands && bandsForShape) this.U.uBands.value.set(bandsForShape);
     if (this.U.uBandDepth) this.U.uBandDepth.value = audio.bandDepth ?? 0;
     if (this.U.uBandMode) this.U.uBandMode.value = audio.bandCharacter === false ? 0 : 1;
     // uCM is NOT updated here during a color crossfade — setColorSchemeAnimated()

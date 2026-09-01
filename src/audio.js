@@ -133,6 +133,51 @@ const BAND_TILT = Object.freeze(BARK_EDGES.slice(0, -1).map((lo, i) => {
   return Math.max(0, Math.log2(fc / BAND_TILT_REF_HZ)) * BAND_TILT_DB_PER_OCT / BAND_DB_SPAN;
 }));
 
+/**
+ * How far a band may move the body, RELATIVE to the others.
+ *
+ * bandDepth is one scalar for all 24, which says that a cymbal and a kick
+ * deserve the same displacement. Nothing physical or perceptual agrees with
+ * that. A body vibrating with constant ENERGY moves less the higher it is
+ * driven — amplitude falls as 1/f — and that is also how a listener feels
+ * sound: bass arrives as whole-body motion, treble as fine detail on a surface
+ * that is not otherwise going anywhere.
+ *
+ * A literal 1/f is far too steep here: from band 0's 45 Hz centre to band 23's
+ * 13.6 kHz is a factor of 300, and the top of the spectrum would stop existing.
+ * The exponent is the one number in this law, and 0.2 puts the ratio at 3.1x
+ * across the whole range — bass roughly double the mean, cymbals roughly two
+ * thirds of it:
+ *
+ *   band   0    4    8   12   16   20   23
+ *   fc    45  452  997 1855 3414 7020 13638 Hz
+ *   w   1.94 1.22 1.04 0.92 0.82 0.71  0.62
+ *
+ * NORMALISED TO MEAN 1, deliberately. Scaling by the maximum would make every
+ * band quieter than it was and read as "the layer got weaker" — the profile is
+ * meant to redistribute the movement, not remove it. Sum over the 24 is
+ * unchanged, so bandDepth keeps meaning what it meant.
+ *
+ * ── This is not the same thing as BAND_TILT, and it partly opposes it ────────
+ * BAND_TILT answers "how loud is this band, given that music is pink" — it
+ * makes a cymbal and a kick COMPARABLE AS LEVELS, and without it the top of the
+ * spectrum would read as silence. This answers a different question: given two
+ * bands that are equally loud, how far should each move the body. So yes, this
+ * pulls back some of what the tilt lifted, and that is intended rather than an
+ * oversight: the two operate on different quantities, and collapsing them into
+ * one curve would mean a quiet cymbal could no longer light its ring at all.
+ */
+const BAND_DEPTH_EXP = 0.2;
+const BAND_DEPTH_PROFILE = Object.freeze((() => {
+  const w = BARK_EDGES.slice(0, -1).map(
+    (lo, i) => Math.pow(Math.sqrt(lo * BARK_EDGES[i + 1]), -BAND_DEPTH_EXP));
+  const mean = w.reduce((a, c) => a + c, 0) / w.length;
+  return w.map(v => v / mean);
+})());
+
+/** Exported for the tests and for anything that needs to undo the weighting. */
+export { BAND_DEPTH_PROFILE };
+
 // AudioEngine
 // ─────────────────────────────────────────────────────────────────────────────
 // Single owner of all audio state. Web Audio graph, file playback, crossfade,
@@ -176,8 +221,15 @@ export class AudioEngine {
     this._bandAnalyser = null;
     this._bandFft      = null;
     this._bandFpb      = 0;
-    /** Smoothed, self-normalised band levels, 0…1. Read by the renderer. */
+    /** Smoothed, self-normalised band levels, 0…1. What the band CARRIES. */
     this.bands     = new Float32Array(BAND_COUNT);
+    /**
+     * The same 24 levels weighted by BAND_DEPTH_PROFILE — what the band should
+     * MOVE. This is the array the geometry reads; `bands` above stays the
+     * measurement, so a test asking "did a 60 Hz tone light band 0" is asking
+     * about the spectrum rather than about a rendering decision.
+     */
+    this.bandsShaped = new Float32Array(BAND_COUNT);
     /** The one reference all 24 are measured against. See BAND_TILT. */
     this._bandRef = BAND_REF_FLOOR;
 
@@ -1071,6 +1123,23 @@ export class AudioEngine {
       const norm = Math.min(1, Math.max(0, tilted[i] / ref));
       this.bands[i] += (norm - this.bands[i]) * k;
     }
+    this._shapeBands();
+  }
+
+  /**
+   * Write `bandsShaped` from `bands`.
+   *
+   * Called from BOTH writers of `bands`, and that is the whole discipline here:
+   * the geometry reads only the shaped array, so a path that updated `bands`
+   * and forgot this one would freeze the body at whatever the previous frame
+   * looked like — a failure that shows up as "the shape stopped listening"
+   * rather than as an exception. Cheap enough (24 multiplies) that there is no
+   * reason to be clever about when it runs.
+   */
+  _shapeBands() {
+    for (let i = 0; i < BAND_COUNT; i++) {
+      this.bandsShaped[i] = this.bands[i] * BAND_DEPTH_PROFILE[i];
+    }
   }
 
   /** Let every band fall back to rest — used when nothing is playing. */
@@ -1079,6 +1148,7 @@ export class AudioEngine {
     // second after the music stops rather than still visibly standing.
     const k = Math.pow(0.5, dt / 0.15);
     for (let i = 0; i < BAND_COUNT; i++) this.bands[i] *= k;
+    this._shapeBands();
     this._bandRef = Math.max(BAND_REF_FLOOR, this._bandRef * Math.pow(0.5, dt / BAND_REF_HALFLIFE));
   }
 
