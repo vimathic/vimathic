@@ -66,7 +66,7 @@ import { BAND_PAN_TILT } from './audio.js';
  * travelling wave starts flat, several quantum states start at a node) and a
  * map built on a flat frame would fall through to rings for no good reason.
  */
-const BAND_MAP_REF_TIME = 7.0;
+export const BAND_MAP_REF_TIME = 7.0;
 
 // ── Worker bootstrap ───────────────────────────────────────────────────────
 // Returns the Worker instance, or null if construction fails. A failure here
@@ -1378,9 +1378,13 @@ export class MathVisualizer {
     // _pristineNormals is nulled for a thin body and welded for the rest, and
     // the weld is exactly what would erase the disagreement this measures.
     //
-    // Cost: one pass over the triangles and two Float32Arrays, no hashing and no
-    // adjacency — which is what makes it affordable unconditionally, unlike the
-    // positionGroups below that a plate is deliberately spared.
+    // Cost: one pass over the triangles and two Float32Arrays, no hashing and
+    // no adjacency. Measured, once per shape change, not per frame: 3.0 ms on a
+    // 161² plane, 8.7 ms on the gyroid, 21.4 ms on a 196 608-vertex body. The
+    // last of those is the same order as the positionGroups below that a plate
+    // is deliberately spared — so "affordable unconditionally" is a claim about
+    // a ONE-OFF beside a geometry rebuild, not about it being cheap in absolute
+    // terms, and the earlier wording implied the second.
     this._bodyCurv = buildBodyCurvature(
       this._pristinePositions, this._pristineNormals,
       geo.index ? geo.index.array : null);

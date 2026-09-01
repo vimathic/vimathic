@@ -553,6 +553,16 @@ void main(){
     // the slider at zero pays nothing at all. With the layout by radius the
     // gesture stays the plain push it always was: the radius says nothing about
     // the formula, so there is nothing to give a gesture to.
+    //
+    // ── And it must STAY that way, which is less obvious ─────────────────────
+    // "Low bands should always breathe and high ones always shatter, whatever
+    // the layout" is a reasonable thing to want, and under the character map it
+    // is already true — the gesture is chosen by the same coordinate that picks
+    // the band, so they cannot disagree. The only place it is not true is here,
+    // the radius rule, and giving the gesture to this arm would break a promise
+    // the code makes elsewhere: presets older than format v4 are migrated to
+    // bandCharacter = false precisely so they render what they were captured
+    // under (src/ui/presets.js). Motion they never had is not what they were.
     float f = uBandDepth > 0.
       ? fBase + (uBandMode == 1 ? bandTermOfMode(pos.xz, a, wi, T, aBodyK, bandU)
                                 : bandAtU(length(pos.xz) / max(uBandR, 1e-3))) * uBandDepth

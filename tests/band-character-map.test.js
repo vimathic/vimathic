@@ -17,6 +17,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBandMap, radialU, ANALYSIS_GRID } from '../src/band-map.js';
+import { BAND_MAP_REF_TIME } from '../src/math-visualizer.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +29,11 @@ import {
 } from '../src/math-collections.js';
 
 const P = { amp: 1, freq: 1, comp: 0.5 };
-const T_REF = 7.0;
+// Not a literal 7.0 typed here a third time. There were four of these — this
+// one, the one in tests/band-body-curvature.test.js, the shipped constant and
+// the shader's BAND_T — and nothing compared any of them, so a change to the
+// reference instant could move the product and leave every test green.
+const T_REF = BAND_MAP_REF_TIME;
 
 /** A plane's vertices — the commonest body, and the one with an interior. */
 function planeVerts(n = 81, half = 3.5) {

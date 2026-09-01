@@ -35,6 +35,7 @@ import {
 import { generateSurfaceFromFormula, FIELD_EXTENT } from '../src/math-collections.js';
 import { BAND_COUNT } from '../src/audio.js';
 import * as PARAMETRIC from '../src/parametric-surfaces.js';
+import { BAND_MAP_REF_TIME } from '../src/math-visualizer.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHADER_SRC = readFileSync(path.join(ROOT, 'src/shaders.js'), 'utf8');
@@ -267,6 +268,20 @@ describe('the shift is bounded, and bounded by one number', () => {
       `the shader divides by ${m[2]}, but there are ${BAND_COUNT} bands`);
   });
 
+  test('both paths sample the formula at the SAME instant', () => {
+    // BAND_T in the shader and BAND_MAP_REF_TIME in the visualiser are the same
+    // number by intent and were unrelated literals in fact — four of them, once
+    // the two test files are counted, and nothing compared any pair. Changing
+    // either one alone turned no test red, and the symptom would have been the
+    // CPU and GPU laying the spectrum out from two different frames of one
+    // formula: visible only by switching math mode, and not something a viewer
+    // would connect to a number in a shader.
+    const m = SHADER_SRC.match(/const float BAND_T = ([\d.]+);/);
+    assert.ok(m, 'bandCoordOfMode no longer pins the clock at a named constant');
+    assert.equal(Number(m[1]), BAND_MAP_REF_TIME,
+      `the shader samples at t = ${m[1]} and the CPU map at t = ${BAND_MAP_REF_TIME}`);
+  });
+
   test('the shader passes the body attribute, and not something audio-driven', () => {
     // The whole map is frozen at a reference time and its audio arguments are
     // pinned, so that the sound cannot choose which sound it is modulated by.
@@ -285,7 +300,7 @@ describe('the shift is bounded, and bounded by one number', () => {
 
 const FIELD = generateSurfaceFromFormula(
   (x, z) => Math.sin(x * 1.7) * Math.cos(z * 1.3) + 0.35 * Math.sin(x * 5.1),
-  { amp: 1, freq: 1, comp: 0.5 }, ANALYSIS_GRID, FIELD_EXTENT, 7.0);
+  { amp: 1, freq: 1, comp: 0.5 }, ANALYSIS_GRID, FIELD_EXTENT, BAND_MAP_REF_TIME);
 
 function mapOf(mesh, withBody) {
   const V = mesh.V;

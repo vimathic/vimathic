@@ -443,6 +443,31 @@ export function applyBodyShift(u, bodyK) {
  *      A live map would let the sound choose which sound it is modulated by —
  *      a feedback loop, and one that would be very hard to read as a bug.
  *
+ * ── And why it is not merely SLOWED, which is the obvious next idea ──────────
+ * "Rebuild every few seconds and crossfade" was the standing proposal. It is
+ * measured and it does not work, and the numbers are worth keeping because the
+ * idea is an easy one to have twice.
+ *
+ * How far the layout moves when the reference time moves, on a 161² plane under
+ * one formula, in bands of 24:
+ *
+ *     +0.1 s  0.33     +1 s  2.67     +4 s  8.65
+ *     +0.5 s  1.41     +2 s  4.90     +8 s  9.60
+ *
+ * So the two ends of the idea fail for opposite reasons. A step small enough to
+ * read as a breath (0.1 s, a third of a band) needs ten rebuilds a second, and
+ * one rebuild costs 4.8 ms on the gyroid and 17.1 ms on a 196 608-vertex body —
+ * synchronous, on the frame path, so that is 170 ms of every second spent
+ * relaying the map. A step cheap enough to afford moves the layout by three to
+ * nine bands, which is not a breath; it is the whole spectrum changing places.
+ *
+ * Two further costs, neither of them about frames. The layout would stop being
+ * reproducible, and presets and clip steps depend on the same formula drawing
+ * the same picture. And the colour tint's photosensitivity argument rests on
+ * vBandU being static — a map that breathed would make it periodic, and the
+ * guard in tests/colour-ramp.test.js checks the tint's FORM, not its motion, so
+ * that sentence would quietly stop being true with every test green.
+ *
  * ── Where this still degrades to rings, honestly ─────────────────────────────
  * Four kernels of 192 (rule184, langtonAnt, wiredFire, sandpile) have no local
  * frequency anywhere and fall through the whole cascade. A genuinely radial
