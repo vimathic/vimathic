@@ -83,6 +83,22 @@ describe('off is off, to the bit', () => {
     }
   });
 
+  // ── A test that was written here and then removed, on purpose ─────────────
+  // An external review reported that `h += bv` (the unconditional form this
+  // file's subject briefly had) breaks bit-exactness, because +0.0 added to
+  // -0.0 is +0.0. The argument is correct. The reach is not: h comes out of
+  // sampleHeightField, whose interpolation `a + (b - a) * t` has already
+  // normalised any -0 to +0 before the band layer is added. A field filled
+  // entirely with -0 arrives as +0 — measured, twice, once against the position
+  // attribute and once against aField, and both times the test failed on its
+  // own precondition rather than on its claim.
+  //
+  // So there is no fixture that can make this fire through the shipped path,
+  // and a test asserting something it cannot distinguish is worse than no test:
+  // it reads as coverage. The guard is restored in src/math-collections.js with
+  // the measurement written beside it, and this note is what stands in for the
+  // test that cannot exist.
+
   test('CONTROL — the same call at a non-zero depth does move it', () => {
     // Without this the test above would pass just as well against a layer that
     // had been deleted, and "off is bit-exact" would mean nothing.

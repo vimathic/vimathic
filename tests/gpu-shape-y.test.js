@@ -164,6 +164,20 @@ function gpuWrite(src, label) {
     assert.equal(pv.op, '+=',
       `${label}: the tail assigns to pos with '${pv.op}' — "${pv.stmt};" — which throws away ` +
       'both branches instead of adding to what they wrote');
+    // And it has to be CONDITIONAL. An addition that runs always and is
+    // multiplied to nothing is not the same as no addition: `pos += 0.0` turns
+    // a -0.0 component into +0.0, so the promise that the layer OFF is
+    // bit-identical would hold for the field and not for the position. It also
+    // makes every vertex of every mode pay for the scatter hash. Both were
+    // shipped in the first version of this line and both were found by an
+    // external review; the guard that was supposed to be watching this line
+    // could not see it at all, because it only looked for writes to pos.y.
+    assert.ok(pv.guard,
+      `${label}: "${pv.stmt};" moves the position unconditionally. Multiplying the term to zero ` +
+      'is not the same as not adding it — see the note beside this assertion');
+    assert.match(pv.guard, /\bptB\b/,
+      `${label}: the tail's position write is gated on "${pv.guard}", which is not the band term. ` +
+      'Gated on anything else it can still fire when the layer is off');
     for (const name of ['normal', 'uPtBand', 'bandHere']) {
       assert.ok(pv.names.has(name),
         `${label}: the tail's whole-position write "${pv.stmt};" does not read ${name}. ` +

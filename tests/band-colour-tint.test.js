@@ -17,9 +17,16 @@
 // single 60 Hz frame (BAND_TAU is 60 ms), the layer reaches the ramp, and
 // coherent brightness modulation at hi-hat rate is the same class of risk that
 // keeps uBeat pinned to 0 in the vertex program. The coordinate does not move
-// with the music at all — the character map is frozen at a reference time and
-// the GPU coordinate is computed with the audio pinned — so the tint is a
-// legend, not a strobe.
+// with the MUSIC — the character map is frozen at a reference time and the GPU
+// coordinate is computed with the audio pinned — so the tint is a legend, not a
+// strobe.
+//
+// One thing does move it, and it is stated here because the shipped comment
+// claimed otherwise until an external review corrected it: a GPU mode crossfade
+// blends the two modes' coordinates, so the tint travels while the fade runs.
+// That is a sub-second one-way transition following the surface's own, not a
+// periodic modulation, and nothing about it is driven by an onset or a level —
+// which is the part the photosensitivity argument actually rests on.
 //
 // The structural half (only one statement may touch the palette parameter after
 // the ramp, and only these names may appear in it) lives in

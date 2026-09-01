@@ -627,7 +627,20 @@ void main(){
   // expression collapses to uPointSize exactly, not approximately.
   vBandU = bandU;
   float ptB = uPtBand * bandHere * uMorphProgress;
-  pos += normal * (ptSpray(position) * ptB * 0.8);
+  // Inside the branch, not multiplied to nothing, and for two separate reasons
+  // an external review named together:
+  //   * COST. ptSpray is a sin and a fract, and outside PTS — which is most of
+  //     the time — it was being paid by every vertex to be multiplied by zero.
+  //     That is the same shape as the defect fc0c32c fixed one level up, where
+  //     the band coordinate was computed before the depth test.
+  //   * BITS. Adding 0.0 to pos is not a no-op: it turns a -0.0 component
+  //     into +0.0.
+  //     The contract in this file is that the layer OFF leaves the picture
+  //     bit-identical, and an unconditional addition breaks it for every vertex
+  //     of every mode, not only in PTS.
+  // ptB is exactly 0 whenever uPtBand or uBandDepth is, so this is off in SURF,
+  // in WIRE, under an imported model, and at depth zero.
+  if (ptB != 0.) pos += normal * (ptSpray(position) * ptB * 0.8);
   gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
   // Compute world-space position AFTER all displacement so derived normals are correct
   vec4 _wp = modelMatrix * vec4(pos, 1.0);
@@ -1008,10 +1021,19 @@ void main(){
   // 60 ms), the layer reaches the ramp, and coherent brightness modulation at
   // hi-hat rate is the same class of risk that keeps uBeat pinned to 0 in the
   // vertex program and the starfield fade damped. vBandU does not move with the
-  // music at all: the character map is frozen at a reference time and the GPU
-  // coordinate is computed with the audio pinned at 0.5, so this term is
-  // constant per vertex until the formula or the shape changes. It adds no
-  // temporal modulation whatsoever — it is a legend, not a strobe.
+  // MUSIC at all: the character map is frozen at a reference time and the GPU
+  // coordinate is computed with the audio pinned at 0.5, so nothing the track
+  // does changes this term.
+  //
+  // It is not literally constant, and the earlier version of this note said it
+  // was. During a GPU mode crossfade bandTermOfMode blends the two modes'
+  // coordinates and hands the blended one back, so the tint travels across the
+  // palette while the fade runs. That is a one-way transition of under a
+  // second, not a periodic modulation, and it is the same movement the surface
+  // itself is making — but "adds no temporal modulation whatsoever" was false
+  // and an external review said so. What is true, and is what the
+  // photosensitivity argument needs, is that nothing here is driven by an
+  // ONSET or by a band level.
   //
   // Bounded and re-clamped into the SAME [.03, .97] window, so every pixel is
   // still a colour the chosen palette declares. That is what keeps the NIGHT
@@ -1176,6 +1198,21 @@ void main(){vec3 pos=position;
   // bandHere is the band's own share of the displacement, recovered as fB - y
   // rather than evaluated a second time, exactly as the built-in VS recovers it
   // as f - fBase. At depth 0 the ternary returns y and this is exactly 0.
+  //
+  // ── bandU differs between the two branches, and that is not an oversight ──
+  // GPU branch: the RADIUS, because this template's band term is
+  // bandAtRadius — a user shader has always been outside the character path,
+  // deliberately and pinned by tests/audio-band-shape.test.js.
+  // CPU branch: aBandU, the character map, because in CPU mode the displacement
+  // was baked by applyHeightField, which DOES use the map, whatever vertex
+  // program is installed afterwards.
+  // So each branch reports the layout its own geometry actually has, and the
+  // colour agrees with the shape in both. What the user sees is that switching
+  // math mode under a custom shader changes the layout — which it already did
+  // before any of this, in the geometry alone; the tint now makes that visible
+  // rather than introducing it. An external review flagged the difference; it
+  // is real, it is older than the tint, and the alternative (colouring by rings
+  // over a body the CPU laid out by the formula) would be worse.
   float bandHere=0.;
   float bandU=-1.;
   if(uMathMode==0){float fB=uBandDepth>0.?y+bandAtRadius(length(pos.xz))*uBandDepth:y;bandHere=fB-y;if(uBandDepth>0.)bandU=length(pos.xz)/max(uBandR,1e-3);pos.y=(pos.y+fB)*uMorphProgress;vH=fB*uMorphProgress;}else{bandHere=aBand;bandU=aBandU;vH=(uVHField==2)?aField*uMorphProgress:(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
@@ -1185,7 +1222,7 @@ void main(){vec3 pos=position;
   // Mirrors the built-in VS, PTS cloud included; harmless in WIRE/SURF, which
   // ignore gl_PointSize, and inert everywhere uPtBand is 0.
   float ptB = uPtBand * bandHere * uMorphProgress;
-  pos += normal * (ptSpray(position) * ptB * 0.8);
+  if (ptB != 0.) pos += normal * (ptSpray(position) * ptB * 0.8);
   gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
   vec4 _wp = modelMatrix * vec4(pos, 1.0);
   vWorldPos = _wp.xyz;

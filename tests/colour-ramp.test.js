@@ -904,10 +904,17 @@ describe('the ramp this file models is the ramp that ships', () => {
     const found = G.colourRamps(readFileSync(SRC_PATH, 'utf8'));
     const r = shippedRamp();
     for (const f of found) {
-      assert.ok(f.after.length <= 1,
+      // EXACTLY one, in BOTH programs. The first version of this check read
+      // `<= 1` and then `continue`d on zero, with a `some(...)` at the end —
+      // which is a guard satisfied by the feature's absence: delete the tint
+      // from FS or from SE_FS_TEMPLATE alone and it stayed green, while the
+      // built-in and the shader editor coloured the same scene differently.
+      // That is the defect this whole describe block was written about, and the
+      // guard against it had it. Found by an external review.
+      assert.equal(f.after.length, 1,
         `${f.program}: ${f.after.length} statements rewrite the palette parameter after the ` +
-        `ramp (${f.after.join(' | ')}). This file models one`);
-      if (!f.after.length) continue;
+        `ramp (${f.after.join(' | ') || 'none'}). Both fragment programs must carry exactly the ` +
+        'band tint — one of them dropping it means opening the shader editor recolours the scene');
       const s = f.after[0];
       assert.match(s, /vBandU/,
         `${f.program}: "${s};" rewrites the palette parameter with something other than the ` +
@@ -933,8 +940,8 @@ describe('the ramp this file models is the ramp that ships', () => {
           'uBeat is pinned to 0 for');
       }
     }
-    assert.ok(found.some(f => f.after.length === 1),
-      'neither fragment program applies the band tint any more, so this guard reports on nothing');
+    assert.equal(found.length, 2,
+      'this guard is written for the two fragment programs and found ' + found.length);
   });
 
   test('CONTROL — the parser moves when the ramp moves', () => {

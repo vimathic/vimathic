@@ -1111,7 +1111,18 @@ export function readVertexProgram(programSrc) {
         const stmt = w[0];
         const eq = stmt.findIndex(t => t.t === 'op' && ASSIGN_OPS.has(t.v));
         const lhs = text(stmt.slice(0, eq));
-        if (lhs !== 'pos') return { count: 1, writes: [text(stmt)], wrapped: lhs };
+        // The write is expected to be CONDITIONAL: adding 0.0 to a position is
+        // not a no-op — it turns a -0.0 component into +0.0 — and the
+        // multiply-to-nothing form both broke that and paid for a hash on every
+        // vertex of every mode. So a wrapper is reported rather than refused,
+        // and the caller decides which wrappers are legal. Anything before the
+        // lvalue that is not a simple `if (…)` still comes back as unreadable.
+        let guard = null;
+        if (lhs !== 'pos') {
+          const m = /^if\s*\((.*)\)\s*pos$/.exec(lhs);
+          if (!m) return { count: 1, writes: [text(stmt)], wrapped: lhs };
+          guard = m[1].trim();
+        }
         let rhs;
         try { rhs = parseExpr(stmt.slice(eq + 1)); }
         catch (e) { return { count: 1, writes: [text(stmt)], unreadable: e.message }; }
@@ -1129,7 +1140,13 @@ export function readVertexProgram(programSrc) {
           for (const key of ['l', 'r', 'c', 'a', 'b', 'o', 'e']) if (n[key]) walk(n[key]);
           if (Array.isArray(n.args)) n.args.forEach(walk);
         })(resolved);
-        return { count: 1, stmt: text(stmt), op: stmt[eq].v, tree: resolved, raw: rhs, names };
+        if (guard) {
+          // The guard's own names count too: a wrapper that tested something
+          // unrelated would gate the write on the wrong thing and the checks
+          // below would never notice, because they only read the right side.
+          for (const t of tokenize(guard)) if (t.t === 'id') names.add(t.v);
+        }
+        return { count: 1, stmt: text(stmt), op: stmt[eq].v, tree: resolved, raw: rhs, names, guard };
       })(),
       vh: splitStatements(B.tail).filter(s => assignsTo(s, ['vH'])).map(text),
       vhWrite: (() => {

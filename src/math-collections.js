@@ -5307,8 +5307,28 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
     // and GPU paths cannot drift into drawing two different pictures. Added to
     // the field before the cap below, deliberately: these rings can fold a
     // surface through itself exactly the way the formula can.
+    // `if (bv !== 0)`, not a plain `h += bv`. This line used to read
+    // `if (bandLayer) h += bandRingValue(...)`, and splitting the value out to
+    // put it in an attribute turned the guard into an unconditional addition.
+    // An external review called that a break of the "OFF is bit-exact" promise,
+    // on the same argument the vertex shader's ternary is written from: adding
+    // +0.0 to -0.0 gives +0.0, a different word.
+    //
+    // Measured before restoring the guard, because the argument and the reach
+    // are different questions: h comes out of sampleHeightField, whose own
+    // interpolation is `a + (b - a) * t`, and that addition has already turned
+    // any -0 into +0 before this line ever sees it. A field filled entirely
+    // with -0 arrives here as +0 — checked. So no picture was affected and no
+    // test could have been written that fires on the shipped path.
+    //
+    // The guard goes back anyway. It costs one comparison, it restores exactly
+    // the semantics the line had before the refactor, and the reasoning that
+    // says it is unreachable depends on an implementation detail of a different
+    // function — which is precisely the kind of dependency that stops being
+    // true without anyone noticing. The check is on the VALUE rather than on
+    // the layer, so it also covers a layer present at depth 0.
     const bv = bandLayer ? bandRingValue(bandLayer, bx, bz, i) : 0;
-    h += bv;
+    if (bv !== 0) h += bv;
     // Capped by the caller's measure of how far this surface can travel before
     // it meets itself — the local medial radius, not the bounding box.
     if (norm && h < -maxDepth) h = -maxDepth;
