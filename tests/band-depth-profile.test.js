@@ -20,7 +20,7 @@
 // each consumer separately, then one end-to-end run through a real engine that
 // would fail if any link were wrong.
 
-import { test, describe, before } from 'node:test';
+import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AudioEngine, BARK_EDGES, BAND_COUNT, BAND_DEPTH_PROFILE,

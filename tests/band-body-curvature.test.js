@@ -24,7 +24,7 @@
 //      show it if they drifted — the body would simply be laid out differently
 //      depending on a mode the user was not thinking about.
 
-import { test, describe, before } from 'node:test';
+import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

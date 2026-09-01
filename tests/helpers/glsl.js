@@ -1011,20 +1011,6 @@ function isRadiusTerm(n) {
   return false;
 }
 
-/** One of the two coordinates, or a `uBandMode` choice between them. */
-function isBandCoord(c, radiusOnly = false) {
-  if (!c) return false;
-  // bandAtRadius() takes the radius already divided by uBandR inside itself.
-  if (radiusOnly) return isPosXZLength(c);
-  if (c.k === 'tern') {
-    const guard = c.c && c.c.k === 'bin' && c.c.op === '==' &&
-      [c.c.l, c.c.r].some(n => n.k === 'id' && n.v === 'uBandMode') &&
-      [c.c.l, c.c.r].some(n => n.k === 'num' && Number(n.v) === 1);
-    return !!(guard && isModeTexture(c.a) && isRadiusOverR(c.b));
-  }
-  return isModeTexture(c) || isRadiusOverR(c) || isPosXZLength(c);
-}
-
 const isPosXZLength = (n) =>
   !!(n && n.k === 'call' && n.n === 'length' && n.args.length === 1 &&
      n.args[0].k === 'field' && n.args[0].f === 'xz' &&

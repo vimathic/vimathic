@@ -154,7 +154,6 @@ function plate(seg = 12) {
   g.setAttribute('aBand', new THREE.BufferAttribute(new Float32Array(n), 1));
   return g;
 }
-const flatField = () => new Float32Array(GRID * GRID);
 function bandsOnly(k, v = 1) {
   const b = new Float32Array(24);
   b[k] = v;
