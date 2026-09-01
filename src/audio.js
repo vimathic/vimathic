@@ -178,6 +178,28 @@ const BAND_DEPTH_PROFILE = Object.freeze((() => {
 /** Exported for the tests and for anything that needs to undo the weighting. */
 export { BAND_DEPTH_PROFILE };
 
+/**
+ * How far apart the side tap and the mono tap have to read, in analyser bytes,
+ * before a band counts as hard-panned.
+ *
+ * One byte is (maxDecibels - minDecibels)/255 = 75/255 = 0.294 dB, so 26 bytes
+ * is 7.6 dB between R and the down-mix. That is about where a listener stops
+ * hearing "a little to the right" and starts hearing "over there"; a fully
+ * hard-panned source is far past it and clamps, which is the intended shape —
+ * the number is a sensitivity, not a maximum.
+ */
+const PAN_FULL_BYTES = 26;
+
+/**
+ * How much a band's pan may tilt its displacement from side to side.
+ *
+ * 0.6 means a hard-panned band moves 1.6x on the side it is on and 0.4x on the
+ * other. Both paths apply it, inside the single band lookup they share, and it
+ * is exactly 1.0 at pan 0 — so mono material, a silent band and a missing side
+ * tap all leave the body bit-for-bit where it was.
+ */
+export const BAND_PAN_TILT = 0.6;
+
 // AudioEngine
 // ─────────────────────────────────────────────────────────────────────────────
 // Single owner of all audio state. Web Audio graph, file playback, crossfade,
@@ -221,6 +243,22 @@ export class AudioEngine {
     this._bandAnalyser = null;
     this._bandFft      = null;
     this._bandFpb      = 0;
+    // ── The side tap ──────────────────────────────────────────────────────
+    // An AnalyserNode analyses a MONO DOWN-MIX of its input, so everything
+    // above — every band, the beat, the BPM — is the sum of both channels and
+    // knows nothing about where in the stereo field a sound sits. Left against
+    // right is the largest asymmetry recorded music actually contains, and the
+    // body had no way to hear it.
+    //
+    // ONE extra node, not two. A splitter hung off the main analyser's output
+    // (its pass-through keeps its channels, unlike its analysis) feeds a second
+    // 4096-point tap the RIGHT channel alone; left is not measured, because the
+    // mono tap already carries (L+R)/2 and the difference between that and R is
+    // exactly the imbalance. Two side taps would cost a third FFT to compute a
+    // number that is already determined.
+    this._bandSplitter = null;
+    this._bandSide     = null;
+    this._bandSideFft  = null;
     /** Smoothed, self-normalised band levels, 0…1. What the band CARRIES. */
     this.bands     = new Float32Array(BAND_COUNT);
     /**
@@ -230,6 +268,13 @@ export class AudioEngine {
      * about the spectrum rather than about a rendering decision.
      */
     this.bandsShaped = new Float32Array(BAND_COUNT);
+    /**
+     * Where each band sits between the speakers: -1 hard left, 0 centred,
+     * +1 hard right. Zero everywhere for mono material, for a silent band, and
+     * whenever the side tap is missing — so a body that cannot hear a stereo
+     * field stands exactly as it did before this existed.
+     */
+    this.bandPan = new Float32Array(BAND_COUNT);
     /** The one reference all 24 are measured against. See BAND_TILT. */
     this._bandRef = BAND_REF_FLOOR;
 
@@ -416,6 +461,37 @@ export class AudioEngine {
         this._bandFft = new Uint8Array(this._bandAnalyser.frequencyBinCount);
         this._bandFpb = this._nyq / this._bandAnalyser.frequencyBinCount;
         this.analyser.connect(this._bandAnalyser);
+
+        // The side tap. A splitter's channelCountMode is "explicit" with
+        // channelCount = numberOfOutputs, so a MONO source is up-mixed to two
+        // identical channels rather than leaving output 1 silent — which is
+        // what keeps a mono track reading as centred instead of hard left.
+        // That is spec behaviour and cannot be verified from here, so
+        // _updateBands also refuses a reading in which the side is silent while
+        // the mono tap is not: whichever way the assumption fails, "no
+        // asymmetry" is the honest answer and "everything is hard left" is not.
+        //
+        // Also never connected onward, for the same reason as the band tap
+        // above: an analyser measures its input whether or not its output goes
+        // anywhere. Cost is one more 4096-point FFT per frame, paid only while
+        // the layer is on — _updateBands is the sole reader and it is gated.
+        try {
+          this._bandSplitter = this.audioCtx.createChannelSplitter(2);
+          this._bandSide = this.audioCtx.createAnalyser();
+          this._bandSide.fftSize = this._bandAnalyser.fftSize;
+          this._bandSide.minDecibels = this.analyser.minDecibels;
+          this._bandSide.maxDecibels = this.analyser.maxDecibels;
+          this._bandSide.smoothingTimeConstant = 0;
+          this._bandSideFft = new Uint8Array(this._bandSide.frequencyBinCount);
+          this.analyser.connect(this._bandSplitter);
+          this._bandSplitter.connect(this._bandSide, 1);
+        } catch (e) {
+          // An engine without createChannelSplitter, or a graph that refuses
+          // the connection, costs the stereo term and nothing else: bandPan
+          // stays zero and every other number is what it was.
+          console.warn('stereo band tap unavailable:', e);
+          this._bandSplitter = null; this._bandSide = null; this._bandSideFft = null;
+        }
       }
       // Chromium auto-suspends contexts created before the first user
       // gesture. Resuming here is the canonical fix.
@@ -1124,6 +1200,64 @@ export class AudioEngine {
       this.bands[i] += (norm - this.bands[i]) * k;
     }
     this._shapeBands();
+    this._updatePan(k);
+  }
+
+  /**
+   * Where each band sits between the speakers, from the side tap.
+   *
+   * The mono tap carries the down-mix, so its byte is the level of (L+R)/2 and
+   * the side tap's is the level of R alone. Their DIFFERENCE in byte units is
+   * the imbalance: R above the mix means the band leans right, below it means
+   * left, and the sign is exact — R > (L+R)/2 is R > L, whatever the dB mapping
+   * does to the magnitudes. Working in bytes rather than converting back to
+   * power is deliberate: a byte here is 0.294 dB, and a perceptual balance is a
+   * dB quantity, not an energy ratio.
+   *
+   * PAN_FULL is what counts as hard-panned. A byte is 0.294 dB, so 26 bytes is
+   * 7.6 dB between R and the mix — about where a listener stops hearing "a bit
+   * to the right" and starts hearing "over there". Anything wider clamps.
+   *
+   * Smoothed with the SAME pole as the levels, so a pan cannot flicker faster
+   * than a band can — the whole photosensitivity argument for BAND_TAU applies
+   * to this number too, and it reaches the geometry by the same route.
+   *
+   * @param {number} k the already-computed one-pole coefficient for this frame
+   */
+  _updatePan(k) {
+    const side = this._bandSide, fftS = this._bandSideFft, fft = this._bandFft;
+    if (!side || !fftS || !fft || !this._bandFpb) { this._fadePanToZero(k); return; }
+    side.getByteFrequencyData(fftS);
+
+    // The refusal the splitter's up-mix is supposed to make unnecessary. If the
+    // side tap is silent everywhere while the mono tap is not, the second
+    // channel never arrived — a mono source that was not up-mixed, or a graph
+    // that dropped the connection — and every band would otherwise read hard
+    // left at once. "No asymmetry" is the honest answer to that; "the whole
+    // track is on the left" is not, and it is the failure a viewer would see.
+    let sideSum = 0, monoSum = 0;
+    for (let b = 0; b < fftS.length; b++) { sideSum += fftS[b]; monoSum += fft[b]; }
+    if (sideSum === 0 && monoSum > 0) { this._fadePanToZero(k); return; }
+
+    for (let i = 0; i < BAND_COUNT; i++) {
+      const lo = Math.ceil(BARK_EDGES[i] / this._bandFpb);
+      const hi = Math.min(fft.length, Math.ceil(BARK_EDGES[i + 1] / this._bandFpb));
+      let sM = 0, sS = 0, c = 0;
+      for (let b = lo; b < hi; b++) { sM += fft[b]; sS += fftS[b]; c++; }
+      // A band with nothing in it has no direction, and the noise floor is the
+      // same one that decides whether a band competes for the reference at all.
+      // Without this every silent band would report whatever its dither did.
+      const mono = c ? sM / c / 255 : 0;
+      const want = (c && mono > BAND_NOISE_FLOOR)
+        ? Math.max(-1, Math.min(1, ((sS - sM) / c) / PAN_FULL_BYTES))
+        : 0;
+      this.bandPan[i] += (want - this.bandPan[i]) * k;
+    }
+  }
+
+  /** Let the pan return to centre at the same rate it would have moved. */
+  _fadePanToZero(k) {
+    for (let i = 0; i < BAND_COUNT; i++) this.bandPan[i] -= this.bandPan[i] * k;
   }
 
   /**
@@ -1149,6 +1283,10 @@ export class AudioEngine {
     const k = Math.pow(0.5, dt / 0.15);
     for (let i = 0; i < BAND_COUNT; i++) this.bands[i] *= k;
     this._shapeBands();
+    // The pan settles with the levels. Left holding its last value it would be
+    // inert on a silent body — but the first band to come back would arrive
+    // already leaning, from a track that is no longer playing.
+    for (let i = 0; i < BAND_COUNT; i++) this.bandPan[i] *= k;
     this._bandRef = Math.max(BAND_REF_FLOOR, this._bandRef * Math.pow(0.5, dt / BAND_REF_HALFLIFE));
   }
 

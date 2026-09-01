@@ -5496,7 +5496,27 @@ export function bandRingValue(layer, x, z, vertexIndex) {
   const uc = Math.min(1, Math.max(0, u));
   const t = uc * last;
   const i0 = Math.floor(t), i1 = Math.min(i0 + 1, last), fr = t - i0;
-  const amp = layer.bands[i0] + (layer.bands[i1] - layer.bands[i0]) * fr;
+  const ampFlat = layer.bands[i0] + (layer.bands[i1] - layer.bands[i0]) * fr;
+  // The stereo tilt, term for term with bandAtU in src/shaders.js — the same
+  // interpolation of the same array, weighted by the same ramp across the body.
+  // Written out here rather than shared because the two live in two languages;
+  // tests/band-stereo.test.js parses the shader's factor and compares.
+  //
+  // Optional in the layer object: a stand that predates the side tap, or an
+  // engine whose splitter failed, hands over no pan and the factor is exactly
+  // 1.0 — which is what keeps a mono body bit-for-bit what it was.
+  // The tilt arrives IN the layer rather than as a constant of this file. This
+  // module has no imports at all — it is the formula catalogue, and a
+  // dependency edge from it to the audio engine would be backwards — but a
+  // second literal spelling of the same number is exactly the drift this
+  // codebase keeps finding. The layer object is already how every other shared
+  // quantity gets here (bands, depth, radius, the map), so the constant travels
+  // the same road, defined once in audio.js.
+  const pans = layer.pan, tilt = layer.panTilt;
+  const amp = (pans && tilt)
+    ? ampFlat * (1 + tilt * (pans[i0] + (pans[i1] - pans[i0]) * fr)
+                 * Math.max(-1, Math.min(1, x / Math.max(layer.radius, 1e-3))))
+    : ampFlat;
   // The gesture rides the character map, so it appears exactly where the map
   // does — under the radius rule there is nothing about the formula to give a
   // gesture to, and the layer stays the plain push it always was.

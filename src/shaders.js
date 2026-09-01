@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { OBJLoader }  from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { BAND_COUNT } from './audio.js';
+import { BAND_COUNT, BAND_PAN_TILT } from './audio.js';
 
 /**
  * The band lookup, shared by the built-in vertex shader and by the one the
@@ -31,13 +31,35 @@ import { BAND_COUNT } from './audio.js';
  */
 export const BAND_GLSL = `
 uniform float uBands[${BAND_COUNT}];
+// Where each band sits between the speakers, -1..+1, matched index for index
+// with uBands. Written from AudioEngine.bandPan; all zeros for mono material,
+// for a silent band, and whenever the side tap is missing.
+uniform float uBandPan[${BAND_COUNT}];
 uniform float uBandDepth, uBandR;
 uniform int   uBandMode;
 float bandAtU(float u){
   float x = clamp(u, 0., 1.) * float(${BAND_COUNT} - 1);
   int i = int(floor(x));
   int j = min(i + 1, ${BAND_COUNT} - 1);
-  return mix(uBands[i], uBands[j], fract(x));
+  // ── Stereo, applied HERE and nowhere else ─────────────────────────────────
+  // Every band term in every program goes through this one lookup — the
+  // character path, the radius rule, the editor template's bandAtRadius — so
+  // putting the stereo tilt inside it is what makes "the left of the body
+  // answers the left of the mix" true everywhere at once, with no call site
+  // changed and no guard loosened to let a new factor through.
+  //
+  // It reads \`position\` directly rather than taking the coordinate as an
+  // argument: the attribute is in scope in every vertex program, and it is the
+  // UNDISPLACED body, so the side a vertex is on cannot drift while the surface
+  // moves. The clamp makes the weighting a smooth ramp across the body instead
+  // of a sign, which would draw a seam straight down the middle at x = 0.
+  //
+  // At pan 0 the factor is exactly 1.0 and this returns precisely the mix it
+  // always did — mono material, a silent band and a browser without a channel
+  // splitter are all bit-identical to before the stereo tap existed.
+  float lvl = mix(uBands[i], uBands[j], fract(x));
+  float pan = mix(uBandPan[i], uBandPan[j], fract(x));
+  return lvl * (1. + ${BAND_PAN_TILT.toFixed(2)} * pan * clamp(position.x / max(uBandR, 1e-3), -1., 1.));
 }
 float bandAtRadius(float r){
   return bandAtU(r / max(uBandR, 1e-3));

@@ -1728,6 +1728,10 @@ export class RenderEngine {
                // change: band 23 has to land on the rim of what is on screen,
                // not at a distance a small body never reaches.
                uBands:        { value: new Float32Array(BAND_COUNT) },
+               // Where each band sits between the speakers, -1..+1, index for
+               // index with uBands. All zeros is "centred", which is exactly the
+               // factor 1.0 the lookup applied before the stereo tap existed.
+               uBandPan:      { value: new Float32Array(BAND_COUNT) },
                uBandDepth:    { value: 0.0 },
                uBandR:        { value: 3.5 },
                // 0 = rings from the axis, 1 = the mode's own texture decides.
@@ -1890,9 +1894,13 @@ export class RenderEngine {
     // The band array is COPIED into the uniform's own buffer rather than having
     // the uniform point at the engine's. three.js uploads a uniform array by
     // reading whatever object is in `.value` at draw time, so aliasing the
-    // engine's live array would work — until an engine that reallocates its
-    // buffer (a sample-rate change rebuilds the tap) left the uniform pointing
-    // at the old one, and the rings would freeze with no error anywhere.
+    // engine's live array would work — until an engine that reallocated its
+    // buffer left the uniform pointing at the old one, and the rings would
+    // freeze with no error anywhere. (The example this used to give — "a
+    // sample-rate change rebuilds the tap" — is fiction: nothing reads
+    // sampleRate after ensureCtx, and ensureCtx re-enters only for a closed
+    // context. The copy is still right; its stated reason was not, and an
+    // external reading of the audio graph caught it.)
     // Optional, for the same reason uBandR is — probes and unit stands build a
     // U with only the uniforms they are about, and a frame must not depend on
     // the band layer being present.
@@ -1901,6 +1909,10 @@ export class RenderEngine {
     // AudioEngine; a real one always has both, written together.
     const bandsForShape = audio.bandsShaped ?? audio.bands;
     if (this.U.uBands && bandsForShape) this.U.uBands.value.set(bandsForShape);
+    // Copied for the same reason, and optional for the same reason: a stand
+    // that predates the side tap leaves the uniform at its zeros, which is
+    // centred, which is the factor the lookup applied before stereo existed.
+    if (this.U.uBandPan && audio.bandPan) this.U.uBandPan.value.set(audio.bandPan);
     if (this.U.uBandDepth) this.U.uBandDepth.value = audio.bandDepth ?? 0;
     if (this.U.uBandMode) this.U.uBandMode.value = audio.bandCharacter === false ? 0 : 1;
     // uCM is NOT updated here during a color crossfade — setColorSchemeAnimated()

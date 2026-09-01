@@ -55,6 +55,7 @@ import {
   FIELD_EXTENT,
 } from './math-collections.js';
 import { buildBandMap, buildBodyCurvature, ANALYSIS_GRID } from './band-map.js';
+import { BAND_PAN_TILT } from './audio.js';
 
 /**
  * The moment the character map is sampled at.
@@ -1788,6 +1789,11 @@ export class MathVisualizer {
       // give the CPU and GPU paths two different bodies under one slider, which
       // is exactly the drift the rest of this method is written to avoid.
       bands: this.audio.bandsShaped ?? this.audio.bands,
+      // Where each band sits between the speakers, and how far that may tilt
+      // the displacement. Both travel with the layer so bandRingValue needs no
+      // import of its own — see the note beside its use there.
+      pan: this.audio.bandPan,
+      panTilt: BAND_PAN_TILT,
       depth,
       radius: this.render.U?.uBandR?.value ?? 3.5,
       u: wantMap ? (this._bandMap ?? undefined) : undefined,
