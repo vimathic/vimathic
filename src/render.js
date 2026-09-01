@@ -1147,6 +1147,15 @@ function attachBaseY(geo) {
   // geometry have to be two channels, which is what round 10 established; this
   // attribute is that separation made explicit rather than reconstructed.
   geo.setAttribute('aField', new THREE.BufferAttribute(new Float32Array(n), 1));
+  // The band's own share of that field, for the PTS cloud. Separate from aField
+  // because the two answer different questions: aField is what the palette
+  // colours by (formula plus layer, the whole displacement), while this is the
+  // part the MUSIC contributed. A point that swelled with the formula's relief
+  // would be a static texture, not a reaction.
+  //
+  // Zero-filled, and it stays zero unless a CPU writer fills it: in GPU mode the
+  // vertex program recovers the same quantity as f - fBase and never reads this.
+  geo.setAttribute('aBand', new THREE.BufferAttribute(new Float32Array(n), 1));
 }
 
 /**
@@ -1681,6 +1690,11 @@ export class RenderEngine {
                uCMNext:       { value: 0   },
                uCMBlend:      { value: 0.0 },
                uPointSize:    { value: 1.0 },
+               // 1 only while the points proxy is on stage — see the PTS block
+               // at the end of VS. It lives beside uPointSize because it has the
+               // same lifetime and the same reset (setVizModeGPU zeroes both on
+               // every mode call, so neither can strand across a round trip).
+               uPtBand:       { value: 0.0 },
                // ── The 24-band spectrum, laid across the radius ──────────────
                // uBands is written every frame from AudioEngine.bandsShaped —
                // the levels already weighted by BAND_DEPTH_PROFILE, so bass
@@ -1745,6 +1759,10 @@ export class RenderEngine {
     // reads 0, and uVHField never reaches 2 for those, so the ramp keeps its
     // previous source rather than going flat.
     this.gpuMat.defaultAttributeValues.aField = [0];
+    // And for the band's own share of it, which the PTS cloud reads. Zero is the
+    // right leftover twice over: an imported model has no band map, and uPtBand
+    // is forced to 0 while one is on stage anyway.
+    this.gpuMat.defaultAttributeValues.aBand = [0];
     this.gpuMesh = new THREE.Mesh(gpuGeo, this.gpuMat);
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
@@ -2298,6 +2316,10 @@ export class RenderEngine {
     this.gpuMesh.visible  = this.modelMeshes.length === 0;
     this.gpuMat.wireframe = false;
     this.U.uPointSize.value = 1.0;
+    // Down first, up only in the points branch below — the same discipline
+    // uPointSize and uPtStyle keep. Optional because the unit stands build a U
+    // with only the uniforms they are about (tests/particle-style.test.js).
+    if (this.U.uPtBand) this.U.uPtBand.value = 0.0;
     if (mode !== 'points') {
       // Leaving PTS: the particle mask must not run over triangles, and the
       // smoke style's afterglow belongs to the style, not to the session — a
@@ -2390,6 +2412,12 @@ export class RenderEngine {
 
     this.U.uPointSize.value = style.size;
     this.U.uPtStyle.value   = style.mask;
+    // Raised here rather than in setVizModeGPU's points branch, because THIS is
+    // the call that runs on every entry into PTS and on every style click. Put
+    // it in the branch and a style change would leave it alone — which happens
+    // to be right today and would stop being right the first time anything else
+    // lowered it. The guard above already refuses models and non-PTS modes.
+    if (this.U.uPtBand) this.U.uPtBand.value = 1.0;
 
     const m = this.gpuPtsProxy?.material;
     if (m) {

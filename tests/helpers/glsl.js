@@ -1076,6 +1076,47 @@ export function readVertexProgram(programSrc) {
     tail: {
       stmts: splitStatements(B.tail).map(text),
       pos: splitStatements(B.tail).filter(s => assignsTo(s, ['pos', 'y'])).map(text),
+      // Writes to the WHOLE position, which `pos` above cannot see: it looks for
+      // the path ['pos','y'], so `pos += anything` walked straight past it. The
+      // PTS cloud needs exactly such a write — it moves the vertex along its
+      // normal, which is not a y-only displacement — and rather than let it
+      // through a gap, the gap is closed and the one legal form is modelled.
+      // gpu-shape-y.test.js is what applies the model; this only reports.
+      posVec: splitStatements(B.tail).filter(s => assignsTo(s, ['pos'])).map(text),
+      // The same write, parsed but NOT resolved, and the distinction is the
+      // point. `bandHere` is declared before the branch and assigned inside both
+      // of them, so resolve() sees a local that is defined once and amended and
+      // would hand back its DECLARATION — the literal 0.0. A guard built on that
+      // would cheerfully certify that the scatter is identically zero. What the
+      // caller gets is the expression as written, and it checks which names
+      // appear in it.
+      posVecWrite: (() => {
+        const w = splitStatements(B.tail).filter(s => assignsTo(s, ['pos']));
+        if (!w.length) return null;
+        if (w.length > 1) return { count: w.length, writes: w.map(text) };
+        const stmt = w[0];
+        const eq = stmt.findIndex(t => t.t === 'op' && ASSIGN_OPS.has(t.v));
+        const lhs = text(stmt.slice(0, eq));
+        if (lhs !== 'pos') return { count: 1, writes: [text(stmt)], wrapped: lhs };
+        let rhs;
+        try { rhs = parseExpr(stmt.slice(eq + 1)); }
+        catch (e) { return { count: 1, writes: [text(stmt)], unreadable: e.message }; }
+        // Resolved against the TAIL's own environment and nothing wider. A local
+        // the tail declares (`float ptB = …`) is substituted, so hiding the
+        // gating uniform one name deep does not hide it from the caller; a name
+        // that comes from ABOVE the tail is left standing as an identifier,
+        // which is the honest reading — see the note on bandHere above.
+        const resolved = resolve(rhs, collectEnv(B.tail, new Map(), stmt[0].p)).tree;
+        const names = new Set();
+        (function walk(n) {
+          if (!n || typeof n !== 'object') return;
+          if (n.k === 'id') names.add(n.v);
+          if (n.k === 'call') names.add(n.n);
+          for (const key of ['l', 'r', 'c', 'a', 'b', 'o', 'e']) if (n[key]) walk(n[key]);
+          if (Array.isArray(n.args)) n.args.forEach(walk);
+        })(resolved);
+        return { count: 1, stmt: text(stmt), op: stmt[eq].v, tree: resolved, raw: rhs, names };
+      })(),
       vh: splitStatements(B.tail).filter(s => assignsTo(s, ['vH'])).map(text),
       vhWrite: (() => {
         const w = splitStatements(B.tail).filter(s => assignsTo(s, ['vH']));

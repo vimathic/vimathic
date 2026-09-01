@@ -184,7 +184,7 @@ const _scratch = new Float32Array(SUB);
  * describe the seam rather than the body; reordering the same geometry would
  * then change the map. Knuth's multiplicative constant is coprime with any
  * power of two and mixes the low bits, so the sample is spread over the whole
- * array while staying完全 deterministic — the same input gives the same map,
+ * array while staying entirely deterministic — the same input gives the same map,
  * which presets and clip steps depend on. Found by an external review.
  */
 function sortedSample(a) {

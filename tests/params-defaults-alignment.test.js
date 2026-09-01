@@ -141,6 +141,14 @@ describe('every default matches the value the engine boots at', () => {
     assert.equal(audio.trebleSens, PARAMS.trebleSens.default);
     assert.equal(audio.waveInt,    PARAMS.waveInt.default);
     assert.equal(audio.amp,        PARAMS.amp.default);
+    // bandDepth was missing from this list for as long as it shipped at 0, and
+    // nothing noticed, because 0 and 0 agree by accident. It stopped being an
+    // accident when the layer started shipping ON: the two other legs (slider
+    // position, value badge) are checked generically above, so leaving the
+    // engine at 0 while the registry said 0.3 would have been fully green — a
+    // panel reading 0.30 over a body that is not moving, until the first RESET
+    // ALL jumped the rings on.
+    assert.equal(audio.bandDepth,  PARAMS.bandDepth.default);
   });
 
   test('CameraSystem starts on the registry default for rotSpeed', () => {

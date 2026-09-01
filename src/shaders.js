@@ -90,6 +90,26 @@ uniform float uMorphProgress,uModeBlend;
 uniform int   uVHField;
 attribute float aBaseY;
 attribute float aField;
+// ── The band's own contribution, per vertex ─────────────────────────────────
+// PTS draws the surface as points, and a point can do two things a triangle
+// cannot: change size, and leave the sheet. Both want the BAND's displacement
+// on its own — not the whole displacement, which is mostly the formula, and not
+// the band level, which knows nothing about where this vertex listens.
+//
+// In GPU mode the vertex program already has it: f - fBase is exactly the band
+// term, for free, and exactly 0.0 when the layer is off. In CPU mode the
+// displacement is baked into the position attribute before any shader runs, so
+// the writers hand it over here instead. Zero-filled by attachBaseY, so a
+// geometry that predates the layer reads 0 and the points stay a plain cloud.
+attribute float aBand;
+// 1 while the points proxy is the thing being drawn, 0 otherwise — set beside
+// uPointSize in setVizModeGPU, for the same reason and with the same lifetime.
+// It cannot be inferred inside the shader: uPtStyle is 0 both outside PTS and
+// for the plain-square style, and the proxy shares this whole uniform block
+// with the mesh and with any imported model.
+// (No backticks in this file's GLSL comments — the shader sources are template
+// literals, and one closed VS in the middle of a sentence.)
+uniform float uPtBand;
 varying float vH;
 // SURF lighting: pass post-displacement world position and view direction to FS
 // so the fragment shader can reconstruct surface normals via screen-space
@@ -100,6 +120,14 @@ ${BAND_GLSL}
 varying vec3  vViewDir;
 
 // ── Helper functions ──────────────────────────────────────────────────────────
+// A deterministic per-vertex value in [-1, 1], for the PTS scatter. Signed and
+// roughly symmetric, so a region sprays both ways and does not simply inflate;
+// deterministic, so the grain belongs to the vertex rather than shimmering. It
+// is fed the ORIGINAL position, never the displaced one, for that second reason.
+// The usual sin/fract hash: its statistics are poor and its behaviour differs
+// between drivers, and neither matters for a value whose only job is to be
+// different from its neighbour's.
+float ptSpray(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453)*2.-1.;}
 float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;s+=cos(a*-6.)*exp(-r*.28*36.);s+=cos(a*-5.)*exp(-r*.28*25.);s+=cos(a*-4.)*exp(-r*.28*16.);s+=cos(a*-3.)*exp(-r*.28*9.);s+=cos(a*-2.)*exp(-r*.28*4.);s+=cos(a*-1.)*exp(-r*.28*1.);s+=1.;s+=cos(a*1.)*exp(-r*.28*1.);s+=cos(a*2.)*exp(-r*.28*4.);s+=cos(a*3.)*exp(-r*.28*9.);s+=cos(a*4.)*exp(-r*.28*16.);s+=cos(a*5.)*exp(-r*.28*25.);s+=cos(a*6.)*exp(-r*.28*36.);return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
@@ -395,6 +423,11 @@ void main(){
   // seizure risk back to the out-of-the-box visualisation.
   float b=clamp(uBass,0.,1.2),t=clamp(uTreble,0.,1.2),m=clamp(uMid,0.,1.),bt=0./*intentional, see note above*/;
   float a=uAmp,wi=uWI,T=uTime;
+  // The band's own displacement at this vertex, before uMorphProgress. Declared
+  // out here because both branches have it and the tail needs it; neither branch
+  // computes anything extra to fill it. Nothing but the PTS block below reads
+  // it, so on triangles this is a dead float the compiler removes.
+  float bandHere=0.;
 
   if(uMathMode==0){
     // GPU mode: compute both current and next, blend between them
@@ -469,6 +502,12 @@ void main(){
       ? fBase + (uBandMode == 1 ? bandTermOfMode(pos.xz, a, wi, T)
                                 : bandAtU(length(pos.xz) / max(uBandR, 1e-3))) * uBandDepth
       : fBase;
+    // f minus the field it was built from IS the band term — the difference of
+    // two locals, not a second evaluation, so the eight computeMode calls stay
+    // bought once and stay inside the depth guard. At uBandDepth 0 the ternary
+    // above returns fBase itself and this is exactly 0.0, which is what keeps
+    // "off" costing nothing here too.
+    bandHere = f - fBase;
     pos.y = (pos.y + f) * uMorphProgress;
     // The field alone, scaled the same way — bit-for-bit what vH carried
     // before round 10, when the height WAS the field: c629b53 stored
@@ -519,10 +558,38 @@ void main(){
     vH = (uVHField == 2) ? aField * uMorphProgress
        : (uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress
        : pos.y * uMorphProgress;
+    // The CPU writers baked the band into the position before this program ran,
+    // so they hand the term over in its own attribute rather than leaving it to
+    // be recovered. aBand is 0 on a geometry that never carried the layer.
+    bandHere = aBand;
     pos.y = pos.y * uMorphProgress;
   }
 
-  gl_PointSize=uPointSize;
+  // ── PTS: the band scatters its own cloud ────────────────────────────────────
+  // In SURF and WIRE the layer can only push the sheet in and out, because the
+  // sheet has to stay a sheet. Points are under no such obligation, and the mode
+  // exists for exactly that: a loud band can throw its region off the surface and
+  // swell the grains it is made of, so the body reads as a cloud that the music
+  // stirs rather than as a surface with ripples on it.
+  //
+  // Two channels, and they are deliberately different in kind:
+  //   * ALONG THE NORMAL, signed and per-vertex random. The randomness is what
+  //     makes it a cloud instead of a thicker sheet — a uniform push along the
+  //     normal is just the displacement the surface already has. Frozen to the
+  //     vertex's ORIGINAL position, so the grain does not crawl while the body
+  //     moves under it.
+  //   * IN SIZE, unsigned. A grain that shrank on the negative half of a ripple
+  //     would blink at the ripple's own rate; abs() makes both halves of the
+  //     gesture read as energy, which is what a size cue means.
+  //
+  // uPtBand is 0 everywhere except the points proxy, so both terms vanish for
+  // triangles, for imported models, and for the mesh the proxy is standing in
+  // for. bandHere is 0 whenever uBandDepth is, so dragging Spectrum Rings to
+  // zero returns PTS to the plain cloud it has always drawn — the point-size
+  // expression collapses to uPointSize exactly, not approximately.
+  float ptB = uPtBand * bandHere * uMorphProgress;
+  pos += normal * (ptSpray(position) * ptB * 0.8);
+  gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
   // Compute world-space position AFTER all displacement so derived normals are correct
   vec4 _wp = modelMatrix * vec4(pos, 1.0);
   vWorldPos = _wp.xyz;
@@ -956,10 +1023,19 @@ uniform float uMorphProgress,uModeBlend;
 uniform int uVHField;
 attribute float aBaseY;
 attribute float aField;
+// aBand / uPtBand / ptSpray — the PTS cloud, mirrored from VS term for term. An
+// editor shader is installed on the points proxy too, so leaving them out here
+// would make Spectrum Rings scatter the grains with the built-in program and do
+// nothing with a custom one — one control, two answers, depending on a mode the
+// user was not thinking about. That exact defect has already been found once in
+// this template, for this same layer.
+attribute float aBand;
+uniform float uPtBand;
 varying float vH;
 varying vec3  vWorldPos;
 ${BAND_GLSL}
 varying vec3  vViewDir;
+float ptSpray(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453)*2.-1.;}
 float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;for(int n=-6;n<=6;n++){float fn=float(n);s+=cos(a*fn)*exp(-r*.28*fn*fn);}return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
@@ -1023,11 +1099,18 @@ void main(){vec3 pos=position;
   //
   // The ternary wraps the whole sum, so at depth 0 this is bit-identical to the
   // plain y it carried before, and vH gets the same value the geometry does.
-  if(uMathMode==0){float fB=uBandDepth>0.?y+bandAtRadius(length(pos.xz))*uBandDepth:y;pos.y=(pos.y+fB)*uMorphProgress;vH=fB*uMorphProgress;}else{vH=(uVHField==2)?aField*uMorphProgress:(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
+  // bandHere is the band's own share of the displacement, recovered as fB - y
+  // rather than evaluated a second time, exactly as the built-in VS recovers it
+  // as f - fBase. At depth 0 the ternary returns y and this is exactly 0.
+  float bandHere=0.;
+  if(uMathMode==0){float fB=uBandDepth>0.?y+bandAtRadius(length(pos.xz))*uBandDepth:y;bandHere=fB-y;pos.y=(pos.y+fB)*uMorphProgress;vH=fB*uMorphProgress;}else{bandHere=aBand;vH=(uVHField==2)?aField*uMorphProgress:(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
   // An editor shader is now installed on the POINTS proxy too, and a vertex
   // program that leaves gl_PointSize unwritten draws points of undefined size.
-  // Mirrors the built-in VS; harmless in WIRE/SURF, which ignore it.
-  gl_PointSize=uPointSize;
+  // Mirrors the built-in VS, PTS cloud included; harmless in WIRE/SURF, which
+  // ignore gl_PointSize, and inert everywhere uPtBand is 0.
+  float ptB = uPtBand * bandHere * uMorphProgress;
+  pos += normal * (ptSpray(position) * ptB * 0.8);
+  gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
   vec4 _wp = modelMatrix * vec4(pos, 1.0);
   vWorldPos = _wp.xyz;
   vViewDir  = cameraPosition - _wp.xyz;
@@ -1193,6 +1276,12 @@ export class ShaderEditor {
     // of three's two paths for it and leaves the generic location holding
     // whatever the last program put there. See attachBaseY in render.js.
     tMat.defaultAttributeValues.aBaseY = [0];
+    // aField and aBand are on the same footing and were missing here — the
+    // template declares and reads all three, and the probe geometry carries
+    // none of them. Left as it was, a compile probe could read whatever the
+    // previous program left in those generic slots.
+    tMat.defaultAttributeValues.aField = [0];
+    tMat.defaultAttributeValues.aBand  = [0];
     // Probe in a scene of its own rather than adding the test mesh to the live
     // one: compile()/render() would then walk every material in the scene —
     // seconds of work on a software GL — and the probe mesh could show up in
@@ -1481,6 +1570,12 @@ export class ModelLoader {
       // value there. Survives the editor's swap: applyShaderSource mutates
       // .vertexShader in place and does not rebuild the material.
       mat.defaultAttributeValues.aBaseY = [0];
+      // Same argument, same two other attributes an imported geometry does not
+      // carry. aBand additionally has uPtBand forced to 0 while a model is on
+      // stage, so it is belt and braces — but the belt is the one that broke
+      // before, and a model is exactly the geometry attachBaseY never sees.
+      mat.defaultAttributeValues.aField = [0];
+      mat.defaultAttributeValues.aBand  = [0];
       child.material = mat;
       this._meshes.push(child);
     });

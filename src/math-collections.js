@@ -5283,6 +5283,10 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
   const norm = (baseNormals && baseNormals.length === n * 3) ? baseNormals : null;
   const fa   = geometry.attributes.aField;
   const field = (fa && fa.array && fa.array.length === n) ? fa : null;
+  // Same optional treatment as aField: a geometry from before this attribute
+  // existed, or a points proxy with its own buffers, simply does not get one.
+  const ba   = geometry.attributes.aBand;
+  const band = (ba && ba.array && ba.array.length === n) ? ba : null;
 
   for (let i = 0; i < n; i++) {
     // Sampled at the BASE coordinate, not the live one. With Y-only
@@ -5299,7 +5303,8 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
     // and GPU paths cannot drift into drawing two different pictures. Added to
     // the field before the cap below, deliberately: these rings can fold a
     // surface through itself exactly the way the formula can.
-    if (bandLayer) h += bandRingValue(bandLayer, bx, bz, i);
+    const bv = bandLayer ? bandRingValue(bandLayer, bx, bz, i) : 0;
+    h += bv;
     // Capped by the caller's measure of how far this surface can travel before
     // it meets itself — the local medial radius, not the bounding box.
     if (norm && h < -maxDepth) h = -maxDepth;
@@ -5314,9 +5319,16 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
     // vertical; along a normal the same subtraction yields n_y·h, which is 0
     // wherever the surface stands up and negative underneath.
     if (field) field.array[i] = h;
+    // The band's share on its own, for the PTS cloud — the shader cannot
+    // recover it here the way it does in GPU mode, because by the time it runs
+    // the whole displacement is already inside the position attribute. Written
+    // BEFORE the cap deliberately: the cap is about the surface folding through
+    // itself, and a point that has left the surface is not folding anything.
+    if (band) band.array[i] = bv;
   }
   pos.needsUpdate = true;
   if (field) field.needsUpdate = true;
+  if (band) band.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 
@@ -5447,11 +5459,17 @@ export function bandRingValue(layer, x, z, vertexIndex) {
   //
   // The index is checked against the map's own length, not assumed to be in it.
   // A points proxy can carry its OWN geometry with a different vertex count
-  // (the comment in MathVisualizer._tickCollapse says so), and the same layer
-  // object is handed to both it and the mesh — so an index past the end used to
-  // read undefined, turn the displacement into NaN, and take the vertex with
-  // it. Falling back to the radius here keeps such a proxy drawn rather than
-  // destroyed; the map it deserves is a separate question from not exploding.
+  // (the comment in MathVisualizer._tickCollapse says so), and it is served from
+  // a layer built out of the MESH's map — _bandLayer() is called once for the
+  // mesh and again for the proxy, so the two objects are distinct but the `u`
+  // inside both is sized from _pristinePositions either way. An index past the
+  // end therefore used to read undefined, turn the displacement into NaN, and
+  // take the vertex with it. Falling back to the radius here keeps such a proxy
+  // drawn rather than destroyed; the map it deserves is a separate question
+  // from not exploding.
+  // (The earlier wording said "the same layer object is handed to both". It is
+  // not — two calls, two objects — and the distinction matters to anyone who
+  // reads this looking for a place to give the proxy a map of its own.)
   if (layer.u !== undefined && vertexIndex !== undefined && vertexIndex >= layer.u.length) {
     const r = Math.min(1, Math.sqrt(x * x + z * z) / Math.max(layer.radius, 1e-3));
     const tr = r * last;
@@ -5474,6 +5492,8 @@ export function bandRingValue(layer, x, z, vertexIndex) {
  */
 export function applyDisplacementField(geometry, df, basePositions, bandLayer = null) {
   const pos = geometry.attributes.position;
+  const ba = geometry.attributes.aBand;
+  const band = (ba && ba.array && ba.array.length === pos.count) ? ba : null;
   for (let i = 0; i < pos.count; i++) {
     const bx = basePositions[i * 3], bz = basePositions[i * 3 + 2];
     // VOLUME has no surface normal to travel along — its field is already a free
@@ -5492,8 +5512,14 @@ export function applyDisplacementField(geometry, df, basePositions, bandLayer = 
       basePositions[i * 3 + 1] + (df[i * 3 + 1] ?? 0),
       basePositions[i * 3 + 2] + (df[i * 3 + 2] ?? 0) + rz,
     );
+    // The band's share, for the PTS cloud — see the same line in
+    // applyHeightField. The magnitude, not the outward vector: the cloud takes
+    // its own direction from the vertex normal, and what it needs from here is
+    // how loudly this vertex is being driven.
+    if (band) band.array[i] = ring;
   }
   pos.needsUpdate = true;
+  if (band) band.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 
@@ -5509,17 +5535,22 @@ export function applyDisplacementField(geometry, df, basePositions, bandLayer = 
  */
 export function applyCollapseField(geometry, scalarField, basePositions, baseNormals, strength = 1, bandLayer = null) {
   const pos = geometry.attributes.position;
+  const ba = geometry.attributes.aBand;
+  const band = (ba && ba.array && ba.array.length === pos.count) ? ba : null;
   for (let i = 0; i < pos.count; i++) {
     // COLLAPSE already travels along the normal, so the rings ride the same
     // direction the mode's own field does — the same rule the SURFACE path
     // follows.
-    const s  = (scalarField[i] ?? 0) * strength
-             + bandRingValue(bandLayer, basePositions[i * 3], basePositions[i * 3 + 2], i);
+    const ring = bandRingValue(bandLayer, basePositions[i * 3], basePositions[i * 3 + 2], i);
+    const s  = (scalarField[i] ?? 0) * strength + ring;
     const bx = basePositions[i * 3],     by = basePositions[i * 3 + 1], bz = basePositions[i * 3 + 2];
     const nx = baseNormals[i * 3],       ny = baseNormals[i * 3 + 1],   nz = baseNormals[i * 3 + 2];
     pos.setXYZ(i, bx + nx * s, by + ny * s, bz + nz * s);
+    // The band's share, for the PTS cloud — see applyHeightField.
+    if (band) band.array[i] = ring;
   }
   pos.needsUpdate = true;
+  if (band) band.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 
