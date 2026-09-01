@@ -888,6 +888,62 @@ describe('the ramp this file models is the ramp that ships', () => {
     assert.equal((hi - lo).toFixed(4), '1.5667');
   });
 
+  test('nothing else touches the palette parameter except the band tint', () => {
+    // The ramp pattern is anchored on vH, so a SECOND statement rewriting `t`
+    // is invisible to it — and every clamped-area figure in this file is
+    // computed from the model, not from the shader. A model of the code is only
+    // worth what its link to the code is worth, which is the sentence this
+    // whole describe block exists for; one level down, the same hole.
+    //
+    // Exactly one further write is allowed, in both programs, and it is the
+    // band tint. What is checked about it is what the rest of the file depends
+    // on: it re-clamps into the SAME window, so no pixel can leave the ramp and
+    // every conclusion here about clamped area and about the NIGHT contract
+    // still holds — and it reads vBandU, which is static per vertex, so it adds
+    // no temporal modulation to a channel this app damps on purpose.
+    const found = G.colourRamps(readFileSync(SRC_PATH, 'utf8'));
+    const r = shippedRamp();
+    for (const f of found) {
+      // EXACTLY one, in BOTH programs. The first version of this check read
+      // `<= 1` and then `continue`d on zero, with a `some(...)` at the end —
+      // which is a guard satisfied by the feature's absence: delete the tint
+      // from FS or from SE_FS_TEMPLATE alone and it stayed green, while the
+      // built-in and the shader editor coloured the same scene differently.
+      // That is the defect this whole describe block was written about, and the
+      // guard against it had it. Found by an external review.
+      assert.equal(f.after.length, 1,
+        `${f.program}: ${f.after.length} statements rewrite the palette parameter after the ` +
+        `ramp (${f.after.join(' | ') || 'none'}). Both fragment programs must carry exactly the ` +
+        'band tint — one of them dropping it means opening the shader editor recolours the scene');
+      const s = f.after[0];
+      assert.match(s, /vBandU/,
+        `${f.program}: "${s};" rewrites the palette parameter with something other than the ` +
+        'band coordinate. Anything audio-driven here is coherent brightness modulation at the ' +
+        'rate the band moves, which is the class of flicker uBeat is pinned to 0 for');
+      const num = n => String(n).replace('.', '\\.');
+      assert.match(s, new RegExp(`=\\s*clamp\\s*\\(.*,\\s*${num(r.lo)}\\s*,\\s*${num(r.hi)}\\s*\\)\\s*$`),
+        `${f.program}: "${s};" does not re-clamp into the shipped window ` +
+        `[${r.lo}, ${r.hi}] — a pixel could land on a colour the palette never declares, and ` +
+        'the NIGHT darkness contract is stated over the ramp, not over arbitrary parameters');
+      // An ALLOWLIST, not a list of banned names. A banlist was tried and let
+      // the worst case through: `bandAtU(vBandU)` mentions none of uBands,
+      // uBeat or uBass and yet returns a band LEVEL, which is precisely the
+      // loudness-driven tint this design refuses. Naming what may appear is the
+      // only form of this check that cannot be walked around by indirection.
+      const ALLOWED = new Set(['t', 'clamp', 'step', 'vBandU']);
+      const names = new Set((s.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []));
+      for (const n of names) {
+        assert.ok(ALLOWED.has(n),
+          `${f.program}: the tint reads "${n}" — "${s};". Only ${[...ALLOWED].join(', ')} may ` +
+          'appear here. Anything else can carry a level, and a level in this statement is ' +
+          'coherent brightness modulation at the rate the band moves — the class of flicker ' +
+          'uBeat is pinned to 0 for');
+      }
+    }
+    assert.equal(found.length, 2,
+      'this guard is written for the two fragment programs and found ' + found.length);
+  });
+
   test('CONTROL — the parser moves when the ramp moves', () => {
     // Without this the equality above could be reading a constant it invented.
     // Same parser, same file, one number changed the way row D10a changes it:

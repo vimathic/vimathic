@@ -6295,12 +6295,36 @@ describe('Round 11 — the visible label against the drawn object', () => {
     // e^{−iE_n t/ħ} cancels in the modulus. Both entries used to carry a
     // ×(0.8+0.2cos(...)) pulse — ×1.666667 peak to trough, 54.5 s and 218 s of
     // wall clock per period at the app's 0.48 units/s.
+    // Counted, not deepEqual: these grids are 41² = 1681 values each, and node's
+    // differ renders BOTH sides when the assertion fails — i.e. exactly when this
+    // test is right about a regression. Same verdict (`Object.is`, so a NaN pair
+    // still counts as equal and ±0 still differ), one line of output. See the
+    // note in tests/surface-plumbing.test.js for the measured cost of the form
+    // this replaces.
+    // -3 container mismatch, -2 length mismatch, -1 equal, otherwise the index.
+    // The container check is what keeps the verdict the same as deepStrictEqual's:
+    // that rejects a Float32Array against a plain array even when every element
+    // matches, and a counted walk would happily call them equal. Both operands
+    // here are Array.from(...) today, so this changes nothing now — it is there
+    // so the helper stays honest if a caller stops converting. (An external
+    // review pointed at the gap.)
+    const firstDiff = (a, b) => {
+      if (a.constructor !== b.constructor) return -3;
+      if (a.length !== b.length) return -2;
+      for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return i;
+      return -1;
+    };
     for (const [col, key] of [['quantumMechanics', 'particleBox1D'], ['quantumMechanics', 'harmonicOscillator']]) {
       const f = getFormula(col, key).f;
       const at = t => Array.from(generateSurfaceFromFormula(f, { amp: 1, freq: 1, comp: 0.5 }, 41, 3.5, t));
       const base = at(0);
       for (const t of [13.09, 52.36, 104.72, 419.0]) {
-        assert.deepEqual(at(t), base, `${key} moved between t = 0 and t = ${t}`);
+        const now = at(t);
+        const i = firstDiff(now, base);
+        assert.ok(i === -1,
+          i === -3 ? `${key} changed container type between t = 0 and t = ${t}`
+          : i === -2 ? `${key} changed grid size between t = 0 and t = ${t}`
+          : `${key} moved between t = 0 and t = ${t}: value ${i} went ${base[i]} -> ${now[i]}`);
       }
     }
     // Control: the probe can see a clock. wavePacket carries one by design, so
@@ -6308,7 +6332,8 @@ describe('Round 11 — the visible label against the drawn object', () => {
     const wp = getFormula('quantumMechanics', 'wavePacket').f;
     const w0 = Array.from(generateSurfaceFromFormula(wp, { amp: 1, freq: 1, comp: 0.5 }, 41, 3.5, 0));
     const w1 = Array.from(generateSurfaceFromFormula(wp, { amp: 1, freq: 1, comp: 0.5 }, 41, 3.5, 13.09));
-    assert.notDeepEqual(w1, w0, 'the probe cannot see time passing, so the two greens above mean nothing');
+    assert.ok(firstDiff(w1, w0) !== -1,
+      'the probe cannot see time passing, so the two greens above mean nothing');
   });
 
   test('the dragon plate is the Heighway dragon, not per-vertex speckle', () => {

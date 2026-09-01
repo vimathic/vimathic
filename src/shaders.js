@@ -8,6 +8,62 @@
 import * as THREE from 'three';
 import { OBJLoader }  from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { BAND_COUNT, BAND_PAN_TILT } from './audio.js';
+
+/**
+ * The band lookup, shared by the built-in vertex shader and by the one the
+ * editor compiles, so a user-written shader can read the spectrum the same way.
+ *
+ * A uniform array rather than a texture: 24 floats is far inside the smallest
+ * vertex-uniform budget WebGL2 guarantees (1024 components), needs no format
+ * negotiation and no filtering rules, and — unlike a texture fetch — is exact.
+ *
+ * The lookup INTERPOLATES between neighbouring bands instead of stepping. Both
+ * were tried on the plane at 161 segments: stepping puts a visible crease at
+ * each of the 23 band boundaries, because two adjacent rings of vertices get
+ * levels that differ by whatever the music does, and a mesh cannot hide a
+ * discontinuity that large. Interpolating keeps the rings legible — the band
+ * structure is still what you see — without the seams.
+ *
+ * uBandR is the radius the body actually occupies, written per shape change, so
+ * band 23 lands on the rim of whatever is on screen rather than at a fixed
+ * distance that a small body never reaches.
+ */
+export const BAND_GLSL = `
+uniform float uBands[${BAND_COUNT}];
+// Where each band sits between the speakers, -1..+1, matched index for index
+// with uBands. Written from AudioEngine.bandPan; all zeros for mono material,
+// for a silent band, and whenever the side tap is missing.
+uniform float uBandPan[${BAND_COUNT}];
+uniform float uBandDepth, uBandR;
+uniform int   uBandMode;
+float bandAtU(float u){
+  float x = clamp(u, 0., 1.) * float(${BAND_COUNT} - 1);
+  int i = int(floor(x));
+  int j = min(i + 1, ${BAND_COUNT} - 1);
+  // ── Stereo, applied HERE and nowhere else ─────────────────────────────────
+  // Every band term in every program goes through this one lookup — the
+  // character path, the radius rule, the editor template's bandAtRadius — so
+  // putting the stereo tilt inside it is what makes "the left of the body
+  // answers the left of the mix" true everywhere at once, with no call site
+  // changed and no guard loosened to let a new factor through.
+  //
+  // It reads \`position\` directly rather than taking the coordinate as an
+  // argument: the attribute is in scope in every vertex program, and it is the
+  // UNDISPLACED body, so the side a vertex is on cannot drift while the surface
+  // moves. The clamp makes the weighting a smooth ramp across the body instead
+  // of a sign, which would draw a seam straight down the middle at x = 0.
+  //
+  // At pan 0 the factor is exactly 1.0 and this returns precisely the mix it
+  // always did — mono material, a silent band and a browser without a channel
+  // splitter are all bit-identical to before the stereo tap existed.
+  float lvl = mix(uBands[i], uBands[j], fract(x));
+  float pan = mix(uBandPan[i], uBandPan[j], fract(x));
+  return lvl * (1. + ${BAND_PAN_TILT.toFixed(2)} * pan * clamp(position.x / max(uBandR, 1e-3), -1., 1.));
+}
+float bandAtRadius(float r){
+  return bandAtU(r / max(uBandR, 1e-3));
+}`;
 
 // ── Vertex shader — 38 modes ──────────────────────────────────────────────────
 // Transition uniforms added:
@@ -56,15 +112,61 @@ uniform float uMorphProgress,uModeBlend;
 uniform int   uVHField;
 attribute float aBaseY;
 attribute float aField;
+// ── The band's own contribution, per vertex ─────────────────────────────────
+// PTS draws the surface as points, and a point can do two things a triangle
+// cannot: change size, and leave the sheet. Both want the BAND's displacement
+// on its own — not the whole displacement, which is mostly the formula, and not
+// the band level, which knows nothing about where this vertex listens.
+//
+// In GPU mode the vertex program already has it: f - fBase is exactly the band
+// term, for free, and exactly 0.0 when the layer is off. In CPU mode the
+// displacement is baked into the position attribute before any shader runs, so
+// the writers hand it over here instead. Zero-filled by attachBaseY, so a
+// geometry that predates the layer reads 0 and the points stay a plain cloud.
+attribute float aBand;
+// ── The body's own share of the band coordinate ─────────────────────────────
+// Everything the shader can measure by itself is the FORMULA: bandCoordOfMode
+// samples computeMode around pos.xz and knows nothing about the shape those
+// samples are being drawn on. A vertex shader cannot see its neighbours, so a
+// curvature it computed itself is not available at any price — the value is
+// measured once on the CPU in MathVisualizer._capturePristine and uploaded,
+// exactly as aBaseY is, and exactly the same array is handed to the CPU map.
+// In [-1, 1]; 0 means this body has no curvature texture to spend, which is the
+// honest answer for a plane and for every flat-shaded polyhedron.
+attribute float aBodyK;
+// 1 while the points proxy is the thing being drawn, 0 otherwise — set beside
+// uPointSize in setVizModeGPU, for the same reason and with the same lifetime.
+// It cannot be inferred inside the shader: uPtStyle is 0 both outside PTS and
+// for the plain-square style, and the proxy shares this whole uniform block
+// with the mesh and with any imported model.
+// (No backticks in this file's GLSL comments — the shader sources are template
+// literals, and one closed VS in the middle of a sentence.)
+uniform float uPtBand;
+// WHICH band this point listens to, 0…1, or -1 where the layer is off. Written
+// here and read by the fragment shader, which shifts the palette parameter by
+// it — see the tint note in FS. The CPU path hands it over in aBandU, because
+// by the time this program runs its displacement is already baked into the
+// position; the GPU path has the coordinate in hand and passes it straight out.
+attribute float aBandU;
+varying float vBandU;
 varying float vH;
 // SURF lighting: pass post-displacement world position and view direction to FS
 // so the fragment shader can reconstruct surface normals via screen-space
 // derivatives. Both varyings are written unconditionally — they're cheap, and
 // the FS only consumes them when uLighting==1.
 varying vec3  vWorldPos;
+${BAND_GLSL}
 varying vec3  vViewDir;
 
 // ── Helper functions ──────────────────────────────────────────────────────────
+// A deterministic per-vertex value in [-1, 1], for the PTS scatter. Signed and
+// roughly symmetric, so a region sprays both ways and does not simply inflate;
+// deterministic, so the grain belongs to the vertex rather than shimmering. It
+// is fed the ORIGINAL position, never the displaced one, for that second reason.
+// The usual sin/fract hash: its statistics are poor and its behaviour differs
+// between drivers, and neither matters for a value whose only job is to be
+// different from its neighbour's.
+float ptSpray(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453)*2.-1.;}
 float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;s+=cos(a*-6.)*exp(-r*.28*36.);s+=cos(a*-5.)*exp(-r*.28*25.);s+=cos(a*-4.)*exp(-r*.28*16.);s+=cos(a*-3.)*exp(-r*.28*9.);s+=cos(a*-2.)*exp(-r*.28*4.);s+=cos(a*-1.)*exp(-r*.28*1.);s+=1.;s+=cos(a*1.)*exp(-r*.28*1.);s+=cos(a*2.)*exp(-r*.28*4.);s+=cos(a*3.)*exp(-r*.28*9.);s+=cos(a*4.)*exp(-r*.28*16.);s+=cos(a*5.)*exp(-r*.28*25.);s+=cos(a*6.)*exp(-r*.28*36.);return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
@@ -217,6 +319,149 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
   return y;
 }
 
+// ── Where the music lands, decided by the MODE rather than by the radius ─────
+// The CPU path builds this as a map, once per formula change, because it can
+// sample the field on a lattice (src/band-map.js). A shader has no neighbours
+// and no memory — but it does have the field itself, so it can ask for it four
+// more times and measure the texture directly. Measured on this device's GPU
+// (PowerVR through Vulkan): four extra computeMode calls cost 60 -> 59 fps on
+// the plane and 55 -> 53 on sierpinski-tetra's 196 608 vertices. The vertex
+// program is not what limits this scene, so the honest answer was to spend it.
+//
+// TWO THINGS ARE HELD FIXED, and both matter:
+//   * the audio arguments are pinned at 0.5 rather than the live bass/treble.
+//     computeMode READS them, so a live reading would let the sound choose
+//     which band it is modulated by — the layout would breathe with the music
+//     instead of belonging to the formula.
+//   * the time is pinned at BAND_T. The layout is a property of the shape a
+//     mode draws, not of the frame it is on; a live clock would make the bands
+//     crawl across the surface while the music plays through them.
+// ── HOW a band moves a point, not only how far ──────────────────────────────
+// Until this, all 24 bands did one thing: push the vertex out along the field.
+// Loudness changed, the gesture did not — so a fractal and a smooth bell
+// answered the same music the same way, which is the second half of "no magic".
+//
+// The gesture now follows the same coordinate the layout does. u is 0 where the
+// formula is broad and 1 where it is finely corrugated, so:
+//
+//   u ~ 0    BREATHE   the whole region rises and falls together, one slow mass
+//   u ~ 0.5  RIPPLE    a travelling wave runs through it, phase set by u so
+//                      neighbouring bands do not move in lockstep
+//   u ~ 1    SHATTER   turbulence, signed and zero-mean: the surface boils in
+//                      place instead of swelling
+//
+// The three are crossfaded, never switched, because a hard boundary between two
+// gestures reads as a seam on the mesh — the same reason the band lookup
+// interpolates rather than steps.
+//
+// Zero-mean matters for the last two: a ripple that only pushed outward would
+// just be a lumpier breathe. Signed motion is what makes fine detail read as
+// vibration rather than as swelling.
+// TIME ENTERS ONLY AS A PHASE, and that is a cost decision as much as a visual
+// one. Sliding the turbulence through space (turb(xz*k + T)) reads much the same
+// on screen but forces the noise to be recomputed every frame; as a phase, the
+// noise depends on position alone, so the CPU path can precompute it once per
+// map and multiply. Measured there: 25.2 ms per frame on 196 608 vertices with
+// the noise live, 4.6 ms with it cached — the difference between unusable and
+// free. The shader recomputes it regardless (it is four harmonics and the GPU
+// does not care), but both paths must evaluate the SAME expression.
+float bandMotion(float amp, float u, vec2 xz, float T, float rr){
+  float breathe = amp;
+  float ripple  = amp * sin(rr * 9.0 - T * 3.0 + u * 12.0);
+  float toShatter = smoothstep(0.60, 0.92, u);
+  // The noise is evaluated only where it has any weight. Most of a body sits
+  // below u = 0.6, and turb() is four harmonics — skipping it there took the
+  // heaviest body in the catalogue from 40 fps back to 50. The branch is not
+  // coherent across vertices, which normally makes a GPU branch worthless, but
+  // four transcendental pairs are worth more than the divergence costs here.
+  float shatter = 0.0;
+  if (toShatter > 0.0) {
+    // turb() runs roughly 0..1.8 with a mean near 0.9; centring it is what makes
+    // this shake rather than inflate.
+    shatter = amp * (turb(xz * 3.5) - 0.9) * 1.7 * sin(T * 2.0 + u * 10.0);
+  }
+  return mix(mix(breathe, ripple, smoothstep(0.25, 0.60, u)), shatter, toShatter);
+}
+
+float bandCoordOfMode(int mode, vec2 xz, float a, float wi){
+  // 0.03 rather than 0.05. A centred difference answers a sinusoid with
+  // sin(kE)/E, which NULLS at kE = n*pi: at E = 0.05 the first null sits at
+  // k = 63, and several modes reach that inside the Wave Intensity range (mode
+  // 35's fourth harmonic is k = 32*wi, so wi ~ 1.96 makes its finest detail
+  // read as perfectly smooth — the character inverted). At 0.03 the first null
+  // moves to k = 105, past what the catalogue reaches at the top of the slider.
+  // It cannot be removed, only pushed out: that is the honest limit of a
+  // two-point estimate, and it is why the coarse step is a RATIO partner rather
+  // than an independent measurement. Found by an external review.
+  const float E = 0.03;          // fine finite-difference step, world units
+  const float C = 4.0;           // the coarse step is C times the fine one
+  const float BAND_T = 7.0;      // the same reference instant the CPU map uses
+  // Two slopes, at two scales, with the audio pinned at 0.5 and the clock held.
+  float fx1 = computeMode(mode, xz + vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
+  float fx0 = computeMode(mode, xz - vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
+  float fz1 = computeMode(mode, xz + vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
+  float fz0 = computeMode(mode, xz - vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
+  float cx1 = computeMode(mode, xz + vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
+  float cx0 = computeMode(mode, xz - vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
+  float cz1 = computeMode(mode, xz + vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
+  float cz0 = computeMode(mode, xz - vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
+  float gFine   = length(vec2(fx1 - fx0, fz1 - fz0)) / (2.*E);
+  float gCoarse = length(vec2(cx1 - cx0, cz1 - cz0)) / (2.*C*E);
+  // The RATIO of the two, which is what makes this a frequency rather than a
+  // height: amplitude cancels, so a mode spanning 0.2 units and one spanning 5
+  // are compared on the same scale. A smooth field measures the same slope at
+  // both steps and lands mid-scale; a finely corrugated one has far more slope
+  // at the fine step and lands high; a field with structure only at the coarse
+  // step lands low.
+  //
+  // Bounded BY CONSTRUCTION, and that is not decoration — the first version of
+  // this function used lap/grad with hand-picked constants, and where the slope
+  // vanished it ran away, put the whole surface on band 23 and drove the body
+  // out of frame. Nothing here can divide by zero or exceed the clamp.
+  float ratio = (gFine + 1e-4) / (gCoarse + 1e-4);
+  return clamp(0.5 + 0.5 * log(ratio) / log(3.0), 0., 1.);
+}
+
+/**
+ * The whole band term for the character path: coordinate, amplitude, gesture.
+ *
+ * One function so the coordinate is computed ONCE — it costs eight computeMode
+ * calls — and so the caller can put the whole thing inside a branch. When this
+ * was written the layer shipped OFF, and the first version evaluated the
+ * coordinate before the depth test, so every user paid for eight extra formula
+ * evaluations per vertex to render a feature they had not switched on. Found by
+ * an external review.
+ *
+ * The layer ships ON now (0.30), which changes who pays but not the argument:
+ * the branch is what keeps the cost proportional to the feature being used, and
+ * it is the difference between the slider at 0 costing nothing and costing eight
+ * computeMode calls per vertex. Dragging the layer off has to give the frame
+ * time back, or "off" is only off on screen.
+ *
+ * The coordinate is blended across a mode crossfade, the same way the surface
+ * is. Without it the layout stayed on the outgoing mode for the whole fade and
+ * then snapped to the incoming one in a single frame; the second coordinate is
+ * only computed while a fade is actually running, which is under a second.
+ *
+ * THE BODY'S SHIFT, and why it is a fifth argument rather than something read
+ * off a uniform: it is per VERTEX. bodyK is aBodyK at the call site, measured on
+ * the CPU because a vertex program cannot see its neighbours, and the shift is
+ * bounded at BODY_SHIFT_BANDS of 24 — 4/23 of the coordinate — so the body
+ * redistributes the layout without ever taking it over. src/band-map.js's
+ * applyBodyShift is this same law on the CPU side, and the two are mirrored by
+ * name so a change to one names the other.
+ */
+float bandTermOfMode(vec2 xz, float a, float wi, float T, float bodyK, out float uOut){
+  float u = bandCoordOfMode(uMode, xz, a, wi);
+  if (uModeBlend > 0.) u = mix(u, bandCoordOfMode(uModeNext, xz, a, wi), uModeBlend);
+  u = clamp(u + (4.0 / 23.0) * bodyK, 0., 1.);
+  // Handed back rather than recomputed by the caller: the coordinate costs
+  // eight computeMode calls, and the colour tint needs exactly the one the
+  // displacement used. Two evaluations would be two layouts on one body.
+  uOut = u;
+  return bandMotion(bandAtU(u), u, xz, T, length(xz));
+}
+
 void main(){
   vec3 pos=position;
   // bt is pinned to 0 by decision, not by omission — every +bt*.5 term in
@@ -230,6 +475,14 @@ void main(){
   // seizure risk back to the out-of-the-box visualisation.
   float b=clamp(uBass,0.,1.2),t=clamp(uTreble,0.,1.2),m=clamp(uMid,0.,1.),bt=0./*intentional, see note above*/;
   float a=uAmp,wi=uWI,T=uTime;
+  // The band's own displacement at this vertex, before uMorphProgress. Declared
+  // out here because both branches have it and the tail needs it; neither branch
+  // computes anything extra to fill it. Nothing but the PTS block below reads
+  // it, so on triangles this is a dead float the compiler removes.
+  float bandHere=0.;
+  // -1 is "no layer here", and it has to be distinguishable from band 0, which
+  // is a real answer. Both branches overwrite it when there is one.
+  float bandU=-1.;
 
   if(uMathMode==0){
     // GPU mode: compute both current and next, blend between them
@@ -264,7 +517,66 @@ void main(){
     // float32 vertices differ across progress 0/.25/.5/.75/1. That total is
     // the desktop plane's 25921 vertices and circle's 162, five progress
     // values each: 129605 + 810. Mobile is 33215 the same way.
-    float f = mix(y, yNxt, uModeBlend);
+    // ── The spectrum, laid across the radius ─────────────────────────────────
+    // Everything above answers to three scalars — uBass, uMid, uTreble — and
+    // each is the same number at every vertex, so the body can only breathe in
+    // and out as a whole. This adds what that arrangement cannot express: WHERE
+    // in the spectrum a given point listens. Distance from the axis picks a
+    // Bark band, so the middle answers to the kick and the rim to the cymbals,
+    // and a chord becomes a standing pattern of rings instead of one swell.
+    //
+    // Added INTO the field rather than displacing the vertex separately, which
+    // is what the first draft did. Three things follow from being part of the
+    // field and none of them from being beside it: the depth cap that keeps a
+    // surface from folding through itself applies to these rings too, the
+    // colour ramp sees them (vH is the field), and the CPU path in
+    // applyHeightField can do the identical thing to the identical quantity
+    // rather than approximate it.
+    //
+    // The branch, not a multiply, is what makes "off" bit-exact: adding 0.0
+    // would flip a -0.0 field to +0.0, and tests/colour-ramp.test.js compares
+    // float32 words. Guarded, the catalogue is untouched until this is turned on.
+    // The whole ADDITION is conditional, not just the band value. An external
+    // review caught the first version claiming more than it did: it guarded the
+    // lookup but still evaluated mix(...) + bandY unconditionally, and adding
+    // +0.0 turns a -0.0 field into +0.0 — precisely the case the guard was
+    // written for, left in place by it. With the ternary around the sum, depth 0
+    // yields the identical expression this line carried before the band layer
+    // existed, so "off is bit-exact" is true rather than nearly true.
+    //
+    // Still one expression rather than a conditional re-assignment of f:
+    // tests/helpers/glsl.js resolves a local to its DEFINITION, and a local that
+    // is defined once and then amended cannot be resolved at all — the guard
+    // would stop being able to say what this program draws.
+    float fBase = mix(y, yNxt, uModeBlend);
+    // Everything the layer costs now sits INSIDE the depth test, so a scene with
+    // the slider at zero pays nothing at all. With the layout by radius the
+    // gesture stays the plain push it always was: the radius says nothing about
+    // the formula, so there is nothing to give a gesture to.
+    //
+    // ── And it must STAY that way, which is less obvious ─────────────────────
+    // "Low bands should always breathe and high ones always shatter, whatever
+    // the layout" is a reasonable thing to want, and under the character map it
+    // is already true — the gesture is chosen by the same coordinate that picks
+    // the band, so they cannot disagree. The only place it is not true is here,
+    // the radius rule, and giving the gesture to this arm would break a promise
+    // the code makes elsewhere: presets older than format v4 are migrated to
+    // bandCharacter = false precisely so they render what they were captured
+    // under (src/ui/presets.js). Motion they never had is not what they were.
+    float f = uBandDepth > 0.
+      ? fBase + (uBandMode == 1 ? bandTermOfMode(pos.xz, a, wi, T, aBodyK, bandU)
+                                : bandAtU(length(pos.xz) / max(uBandR, 1e-3))) * uBandDepth
+      : fBase;
+    // f minus the field it was built from IS the band term — the difference of
+    // two locals, not a second evaluation, so the eight computeMode calls stay
+    // bought once and stay inside the depth guard. At uBandDepth 0 the ternary
+    // above returns fBase itself and this is exactly 0.0, which is what keeps
+    // "off" costing nothing here too.
+    bandHere = f - fBase;
+    // Under the radius rule bandTermOfMode never runs, so the coordinate it
+    // would have handed back has to be taken here instead. One length() against
+    // the eight computeMode calls the other branch already paid for.
+    if (uBandDepth > 0. && uBandMode != 1) bandU = length(pos.xz) / max(uBandR, 1e-3);
     pos.y = (pos.y + f) * uMorphProgress;
     // The field alone, scaled the same way — bit-for-bit what vH carried
     // before round 10, when the height WAS the field: c629b53 stored
@@ -315,10 +627,53 @@ void main(){
     vH = (uVHField == 2) ? aField * uMorphProgress
        : (uVHField == 1) ? (pos.y - aBaseY) * uMorphProgress
        : pos.y * uMorphProgress;
+    // The CPU writers baked the band into the position before this program ran,
+    // so they hand the term over in its own attribute rather than leaving it to
+    // be recovered. aBand is 0 on a geometry that never carried the layer.
+    bandHere = aBand;
+    bandU = aBandU;
     pos.y = pos.y * uMorphProgress;
   }
 
-  gl_PointSize=uPointSize;
+  // ── PTS: the band scatters its own cloud ────────────────────────────────────
+  // In SURF and WIRE the layer can only push the sheet in and out, because the
+  // sheet has to stay a sheet. Points are under no such obligation, and the mode
+  // exists for exactly that: a loud band can throw its region off the surface and
+  // swell the grains it is made of, so the body reads as a cloud that the music
+  // stirs rather than as a surface with ripples on it.
+  //
+  // Two channels, and they are deliberately different in kind:
+  //   * ALONG THE NORMAL, signed and per-vertex random. The randomness is what
+  //     makes it a cloud instead of a thicker sheet — a uniform push along the
+  //     normal is just the displacement the surface already has. Frozen to the
+  //     vertex's ORIGINAL position, so the grain does not crawl while the body
+  //     moves under it.
+  //   * IN SIZE, unsigned. A grain that shrank on the negative half of a ripple
+  //     would blink at the ripple's own rate; abs() makes both halves of the
+  //     gesture read as energy, which is what a size cue means.
+  //
+  // uPtBand is 0 everywhere except the points proxy, so both terms vanish for
+  // triangles, for imported models, and for the mesh the proxy is standing in
+  // for. bandHere is 0 whenever uBandDepth is, so dragging Spectrum Rings to
+  // zero returns PTS to the plain cloud it has always drawn — the point-size
+  // expression collapses to uPointSize exactly, not approximately.
+  vBandU = bandU;
+  float ptB = uPtBand * bandHere * uMorphProgress;
+  // Inside the branch, not multiplied to nothing, and for two separate reasons
+  // an external review named together:
+  //   * COST. ptSpray is a sin and a fract, and outside PTS — which is most of
+  //     the time — it was being paid by every vertex to be multiplied by zero.
+  //     That is the same shape as the defect fc0c32c fixed one level up, where
+  //     the band coordinate was computed before the depth test.
+  //   * BITS. Adding 0.0 to pos is not a no-op: it turns a -0.0 component
+  //     into +0.0.
+  //     The contract in this file is that the layer OFF leaves the picture
+  //     bit-identical, and an unconditional addition breaks it for every vertex
+  //     of every mode, not only in PTS.
+  // ptB is exactly 0 whenever uPtBand or uBandDepth is, so this is off in SURF,
+  // in WIRE, under an imported model, and at depth zero.
+  if (ptB != 0.) pos += normal * (ptSpray(position) * ptB * 0.8);
+  gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
   // Compute world-space position AFTER all displacement so derived normals are correct
   vec4 _wp = modelMatrix * vec4(pos, 1.0);
   vWorldPos = _wp.xyz;
@@ -672,6 +1027,7 @@ ${_MATERIAL_UNIFORMS}
 // Shared with SE_FS_TEMPLATE via _POINT_UNIFORMS.
 ${_POINT_UNIFORMS}
 varying float vH;
+varying float vBandU;
 varying vec3  vWorldPos;
 varying vec3  vViewDir;
 
@@ -681,6 +1037,44 @@ ${_STUDIO_ENV}
 // ── Main ─────────────────────────────────────────────────────────────────────
 void main(){
   float t = clamp((vH+.8)*.6,.03,.97);
+  // ── The spectrum as a colour map ──────────────────────────────────────────
+  // Until this, the bands reached the palette only through vH: they moved the
+  // surface, the surface is the ramp's parameter, so a loud band changed the
+  // COLOUR of its zone but said nothing about WHICH band it was. Two zones
+  // listening to a kick and to a hi-hat, equally loud, were the same colour.
+  //
+  // vBandU is that identity, and shifting t by it makes the layout readable as
+  // a colour map: the low end sits at one place on the ramp, the top at
+  // another, and the picture says where in the spectrum you are looking.
+  //
+  // ── Why this is a STATIC offset, and not driven by loudness ──────────────
+  // Because the loudness version is the flicker this app damps everywhere else.
+  // A band's level can move 0.24 of its range in one 60 Hz frame (BAND_TAU is
+  // 60 ms), the layer reaches the ramp, and coherent brightness modulation at
+  // hi-hat rate is the same class of risk that keeps uBeat pinned to 0 in the
+  // vertex program and the starfield fade damped. vBandU does not move with the
+  // MUSIC at all: the character map is frozen at a reference time and the GPU
+  // coordinate is computed with the audio pinned at 0.5, so nothing the track
+  // does changes this term.
+  //
+  // It is not literally constant, and the earlier version of this note said it
+  // was. During a GPU mode crossfade bandTermOfMode blends the two modes'
+  // coordinates and hands the blended one back, so the tint travels across the
+  // palette while the fade runs. That is a one-way transition of under a
+  // second, not a periodic modulation, and it is the same movement the surface
+  // itself is making — but "adds no temporal modulation whatsoever" was false
+  // and an external review said so. What is true, and is what the
+  // photosensitivity argument needs, is that nothing here is driven by an
+  // ONSET or by a band level.
+  //
+  // Bounded and re-clamped into the SAME [.03, .97] window, so every pixel is
+  // still a colour the chosen palette declares. That is what keeps the NIGHT
+  // contract (max channel 0.55, Y 0.28 at every stop) true without restating
+  // it: nothing here can leave the ramp, only move along it.
+  //
+  // -1 is the "no layer" value written by the vertex program, and the step()
+  // is what keeps depth 0 bit-identical rather than nearly so.
+  t = clamp(t + step(0., vBandU) * .30 * (vBandU - .5), .03, .97);
   vec3 c    = getColor(uCM,    t);
   vec3 cNxt = getColor(uCMNext, t);
   // uCMBlend 0→1 crossfades between the two color schemes
@@ -752,9 +1146,24 @@ uniform float uMorphProgress,uModeBlend;
 uniform int uVHField;
 attribute float aBaseY;
 attribute float aField;
+// aBand / uPtBand / ptSpray — the PTS cloud, mirrored from VS term for term. An
+// editor shader is installed on the points proxy too, so leaving them out here
+// would make Spectrum Rings scatter the grains with the built-in program and do
+// nothing with a custom one — one control, two answers, depending on a mode the
+// user was not thinking about. That exact defect has already been found once in
+// this template, for this same layer.
+attribute float aBand;
+uniform float uPtBand;
+// Mirrored from VS: which band this point listens to, for the fragment
+// template's colour tint. The editor's band path is the RADIUS rule (it never
+// consults uBandMode), so that is the coordinate it reports.
+attribute float aBandU;
+varying float vBandU;
 varying float vH;
 varying vec3  vWorldPos;
+${BAND_GLSL}
 varying vec3  vViewDir;
+float ptSpray(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453)*2.-1.;}
 float turb(vec2 p){float t=0.;for(float i=1.;i<5.;i++)t+=abs(sin(p.x*i)*cos(p.y*i))/i;return t;}
 float ramu(vec2 p){float r=length(p),a=atan(p.y,p.x),s=0.;for(int n=-6;n<=6;n++){float fn=float(n);s+=cos(a*fn)*exp(-r*.28*fn*fn);}return tanh(s*.7);}
 float h_sech(float x){float e=exp(-abs(x));return 2.*e/(1.+e*e);}
@@ -807,11 +1216,46 @@ void main(){vec3 pos=position;
   // branch that is the body's own y, which is bit-for-bit what vH was here
   // before round 10, when the template stored y*uMorphProgress as the height
   // and copied that into vH.
-  if(uMathMode==0){pos.y=(pos.y+y)*uMorphProgress;vH=y*uMorphProgress;}else{vH=(uVHField==2)?aField*uMorphProgress:(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
+  // The band layer reaches a user shader too, mirroring the built-in term for
+  // term. It was missing here at first, and the effect was worse than "a
+  // feature does not apply": with a custom shader live, Spectrum Rings did
+  // nothing in GPU mode and the slider looked broken, while the SAME slider
+  // kept working in CPU/formula mode — where applyHeightField bakes the layer
+  // into the position attribute before any shader runs. One control, two
+  // answers, depending on a mode the user was not thinking about. Found by an
+  // external review.
+  //
+  // The ternary wraps the whole sum, so at depth 0 this is bit-identical to the
+  // plain y it carried before, and vH gets the same value the geometry does.
+  // bandHere is the band's own share of the displacement, recovered as fB - y
+  // rather than evaluated a second time, exactly as the built-in VS recovers it
+  // as f - fBase. At depth 0 the ternary returns y and this is exactly 0.
+  //
+  // ── bandU differs between the two branches, and that is not an oversight ──
+  // GPU branch: the RADIUS, because this template's band term is
+  // bandAtRadius — a user shader has always been outside the character path,
+  // deliberately and pinned by tests/audio-band-shape.test.js.
+  // CPU branch: aBandU, the character map, because in CPU mode the displacement
+  // was baked by applyHeightField, which DOES use the map, whatever vertex
+  // program is installed afterwards.
+  // So each branch reports the layout its own geometry actually has, and the
+  // colour agrees with the shape in both. What the user sees is that switching
+  // math mode under a custom shader changes the layout — which it already did
+  // before any of this, in the geometry alone; the tint now makes that visible
+  // rather than introducing it. An external review flagged the difference; it
+  // is real, it is older than the tint, and the alternative (colouring by rings
+  // over a body the CPU laid out by the formula) would be worse.
+  float bandHere=0.;
+  float bandU=-1.;
+  if(uMathMode==0){float fB=uBandDepth>0.?y+bandAtRadius(length(pos.xz))*uBandDepth:y;bandHere=fB-y;if(uBandDepth>0.)bandU=length(pos.xz)/max(uBandR,1e-3);pos.y=(pos.y+fB)*uMorphProgress;vH=fB*uMorphProgress;}else{bandHere=aBand;bandU=aBandU;vH=(uVHField==2)?aField*uMorphProgress:(uVHField==1)?(pos.y-aBaseY)*uMorphProgress:pos.y*uMorphProgress;pos.y=pos.y*uMorphProgress;}
+  vBandU = bandU;
   // An editor shader is now installed on the POINTS proxy too, and a vertex
   // program that leaves gl_PointSize unwritten draws points of undefined size.
-  // Mirrors the built-in VS; harmless in WIRE/SURF, which ignore it.
-  gl_PointSize=uPointSize;
+  // Mirrors the built-in VS, PTS cloud included; harmless in WIRE/SURF, which
+  // ignore gl_PointSize, and inert everywhere uPtBand is 0.
+  float ptB = uPtBand * bandHere * uMorphProgress;
+  if (ptB != 0.) pos += normal * (ptSpray(position) * ptB * 0.8);
+  gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
   vec4 _wp = modelMatrix * vec4(pos, 1.0);
   vWorldPos = _wp.xyz;
   vViewDir  = cameraPosition - _wp.xyz;
@@ -835,6 +1279,11 @@ uniform float uTime,uBass,uMid,uTreble,uBeat;
 ${_MATERIAL_UNIFORMS}
 ${_POINT_UNIFORMS}
 varying float vH;
+// Mirrored from FS: which band this point listens to, and the same shift of the
+// palette parameter by it. A user's fragment body still starts from the same t
+// the built-in ramp produces, so the spectrum reads as a colour map with a
+// custom shader live as well. Static per vertex, so it adds no flicker.
+varying float vBandU;
 varying vec3  vWorldPos;
 varying vec3  vViewDir;
 ${_COLOR_FUNS}
@@ -845,7 +1294,9 @@ ${_STUDIO_ENV}
 // the vertex template does it — this body is user code that gets saved into
 // presets, so injecting names into its scope would collide with anyone who
 // declared their own.
-void main(){float t=clamp((vH+.8)*.6,.03,.97);vec3 c=vec3(0.0);
+void main(){float t=clamp((vH+.8)*.6,.03,.97);
+  t = clamp(t + step(0., vBandU) * .30 * (vBandU - .5), .03, .97);
+  vec3 c=vec3(0.0);
   ${body}
   vec3 color = c;
   ${_MATERIAL_BLOCK}
@@ -977,6 +1428,13 @@ export class ShaderEditor {
     // of three's two paths for it and leaves the generic location holding
     // whatever the last program put there. See attachBaseY in render.js.
     tMat.defaultAttributeValues.aBaseY = [0];
+    // aField and aBand are on the same footing and were missing here — the
+    // template declares and reads all three, and the probe geometry carries
+    // none of them. Left as it was, a compile probe could read whatever the
+    // previous program left in those generic slots.
+    tMat.defaultAttributeValues.aField = [0];
+    tMat.defaultAttributeValues.aBand  = [0];
+    tMat.defaultAttributeValues.aBandU = [-1];
     // Probe in a scene of its own rather than adding the test mesh to the live
     // one: compile()/render() would then walk every material in the scene —
     // seconds of work on a software GL — and the probe mesh could show up in
@@ -1265,6 +1723,14 @@ export class ModelLoader {
       // value there. Survives the editor's swap: applyShaderSource mutates
       // .vertexShader in place and does not rebuild the material.
       mat.defaultAttributeValues.aBaseY = [0];
+      // Same argument, same two other attributes an imported geometry does not
+      // carry. aBand additionally has uPtBand forced to 0 while a model is on
+      // stage, so it is belt and braces — but the belt is the one that broke
+      // before, and a model is exactly the geometry attachBaseY never sees.
+      mat.defaultAttributeValues.aField = [0];
+      mat.defaultAttributeValues.aBand  = [0];
+      mat.defaultAttributeValues.aBodyK = [0];
+      mat.defaultAttributeValues.aBandU = [-1];
       child.material = mat;
       this._meshes.push(child);
     });

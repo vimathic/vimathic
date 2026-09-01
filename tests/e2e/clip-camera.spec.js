@@ -163,6 +163,22 @@ test.describe('Clip player — camera ownership', () => {
     // so the readings below cannot be moved by the player — but the release and
     // the assertions after it are still easier to read in a long step.
     const HOLD = 8000;
+    // This test owns its own budget, and that is not a workaround — it is the
+    // arithmetic the 8s hold above implies. Two of the waits below are written
+    // as `3 * stepMs(HOLD)`, so the test asks for up to 57.6s of waiting before
+    // anything slow has happened, while playwright.config.js grants
+    // `CI ? 150_000 : 30_000`. Locally it could therefore NEVER pass: the outer
+    // timeout fired mid-wait and playwright reported it as the assertion that
+    // happened to be open — "AUTO-ROTATE: OFF after 8 polls", which reads like a
+    // product failure and was carried for two waves as an inherited red.
+    // Measured after this line was added: the same test, unchanged otherwise,
+    // passes locally in 48.9s, and the camera does turn over — the DIAG trace
+    // showed `autoRot -> true` on cam-b's step exactly as the product intends.
+    //
+    // Math.max, not a constant: on CI the grant is 150s and a slow runner needs
+    // it (measured 1.40x across two runs of PR #44), so this must never LOWER a
+    // budget, only raise one that is too small for the test's own waits.
+    test.setTimeout(Math.max(test.info().timeout, 6 * stepMs(HOLD) + 40_000));
     await boot(page, [preset('cam-a', 13, false, HOLD), preset('cam-b', 5, true, HOLD)]);
     await setCamMode(page, '0');
 

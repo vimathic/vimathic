@@ -1118,6 +1118,21 @@ export function bindControls(ui) {
   }, { passive: false }); // passive:false required to call preventDefault
 
   // ── Track name overlay ────────────────────────────────────────────────────
+  // ── Rings follow the formula ───────────────────────────────────────────
+  // The band layout switch. Unchecked is the original rule (concentric rings
+  // from the axis, the same under every figure); checked builds the layout from
+  // the formula's own local texture — see src/band-map.js. Kept next to the
+  // depth slider because the two are one control in the user's head.
+  const _bandChar = document.getElementById('band-character');
+  if (_bandChar) {
+    _bandChar.checked = ui.audio.bandCharacter !== false;
+    _bandChar.addEventListener('change', () => {
+      ui.audio.bandCharacter = _bandChar.checked;
+      // The map itself is not rebuilt here — it is rebuilt lazily, and the
+      // layer reads the flag every frame, so the switch is felt immediately.
+    });
+  }
+
   const _overlayChk  = document.getElementById('show-track-name');
   const _overlayEl   = document.getElementById('track-overlay');
   const _overlayName = document.getElementById('track-overlay-name');

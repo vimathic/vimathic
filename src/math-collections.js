@@ -5239,10 +5239,16 @@ function sampleHeightField(heightField, grid, extent, step, x, z) {
  *                                  a caller that passes neither cannot mismatch
  *                                  them; a caller that passes one must pass both.
  */
-export function applyHeightField(geometry, heightField, basePositions = null, extent = FIELD_EXTENT, baseNormals = null, maxDepth = Infinity) {
+export function applyHeightField(geometry, heightField, basePositions = null, extent = FIELD_EXTENT, baseNormals = null, maxDepth = Infinity, bandLayer = null) {
   const pos  = geometry.attributes.position;
   const n    = pos.count;
   const grid = Math.max(1, Math.floor(Math.sqrt(heightField.length)));
+  // The 24-band layer, when the user has turned it on. Read once here rather
+  // than per vertex, and left null-ish when off so the loop below is the same
+  // arithmetic it has always been — the CPU path has bit-exactness tests too.
+  // bandRingValue returns 0 for a null or switched-off layer, so the loop below
+  // needs no branch — and with the layer off the arithmetic is what it was
+  // before the layer existed.
   const step = grid > 1 ? (extent * 2) / (grid - 1) : 0;
   const base = (basePositions && basePositions.length === n * 3) ? basePositions : null;
   // FIX(r11): the field moves the vertex along its own normal when the caller
@@ -5277,6 +5283,14 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
   const norm = (baseNormals && baseNormals.length === n * 3) ? baseNormals : null;
   const fa   = geometry.attributes.aField;
   const field = (fa && fa.array && fa.array.length === n) ? fa : null;
+  // Same optional treatment as aField: a geometry from before this attribute
+  // existed, or a points proxy with its own buffers, simply does not get one.
+  const ba   = geometry.attributes.aBand;
+  const band = (ba && ba.array && ba.array.length === n) ? ba : null;
+  // WHICH band, as opposed to how loud it is — the colour tint's channel. Same
+  // optional treatment for the same reason.
+  const ua   = geometry.attributes.aBandU;
+  const bandU = (ua && ua.array && ua.array.length === n) ? ua : null;
 
   for (let i = 0; i < n; i++) {
     // Sampled at the BASE coordinate, not the live one. With Y-only
@@ -5288,6 +5302,33 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
     const by = base ? base[i * 3 + 1] : 0;
     const bz = base ? base[i * 3 + 2] : pos.getZ(i);
     let h = sampleHeightField(heightField, grid, extent, step, bx, bz);
+    // The spectrum across the radius — the same quantity, the same lookup and
+    // the same interpolation as bandAtRadius() in src/shaders.js, so the CPU
+    // and GPU paths cannot drift into drawing two different pictures. Added to
+    // the field before the cap below, deliberately: these rings can fold a
+    // surface through itself exactly the way the formula can.
+    // `if (bv !== 0)`, not a plain `h += bv`. This line used to read
+    // `if (bandLayer) h += bandRingValue(...)`, and splitting the value out to
+    // put it in an attribute turned the guard into an unconditional addition.
+    // An external review called that a break of the "OFF is bit-exact" promise,
+    // on the same argument the vertex shader's ternary is written from: adding
+    // +0.0 to -0.0 gives +0.0, a different word.
+    //
+    // Measured before restoring the guard, because the argument and the reach
+    // are different questions: h comes out of sampleHeightField, whose own
+    // interpolation is `a + (b - a) * t`, and that addition has already turned
+    // any -0 into +0 before this line ever sees it. A field filled entirely
+    // with -0 arrives here as +0 — checked. So no picture was affected and no
+    // test could have been written that fires on the shipped path.
+    //
+    // The guard goes back anyway. It costs one comparison, it restores exactly
+    // the semantics the line had before the refactor, and the reasoning that
+    // says it is unreachable depends on an implementation detail of a different
+    // function — which is precisely the kind of dependency that stops being
+    // true without anyone noticing. The check is on the VALUE rather than on
+    // the layer, so it also covers a layer present at depth 0.
+    const bv = bandLayer ? bandRingValue(bandLayer, bx, bz, i) : 0;
+    if (bv !== 0) h += bv;
     // Capped by the caller's measure of how far this surface can travel before
     // it meets itself — the local medial radius, not the bounding box.
     if (norm && h < -maxDepth) h = -maxDepth;
@@ -5302,9 +5343,18 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
     // vertical; along a normal the same subtraction yields n_y·h, which is 0
     // wherever the surface stands up and negative underneath.
     if (field) field.array[i] = h;
+    // The band's share on its own, for the PTS cloud — the shader cannot
+    // recover it here the way it does in GPU mode, because by the time it runs
+    // the whole displacement is already inside the position attribute. Written
+    // BEFORE the cap deliberately: the cap is about the surface folding through
+    // itself, and a point that has left the surface is not folding anything.
+    if (band) band.array[i] = bv;
+    if (bandU) bandU.array[i] = bandCoordValue(bandLayer, bx, bz, i);
   }
   pos.needsUpdate = true;
   if (field) field.needsUpdate = true;
+  if (band) band.needsUpdate = true;
+  if (bandU) bandU.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 
@@ -5371,6 +5421,135 @@ export function generateVolumeFromFormula(fn, params = {}, gridSize = 90, extent
 }
 
 /**
+ * The 24-band ring value at a point, in world units — the one lookup all three
+ * CPU displacement paths share.
+ *
+ * Written once because it has to agree with bandAtRadius() in src/shaders.js
+ * term for term, and three copies of an agreement are three chances to break
+ * it. Interpolates between neighbouring bands rather than stepping: at 161
+ * segments a stepped lookup creases visibly at each of the 23 boundaries.
+ *
+ * @param {{bands: Float32Array, depth: number, radius: number}|null} layer
+ * @returns {number} 0 when the layer is off, so callers need no branch
+ */
+const bandSmoothstep = (a, b, x) => {
+  const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
+
+/**
+ * HOW a band moves a point, not only how far — the CPU half of bandMotion() in
+ * src/shaders.js, and the two must stay identical or the same formula gestures
+ * differently depending on which render mode the user is in.
+ *
+ * Breathe where the formula is broad, a travelling ripple where it has middling
+ * texture, zero-mean turbulence where it is finely corrugated. Crossfaded, never
+ * switched: a hard boundary between two gestures reads as a seam.
+ */
+function bandMotion(amp, u, rr, tb, t) {
+  const breathe = amp;
+  const ripple  = amp * Math.sin(rr * 9 - t * 3 + u * 12);
+  const shatter = amp * (tb - 0.9) * 1.7 * Math.sin(t * 2 + u * 10);
+  const toRipple  = bandSmoothstep(0.25, 0.60, u);
+  const toShatter = bandSmoothstep(0.60, 0.92, u);
+  const mid = breathe + (ripple - breathe) * toRipple;
+  return mid + (shatter - mid) * toShatter;
+}
+
+/**
+ * WHICH band a point listens to, 0…1, with no reference to how loud it is.
+ *
+ * Split out of bandRingValue rather than duplicated, because two callers now
+ * need it and they must not be allowed to disagree: the displacement (below)
+ * and the colour tint, which hands this to the fragment shader so that a zone's
+ * hue says which part of the spectrum it belongs to. Two spellings of "which
+ * band is this" would show up as a body coloured by one layout and moving by
+ * another, and nothing would throw.
+ *
+ * Returns -1 for a layer that is off or absent — the value the shader reads as
+ * "no tint", and distinguishable from band 0, which is a real answer.
+ */
+export function bandCoordValue(layer, x, z, vertexIndex) {
+  if (!layer || !layer.bands || !(layer.depth > 0) || layer.bands.length < 2) return -1;
+  const u = layer.u !== undefined && vertexIndex !== undefined && vertexIndex < layer.u.length
+    ? layer.u[vertexIndex]
+    : Math.min(1, Math.sqrt(x * x + z * z) / Math.max(layer.radius, 1e-3));
+  return Math.min(1, Math.max(0, u));
+}
+
+export function bandRingValue(layer, x, z, vertexIndex) {
+  if (!layer || !layer.bands || !(layer.depth > 0)) return 0;
+  const last = layer.bands.length - 1;
+  if (last < 1) return 0;
+  // The band coordinate comes from the CHARACTER MAP when there is one — a
+  // per-vertex ranking of how finely the formula is corrugated there, built
+  // once per formula/shape change in src/band-map.js. Without a map this is the
+  // radius rule, which is also what the map itself degrades to on a field with
+  // no structure to spend 24 bands on.
+  //
+  // Math.sqrt, not Math.hypot: hypot guards against overflow for arguments near
+  // 1e154, which these are not, and it measured 2.3 ms of the 3.6 ms this
+  // function cost on a 196k-vertex body — more than the whole band layer.
+  const u = layer.u !== undefined && vertexIndex !== undefined
+    ? layer.u[vertexIndex]
+    : Math.min(1, Math.sqrt(x * x + z * z) / Math.max(layer.radius, 1e-3));
+  const uc = Math.min(1, Math.max(0, u));
+  const t = uc * last;
+  const i0 = Math.floor(t), i1 = Math.min(i0 + 1, last), fr = t - i0;
+  const ampFlat = layer.bands[i0] + (layer.bands[i1] - layer.bands[i0]) * fr;
+  // The stereo tilt, term for term with bandAtU in src/shaders.js — the same
+  // interpolation of the same array, weighted by the same ramp across the body.
+  // Written out here rather than shared because the two live in two languages;
+  // tests/band-stereo.test.js parses the shader's factor and compares.
+  //
+  // Optional in the layer object: a stand that predates the side tap, or an
+  // engine whose splitter failed, hands over no pan and the factor is exactly
+  // 1.0 — which is what keeps a mono body bit-for-bit what it was.
+  // The tilt arrives IN the layer rather than as a constant of this file. This
+  // module has no imports at all — it is the formula catalogue, and a
+  // dependency edge from it to the audio engine would be backwards — but a
+  // second literal spelling of the same number is exactly the drift this
+  // codebase keeps finding. The layer object is already how every other shared
+  // quantity gets here (bands, depth, radius, the map), so the constant travels
+  // the same road, defined once in audio.js.
+  const pans = layer.pan, tilt = layer.panTilt;
+  const amp = (pans && tilt)
+    ? ampFlat * (1 + tilt * (pans[i0] + (pans[i1] - pans[i0]) * fr)
+                 * Math.max(-1, Math.min(1, x / Math.max(layer.radius, 1e-3))))
+    : ampFlat;
+  // The gesture rides the character map, so it appears exactly where the map
+  // does — under the radius rule there is nothing about the formula to give a
+  // gesture to, and the layer stays the plain push it always was.
+  // The gesture needs the two time-independent halves the map precomputed. If a
+  // caller has a map but no gesture data — an older layer object — the plain
+  // push is the honest fallback rather than a second, different gesture.
+  //
+  // The index is checked against the map's own length, not assumed to be in it.
+  // A points proxy can carry its OWN geometry with a different vertex count
+  // (the comment in MathVisualizer._tickCollapse says so), and it is served from
+  // a layer built out of the MESH's map — _bandLayer() is called once for the
+  // mesh and again for the proxy, so the two objects are distinct but the `u`
+  // inside both is sized from _pristinePositions either way. An index past the
+  // end therefore used to read undefined, turn the displacement into NaN, and
+  // take the vertex with it. Falling back to the radius here keeps such a proxy
+  // drawn rather than destroyed; the map it deserves is a separate question
+  // from not exploding.
+  // (The earlier wording said "the same layer object is handed to both". It is
+  // not — two calls, two objects — and the distinction matters to anyone who
+  // reads this looking for a place to give the proxy a map of its own.)
+  if (layer.u !== undefined && vertexIndex !== undefined && vertexIndex >= layer.u.length) {
+    const r = Math.min(1, Math.sqrt(x * x + z * z) / Math.max(layer.radius, 1e-3));
+    const tr = r * last;
+    const j0 = Math.floor(tr), j1 = Math.min(j0 + 1, last), jf = tr - j0;
+    return (layer.bands[j0] + (layer.bands[j1] - layer.bands[j0]) * jf) * layer.depth;
+  }
+  if (layer.u !== undefined && Number.isFinite(layer.time) && layer.r && layer.tb) {
+    return bandMotion(amp, uc, layer.r[vertexIndex], layer.tb[vertexIndex], layer.time) * layer.depth;
+  }
+  return amp * layer.depth;
+}
+
+/**
  * Apply a displacement field to a Three.js BufferGeometry.
  * Adds displacement to stored base positions — non-destructive.
  *
@@ -5378,17 +5557,40 @@ export function generateVolumeFromFormula(fn, params = {}, gridSize = 90, extent
  * @param {Float32Array}         df           — [dx0,dy0,dz0, ...] length = count*3
  * @param {Float32Array}         basePositions — [x0,y0,z0, ...] original positions
  */
-export function applyDisplacementField(geometry, df, basePositions) {
+export function applyDisplacementField(geometry, df, basePositions, bandLayer = null) {
   const pos = geometry.attributes.position;
+  const ba = geometry.attributes.aBand;
+  const band = (ba && ba.array && ba.array.length === pos.count) ? ba : null;
+  const ua = geometry.attributes.aBandU;
+  const bandU = (ua && ua.array && ua.array.length === pos.count) ? ua : null;
   for (let i = 0; i < pos.count; i++) {
+    const bx = basePositions[i * 3], bz = basePositions[i * 3 + 2];
+    // VOLUME has no surface normal to travel along — its field is already a free
+    // 3-vector — so the rings go outward from the axis, which is the direction
+    // the radius picked them by. Zero on the axis itself, where "outward" has no
+    // meaning.
+    const ring = bandRingValue(bandLayer, bx, bz, i);
+    let rx = 0, rz = 0;
+    if (ring !== 0) {
+      const r = Math.hypot(bx, bz);
+      if (r > 1e-6) { rx = (bx / r) * ring; rz = (bz / r) * ring; }
+    }
     pos.setXYZ(
       i,
-      basePositions[i * 3]     + (df[i * 3]     ?? 0),
+      basePositions[i * 3]     + (df[i * 3]     ?? 0) + rx,
       basePositions[i * 3 + 1] + (df[i * 3 + 1] ?? 0),
-      basePositions[i * 3 + 2] + (df[i * 3 + 2] ?? 0),
+      basePositions[i * 3 + 2] + (df[i * 3 + 2] ?? 0) + rz,
     );
+    // The band's share, for the PTS cloud — see the same line in
+    // applyHeightField. The magnitude, not the outward vector: the cloud takes
+    // its own direction from the vertex normal, and what it needs from here is
+    // how loudly this vertex is being driven.
+    if (band) band.array[i] = ring;
+    if (bandU) bandU.array[i] = bandCoordValue(bandLayer, bx, bz, i);
   }
   pos.needsUpdate = true;
+  if (band) band.needsUpdate = true;
+  if (bandU) bandU.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 
@@ -5402,15 +5604,28 @@ export function applyDisplacementField(geometry, df, basePositions) {
  * @param baseNormals   — flat Float32Array [nx0,ny0,nz0,...]
  * @param strength      — multiplier applied uniformly (default 1)
  */
-export function applyCollapseField(geometry, scalarField, basePositions, baseNormals, strength = 1) {
+export function applyCollapseField(geometry, scalarField, basePositions, baseNormals, strength = 1, bandLayer = null) {
   const pos = geometry.attributes.position;
+  const ba = geometry.attributes.aBand;
+  const band = (ba && ba.array && ba.array.length === pos.count) ? ba : null;
+  const ua = geometry.attributes.aBandU;
+  const bandU = (ua && ua.array && ua.array.length === pos.count) ? ua : null;
   for (let i = 0; i < pos.count; i++) {
-    const s  = (scalarField[i] ?? 0) * strength;
+    // COLLAPSE already travels along the normal, so the rings ride the same
+    // direction the mode's own field does — the same rule the SURFACE path
+    // follows.
+    const ring = bandRingValue(bandLayer, basePositions[i * 3], basePositions[i * 3 + 2], i);
+    const s  = (scalarField[i] ?? 0) * strength + ring;
     const bx = basePositions[i * 3],     by = basePositions[i * 3 + 1], bz = basePositions[i * 3 + 2];
     const nx = baseNormals[i * 3],       ny = baseNormals[i * 3 + 1],   nz = baseNormals[i * 3 + 2];
     pos.setXYZ(i, bx + nx * s, by + ny * s, bz + nz * s);
+    // The band's share, for the PTS cloud — see applyHeightField.
+    if (band) band.array[i] = ring;
+    if (bandU) bandU.array[i] = bandCoordValue(bandLayer, bx, bz, i);
   }
   pos.needsUpdate = true;
+  if (band) band.needsUpdate = true;
+  if (bandU) bandU.needsUpdate = true;
   geometry.computeVertexNormals();
 }
 

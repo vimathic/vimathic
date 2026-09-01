@@ -142,6 +142,53 @@ function gpuWrite(src, label) {
     `${label}: pos.y is written again after the uMathMode branch (${P.tail.pos.join(' | ')}), ` +
     'which overrides everything both branches did');
 
+  // ── The whole-vector tail write, which the line above never could see ──────
+  // assignsTo(stmt, ['pos','y']) matches `pos.y = …` and nothing else, so
+  // `pos += …` walked past the guard above for as long as the guard existed.
+  // The PTS cloud needs exactly that write — it moves the vertex along its
+  // normal, which is not a y-only displacement — and the honest way to add it
+  // was to close the gap and model the one form that is allowed, not to slip
+  // through it.
+  //
+  // What has to hold: at most one such write, an ADDITION (a plain `=` would
+  // discard everything both branches computed), and three names in it. Without
+  // uPtBand the scatter runs on triangles and on imported models; without
+  // bandHere it is not the band doing the scattering; without normal it is not
+  // leaving the surface, which is the whole difference between a cloud and a
+  // lumpier sheet.
+  const pv = P.tail.posVecWrite;
+  if (pv) {
+    assert.ok(!pv.unreadable && !pv.wrapped && pv.count === 1,
+      `${label}: the tail writes the whole position in a form this guard cannot read — ` +
+      `${pv.unreadable ?? pv.wrapped ?? `${pv.count} writes: ${(pv.writes || []).join(' | ')}`}`);
+    assert.equal(pv.op, '+=',
+      `${label}: the tail assigns to pos with '${pv.op}' — "${pv.stmt};" — which throws away ` +
+      'both branches instead of adding to what they wrote');
+    // And it has to be CONDITIONAL. An addition that runs always and is
+    // multiplied to nothing is not the same as no addition: `pos += 0.0` turns
+    // a -0.0 component into +0.0, so the promise that the layer OFF is
+    // bit-identical would hold for the field and not for the position. It also
+    // makes every vertex of every mode pay for the scatter hash. Both were
+    // shipped in the first version of this line and both were found by an
+    // external review; the guard that was supposed to be watching this line
+    // could not see it at all, because it only looked for writes to pos.y.
+    assert.ok(pv.guard,
+      `${label}: "${pv.stmt};" moves the position unconditionally. Multiplying the term to zero ` +
+      'is not the same as not adding it — see the note beside this assertion');
+    assert.match(pv.guard, /\bptB\b/,
+      `${label}: the tail's position write is gated on "${pv.guard}", which is not the band term. ` +
+      'Gated on anything else it can still fire when the layer is off');
+    for (const name of ['normal', 'uPtBand', 'bandHere']) {
+      assert.ok(pv.names.has(name),
+        `${label}: the tail's whole-position write "${pv.stmt};" does not read ${name}. ` +
+        (name === 'uPtBand'
+          ? 'Ungated, it displaces triangles, wireframes and imported models too.'
+          : name === 'bandHere'
+            ? 'Then it is not the audio band moving these points.'
+            : 'Then the points never leave the surface, which is the point of the mode.'));
+    }
+  }
+
   assert.ok(!P.gpu.pos.badDisplacement,
     `${label}: the GPU branch's write has the right shape ('${P.gpu.pos.shape}') but the thing it ` +
     `adds is not the field — that operand resolves to ${P.gpu.pos.badDisplacement}, from ` +

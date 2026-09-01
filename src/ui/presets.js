@@ -15,7 +15,7 @@ import { normalizeVizMode, DEFAULT_VIZ_MODE } from '../viz-mode.js';
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
 // preset JSON until we've thought about migration.
-const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx'];
+const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx', 'bandDepth'];
 
 // FIX(#18, r2): the non-param fields applyState() reads. With PARAM_FIELDS this
 // defines "looks like a preset" for migratePreset(), so keep it in step with
@@ -25,6 +25,12 @@ const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colo
 const STATE_FIELDS = [
   'shape', 'vizMode', 'material', 'particleStyle', 'gpuSelVal', 'deformMode',
   'volumeKey', 'gridVisible', 'nightly', 'camera', 'camScript', 'shader',
+  // Where the bands land is part of what a preset looks like: the same depth
+  // with the rings layout and with the formula's own layout are two different
+  // pictures. Without this a preset inherited whichever way the checkbox
+  // happened to be left, so it rendered differently depending on session
+  // history — the same defect bandDepth had before v3.
+  'bandCharacter',
 ];
 
 /**
@@ -97,7 +103,7 @@ function cameraTweenTarget(c) {
 // guards already read it as undefined. On a bump, add the matching
 // `if (v < N)` block to migratePreset(); blocks run in sequence, so a v1 file
 // picks up every step up to CURRENT.
-export const CURRENT_PRESET_VERSION = 2;
+export const CURRENT_PRESET_VERSION = 4;
 
 /**
  * Normalize an incoming snapshot to the current schema version.
@@ -163,6 +169,18 @@ export function migratePreset(s) {
   //   if (v < 3) { out = { ...out, gpuModeIdx: out.gpuMode }; delete out.gpuSelVal; }
   // FIX(#18): blocks must copy, not mutate — `s` belongs to the caller.
   let out = s;
+
+  // v2 → v3: `bandDepth` (Spectrum Rings) joined PARAM_FIELDS. Writing it into
+  // older snapshots is not decoration — applyState only applies a field that is
+  // PRESENT, so without this a v2 preset loaded while the rings were up would
+  // leave them up, and the preset would render as something it never was. Zero
+  // is what every v2 snapshot was captured under, the layer not existing yet.
+  if (v < 3) out = { ...out, bandDepth: out.bandDepth ?? 0 };
+
+  // v3 → v4: `bandCharacter` joined the snapshot. Older files predate the
+  // formula-driven layout entirely, and every one of them was captured under
+  // the radius rule — so that is what they get, rather than the current default.
+  if (v < 4) out = { ...out, bandCharacter: out.bandCharacter ?? false };
 
   // FIX(#18): unconditional stamp — what makes the @returns promise true even
   // while the chain above is empty; the spread is also the no-mutation guarantee.
@@ -239,6 +257,7 @@ export const PresetMixin = {
       // mode has nothing to say about it, and guessing false for it would be
       // an opinion the file does not hold.
       nightly:     r.nightly ?? false,
+      bandCharacter: this.audio?.bandCharacter !== false,
 
       // ── Camera ──────────────────────────────────────────────────────────
       camera: {
@@ -373,6 +392,11 @@ export const PresetMixin = {
     // scheme 44 on restore — the switch-on nudge is for a hand on the button,
     // not for a file that already says which palette it wants.
     if (s.nightly != null) this.setNightly?.(s.nightly, { keepPalette: true });
+    if (s.bandCharacter != null && this.audio) {
+      this.audio.bandCharacter = !!s.bandCharacter;
+      const box = document.getElementById('band-character');
+      if (box) box.checked = !!s.bandCharacter;
+    }
     // ── Viz mode + surface material ────────────────────────────────────────
     // FIX(#15, r2): ONE decision, not two. WIRE/PTS force Matte and hide the
     // material dropdown (reconstructed normals are degenerate there), so a

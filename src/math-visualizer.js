@@ -54,6 +54,19 @@ import {
   VOLUME_FORMULAS,
   FIELD_EXTENT,
 } from './math-collections.js';
+import { buildBandMap, buildBodyCurvature, ANALYSIS_GRID } from './band-map.js';
+import { BAND_PAN_TILT } from './audio.js';
+
+/**
+ * The moment the character map is sampled at.
+ *
+ * Fixed rather than "now": the map has to be reproducible, so a preset, a clip
+ * step and a reload all draw the same layout for the same formula. 7.0 rather
+ * than 0 because a good many formulas are quiet at t = 0 by construction (a
+ * travelling wave starts flat, several quantum states start at a node) and a
+ * map built on a flat frame would fall through to rings for no good reason.
+ */
+export const BAND_MAP_REF_TIME = 7.0;
 
 // ── Worker bootstrap ───────────────────────────────────────────────────────
 // Returns the Worker instance, or null if construction fails. A failure here
@@ -659,6 +672,7 @@ export class MathVisualizer {
     }
 
     this._generation++;
+    this._invalidateBandMap();
 
     // Snapshot the field the mesh is carrying, so the blend has a "from"
     // state. That field is _lastHF — the one _applyHF wrote — and NOT the live
@@ -718,6 +732,11 @@ export class MathVisualizer {
    * @param {string} key — key into VOLUME_FORMULAS
    */
   setVolumeFormula(key) {
+    // A volume formula is a different field, so the character map built for the
+    // previous surface formula does not describe it. Without this, VOLUME wore
+    // whichever map happened to precede it — the same field pulsing in different
+    // places depending on session history.
+    this._invalidateBandMap();
     const f = VOLUME_FORMULAS[key];
     if (!f) {
       console.warn(`[MathVisualizer] Unknown volume formula: ${key}`);
@@ -750,6 +769,11 @@ export class MathVisualizer {
    * @param {Function} fn — f(x, y, z, t, params) → { dx, dy, dz }
    */
   setVolumeFn(fn) {
+    // A volume formula is a different field, so the character map built for the
+    // previous surface formula does not describe it. Without this, VOLUME wore
+    // whichever map happened to precede it — the same field pulsing in different
+    // places depending on session history.
+    this._invalidateBandMap();
     if (typeof fn !== 'function') return;
     this._generation++;
     this._pendingHF  = null;
@@ -970,6 +994,14 @@ export class MathVisualizer {
   tick(time) {
     if (!this.active) return;
 
+    // The gesture's clock. Kept apart from _lastTickTime, which belongs to the
+    // volume accumulator and is only written by _tickVolume — a fact that cost
+    // the gesture its motion in SURFACE and COLLAPSE, the two modes it is most
+    // often seen in: `time` came through as null, coerced to 0, and every
+    // ripple and shatter sat frozen at phase zero. Written here, before the
+    // dispatch, so all three modes share one clock.
+    this._bandClock = time;
+
     // Geometry can be rebuilt under us when the user changes shape. The
     // vertex count and grid size change, so worker state and snapshots
     // are invalidated. Cheaper to detect here than to thread a callback
@@ -1058,7 +1090,7 @@ export class MathVisualizer {
 
     applyCollapseField(
       this.render.gpuMesh.geometry, sf,
-      this._basePositions, this._baseNormals, strength
+      this._basePositions, this._baseNormals, strength, this._bandLayer()
     );
     const ptsGeo = this._ownPtsGeometry();
     if (ptsGeo && this._basePtsPositions && this._basePtsNormals) {
@@ -1069,7 +1101,7 @@ export class MathVisualizer {
       );
       applyCollapseField(
         ptsGeo, sfPts,
-        this._basePtsPositions, this._basePtsNormals, strength
+        this._basePtsPositions, this._basePtsNormals, strength, this._bandLayer()
       );
     }
   }
@@ -1117,10 +1149,15 @@ export class MathVisualizer {
       this._basePositions
     );
 
-    applyDisplacementField(this.render.gpuMesh.geometry, df, this._basePositions);
+    // The band layer reaches VOLUME and COLLAPSE too. It did not at first, and
+    // the symptom was the worst kind of nothing: the slider moved, its readout
+    // counted, presets and autosave stored the value, and not one pixel changed
+    // — because both DEFORM modes have their own door into the geometry and
+    // neither had been given the layer. Found by a review sweep.
+    applyDisplacementField(this.render.gpuMesh.geometry, df, this._basePositions, this._bandLayer());
     const ptsGeo = this._ownPtsGeometry();
     if (ptsGeo) {
-      applyDisplacementField(ptsGeo, df, this._basePtsPositions ?? this._basePositions);
+      applyDisplacementField(ptsGeo, df, this._basePtsPositions ?? this._basePositions, this._bandLayer());
     }
   }
 
@@ -1309,6 +1346,9 @@ export class MathVisualizer {
   }
 
   _capturePristine() {
+    // New geometry means new vertices to sample the formula at, so the map that
+    // was built for the previous body no longer describes this one.
+    this._invalidateBandMap();
     const geo = this.render.gpuMesh.geometry;
     const pos = geo.attributes.position;
     const n   = pos.count;
@@ -1326,6 +1366,30 @@ export class MathVisualizer {
       this._pristineNormals[i * 3 + 1] = nrm.getY(i);
       this._pristineNormals[i * 3 + 2] = nrm.getZ(i);
     }
+    // ── The body's own share of the band coordinate ─────────────────────────
+    // Computed HERE and not in _rebuildBandMap, and the reason is the GPU. In
+    // GPU math mode this visualiser is deactivated and nothing of it ticks, so
+    // a map rebuilt lazily on the CPU would never run — yet the shader is
+    // exactly where the body's say is most missing, because there the layout is
+    // derived from the formula alone with no map at all. This hook is the one
+    // place that fires on every shape change in BOTH modes.
+    //
+    // It is also the only place the RAW normals still exist: three lines below,
+    // _pristineNormals is nulled for a thin body and welded for the rest, and
+    // the weld is exactly what would erase the disagreement this measures.
+    //
+    // Cost: one pass over the triangles and two Float32Arrays, no hashing and
+    // no adjacency. Measured, once per shape change, not per frame: 3.0 ms on a
+    // 161² plane, 8.7 ms on the gyroid, 21.4 ms on a 196 608-vertex body. The
+    // last of those is the same order as the positionGroups below that a plate
+    // is deliberately spared — so "affordable unconditionally" is a claim about
+    // a ONE-OFF beside a geometry rebuild, not about it being cheap in absolute
+    // terms, and the earlier wording implied the second.
+    this._bodyCurv = buildBodyCurvature(
+      this._pristinePositions, this._pristineNormals,
+      geo.index ? geo.index.array : null);
+    this._uploadBodyCurv(geo, n);
+
     // Which bodies the field may follow, decided by measurement rather than by
     // shape name — names change, and round 10 spent a wave on that lesson.
     //
@@ -1431,6 +1495,28 @@ export class MathVisualizer {
       this._pristinePtsPositions = null;
       this._pristinePtsNormals   = null;
     }
+  }
+
+  /**
+   * Hand the body's curvature term to the shader, in the attribute the vertex
+   * program reads it from.
+   *
+   * The attribute is created by attachBaseY and arrives zero-filled, which is
+   * the value that makes the shift a no-op — so a body with no curvature
+   * texture, or a geometry that predates the attribute, simply gets the layout
+   * the formula alone decides. Writing zeros explicitly rather than leaving the
+   * previous shape's numbers in place is the whole job here: the buffer is
+   * reallocated by setShape on a vertex-count change but REUSED when the count
+   * happens to match, and a stale curvature map is a picture that looks
+   * deliberate.
+   */
+  _uploadBodyCurv(geo, n) {
+    const a = geo.attributes.aBodyK;
+    if (!a || !a.array || a.array.length !== n) return;
+    const k = this._bodyCurv;
+    if (k && k.length === n) a.array.set(k);
+    else a.array.fill(0);
+    a.needsUpdate = true;
   }
 
   /**
@@ -1673,6 +1759,109 @@ export class MathVisualizer {
    * the call it rides along with. Both are machine numbers; the durable claim
    * is the ratio, and it is the reason this fix costs nothing to take.
    */
+  /**
+   * The 24-band layer as applyHeightField wants it, or null when it is off.
+   *
+   * Reads the SAME two numbers the shader is given — the engine's live band
+   * array and the renderer's uBandR — rather than measuring the body a second
+   * time here. Two independent measurements of "how wide is this shape" would
+   * agree until the day one of them was updated and the other was not, and the
+   * symptom would be the CPU and GPU paths drawing their rings at different
+   * radii on the same body.
+   */
+  _bandLayer() {
+    const depth = this.audio?.bandDepth ?? 0;
+    if (!(depth > 0) || !this.audio?.bands) return null;
+    // Lazily, and it still matters even though the layer now ships ON at 0.30.
+    // The saving is no longer "a default session never pays" — it is that the
+    // map is rebuilt on DEMAND rather than on every invalidation: browsing ten
+    // formulas with the slider at 0, or with the layer dragged off, costs one
+    // rebuild when it comes back rather than ten along the way. The early
+    // return above is the same guard from the other side.
+    const wantMap = this.audio.bandCharacter !== false;
+    // The radius the map was equalised against is part of what it IS, and it can
+    // change without any of the invalidation hooks firing: importing a model or
+    // clearing one rewrites uBandR from RenderEngine, which the visualiser never
+    // hears about. Comparing it here catches that without wiring the two
+    // modules together — and catches anything else that moves the radius too.
+    const liveR = this.render.U?.uBandR?.value ?? FIELD_EXTENT;
+    if (wantMap && this._bandMap && this._bandMapBuiltR !== liveR) this._invalidateBandMap();
+    if (wantMap && this._bandMapDirty) this._rebuildBandMap();
+    return {
+      // The profile-weighted copy, the same array the shader is handed — see
+      // BAND_DEPTH_PROFILE. Reading `bands` here and `bandsShaped` there would
+      // give the CPU and GPU paths two different bodies under one slider, which
+      // is exactly the drift the rest of this method is written to avoid.
+      bands: this.audio.bandsShaped ?? this.audio.bands,
+      // Where each band sits between the speakers, and how far that may tilt
+      // the displacement. Both travel with the layer so bandRingValue needs no
+      // import of its own — see the note beside its use there.
+      pan: this.audio.bandPan,
+      panTilt: BAND_PAN_TILT,
+      depth,
+      radius: this.render.U?.uBandR?.value ?? 3.5,
+      u: wantMap ? (this._bandMap ?? undefined) : undefined,
+      r: wantMap ? this._bandMapR : undefined,
+      tb: wantMap ? this._bandMapTb : undefined,
+      // The live clock, for the gesture only — the MAP is built at a frozen
+      // reference time so the layout does not crawl, but the motion has to move.
+      time: wantMap ? (this._bandClock ?? undefined) : undefined,
+    };
+  }
+
+  /**
+   * Mark the character map stale. Called wherever the two things it is built
+   * from change: the formula (a different field) and the body (different
+   * vertices to sample it at).
+   */
+  _invalidateBandMap() {
+    this._bandMapDirty = true;
+  }
+
+  /**
+   * Build the per-vertex band coordinate for the live formula and body.
+   *
+   * The field is sampled at a FIXED reference time, not the live one — see the
+   * note in src/band-map.js. Two things follow: the layout does not crawl while
+   * the music plays through it, and the audio-driven parameters cannot feed
+   * back into the choice of which band a point listens to.
+   */
+  _rebuildBandMap() {
+    this._bandMapDirty = false;
+    this._bandMap = null;
+    this._bandMapR = null;
+    this._bandMapTb = null;
+    this._bandMapBuiltR = null;
+    const base = this._pristinePositions;
+    if (!base || !this._formulaFn) return;
+
+    const V = base.length / 3;
+    const x = new Float32Array(V), z = new Float32Array(V);
+    for (let i = 0; i < V; i++) { x[i] = base[i * 3]; z[i] = base[i * 3 + 2]; }
+    const R = this.render.U?.uBandR?.value ?? FIELD_EXTENT;
+
+    try {
+      const field = generateSurfaceFromFormula(
+        this._formulaFn, { amp: 1, freq: 1, comp: 0.5 },
+        ANALYSIS_GRID, FIELD_EXTENT, BAND_MAP_REF_TIME);
+      // The SAME curvature array the shader was handed in aBodyK — measured
+      // once in _capturePristine, spent twice. Two independent measurements of
+      // "how curved is this body here" would agree until the day one of them
+      // was updated, and the symptom would be the CPU and GPU paths laying the
+      // spectrum out differently on one shape under one slider.
+      const k = (this._bodyCurv && this._bodyCurv.length === V) ? this._bodyCurv : null;
+      const { u, r, tb } = buildBandMap(field, ANALYSIS_GRID, FIELD_EXTENT, { x, z, R, k });
+      this._bandMap = u;
+      this._bandMapR = r;
+      this._bandMapTb = tb;
+      this._bandMapBuiltR = R;
+    } catch (_) {
+      // A formula that throws on this lattice keeps the radius rule rather than
+      // taking the layer down with it.
+      this._bandMap = null;
+    }
+  }
+
   _applyHF(hf) {
     if (!this._lastHFBuf || this._lastHFBuf.length !== hf.length) {
       this._lastHFBuf = new Float32Array(hf.length);
@@ -1685,12 +1874,14 @@ export class MathVisualizer {
     // _capturePristine). Without them the field could only push along +Y, and
     // on a closed body that moves the top and the bottom of every column the
     // same way: the shape shears and never changes thickness.
-    applyHeightField(geo, hf, this._pristinePositions, FIELD_EXTENT, this._pristineNormals, this._pristineDepth);
+    applyHeightField(geo, hf, this._pristinePositions, FIELD_EXTENT, this._pristineNormals, this._pristineDepth,
+                     this._bandLayer());
     // FIX(#52): same guard as everywhere else, through the one helper — this
     // site is where the pattern was born (FIX(r11)).
     const ptsGeo = this._ownPtsGeometry();
     if (ptsGeo) {
-      applyHeightField(ptsGeo, hf, this._pristinePtsPositions, FIELD_EXTENT, this._pristinePtsNormals, this._pristineDepth);
+      applyHeightField(ptsGeo, hf, this._pristinePtsPositions, FIELD_EXTENT, this._pristinePtsNormals, this._pristineDepth,
+                       this._bandLayer());
     }
   }
 }

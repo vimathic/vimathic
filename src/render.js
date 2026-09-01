@@ -6,6 +6,48 @@ import { ShaderPass }      from 'three/examples/jsm/postprocessing/ShaderPass.js
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass }  from 'three/examples/jsm/postprocessing/AfterimagePass.js';
 import { VS, FS } from './shaders.js';
+import { BAND_COUNT } from './audio.js';
+
+/**
+ * The radius the band layer spreads its 24 bands over: how far this body
+ * actually reaches from its own axis.
+ *
+ * The bounding SPHERE would be wrong here — it includes y, and a tall thin body
+ * (cylinder, pseudosphere) would then map its whole spectrum into a narrow
+ * annulus near the axis, leaving bands 12-23 on nothing. This measures the XZ
+ * extent, which is what `length(pos.xz)` in the shader compares against.
+ *
+ * The 95th percentile rather than the maximum: a single stray vertex — the tip
+ * of a star, the far corner of a rim — would otherwise set the scale for the
+ * whole body and squeeze every band into the inner two thirds. Measured on the
+ * catalogue, max/p95 runs 1.00 on the round bodies and 1.31 on `star`.
+ */
+function bandRadiusOf(geo) {
+  const p = geo?.attributes?.position;
+  if (!p) return 3.5;
+  const n = p.count;
+  // Sampled, not exhaustive, and squared rather than rooted. Sorting every
+  // vertex cost 20.6 ms on sierpinski-tetra's 196 608 — measured on this
+  // machine, against ~9 ms to build the geometry in the first place, i.e. the
+  // measurement was more expensive than the thing measured, and it ran inside a
+  // shape swap where a dropped frame shows. A stride keeps at most 16 384
+  // samples; measured against the full sort on three radius distributions
+  // (uniform disc, ring, fractal) the p95 moves by 0.007-0.101 %, which is
+  // millimetres on a body three units across.
+  const CAP = 16384;
+  const stride = Math.max(1, Math.ceil(n / CAP));
+  const m = Math.ceil(n / stride);
+  const r = new Float64Array(m);
+  for (let i = 0, k = 0; k < m; i += stride, k++) {
+    const x = p.getX(i), z = p.getZ(i);
+    r[k] = x * x + z * z;                    // compare squares, root once at the end
+  }
+  r.sort();
+  const q = Math.sqrt(r[Math.min(m - 1, Math.floor(m * 0.95))]);
+  // A body with no XZ extent at all (a degenerate import) must not divide by
+  // zero and must not collapse every band onto vertex 0.
+  return q > 1e-3 ? q : 3.5;
+}
 import { DEFAULT_SHAPE, normalizeShape } from './shapes.js';
 import { normalizeVizMode } from './viz-mode.js';
 import {
@@ -1105,6 +1147,30 @@ function attachBaseY(geo) {
   // geometry have to be two channels, which is what round 10 established; this
   // attribute is that separation made explicit rather than reconstructed.
   geo.setAttribute('aField', new THREE.BufferAttribute(new Float32Array(n), 1));
+  // The band's own share of that field, for the PTS cloud. Separate from aField
+  // because the two answer different questions: aField is what the palette
+  // colours by (formula plus layer, the whole displacement), while this is the
+  // part the MUSIC contributed. A point that swelled with the formula's relief
+  // would be a static texture, not a reaction.
+  //
+  // Zero-filled, and it stays zero unless a CPU writer fills it: in GPU mode the
+  // vertex program recovers the same quantity as f - fBase and never reads this.
+  geo.setAttribute('aBand', new THREE.BufferAttribute(new Float32Array(n), 1));
+  // The body's own share of the band coordinate, in [-1, 1] — see
+  // buildBodyCurvature. Created here because the shader reads it in GPU math
+  // mode, where MathVisualizer is deactivated and would never get the chance to
+  // add an attribute of its own; filled by _capturePristine, which is the one
+  // hook that fires on every shape change in both modes. Zero is the value that
+  // makes the shift a no-op, so an unfilled buffer is the old behaviour.
+  geo.setAttribute('aBodyK', new THREE.BufferAttribute(new Float32Array(n), 1));
+  // WHICH band this vertex listens to, 0…1 — the colour tint's channel, and a
+  // different question from aBand's "how far is it being pushed". Filled to -1
+  // rather than 0, because 0 is band 0 and a real answer: the shader has to be
+  // able to tell "the lowest band" from "no layer here". applyHeightField and
+  // the two other CPU writers overwrite it every frame the layer is on.
+  const bu = new Float32Array(n);
+  bu.fill(-1);
+  geo.setAttribute('aBandU', new THREE.BufferAttribute(bu, 1));
 }
 
 /**
@@ -1639,6 +1705,39 @@ export class RenderEngine {
                uCMNext:       { value: 0   },
                uCMBlend:      { value: 0.0 },
                uPointSize:    { value: 1.0 },
+               // 1 only while the points proxy is on stage — see the PTS block
+               // at the end of VS. It lives beside uPointSize because it has the
+               // same lifetime and the same reset (setVizModeGPU zeroes both on
+               // every mode call, so neither can strand across a round trip).
+               uPtBand:       { value: 0.0 },
+               // ── The 24-band spectrum, laid across the radius ──────────────
+               // uBands is written every frame from AudioEngine.bandsShaped —
+               // the levels already weighted by BAND_DEPTH_PROFILE, so bass
+               // moves the body further than treble for the same loudness. The
+               // weighting is applied on the CPU rather than in here on purpose:
+               // it is 24 multiplies once per frame against 24 more uniforms
+               // and a second lookup per vertex, and doing it before the upload
+               // is also what keeps the CPU and GPU paths reading one array
+               // instead of two that could disagree.
+               // The array identity never changes, so three.js uploads the same
+               // buffer rather than reallocating one per frame.
+               // uBandDepth 0 means the term is not merely small but absent —
+               // the shader guards on it — so the whole catalogue is bit-exact
+               // until the user asks for this.
+               // uBandR is the body's own radius in XZ, rewritten per shape
+               // change: band 23 has to land on the rim of what is on screen,
+               // not at a distance a small body never reaches.
+               uBands:        { value: new Float32Array(BAND_COUNT) },
+               // Where each band sits between the speakers, -1..+1, index for
+               // index with uBands. All zeros is "centred", which is exactly the
+               // factor 1.0 the lookup applied before the stereo tap existed.
+               uBandPan:      { value: new Float32Array(BAND_COUNT) },
+               uBandDepth:    { value: 0.0 },
+               uBandR:        { value: 3.5 },
+               // 0 = rings from the axis, 1 = the mode's own texture decides.
+               // The CPU path gets the same choice through MathVisualizer's
+               // band map; this is the GPU half of one checkbox.
+               uBandMode:     { value: 1   },
                // Colour channel — which value the vertex program hands the ramp.
                // 0 = pos.y as written (GPU mode, and the Volume/Collapse CPU
                // modes, which have always coloured by base + displacement).
@@ -1679,6 +1778,17 @@ export class RenderEngine {
     // reads 0, and uVHField never reaches 2 for those, so the ramp keeps its
     // previous source rather than going flat.
     this.gpuMat.defaultAttributeValues.aField = [0];
+    // And for the band's own share of it, which the PTS cloud reads. Zero is the
+    // right leftover twice over: an imported model has no band map, and uPtBand
+    // is forced to 0 while one is on stage anyway.
+    this.gpuMat.defaultAttributeValues.aBand = [0];
+    // And the body's curvature term. 0 is the no-op value for the shift, so an
+    // imported model — which has no band map and no curvature measurement —
+    // keeps the layout the formula alone decides.
+    this.gpuMat.defaultAttributeValues.aBodyK = [0];
+    // -1, not 0: 0 is band 0 and a real answer, so a geometry with no layer has
+    // to be able to say "none" rather than "the lowest one".
+    this.gpuMat.defaultAttributeValues.aBandU = [-1];
     this.gpuMesh = new THREE.Mesh(gpuGeo, this.gpuMat);
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
@@ -1781,6 +1891,30 @@ export class RenderEngine {
     this.U.uBeat.value   = audio.beatInt;
     this.U.uAmp.value    = audio.amp;
     this.U.uWI.value     = audio.waveInt;
+    // The band array is COPIED into the uniform's own buffer rather than having
+    // the uniform point at the engine's. three.js uploads a uniform array by
+    // reading whatever object is in `.value` at draw time, so aliasing the
+    // engine's live array would work — until an engine that reallocated its
+    // buffer left the uniform pointing at the old one, and the rings would
+    // freeze with no error anywhere. (The example this used to give — "a
+    // sample-rate change rebuilds the tap" — is fiction: nothing reads
+    // sampleRate after ensureCtx, and ensureCtx re-enters only for a closed
+    // context. The copy is still right; its stated reason was not, and an
+    // external reading of the audio graph caught it.)
+    // Optional, for the same reason uBandR is — probes and unit stands build a
+    // U with only the uniforms they are about, and a frame must not depend on
+    // the band layer being present.
+    // bandsShaped, not bands — see the uniform's declaration. The fallback is
+    // for a stand that builds a bare engine-shaped object rather than a real
+    // AudioEngine; a real one always has both, written together.
+    const bandsForShape = audio.bandsShaped ?? audio.bands;
+    if (this.U.uBands && bandsForShape) this.U.uBands.value.set(bandsForShape);
+    // Copied for the same reason, and optional for the same reason: a stand
+    // that predates the side tap leaves the uniform at its zeros, which is
+    // centred, which is the factor the lookup applied before stereo existed.
+    if (this.U.uBandPan && audio.bandPan) this.U.uBandPan.value.set(audio.bandPan);
+    if (this.U.uBandDepth) this.U.uBandDepth.value = audio.bandDepth ?? 0;
+    if (this.U.uBandMode) this.U.uBandMode.value = audio.bandCharacter === false ? 0 : 1;
     // uCM is NOT updated here during a color crossfade — setColorSchemeAnimated()
     // manages uCM/uCMNext/uCMBlend directly.
 
@@ -2165,6 +2299,25 @@ export class RenderEngine {
    */
   setExternalModel(meshes) {
     this.modelMeshes = meshes ?? [];
+    // The band layer measures the body it is drawn on, and an imported model
+    // never passes through setShape(), so without this it inherited whatever
+    // radius the last procedural shape had: import after `solar` (uBandR ~1.2)
+    // and most of the model clamps onto band 23; import after a wide plane
+    // (~4.7) and it only ever reaches the low bands. Measured across every mesh
+    // of the model, so a multi-mesh file is scaled by what it occupies as a
+    // whole rather than by whichever mesh happens to be first. Found by an
+    // external review; the shipped catalogue could not show it because every
+    // catalogue shape does go through setShape.
+    // Both directions. `setExternalModel(null)` is how "✕ CLEAR MODEL" and a
+    // failed import get back to the procedural shape, and guarding only on
+    // `length` left the model's radius standing until the next shape change —
+    // a model exported in millimetres measures in the hundreds, which collapses
+    // the whole catalogue onto band 0 with nothing on screen to explain it.
+    if (this.U?.uBandR) {
+      this.U.uBandR.value = this.modelMeshes.length
+        ? Math.max(...this.modelMeshes.map(m => bandRadiusOf(m.geometry)))
+        : bandRadiusOf(this.gpuMesh?.geometry);
+    }
     // Re-running the current mode is the whole implementation: it hides or
     // shows the procedural mesh, drops or rebuilds the points proxy, and puts
     // the particle mask where it belongs — all in one place that already knows
@@ -2197,6 +2350,10 @@ export class RenderEngine {
     this.gpuMesh.visible  = this.modelMeshes.length === 0;
     this.gpuMat.wireframe = false;
     this.U.uPointSize.value = 1.0;
+    // Down first, up only in the points branch below — the same discipline
+    // uPointSize and uPtStyle keep. Optional because the unit stands build a U
+    // with only the uniforms they are about (tests/particle-style.test.js).
+    if (this.U.uPtBand) this.U.uPtBand.value = 0.0;
     if (mode !== 'points') {
       // Leaving PTS: the particle mask must not run over triangles, and the
       // smoke style's afterglow belongs to the style, not to the session — a
@@ -2242,6 +2399,9 @@ export class RenderEngine {
       // disagree about what the missing case means.
       ptsMat.defaultAttributeValues.aBaseY = [0];
       ptsMat.defaultAttributeValues.aField = [0];
+      ptsMat.defaultAttributeValues.aBand  = [0];
+      ptsMat.defaultAttributeValues.aBodyK = [0];
+      ptsMat.defaultAttributeValues.aBandU = [-1];
       // Geometry is deliberately shared with gpuMesh, not cloned — see the
       // dispose note at the top of this method.
       this.gpuPtsProxy = new THREE.Points(this.gpuMesh.geometry, ptsMat);
@@ -2289,6 +2449,12 @@ export class RenderEngine {
 
     this.U.uPointSize.value = style.size;
     this.U.uPtStyle.value   = style.mask;
+    // Raised here rather than in setVizModeGPU's points branch, because THIS is
+    // the call that runs on every entry into PTS and on every style click. Put
+    // it in the branch and a style change would leave it alone — which happens
+    // to be right today and would stop being right the first time anything else
+    // lowered it. The guard above already refuses models and non-PTS modes.
+    if (this.U.uPtBand) this.U.uPtBand.value = 1.0;
 
     const m = this.gpuPtsProxy?.material;
     if (m) {
@@ -2467,6 +2633,10 @@ export class RenderEngine {
     // before this callback runs.
     this.gpuMesh.geometry = newGeo;
     if (this.gpuPtsProxy) this.gpuPtsProxy.geometry = newGeo;
+    // Optional-chained because setShape is called by probes and tests against a
+    // stub whose U carries only the uniforms that probe is about; a shape swap
+    // must not depend on the band layer existing.
+    if (this.U?.uBandR) this.U.uBandR.value = bandRadiusOf(newGeo);
 
     requestAnimationFrame(() => {
       // Guard against double-dispose: a rapid second swap may have already

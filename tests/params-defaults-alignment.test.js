@@ -141,6 +141,14 @@ describe('every default matches the value the engine boots at', () => {
     assert.equal(audio.trebleSens, PARAMS.trebleSens.default);
     assert.equal(audio.waveInt,    PARAMS.waveInt.default);
     assert.equal(audio.amp,        PARAMS.amp.default);
+    // bandDepth was missing from this list for as long as it shipped at 0, and
+    // nothing noticed, because 0 and 0 agree by accident. It stopped being an
+    // accident when the layer started shipping ON: the two other legs (slider
+    // position, value badge) are checked generically above, so leaving the
+    // engine at 0 while the registry said 0.3 would have been fully green — a
+    // panel reading 0.30 over a body that is not moving, until the first RESET
+    // ALL jumped the rings on.
+    assert.equal(audio.bandDepth,  PARAMS.bandDepth.default);
   });
 
   test('CameraSystem starts on the registry default for rotSpeed', () => {
@@ -233,7 +241,7 @@ describe('each set() reaches every engine field the registry says it owns', () =
     // get and set have to name the same storage; a set() that wrote a shadow
     // field would make preset capture record a value the engine never held.
     const probe = { amp: 1.1, waveInt: 2.2, bassSens: 0.9, trebleSens: 1.7,
-                    bloom: 0.8, colorIdx: 7, rotSpeed: 0.0007 };
+                    bloom: 0.8, colorIdx: 7, rotSpeed: 0.0007, bandDepth: 0.65 };
     for (const [id, p] of Object.entries(PARAMS)) {
       const ctx = makeCtx();
       assert.ok(id in probe, `PARAMS.${id} has no probe value — add one`);

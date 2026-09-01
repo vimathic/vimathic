@@ -167,9 +167,20 @@ describe('the required test job describes the scope it actually runs', () => {
       'a hand-written total goes stale the day the next test file lands');
   });
 
-  test('it names the glob package.json actually runs', () => {
+  test('it names the glob package.json actually runs', async () => {
     const script = JSON.parse(read('package.json')).scripts.test;
-    const glob = script.match(/(tests\/\S+\.test\.js)/)[1];
+    // The glob used to be spelled in package.json itself. Since the suite runs
+    // under a memory ceiling it lives in the runner npm delegates to, and this
+    // IMPORTS the value rather than reading the file's text. Reading the text
+    // was tried first and was worse than useless: the regexp matched the glob
+    // inside that file's own comment, so renaming the real one left this test
+    // green — a guard that cannot fail. Importing compares against the value
+    // the runner actually passes to node.
+    const runner = script.match(/(scripts\/\S+\.mjs)/)?.[1];
+    const glob = runner
+      ? (await import(`../${runner}`)).TEST_GLOB
+      : script.match(/(tests\/\S+\.test\.js)/)[1];
+    assert.ok(glob, `${runner || 'package.json'} no longer says what it runs`);
     assert.match(step(), new RegExp(glob.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       `package.json runs \`${script}\`; the comment should say so in those terms`);
   });

@@ -830,7 +830,7 @@ const VH_PATS = compiled(VH_FORMS);
  * list that one case. Here the name is irrelevant: the expression is resolved to
  * its definition first and then has to be one of two things.
  */
-export function displacementKind(tree, symbols, interpName) {
+export function displacementKind(tree, symbols, interpName, allowBand = true) {
   if (reads(tree, 'pos', 'y')) return null;              // that is a height, not a displacement
   if (tree.k === 'id' && symbols.get(tree.v) === 'interp') {
     // `interp` means only "a ${…} ran between this name's definition and here",
@@ -858,8 +858,178 @@ export function displacementKind(tree, symbols, interpName) {
       tree.args[2].k === 'id' && tree.args[2].v === 'uModeBlend') {
     return 'the blend of computeMode(uMode, pos.xz, …) and computeMode(uModeNext, pos.xz, …)';
   }
+  // A displacement PLUS the band layer is still a displacement, and the
+  // addition is checked rather than waved through: the left operand has to be a
+  // displacement in its own right by the rules above, and the right one has to
+  // be the band term and nothing else. So a program that quietly replaced the
+  // field with the bands — or added anything else here — still fails.
+  //
+  // `allowBand` is passed false into the left operand, which is what keeps the
+  // rule to ONE band layer. Without it the case is recursively composable and
+  // `(field + band) + band` certifies: the inner call approves `field + band`
+  // and the outer one approves a second copy, so a shader stacking the
+  // displacement twice would pass a guard meant to certify it once. Found by an
+  // external review of this very addition.
+  if (allowBand && tree.k === 'bin' && tree.op === '+') {
+    const base = displacementKind(tree.l, symbols, interpName, false);
+    if (base && isBandTerm(tree.r)) return `${base}, plus the 24-band layer`;
+  }
+  // The shipped form: the whole addition is conditional on uBandDepth, so that
+  // "off" is bit-exact rather than "off" being a +0.0 added to the field. Both
+  // arms have to be understood — the else arm must be the displacement alone,
+  // and the then arm must be that SAME displacement plus the band term — so a
+  // ternary that draws something else when the layer is off cannot slip past.
+  if (allowBand && tree.k === 'tern' && isBandGuard(tree.c)) {
+    const off = displacementKind(tree.b, symbols, interpName, false);
+    if (off && tree.a.k === 'bin' && tree.a.op === '+' &&
+        print(tree.a.l) === print(tree.b) && isBandTerm(tree.a.r, true)) {
+      return `${off}, plus the 24-band layer when it is switched on`;
+    }
+  }
   return null;
 }
+
+/** `uBandDepth > 0.` — the guard that makes "off" cost nothing. */
+function isBandGuard(c) {
+  return !!(c && c.k === 'bin' && c.op === '>' &&
+            c.l.k === 'id' && c.l.v === 'uBandDepth' &&
+            c.r.k === 'num' && Number(c.r.v) === 0);
+}
+
+/**
+ * The band term: `uBandDepth > 0. ? bandAtRadius(length(pos.xz)) * uBandDepth : 0.`
+ *
+ * Written out in full rather than matched loosely, because every part of it is
+ * load-bearing. The guard is `> 0.` so that "off" costs nothing and stays
+ * bit-exact; the radius is `length(pos.xz)`, i.e. distance from the body's own
+ * axis, which is the whole claim the layer makes; and the else-branch is a
+ * literal zero rather than a small number.
+ */
+function isBandTerm(tree, bare = false) {
+  // No symbol lookup here: resolve() has already substituted every local by its
+  // definition before classify() runs, so a `bandY` written in the program
+  // arrives as its definition.
+  //
+  // `bare` means the guard lives one level up (the shipped form puts the
+  // ternary around the whole addition), so what is expected here is the scaled
+  // lookup on its own rather than the guarded ternary.
+  const zero = n => n && n.k === 'num' && Number(n.v) === 0;
+  if (bare) return isScaledLookup(tree);
+  const t = tree;
+  if (!t || t.k !== 'tern') return false;
+  const c = t.c, a = t.a, b = t.b;
+  const isGuard = c && c.k === 'bin' && c.op === '>' &&
+    c.l.k === 'id' && c.l.v === 'uBandDepth' && zero(c.r);
+  return !!(isGuard && isScaledLookup(a) && zero(b));
+}
+
+/**
+ * The band term: a lookup of ONE band coordinate, scaled by uBandDepth.
+ *
+ * The coordinate is checked, not waved through, and exactly two are allowed:
+ *   * `bandCoordOfMode(pos.xz, …)` — the mode's own local texture, and
+ *   * `length(pos.xz) / max(uBandR, …)` — the radius rule it replaces,
+ * either alone or the two selected by `uBandMode`. Anything else — a coordinate
+ * read from an attribute nobody fills, a constant, the radius of something that
+ * is not pos — fails, which is the point of reading the tree rather than the
+ * text.
+ */
+function isScaledLookup(a) {
+  if (!(a && a.k === 'bin' && a.op === '*')) return false;
+  if (!(a.r.k === 'id' && a.r.v === 'uBandDepth')) return false;
+  return isBandTermInner(a.l);
+}
+
+/**
+ * The band value before uBandDepth scales it: a lookup, optionally wrapped in
+ * the gesture, optionally chosen between the two by uBandMode.
+ *
+ * `bandMotion` is allowed to wrap the lookup because HOW a band moves a point is
+ * still that band's value — but its first two arguments have to be the lookup
+ * and the SAME coordinate that lookup used. A gesture driven by one coordinate
+ * while the amplitude comes from another would be unreadable on screen and
+ * unreadable here, so it fails.
+ */
+function isBandTermInner(n) {
+  if (!n) return false;
+  // The uBandMode choice, and the two branches are told apart rather than both
+  // being run through the same predicate. Validating them identically let
+  // `uBandMode == 1 ? radius : radius` certify — a switch that switches
+  // nothing — which an external review pointed out.
+  if (n.k === 'tern') {
+    const guard = n.c && n.c.k === 'bin' && n.c.op === '==' &&
+      [n.c.l, n.c.r].some(x => x.k === 'id' && x.v === 'uBandMode') &&
+      [n.c.l, n.c.r].some(x => x.k === 'num' && Number(x.v) === 1);
+    return !!(guard && isCharacterTerm(n.a) && isRadiusTerm(n.b));
+  }
+  return isCharacterTerm(n) || isRadiusTerm(n);
+}
+
+/** The character path: the mode's own texture, optionally wrapped in a gesture. */
+function isCharacterTerm(n) {
+  if (!n) return false;
+  if (n.k === 'call' && n.n === 'bandTermOfMode') {
+    // The whole term in one call — coordinate, lookup and gesture inside. Its
+    // first argument has to be the position it is displacing.
+    if (!(n.args.length >= 1 && isPosXZ(n.args[0]))) return false;
+    // And the BODY's shift, if one is passed, has to be the body — the
+    // attribute measured on the CPU and nothing else. The arity used to be
+    // unchecked past the first argument, which was harmless while there were
+    // only four; the fifth decides where on the spectrum a vertex listens, and
+    // anything audio-driven in that slot (uBass, a band level) would let the
+    // sound choose which sound it is modulated by. That feedback loop is the
+    // one thing the frozen map and the pinned audio arguments in
+    // bandCoordOfMode exist to prevent, and it would be very hard to read as a
+    // bug on screen.
+    if (n.args.length >= 5) {
+      const k = n.args[4];
+      if (!(k && k.k === 'id' && k.v === 'aBodyK')) return false;
+    }
+    return true;
+  }
+  if (n.k === 'call' && n.n === 'bandMotion') {
+    // A gesture may wrap a lookup ONCE — not another gesture, which the
+    // recursive form used to accept — and its coordinate has to be the one the
+    // lookup used.
+    if (n.args.length < 2) return false;
+    const lookup = n.args[0];
+    if (!(lookup && lookup.k === 'call' && lookup.n === 'bandAtU' && lookup.args.length === 1)) return false;
+    if (!isModeTexture(lookup.args[0])) return false;
+    return print(lookup.args[0]) === print(n.args[1]);
+  }
+  if (n.k === 'call' && n.n === 'bandAtU' && n.args.length === 1) return isModeTexture(n.args[0]);
+  return false;
+}
+
+/** The radius rule: the normalised radius, through either lookup. */
+function isRadiusTerm(n) {
+  if (!(n && n.k === 'call')) return false;
+  if (n.n === 'bandAtRadius') return n.args.length === 1 && isPosXZLength(n.args[0]);
+  // bandAtU takes a 0..1 coordinate, so a RAW length is wrong here — most of the
+  // surface would clamp onto band 23. Only the normalised form counts.
+  if (n.n === 'bandAtU') return n.args.length === 1 && isRadiusOverR(n.args[0]);
+  return false;
+}
+
+const isPosXZLength = (n) =>
+  !!(n && n.k === 'call' && n.n === 'length' && n.args.length === 1 &&
+     n.args[0].k === 'field' && n.args[0].f === 'xz' &&
+     n.args[0].o.k === 'id' && n.args[0].o.v === 'pos');
+
+// bandCoordOfMode(mode, pos.xz, a, wi) — the mode it measures and the position
+// it measures at are both load-bearing, so both are checked.
+const isModeTexture = (n) =>
+  !!(n && n.k === 'call' && n.n === 'bandCoordOfMode' && n.args.length === 4 &&
+     isPosXZ(n.args[1]));
+
+const isPosXZ = (n) =>
+  !!(n && n.k === 'field' && n.f === 'xz' && n.o.k === 'id' && n.o.v === 'pos');
+
+/** `length(pos.xz) / max(uBandR, …)` */
+const isRadiusOverR = (n) =>
+  !!(n && n.k === 'bin' && n.op === '/' && isPosXZLength(n.l) &&
+     n.r.k === 'call' && n.r.n === 'max' && n.r.args.length === 2 &&
+     n.r.args[0].k === 'id' && n.r.args[0].v === 'uBandR');
 
 function classify(pats, write, interpName) {
   if (!write.tree) return { ...write, kind: null };
@@ -906,6 +1076,64 @@ export function readVertexProgram(programSrc) {
     tail: {
       stmts: splitStatements(B.tail).map(text),
       pos: splitStatements(B.tail).filter(s => assignsTo(s, ['pos', 'y'])).map(text),
+      // Writes to the WHOLE position, which `pos` above cannot see: it looks for
+      // the path ['pos','y'], so `pos += anything` walked straight past it. The
+      // PTS cloud needs exactly such a write — it moves the vertex along its
+      // normal, which is not a y-only displacement — and rather than let it
+      // through a gap, the gap is closed and the one legal form is modelled.
+      // gpu-shape-y.test.js is what applies the model; this only reports.
+      posVec: splitStatements(B.tail).filter(s => assignsTo(s, ['pos'])).map(text),
+      // The same write, parsed but NOT resolved, and the distinction is the
+      // point. `bandHere` is declared before the branch and assigned inside both
+      // of them, so resolve() sees a local that is defined once and amended and
+      // would hand back its DECLARATION — the literal 0.0. A guard built on that
+      // would cheerfully certify that the scatter is identically zero. What the
+      // caller gets is the expression as written, and it checks which names
+      // appear in it.
+      posVecWrite: (() => {
+        const w = splitStatements(B.tail).filter(s => assignsTo(s, ['pos']));
+        if (!w.length) return null;
+        if (w.length > 1) return { count: w.length, writes: w.map(text) };
+        const stmt = w[0];
+        const eq = stmt.findIndex(t => t.t === 'op' && ASSIGN_OPS.has(t.v));
+        const lhs = text(stmt.slice(0, eq));
+        // The write is expected to be CONDITIONAL: adding 0.0 to a position is
+        // not a no-op — it turns a -0.0 component into +0.0 — and the
+        // multiply-to-nothing form both broke that and paid for a hash on every
+        // vertex of every mode. So a wrapper is reported rather than refused,
+        // and the caller decides which wrappers are legal. Anything before the
+        // lvalue that is not a simple `if (…)` still comes back as unreadable.
+        let guard = null;
+        if (lhs !== 'pos') {
+          const m = /^if\s*\((.*)\)\s*pos$/.exec(lhs);
+          if (!m) return { count: 1, writes: [text(stmt)], wrapped: lhs };
+          guard = m[1].trim();
+        }
+        let rhs;
+        try { rhs = parseExpr(stmt.slice(eq + 1)); }
+        catch (e) { return { count: 1, writes: [text(stmt)], unreadable: e.message }; }
+        // Resolved against the TAIL's own environment and nothing wider. A local
+        // the tail declares (`float ptB = …`) is substituted, so hiding the
+        // gating uniform one name deep does not hide it from the caller; a name
+        // that comes from ABOVE the tail is left standing as an identifier,
+        // which is the honest reading — see the note on bandHere above.
+        const resolved = resolve(rhs, collectEnv(B.tail, new Map(), stmt[0].p)).tree;
+        const names = new Set();
+        (function walk(n) {
+          if (!n || typeof n !== 'object') return;
+          if (n.k === 'id') names.add(n.v);
+          if (n.k === 'call') names.add(n.n);
+          for (const key of ['l', 'r', 'c', 'a', 'b', 'o', 'e']) if (n[key]) walk(n[key]);
+          if (Array.isArray(n.args)) n.args.forEach(walk);
+        })(resolved);
+        if (guard) {
+          // The guard's own names count too: a wrapper that tested something
+          // unrelated would gate the write on the wrong thing and the checks
+          // below would never notice, because they only read the right side.
+          for (const t of tokenize(guard)) if (t.t === 'id') names.add(t.v);
+        }
+        return { count: 1, stmt: text(stmt), op: stmt[eq].v, tree: resolved, raw: rhs, names, guard };
+      })(),
       vh: splitStatements(B.tail).filter(s => assignsTo(s, ['vH'])).map(text),
       vhWrite: (() => {
         const w = splitStatements(B.tail).filter(s => assignsTo(s, ['vH']));
@@ -953,6 +1181,25 @@ export function colourRamps(src) {
         off: Number(nums[0].v), gain: Number(nums[1].v),
         lo: Number(nums[2].v), hi: Number(nums[3].v),
         span: [at + s, at + e],
+        // Everything else in this main() that writes the SAME name after the
+        // ramp did. The ramp pattern above is anchored on vH, so a second
+        // statement — `t = clamp(t + …, …)` — is invisible to it, and a model
+        // built from the ramp alone would describe a shader that no longer
+        // exists. That is the exact failure this reader was written against,
+        // one level down. Reported here as raw statements; deciding which of
+        // them are legal belongs to the caller.
+        // The NAME, not the declaration: the ramp statement's left side is
+        // `float t`, and asking assignsTo for a path of "float t" matches
+        // nothing at all — which is how this arrived reporting an empty list
+        // and looking correct.
+        after: (() => {
+          const lhsToks = stmt.slice(0, eq).filter(t => t.t === 'id');
+          const name = lhsToks.length ? lhsToks[lhsToks.length - 1].v : null;
+          if (!name) return [];
+          return splitStatements(body)
+            .filter(s2 => s2[0].p > stmt[0].p && assignsTo(s2, [name]))
+            .map(text);
+        })(),
       });
     }
   }

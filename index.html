@@ -1317,6 +1317,25 @@
       <input type="range" id="amplitude" min="0.2" max="1.5" step="0.01" value="0.70"></div>
     <div class="cg xp"><label>Wave Intensity <span id="wiv" class="vd">1.00</span></label>
       <input type="range" id="wave-int" min="0.3" max="3.5" step="0.05" value="1.0"></div>
+    <!-- Spectrum Rings: the 24 Bark bands laid across the body — the low end
+         where the formula is broad, the cymbals where it is finely corrugated.
+         It sits HERE, next to the two sliders that shape the surface, rather
+         than in ADVANCED where it started: a control that decides how the body
+         answers the music is a core visual control, and buried three clicks
+         deep it was a feature nobody found. Ships at 0.30 — see the note on
+         AudioEngine.bandDepth for why that number and why saved presets are
+         unaffected. The checkbox below it travels with it: it changes what the
+         slider MEANS, and a modifier parked in a different, collapsed section
+         reads as a bug rather than as a setting. -->
+    <div class="cg xp"><label>Spectrum Rings <span id="bdv" class="vd">0.30</span></label>
+      <input type="range" id="band-depth" min="0" max="1" step="0.02" value="0.3"></div>
+    <!-- Where the 24 bands land. Unchecked: concentric rings from the axis —
+         the same layout under every figure. Checked: the layout is built from
+         the FORMULA's own texture, so each formula pulses in its own places. -->
+    <label style="display:flex;align-items:center;gap:7px;cursor:pointer;padding:2px 0 6px;user-select:none">
+      <input type="checkbox" id="band-character" class="neon" checked>
+      <span style="font-size:10px;color:#778">Rings follow the formula</span>
+    </label>
 
     <div class="eq-fps-row">
       <div id="fps-inline">FPS<br><span id="fps">60</span></div>
@@ -1340,7 +1359,6 @@
         <input type="range" id="bass-sens" min="0" max="2.5" step="0.05" value="1.2"></div>
       <div class="cg xp"><label>Treble Sensitivity <span id="tsv" class="vd">1.00</span></label>
         <input type="range" id="treble-sens" min="0" max="2.5" step="0.05" value="1.0"></div>
-
       <!-- ── Track name overlay toggle ──────────────────────────────────── -->
       <label style="display:flex;align-items:center;gap:7px;cursor:pointer;padding:4px 0;user-select:none">
         <input type="checkbox" id="show-track-name" class="neon">

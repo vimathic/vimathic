@@ -108,6 +108,34 @@ export const PARAMS = {
     midi: true,
   },
 
+  bandDepth: {
+    label:   'Spectrum Rings',
+    slider:  'bandDepth',
+    display: 'bdv',
+    // 0 is off; the shipped default is 0.30 — see AudioEngine.bandDepth for why
+    // it stopped being 0, and why saved presets are unaffected by the change.
+    //
+    // The top of the plain range is 1.0 world unit ON AVERAGE ACROSS THE
+    // SPECTRUM, which is about a third of the catalogue's envelope radius
+    // (~3.2) and roughly two thirds of the amplitude the formula field itself
+    // reaches at the factory sliders. Past that the rings stop reading as the
+    // body's own texture and start reading as a second object; the extended
+    // range is there for VJ use where that is the point.
+    //
+    // "On average" is not hedging — it is BAND_DEPTH_PROFILE, which weights the
+    // 24 bands by centre frequency to a mean of exactly 1. Band 0 carries 1.94x
+    // and band 23 carries 0.62x, so at the top of the plain range a kick reaches
+    // 1.94 world units and a cymbal 0.62. That asymmetry is the feature; what it
+    // costs is that this slider no longer names a single distance, and the
+    // paragraph above used to read as though it did.
+    min: 0, max: 1.0, default: 0.3,
+    extendedMax: 2.5,
+    format: v => v.toFixed(2),
+    get: ctx => ctx.audio.bandDepth,
+    set: (ctx, v) => { ctx.audio.bandDepth = v; },
+    midi: true,
+  },
+
   bassSens: {
     label:   'Bass Sensitivity',
     slider:  'bassSens',
