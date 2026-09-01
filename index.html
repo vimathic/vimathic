@@ -167,7 +167,7 @@
        min-width:0 is what keeps the control from refusing to shrink: a flex
        item's default min-width is its content, and the palette names are long
        enough to push the button out of the panel without it.
-       .srch-wrap is in the selector because makeSearchable() (bottom of this
+       .srch-wrap is in the selector because makeDropdown() (bottom of this
        file) replaces #color-sel with a combobox wrapper at load — the flex item
        in that row is the wrapper, not the select it hides. */
     .cg-row{display:flex;gap:5px;align-items:stretch}
@@ -212,8 +212,11 @@
     }
     /* ── Searchable combobox wrapper ──────────────────────────────────── */
     .srch-wrap{position:relative;width:100%}
+    /* cursor:pointer and the caret hidden — the field is read-only and opens a
+       list, so it must not look like somewhere to type. */
     .srch-wrap .srch-input{width:100%;background:#0a0a1a;color:#ddd;border:1px solid rgba(255,58,122,.35);
-      border-radius:6px;padding:5px 28px 5px 7px;font-size:10px;font-family:monospace;box-sizing:border-box;outline:none}
+      border-radius:6px;padding:5px 28px 5px 7px;font-size:10px;font-family:monospace;box-sizing:border-box;outline:none;
+      cursor:pointer;caret-color:transparent;user-select:none}
     .srch-wrap .srch-input:focus{box-shadow:0 0 8px rgba(255,58,122,.4);border-color:var(--accent)}
     .srch-wrap .srch-arrow{position:absolute;right:0;top:0;height:100%;width:26px;background:none;
       border:none;color:#889;cursor:pointer;font-size:10px;display:flex;align-items:center;
@@ -854,9 +857,9 @@
   SPACE play/pause · ← → tracks<br>
   F random formula · D next shape · T material · R random all<br>
   Q random color · E next color<br>
-  W flip camera · G grid · H this hint<br>
+  W flip camera · G grid · H this hint · Y glitch<br>
   <span style="color:#445">Hold + drag (mouse / touchpad / wheel):<br>
-  amp J/V · wave N/C · bloom B/A · bass L/X · treble K/Z</span>
+  amp J/V · wave N/C · bloom B/A · bass L/X · treble K/Z · rings S</span>
 </div>
 <input type="file" id="audio-file" accept="audio/*" multiple>
 
@@ -2024,9 +2027,20 @@
 <script type="module" src="/src/main.js"></script>
 
 <script>
-// ── Searchable combobox — wraps a <select> with a typed-filter input ─────────
-// Usage: makeSearchable('gpu-sel')  — call after DOM ready
-function makeSearchable(selId) {
+// ── Dropdown combobox — wraps a <select> with a read-only label + list ───────
+// Usage: makeDropdown('gpu-sel')  — call after DOM ready
+//
+// It USED to be a searchable combobox: the label was a text input and typing in
+// it filtered the list. The field is read-only now, by the owner's call
+// (01.09), and the reason is the phone as much as the desktop — an editable
+// input raises the on-screen keyboard over the panel every time 3D SHAPE,
+// SHADER MODE or COLOR SCHEME is touched, for a field where every legal value
+// is already one tap away in the list.
+//
+// The keyboard is not lost with the typing: Up/Down step through the options
+// the way a native <select> does, Enter and Escape close the list. What is gone
+// is free text, which is what the request was.
+function makeDropdown(selId) {
   const sel = document.getElementById(selId);
   if (!sel || sel.dataset.srch) return;
   sel.dataset.srch = '1';
@@ -2058,6 +2072,14 @@ function makeSearchable(selId) {
   input.type = 'text';
   input.autocomplete = 'off';
   input.spellcheck = false;
+  // Read-only, not disabled: a disabled input takes no focus, and the field has
+  // to stay focusable for the arrow keys and for anything reading the panel
+  // aloud. `readOnly` is also what stops the mobile keyboard from opening.
+  // `inputMode = 'none'` says the same thing to the browsers that ignore it.
+  input.readOnly = true;
+  input.inputMode = 'none';
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-readonly', 'true');
   input.placeholder = sel.options[sel.selectedIndex]?.text || '— select —';
 
   const arrow = document.createElement('button');
@@ -2072,22 +2094,21 @@ function makeSearchable(selId) {
   wrap.appendChild(arrow);
   wrap.appendChild(drop);
 
-  // Sync input text to selected option
-  function syncLabel(clearQuery = true) {
-    // FIX: clearing the query is right when the label is being re-synced after
-    // a selection, and wrong when something else writes the value while the
-    // operator is mid-search — AUTO COLOUR, a clip step, a MIDI CC and the
-    // palette hotkeys all write DOM.colorSel.value. Any of them used to erase
-    // a half-typed query while the dropdown stayed open on the filter derived
-    // from it.
-    if (clearQuery) input.value = '';
+  // Sync the label to the selected option.
+  //
+  // The field carries no text of its own any more, so the old `clearQuery`
+  // parameter — which existed to keep a half-typed search alive while AUTO
+  // COLOUR, a clip step or a MIDI CC wrote the value underneath it — has
+  // nothing left to protect. The value is written blank on every sync, because
+  // the label is a placeholder and a stray value would sit on top of it.
+  function syncLabel() {
+    input.value = '';
     input.placeholder = sel.options[sel.selectedIndex]?.text || '— select —';
   }
 
-  // Render dropdown filtered by query
-  function render(query) {
+  // Render the full option list. No filter: there is nothing to filter by.
+  function render() {
     drop.innerHTML = '';
-    const q = query.toLowerCase().trim();
     let anyVisible = false;
     let groupEl = null;
     for (const item of getItems()) {
@@ -2095,11 +2116,8 @@ function makeSearchable(selId) {
         groupEl = document.createElement('div');
         groupEl.className = 'srch-group';
         groupEl.textContent = item.label;
-        groupEl.style.display = 'none';
         drop.appendChild(groupEl);
       } else {
-        if (q && !item.text.toLowerCase().includes(q)) continue;
-        if (groupEl) groupEl.style.display = '';
         groupEl = null;
         anyVisible = true;
         const div = document.createElement('div');
@@ -2116,17 +2134,13 @@ function makeSearchable(selId) {
         drop.appendChild(div);
       }
     }
-    if (!anyVisible) {
-      const div = document.createElement('div');
-      div.className = 'srch-opt';
-      div.style.color = '#556';
-      div.textContent = 'no results';
-      drop.appendChild(div);
-    }
+    // The empty-list branch is gone with the filter: a <select> that has
+    // options always renders all of them, and one that has none renders
+    // nothing, which is the honest picture of an empty select.
   }
 
   function open() {
-    render(input.value);
+    render();
     wrap.classList.add('open');
     // Scroll active item into view
     const active = drop.querySelector('.active');
@@ -2134,20 +2148,31 @@ function makeSearchable(selId) {
   }
   function close() { wrap.classList.remove('open'); }
 
+  /** Move the selection by one option, the way a native <select> does. */
+  function step(delta) {
+    const opts = getItems().filter(i => i.type === 'opt');
+    if (!opts.length) return;
+    const at = opts.findIndex(o => o.value === sel.value);
+    const next = opts[Math.min(opts.length - 1, Math.max(0, (at < 0 ? 0 : at + delta)))];
+    if (!next || next.value === sel.value) return;
+    sel.value = next.value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    syncLabel();
+    if (wrap.classList.contains('open')) open();
+  }
+
   input.addEventListener('focus', () => open());
-  // FIX: reopen on typing and on a click. Picking an item calls close() while
-  // preventDefault keeps focus in the field, so no further `focus` event can
-  // ever fire — after the first selection, typing filtered a list nobody could
-  // see and clicking the field did nothing. The arrow was the only way back.
-  input.addEventListener('input', () => open());
+  // Reopen on a click: picking an item calls close() while preventDefault keeps
+  // focus in the field, so no further `focus` event can ever fire — after the
+  // first selection, clicking the field did nothing and the arrow was the only
+  // way back. (The 'input' listener that used to sit here went with the typing.)
   input.addEventListener('click', () => open());
   input.addEventListener('blur', () => setTimeout(close, 150));
   input.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { close(); input.blur(); }
-    if (e.key === 'Enter') {
-      const first = drop.querySelector('.srch-opt');
-      if (first) first.dispatchEvent(new MouseEvent('mousedown'));
-    }
+    if (e.key === 'Escape') { close(); input.blur(); return; }
+    if (e.key === 'Enter')  { close(); input.blur(); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); step(+1); return; }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); step(-1); return; }
   });
 
   arrow.addEventListener('mousedown', e => {
@@ -2177,12 +2202,10 @@ function makeSearchable(selId) {
       get() { return _valDesc.get.call(this); },
       set(v) {
         _valDesc.set.call(this, v);
-        // Keep the operator's query while they are typing in this field; the
-        // placeholder still follows the new value, which is all this shadowed
-        // setter was added for.
-        const typing = document.activeElement === input;
-        syncLabel(!typing);
-        if (typing && wrap.classList.contains('open')) render(input.value);
+        syncLabel();
+        // An open list has to follow the write too, or it keeps highlighting
+        // the option that was selected a moment ago.
+        if (wrap.classList.contains('open')) render();
       },
     });
   }
@@ -2192,14 +2215,16 @@ function makeSearchable(selId) {
 
 // Init after module scripts have populated the selects
 window.addEventListener('load', () => {
-  makeSearchable('gpu-sel');
-  makeSearchable('color-sel');
-  makeSearchable('shape-sel');
-  // volume-formula-sel is hidden by default — init searchable when shown
+  makeDropdown('gpu-sel');
+  makeDropdown('color-sel');
+  makeDropdown('shape-sel');
+  // volume-formula-sel is hidden by default — wrap it when it is shown. It is
+  // the same kind of field as the three above and is wrapped by the same
+  // function, so it loses the typing with them.
   const volWrap = document.getElementById('volume-formula-wrap');
   if (volWrap) {
     new MutationObserver(() => {
-      if (volWrap.style.display !== 'none') makeSearchable('volume-formula-sel');
+      if (volWrap.style.display !== 'none') makeDropdown('volume-formula-sel');
     }).observe(volWrap, { attributes: true, attributeFilter: ['style'] });
   }
 });

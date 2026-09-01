@@ -23,7 +23,7 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 | <kbd>E</kbd> | Next color scheme (cycles through all 54) |
 | <kbd>W</kbd> | Flip camera 180° around its orbit |
 | <kbd>G</kbd> | Toggle ground grid |
-| <kbd>S</kbd> | Glitch punch — brief bloom + chromatic burst |
+| <kbd>Y</kbd> | Glitch punch — brief bloom + chromatic burst |
 | <kbd>H</kbd> | Toggle this hotkey hint overlay |
 
 The randomization keys (`R`, `Q`, `F`) use a **shuffle bag**: every color, shape, and formula will appear before any repeats. You will not see the same value twice in a row, ever — even at deck boundaries the next pick is guaranteed different from the last.
@@ -43,6 +43,7 @@ Hold the key, then drag horizontally with mouse, two-finger touchpad swipe, or s
 | <kbd>J</kbd> / <kbd>V</kbd> | Amplitude | 0.2 – 2.0 |
 | <kbd>N</kbd> / <kbd>C</kbd> | Wave intensity | 0.3 – 5.0 |
 | <kbd>B</kbd> / <kbd>A</kbd> | Bloom | 0.1 – 2.0 |
+| <kbd>S</kbd> | Spectrum Rings | 0.1 – 1.0 |
 
 Each range is one full window sweep of the drag; the panel slider shows the narrower everyday range and grows to fit when a drag takes a value past it. The floor is 0.1 even where the parameter itself allows 0 — dragging one to exactly zero makes the picture go still, which reads as a fault mid-set.
 
@@ -55,7 +56,8 @@ These are the "performance" keys — they're chosen so you can hold one with the
 - `D` complements `R` — both now reach all 27 shapes, but `D` walks them in order, which is what you want when comparing looks systematically rather than being surprised.
 - `T` cycles the surface material (Matte, Glossy, Metal, Mirror, Velvet, Glass) — it only has an effect in SURFACE render mode; in Wireframe or Points it does nothing.
 - Combine `R` and `Q`: `R` for a full reset of the look, `Q` to swap just the color afterward.
-- `S` (glitch) plus a beat-heavy moment of music produces a satisfying punch — use it as a manual accent during sets.
+- `Y` (glitch) plus a beat-heavy moment of music produces a satisfying punch — use it as a manual accent during sets. It answered to `S` until 01.09.2026, when `S` was given to Spectrum Rings.
+- `S` has no alias in the other hand cluster — the letters beside it are taken. It is the one hold-and-drag key that is not paired.
 - The randomization affects the dropdowns in the panel too, so whatever `R` lands on becomes the "current" selection if you want to keep iterating from there.
 
 ## What is NOT a hotkey

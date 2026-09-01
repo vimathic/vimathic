@@ -835,10 +835,13 @@ vec3 coalPlum(float t){vec3 a=vec3(.020,.012,.031),b=vec3(.137,.078,.180),c=vec3
 //   FIX(night): comparable where getColor()'s return value IS the pixel,
 //   which is WIRE and PTS with a Matte finish — the shipped startup state.
 //   It is not the whole story in SURF, nor with any non-Matte material.
-//   uLighting=1 puts color*(0.30 + diff*0.85) + color*rim + vec3(spec)
+//   uLighting=1 puts color*(0.30 + diff*0.85) + color*rim + vec3(spec)*uGlare
 //   between the palette and gl_FragColor, i.e. a gain and an ADDITIVE
 //   white term; the reflection block runs in every viz mode and mixes in
-//   studioEnv on top. Both raise what the high-pass sees above the number
+//   studioEnv on top. Since 01.09 both additive terms are scaled by uGlare
+//   (0.65, and 0.45 in NIGHT), so what the high-pass sees above the palette
+//   is smaller than it was — but it is still above it, which is why the
+//   paragraph below still says what it says. Both raise what the high-pass sees above the number
 //   below. The contract still holds as written — it is a contract on the
 //   palette, and it is what keeps the palette itself out of the glow — but
 //   "nothing here blooms at rest" is a claim about the palette, not a
@@ -957,7 +960,14 @@ vec3 getColor(int cm, float t){
 //                      scope. Gated by uMaterial>0 so Matte costs nothing.
 const _MATERIAL_UNIFORMS = `
 uniform int   uMaterial;
-uniform float uMetalness, uRoughness, uReflect, uFresnelP;`;
+uniform float uMetalness, uRoughness, uReflect, uFresnelP;
+// How much of the white the surface throws back: 1.0 is what shipped before
+// 01.09, and NIGHT asks for less than the normal palettes do. Declared here
+// rather than beside the lighting uniforms because studioEnv reads it too, and
+// the two blocks are included independently by the editor template. See the
+// note on studioEnv for what it multiplies and, more to the point, what it
+// deliberately does not.
+uniform float uGlare;`;
 
 // ── Particle shaping (PTS mode) ───────────────────────────────────────────────
 // A point primitive is a screen-aligned square, which is why the POINTS mode
@@ -995,6 +1005,33 @@ const _STUDIO_ENV = `
 // Procedural studio environment — dark floor, brighter ceiling, three
 // soft-box highlights. Sampled by reflect(-V,N); no cubemap texture needed
 // (keeps the single-file bundle asset-free).
+//
+// ── uGlare, and why it multiplies the LAMPS and not the whole environment ───
+// The complaint (owner, 01.09) is that the white cuts the eyes, in NIGHT most
+// of all. Measured on the shipped tree — plane, Eigenvector Field, the owner's
+// own slider values, six frames per configuration, median:
+//
+//                    p99 luma   share > 0.7   mean of lit pixels
+//   normal  mirror     0.467       0.006 %          0.170
+//   normal  matte      0.828       3.586 %          0.316
+//   NIGHT   mirror     0.409       0.000 %          0.233
+//   NIGHT   matte      0.218       0.012 %          0.139
+//
+// Two different things, and the numbers separate them. In the normal palettes
+// MATTE is the bright one — it has no reflection path at all, so what burns
+// there is thewhite specular in the lighting block, which every material gets. In
+// NIGHT the mirror is 1.67x the matte mean, on a mode whose whole promise is a
+// dark picture: the palettes are built to a contract (max channel 0.55, Y 0.28
+// at every stop) and the reflection is added AFTER the palette, so it walks
+// straight through that guarantee.
+//
+// So the dimming is applied to the LAMPS — the three soft-boxes here, the
+// specular in the lighting block, and the material's own highlight — and not
+// to the environment gradient or to reflMix. Dimming the whole reflection would
+// take a mirror's reflectivity away with the glare; dimming the sources leaves
+// the surface as reflective as it was and makes what it reflects less blinding.
+// The gradient (floor/mid/ceiling) is already below 0.4 and is what makes chrome
+// read as chrome.
 vec3 studioEnv(vec3 dir){
   vec3 d = normalize(dir);
   float y = d.y;
@@ -1006,9 +1043,9 @@ vec3 studioEnv(vec3 dir){
   float sb1 = smoothstep(0.55, 0.95, dot(d, normalize(vec3( 0.4, 0.8,  0.3))));
   float sb2 = smoothstep(0.70, 0.98, dot(d, normalize(vec3(-0.5, 0.7, -0.2))));
   float sb3 = smoothstep(0.80, 0.99, dot(d, normalize(vec3( 0.1, 0.6, -0.8))));
-  base += vec3(1.0, 0.98, 0.92) * sb1 * 1.4;
-  base += vec3(0.85, 0.9, 1.0)  * sb2 * 1.0;
-  base += vec3(1.0, 0.95, 0.88) * sb3 * 0.7;
+  base += vec3(1.0, 0.98, 0.92) * sb1 * 1.4 * uGlare;
+  base += vec3(0.85, 0.9, 1.0)  * sb2 * 1.0 * uGlare;
+  base += vec3(1.0, 0.95, 0.88) * sb3 * 0.7 * uGlare;
   return base;
 }`;
 
@@ -1029,7 +1066,10 @@ const _MATERIAL_BLOCK = `
     float reflMix = clamp(uReflect * (uMetalness * 0.6 + fresM * 0.7 + 0.15), 0.0, 1.0);
     color = mix(color, reflection, reflMix);
     float specM = pow(max(dot(Nm, Vm), 0.0), mix(8.0, 180.0, 1.0 - uRoughness));
-    color += vec3(specM) * (1.0 - uRoughness) * uReflect * 0.3;
+    // The material's own highlight is a lamp too — white, additive, and at
+    // mirror roughness it is a 180-power point. Dimmed with the rest of them;
+    // reflMix above is left alone, so the finish keeps its reflectivity.
+    color += vec3(specM) * (1.0 - uRoughness) * uReflect * 0.3 * uGlare;
   }`;
 
 export const FS = `
@@ -1142,10 +1182,17 @@ void main(){
 
     // Compose: ambient floor (so backlit areas keep their hue) + diffuse
     // multiply + coloured rim + white specular sparkle.
+    //
+    // The sparkle is the one term here that is NOT the palette's colour, and on
+    // the shipped tree it is the brightest thing in the frame on a matte body:
+    // p99 luma 0.828 against a mirror's 0.467, 3.59 % of the frame above 0.7.
+    // uGlare is what the owner's "the white cuts the eyes" turns into — see the
+    // note on studioEnv. The diffuse, the ambient floor and the coloured rim are
+    // untouched, so the body keeps its brightness and loses the glint.
     float ambient = 0.30;
     color = color * (ambient + diff * 0.85)
           + color * rim
-          + vec3(spec);
+          + vec3(spec) * uGlare;
   }
 
   // ── Surface material: studio-environment reflections ────────────────────

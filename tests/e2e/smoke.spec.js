@@ -120,11 +120,12 @@ test.describe('Hotkeys', () => {
     // (`#surface-material-sel`) and into render.grid.material — so none of
     // the three may be dropped from this list.
     //
-    // Excluded on purpose: 'c' / 'n' are hold-and-drag aliases for Wave
-    // Intensity owned by _fsParams in src/ui/controls.js and have no tap case,
+    // Excluded on purpose: 'c' / 'n' / 's' are hold-and-drag keys owned by
+    // _fsParams in src/ui/controls.js and have no tap case ('s' drives Spectrum
+    // Rings since 01.09, which is why the glitch it used to fire is 'y' here),
     // so pressing them asserts nothing; ' ' (togglePlay) needs a user-gesture'd
     // AudioContext plus a loaded track; ArrowLeft / ArrowRight need a playlist.
-    const keys = ['d', 't', 'f', 'r', 'q', 'e', 'w', 'g', 'h', 's'];
+    const keys = ['d', 't', 'f', 'r', 'q', 'e', 'w', 'g', 'h', 'y'];
     for (const k of keys) {
       await page.keyboard.press(k);
       // D / R / F each kick off a morph transition and G runs a rAF fade;

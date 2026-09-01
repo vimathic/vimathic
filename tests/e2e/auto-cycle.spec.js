@@ -31,9 +31,9 @@ test.describe('AUTO colour', () => {
     await page.goto('/');
     await expect(page.locator('canvas')).toBeVisible();
 
-    // #color-sel itself is display:none from load: makeSearchable() (bottom of
+    // #color-sel itself is display:none from load: makeDropdown() (bottom of
     // index.html) hides it inside a .srch-wrap combobox and drives it from a
-    // filter input. So the native select is where the VALUE lives, the wrapper
+    // read-only label. So the native select is where the VALUE lives, the wrapper
     // is where the LAYOUT lives, and the input's placeholder is the palette
     // name a human actually reads. All three are checked below.
     const sel   = page.locator('#color-sel');
