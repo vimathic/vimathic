@@ -89,25 +89,25 @@ custom code enters the picture:
 <!-- Colour schemes track COLOR_SCHEME_COUNT in src/params.js (54). -->
 | Axis | Count |
 |---|---|
-| 3D shapes (Plane, Sphere, Torus, Klein Bottle, and others) | 27 |
+| 3D shapes (Plane, Sphere, Torus, Klein Bottle, and others) | 32 |
 | Formulas (192 CPU + 38 GPU shaders) | 230 |
 | Colour schemes | 54 |
 | Render modes (surface / wireframe / points) | 3 |
 | Deformation modes (surface / volume / collapse) | 3 |
 | Volume vector fields (when Volume mode is active) | 6 |
 
-<!-- (2 deform modes × 230 formulas + 6 volume fields) × 27 shapes ×
-     3 render modes × 54 schemes = 2 038 284. Recompute if any factor moves. -->
+<!-- (2 deform modes × 230 formulas + 6 volume fields) × 32 shapes ×
+     3 render modes × 54 schemes = 2 415 744. Recompute if any factor moves. -->
 Counting these combinations honestly — accounting for the fact that Volume
 mode replaces the formula slot with one of 6 vector fields, while Surface and
-Collapse use the chosen formula — gives **roughly 2 million distinct base
+Collapse use the chosen formula — gives **roughly 2.4 million distinct base
 states**.
 
 That's before:
 
-- 7 audio-reactive sliders (amplitude, wave intensity, bass/treble sensitivity, bloom, colour, rotate-speed)
+- 8 audio-reactive sliders (amplitude, wave intensity, Spectrum Rings, bass/treble sensitivity, bloom, colour, rotate-speed)
 - The MIDI mapping table (any CC → any parameter)
-- 7 toggleable post-processing effects with continuous parameters
+- 6 post-processing passes in the engine covering 7 effects (Film Grain and Vignette share a pass), two of them reachable from the app — the bloom slider above and the afterglow the *smoke* particle style brings in PTS mode
 - The **Camera Programmer** (arbitrary JavaScript camera scripts + keyframe timeline)
 - The **GLSL Shader Editor** (live-edit vertex and fragment shaders)
 - The audio itself — every track produces a different spectral fingerprint
@@ -154,12 +154,19 @@ Cinematic, Synthwave, Scientific, Premium, Monochrome, Trending, a 12-palette "N
 
 ### Post-Processing Effects
 Bloom · God Rays · Motion Blur · Chromatic Aberration · Afterglow · Film Grain · Vignette
-— all toggleable in real time, GPU-accelerated via custom GLSL shaders
+— composer passes. Four are custom GLSL written here (God Rays, Motion Blur,
+Chromatic Aberration, and the combined Film Grain + Vignette); Bloom and the
+afterglow are three.js's own `UnrealBloomPass` and `AfterimagePass`, used
+unmodified. Two are reachable from the UI: Bloom's strength slider (the pass
+itself always runs) and the afterglow the *smoke* particle style switches on in
+PTS mode. The vignette runs for everyone; the rest
+are engine capability with no control wired to them yet.
 
 ### Audio Engine
+- **Spectrum Rings** — the 24 Bark bands of the spectrum laid across the body itself: each band moves its own region, placed by the formula's own texture, stereo-aware (L/R) — on by default
 - File playback (MP3, WAV, FLAC, OGG) with drag & drop
-- Crossfade between tracks (configurable duration)
-- Bass / Mid / Treble sensitivity controls
+- Crossfade between tracks (fixed 1.5 s)
+- Bass / Treble sensitivity controls
 - Beat detection in the background — feeds BPM to the Camera Programmer and beat-synced GIF recorder; the visualizer deliberately holds back on flash response in the default scene
 - Live microphone input (works with virtual loopback devices: VB-Audio Cable, BlackHole)
 - Browser tab audio capture (Chrome)
@@ -194,9 +201,16 @@ src/
   main.js              — bootstrap, event loop, hotkeys
   render.js            — Three.js renderer, geometry, animation, post-processing
   shaders.js           — GLSL shaders (54 colour schemes, 38 GPU formulas)
+  shapes.js            — the shape catalogue: every body the build can draw
+  parametric-surfaces.js — Möbius, Klein, catenoid, helicoid, hyperboloid, pseudosphere
+  implicit-surfaces.js — gyroid, Schwarz P, Chmutov, Clebsch, Cayley (equation-only bodies)
+  marching-cubes.js    — turns an implicit equation into a mesh
   math-collections.js  — 192 CPU formula implementations + 6 volume vector fields
   math-visualizer.js   — CPU math engine (worker/sync hybrid)
   math-worker.js       — Web Worker for off-main-thread evaluation
+  band-map.js          — which of the 24 Bark bands each point of the body listens to
+  formula-picker.js    — the randomiser's pool: both formula families, GPU and CPU
+  viz-mode.js          — render-mode whitelist (surface / wireframe / points)
   camera.js            — Camera physics, programmer, keyframes
   audio.js             — Web Audio API, FFT, beat detection, live capture
   dom.js               — Centralised DOM lookups (single source of truth)
@@ -210,20 +224,22 @@ src/
     modals.js          — Shader / camera / output / audio-source / MIDI modals
     presets.js         — Capture/apply state, import/export JSON, migration registry
     clip-player.js     — Sequence automation with backgrounded-tab catch-up
+    auto-cycle.js      — Timed palette/material cycling: bars of BPM when playing, wall time when idle
     about-modal.js     — Documentation viewer with browser-style tabs
 
 plugins/
   vimathic-docs.js     — Vite plugin: documents/*.md → app modal + static SEO site
+  vimathic-build-info.js — Vite plugin: version + build hash as a virtual module
 
 documents/             — Markdown documentation (loaded into About modal + indexed by Google)
-  quick-start.md  hotkeys.md  midi.md  camera-programmer.md
+  index.md  quick-start.md  hotkeys.md  midi.md  camera-programmer.md
   shader-editor.md  recording.md  presets.md  output.md  troubleshooting.md
   roadmap.md  safety.md  science.md  license.md
 ```
 
 **Stack:** Three.js (WebGL) · Web Audio API · Web MIDI API · Vite + vite-plugin-singlefile · micromark (build-time)
 **Tests:** `node --test` — no test framework dependency
-**CI:** GitHub Actions — math tests + single-file build verification on every push
+**CI:** GitHub Actions — full unit suite + Playwright smoke tests + single-file build verification on every push
 
 ---
 

@@ -15,8 +15,10 @@
 // Where that '— select —' comes from, since #shape-sel's markup has no such
 // <option>: makeDropdown() (index.html, bottom) hides the <select> with
 // display:none and puts a read-only input in front of it whose placeholder is
-// `sel.options[sel.selectedIndex]?.text || '— select —'` (index.html:2004,
-// :2027). An unknown value leaves selectedIndex at -1, so that literal is what
+// `sel.options[sel.selectedIndex]?.text || '— select —'` — written once when
+// the dropdown is built and again in its `syncLabel()`, cited by symbol rather
+// than by line because a line number here goes stale on the next edit above it.
+// An unknown value leaves selectedIndex at -1, so that literal is what
 // a viewer reads. The <select> is never the thing on screen.
 //
 // Measured on the built app in Chromium, booting with an unknown shape seeded

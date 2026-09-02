@@ -21,9 +21,11 @@ What gets captured:
 
 - Shape and color scheme indices
 - Visual mode (Surface / Wireframe / Points)
+- Surface material (Matte, Glossy, Metal, Mirror, Velvet, Glass) and particle style
+- NIGHT mode — the dark stage is part of the look, so a snapshot brings it back with everything else
 - GPU mode or CPU formula (and which math collection)
 - Deformation mode (Surface / Volume / Collapse) and volume formula
-- All audio slider values: amplitude, wave intensity, bass/treble sensitivity, bloom
+- All audio slider values: amplitude, wave intensity, bass/treble sensitivity, bloom, Spectrum Rings depth — plus the "Rings follow the formula" checkbox that decides where the bands land
 - Camera position, target, FOV, physics mode, auto-rotate state
 - Camera Programmer code and keyframes (if any)
 - Custom shader code (if applied)
@@ -49,7 +51,7 @@ Click the **✕** next to the preset name in the list. There is no confirmation 
 
 ## Hold time
 
-Each preset row has a small number field — the hold time in seconds. This is used by the Clip Player. Default is whatever the global "hold" slider is set to.
+Each preset row has a small number field — the hold time in seconds. This is used by the Clip Player. Default is whatever the global **Hold(s)** field in the CLIP PLAYER section is set to.
 
 ## The Clip Player
 
@@ -68,7 +70,7 @@ In bars mode, the player uses VIMATHIC's BPM detector. A 4-bar hold at 120 BPM =
 
 ### Sync with music
 
-The **sync with music** checkbox links the Clip Player to audio playback:
+The **🎵 Start with music** checkbox links the Clip Player to audio playback:
 
 - Audio plays → clip cycling starts automatically
 - Audio pauses → clip cycling stops
@@ -95,7 +97,7 @@ This is what lets you arm a camera script *during* a set. Before, the script die
 
 Handing the camera back to the player:
 
-- switch **AUTO-ROTATE** off, or drag the view (dragging switches it off anyway);
+- switch **AUTO-ROTATE** off, or hold a drag on the view for half a second (which switches it off too) — a quick drag or a wheel zoom does not hand the camera back;
 - or press **▶ PLAY** again — a new clip always starts on the player's own camera logic.
 
 ### Backgrounded tabs
@@ -132,13 +134,13 @@ Preset JSON files carry a `_version` field. As VIMATHIC evolves, the snapshot fo
 
 If you load a preset from a *future* VIMATHIC version, you'll see a warning in the console — fields the current build doesn't understand are ignored, but the load tries its best. The reverse (future loading past) is the standard path and always works.
 
-Current preset format version: **2**.
+Current preset format version: **4**.
 
 ## Tips
 
 - **Build a library of looks for each track or set.** Name them by mood: "verse-pulse", "drop-stab", "ambient-float". Cycling four well-chosen presets gives more visual variety than fiddling with sliders mid-set.
 - **Tune per-preset hold times.** A high-energy preset benefits from 4 bars; a slow ambient one wants 16. Edit the seconds field next to each row.
-- **For VJ sets, use bars mode + sync with music.** Build a 16-preset clip, set 4 bars each, hit play, never touch the keyboard for an hour.
+- **For VJ sets, use bars mode + 🎵 Start with music.** Build a 16-preset clip, set 4 bars each, hit play, never touch the keyboard for an hour.
 - **Export weekly.** Browser cache clearing wipes localStorage. A JSON backup once a week is the difference between losing 3 hours of work and not.
 
 ## Where the data lives

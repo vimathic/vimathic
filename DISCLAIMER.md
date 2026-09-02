@@ -8,8 +8,9 @@
 
 VIMATHIC produces **rapid visual changes synchronised to music**: bright flashes
 on detected beats, high-contrast strobing patterns when the beat detector
-fires, fast-moving fractal geometry, post-processing effects (bloom, motion
-blur, chromatic aberration), and colour cycling at audio rate. Some scenes —
+fires, fast-moving fractal geometry, post-processing effects (bloom, the
+vignette, and the afterglow trails the *smoke* particle style adds in points
+mode), and colour cycling at audio rate. Some scenes —
 particularly with high bass sensitivity, heavy bloom, or beat-sync clip
 playback — produce flashing visuals that can trigger seizures or other
 adverse reactions.
@@ -45,14 +46,17 @@ guidance.
 
 - VIMATHIC runs in the browser and uses **WebGL (GPU)** for rendering, with
   parallel Web Worker driving CPU math evaluation. It is intentionally
-  demanding: a complex fractal animated at 60 fps with 7 post-processing
-  passes will use whatever GPU and CPU the machine provides.
+  demanding: a complex fractal animated at 60 fps through the composer chain —
+  bloom, the vignette, and the afterglow the smoke particle style adds in
+  points mode — will use whatever GPU and CPU the machine provides.
 - Extended use of a GPU-intensive application can cause hardware to **run
   hot**. Ensure adequate ventilation. If your machine has fan-control
   software, set it to a profile that copes with sustained load.
 - **Mobile is a preview, not the primary experience.** On phones and
   tablets, VIMATHIC renders at a reduced frame rate, lower mesh resolution,
-  and with the heaviest post-processing effects disabled by default. This
+  and with the heaviest post-processing effects — god rays and motion blur —
+  refused outright rather than merely defaulted off: on mobile those passes
+  are never built, whatever a preset or script asks for. This
   keeps the app responsive but cannot fully neutralise the thermal load of
   sustained GPU rendering on hardware that was not built for it. Switching
   your mobile browser to "Desktop site" does not improve performance — it
@@ -61,8 +65,9 @@ guidance.
   mobile as a preview.
 - **No cryptominers, no trojans, no background tasks.** VIMATHIC does only
   one thing: render mathematics to a canvas in response to your audio. There
-  is no analytics, no telemetry, no network activity at runtime, no
-  background process that survives the tab closing. If your machine is
+  is no analytics, no telemetry, no third-party network activity at runtime —
+  everything it loads after the page opens comes from the same site the page
+  did — and no background process that survives the tab closing. If your machine is
   warm, it is warm because of the rendering you can see on screen.
 - The **GIF recorder** holds captured frames as uncompressed RGBA, so it is
   capped at 1500 MB of queued frames. It prices the clip before capture and

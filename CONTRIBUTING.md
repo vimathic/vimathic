@@ -17,8 +17,8 @@ VIMATHIC is at **v1.0-beta** and currently in a stability period. This freeze is
 
 - New mathematical formulas (192 is the curated count)
 - New GPU shaders (38 is intentional)
-- New colour schemes (44 covers the design space)
-- New base shapes (20 + deformation modes cover geometry)
+- New colour schemes (54 covers the design space)
+- New base shapes (32 + deformation modes cover geometry)
 - New keyboard shortcuts (hotkey surface is full)
 - Major architecture refactors
 - New external dependencies (currently 4: `three`, `gif.js`, `micromark`, `micromark-extension-gfm-table`)

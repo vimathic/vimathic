@@ -15,7 +15,7 @@ VIMATHIC runs entirely in your browser. We don't store your data, we don't track
 
 The site at vimathic.com is hosted on **Cloudflare Pages**. Cloudflare collects anonymised visit counts — page views, popular pages, country-level breakdown. We look at those numbers to know how many people use the project and which pages they read.
 
-Cloudflare **does not give us your IP address**, and we **don't link any of that data to your actions in the app**. The visualizer itself makes no network requests at runtime — once the page has loaded, nothing leaves your browser.
+Cloudflare **does not give us your IP address**, and we **don't link any of that data to your actions in the app**. The visualizer itself makes no third-party requests at runtime. Everything it loads after the page opens comes from the same site the page did — the bundled intro track (fetched on each visit until you clear it), its math worker, the images inside these documentation pages, and the second-screen page if you open that output. Nothing leaves your browser for anywhere else.
 
 To avoid even that anonymous level of analytics, download the offline build from [GitHub](https://github.com/vimathic/vimathic) and open `index.html` locally. It works without an internet connection and makes zero external requests.
 
@@ -52,7 +52,7 @@ VIMATHIC uses your GPU heavily. Extended use may cause your device to run warm. 
 
 ### Mobile devices
 
-VIMATHIC runs in mobile browsers, but the mobile experience is intentionally a lighter preview of the desktop one. On phones and tablets the visualizer renders at roughly half the desktop frame rate, the displacement mesh is built at a lower resolution, and the heaviest post-processing effects (god rays, motion blur) are disabled by default. This trade keeps the app responsive on mid-range hardware and reduces — but does not eliminate — thermal load.
+VIMATHIC runs in mobile browsers, but the mobile experience is intentionally a lighter preview of the desktop one. On phones and tablets the visualizer renders at roughly half the desktop frame rate, the displacement mesh is built at a lower resolution, and the heaviest post-processing effects (god rays, motion blur) are unavailable outright — the app refuses to enable them on mobile, no matter what a preset or script asks for. This trade keeps the app responsive on mid-range hardware and reduces — but does not eliminate — thermal load.
 
 Extended sessions can still warm the device. WebGL is a real GPU workload; phones are not designed for sustained 100% GPU use the way desktops are. If the device gets hot, take a break, lower the screen brightness, or close other apps in the background.
 
@@ -60,7 +60,7 @@ Extended sessions can still warm the device. WebGL is a real GPU workload; phone
 
 A dedicated **VIMATHIC Mobile app** — built natively for iOS and Android, with proper GPU scheduling and platform-specific optimisations — is on the [Roadmap](./roadmap.md). The web version on mobile is best treated as a preview until that ships.
 
-There are no hidden processes, no cryptominers, no analytics beacons, and no network requests during use — just mathematics rendering to your music.
+There are no hidden processes, no cryptominers, no analytics beacons, and no requests to anything beyond the site the page came from — just mathematics rendering to your music.
 
 ## Importing Presets
 

@@ -91,9 +91,10 @@ Findings relevant here:
   alpha/theta range) is a different stimulus from VIMATHIC.
 
 > VIMATHIC is an audiovisual stimulus driven by music the user chooses, with
-> mathematical animation synchronised to bass/mid/treble bands and detected
-> beats. It is not the ELA device used in this study, and no claim is made
-> that VIMATHIC reproduces the study's effects.
+> mathematical animation synchronised to bass/mid/treble bands, to 24
+> critical-band (Bark-scale) levels — including a stereo left/right term —
+> and to detected beats. It is not the ELA device used in this study, and no
+> claim is made that VIMATHIC reproduces the study's effects.
 
 ---
 
@@ -123,8 +124,9 @@ time, with 192 distinct formula systems across 12 mathematical domains.
 - **Mathematical variety as a variable.** Hägerhäll et al. (2008) showed
   that different fractal dimensions produce different EEG signatures. VIMATHIC
   provides 192 formula systems with widely varying mathematical properties,
-  plus configurable deformation modes (Surface / Volume / Collapse) and
-  post-processing effects (bloom, god rays, motion blur). The interaction
+  plus configurable deformation modes (Surface / Volume / Collapse) and the
+  post-processing the panel exposes — bloom strength, and the afterglow the
+  smoke particle style brings in points mode. The interaction
   between mathematical structure and neurological response across this
   parameter space is entirely unexplored.
 

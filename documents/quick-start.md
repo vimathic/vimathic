@@ -48,7 +48,7 @@ That's enough to get a feel for what the system can do. See the **Hotkeys** tab 
 
 ## 4. Find a look you like
 
-The control panel on the left exposes the main knobs:
+The control panel in the bottom-right corner exposes the main knobs — on narrow screens it becomes a full-width sheet along the bottom edge:
 
 - **Visual Style** — Surface / Wireframe / Points rendering modes.
 - **Shape** — Pyramid, Sphere, Torus, Icosahedron, and others. The mesh that the math deforms.
@@ -63,6 +63,7 @@ The control panel on the left exposes the main knobs:
   - In **Points** mode a loud band also throws its grains off the surface and swells them, so the body reads as a cloud the music stirs.
 - **Audio sliders** — Amplitude, Wave Intensity, Bass/Treble Sensitivity, Bloom.
 - **Camera** — Reset camera position, toggle Auto-Rotate.
+- **⏸ STOP MOTION** — in the FPS row near the bottom of the panel, beside the FPS counter and the **i** button, it freezes the picture on its current frame; the music keeps playing, and a second click resumes exactly where it held.
 
 ## 5. Save what you like — and play it back
 
@@ -72,7 +73,7 @@ When you've got a look you want to keep:
 2. It appears in the preset list with its own thumbnail-style button.
 3. Click any saved preset to load it back instantly.
 
-For VJ sets there's also **CLIP PLAYER** — auto-cycle through your presets with a configurable hold time (seconds or musical bars). Click ▶ to start, ⏹ to stop.
+For VJ sets there's also **CLIP PLAYER** — auto-cycle through your presets with a configurable hold time (seconds or musical bars). Click ▶ PLAY to start, ■ STOP to stop.
 
 ## What next
 
@@ -82,4 +83,4 @@ For VJ sets there's also **CLIP PLAYER** — auto-cycle through your presets wit
 - **Shader Editor** — write your own GLSL fragments and vertex code
 - **Recording** — export GIF or WebM of what you see
 
-The **i** button (top of FPS panel) opens this documentation any time.
+The **i** button, in that same FPS row, opens this documentation any time.

@@ -481,8 +481,10 @@ function bindRecordingSection(ui, setOutFeedback) {
       // the label — capture can end on its own (duration timer / beat target)
       // between the last repaint and this click. Once gif.js is encoding,
       // stop() is a no-op and abort() is the only way out.
-      // FIX(r11): documents/recording.md:131 promises "For GIF, this aborts the
-      // worker and discards partial frames — no file is saved". During CAPTURE
+      // FIX(r11): documents/recording.md, section "Stopping early", promises
+      // "For GIF, this aborts the worker and discards partial frames — no file
+      // is saved" — cited by section, because a line number goes stale the
+      // first time a bullet is added above it. During CAPTURE
       // gif.encoding is false, so this called stop() — and GifRecorder.stop()
       // with frames already collected sets encoding = true and renders them,
       // downloading the partial file the documentation says is discarded. STOP

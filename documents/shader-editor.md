@@ -13,20 +13,20 @@ If GLSL is new to you: vertex shaders move points in 3D space, fragment shaders 
 
 ## Prerequisite — switch to a GPU shader first
 
-**The Shader Editor only affects rendering when the visualizer is in GPU mode.** In CPU mode the geometry is deformed by JavaScript and your custom shader sits unused — your code compiles fine but nothing changes on screen.
+**Custom vertex displacement only affects rendering when the visualizer is in GPU mode.** In CPU mode the geometry is deformed by JavaScript and your `y` is discarded, so a body that only assigns `y` — every shipped vertex preset — changes nothing on screen. Writes straight to `pos` still count in either mode — `pos.y` scaled by the morph progress, `pos.x` and `pos.z` not. Custom **fragment** code is different: it colors every mode, CPU formulas included.
 
 How to tell which mode you're in: open the **SHADER MODE** dropdown in the panel. It contains both types in groups:
 
-- **GPU shaders are numbered** — *1. Bass Reactive Waves*, *2. Spectrogram Mode*, … through *38. Spectral Centroid*. Pick any one of these to put the visualizer in GPU mode.
-- **CPU formulas have no number** — *Mandelbrot Escape*, *Julia Set (animated)*, *Lorenz Attractor Slice*, etc. These run on the CPU and bypass the Shader Editor.
+- **GPU shaders are numbered** — *1. Bass Reactive Waves*, *2. Damped Radial Rings*, … through *38. Spectral Centroid*. Pick any one of these to put the visualizer in GPU mode.
+- **CPU formulas have no number** — *Mandelbrot Escape*, *Julia Set (animated)*, *Lorenz Attractor Density*, etc. These run on the CPU and ignore custom vertex displacement.
 
 To use the Shader Editor: pick a **numbered** entry from the dropdown, then open **SHADER EDITOR** and APPLY your code.
 
-If you APPLY a custom shader while a CPU formula is active, you'll see "✔ Compiled & applied" in green — that means your GLSL is valid, but you won't see it on the canvas until you switch to a numbered GPU shader.
+If you APPLY custom vertex code while a CPU formula is active, you'll see "✔ Compiled & applied" in green — that means your GLSL is valid, but the displacement won't show on the canvas until you switch to a numbered GPU shader. (Custom fragment color applies immediately in either mode.)
 
 ## Opening it
 
-Click **SHADER EDITOR** in the control panel (below the camera section). The modal has:
+Open **ADVANCED** in the control panel, expand **SHADER EDITOR**, and click **✎ EDIT GLSL SHADER**. The modal has:
 
 - **Tabs** — switch between vertex and fragment code
 - **Presets strip** — eight starters covering both tab types
@@ -66,10 +66,10 @@ The scaffold defines:
 
 | Variable | Type | Meaning |
 |---|---|---|
-| `t` | `float` | Normalized height, 0–1 (from current vertex Y) |
+| `t` | `float` | Normalized height, 0–1 from the current vertex Y, then shifted by the Spectrum Rings band that region listens to — the same shift the built-in fragment shader gets, so a custom body starts from the same ramp. Set Spectrum Rings to 0 and it is the plain height |
 | `c` | `vec3` | **Output** — assign your color here |
 | `uCM`, `uCMNext`, `uCMBlend` | uniforms | Active palette index and crossfade |
-| `uTime`, `uBass`, `uTreble` | uniforms | Audio-reactive globals |
+| `uTime`, `uBass`, `uMid`, `uTreble`, `uBeat` | uniforms | Audio-reactive globals |
 
 You also have **all 54 palette functions** available by name (`tealOrange`, `lava`, `cyberpunkGold`, `coalPlum`, `burgundyBlack`, etc.) plus a dispatcher:
 
@@ -88,10 +88,10 @@ c = lava(t) * (0.7 + uBass * 0.5);
 | Preset | Tab | What it does |
 |---|---|---|
 | 🌊 Ocean | vert | Traveling sine waves with cross-grain detail |
-| ⚡ Lightning | vert | High-frequency strikes triggered by beats |
+| ⚡ Lightning | vert | High-frequency strikes driven by bass and treble (the beat term is muted — `bt` is 0 until you assign `bt = uBeat`) |
 | 🌀 Vortex | vert | Spiral that rotates in time |
 | 💎 Crystal | vert | Hard angular tiles + radial shimmer |
-| 🔥 Plasma | vert | Turbulent noise + radial wave + beat punch |
+| 🔥 Plasma | vert | Turbulent noise + radial wave; add `bt = uBeat;` above it to get the beat punch |
 | 🎆 Ramanujan | vert | The classic Ramanujan radial sum |
 | 🌈 Neon | frag | RGB rainbow cycling with audio shift |
 | 🔆 Lava | frag | Bass-pumped lava palette |

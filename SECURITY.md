@@ -6,9 +6,15 @@
 
 VIMATHIC is a client-side, browser-only application — it has no server, no
 authentication, no user data storage outside `localStorage` on the user's own
-machine, and makes no network requests at runtime — everything is bundled into
-four self-contained files: `index.html`, `math-worker-*.js`,
+machine, and makes no third-party network requests at runtime — everything it
+loads comes from alongside the page itself. The application proper is bundled
+into four self-contained files: `index.html`, `math-worker-*.js`,
 `second-screen.html`, and `vimathic-intro.mp3`.
+
+The build ships these alongside a static copy of the documentation
+(`docs/*.html`) and inert site assets — icons, `sitemap.xml`, `llms.txt`,
+`robots.txt`, and the roadmap hero image the About modal loads — none of
+which carry executable logic.
 
 That keeps the attack surface small but does not eliminate it. If you find:
 
@@ -69,7 +75,8 @@ considered acceptable trade-offs for a local-only VJ tool:
 
 ## Out of scope
 
-- Vulnerabilities in third-party dependencies (Three.js, gif.js, Vite) — please
+- Vulnerabilities in third-party dependencies (Three.js, gif.js, micromark,
+  micromark-extension-gfm-table, Vite) — please
   report those upstream to the respective maintainers.
 - Issues that require physical access to the user's machine.
 - Excessive GPU temperature from extended use — see [DISCLAIMER.md](./DISCLAIMER.md).

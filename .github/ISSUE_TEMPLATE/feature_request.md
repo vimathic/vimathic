@@ -13,8 +13,8 @@ assignees: ''
 
      ❌ New mathematical formulas (192 is the curated count)
      ❌ New GPU shaders (38 is intentional)
-     ❌ New colour schemes (44 covers the design space)
-     ❌ New shapes (20 base shapes + deformation modes cover geometry)
+     ❌ New colour schemes (54 covers the design space)
+     ❌ New shapes (32 base shapes + deformation modes cover geometry)
      ❌ New keyboard shortcuts (the hotkey surface is full)
      ❌ Major architecture refactors
      ❌ New external dependencies (currently `three`, `gif.js`, `micromark`

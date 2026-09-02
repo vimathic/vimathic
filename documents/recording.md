@@ -11,12 +11,13 @@ VIMATHIC has two built-in recorders: **GIF** for sharable loops and **WebM** for
 
 ## Opening the recorder
 
-Click **OUTPUT** in the control panel. The output modal includes a **🎞️ RECORD CLIP** section near the bottom. From there:
+Open **ADVANCED** in the control panel, expand **VIDEO OUTPUT & AUDIO IN**, and click **OUTPUT SETTINGS** — both sections ship collapsed. The output modal includes a **🎞️ RECORD CLIP** section near the bottom. From there:
 
 - Choose format — **GIF** or **WebM**
+- Choose aspect — 16:9 landscape, 9:16 portrait (TikTok/Reels), 1:1 square, or Native; the recorder centre-crops the canvas so nothing is stretched
 - Set resolution, FPS, quality
 - Choose duration mode — **seconds** or **beats**
-- Click **⏺ START RECORDING** to start, **⏹ STOP** to finish early
+- Click **⏺ START RECORDING** to start, **⏹ STOP** to end early — WebM keeps the partial take, GIF discards it (see *Stopping early*)
 
 A progress bar shows the capture state. When recording completes, the file downloads automatically.
 
@@ -26,7 +27,7 @@ Animated GIFs are great for messaging apps, Twitter/X, Discord, Slack. Limitatio
 
 | Setting | Range | Notes |
 |---|---|---|
-| Width | up to 1280 px | Internal cap |
+| Width | up to 1920 px | Internal cap (ASPECT: Native falls back to a 1280 × 720 box) |
 | FPS | 5–30 | GIFs above 30 look bad and weigh too much; below 5 stutters |
 | Duration | up to 60 seconds | Cap to prevent runaway memory use |
 | Quality | 1–30, default 10 (lower = better, slower) | Tradeoff against file size and encode time |
@@ -54,12 +55,12 @@ Works best with steady-tempo music. If beat detection drifts mid-capture, the lo
 
 ### Typical GIF settings
 
-| Use case | Width | FPS | Duration | Quality |
+| Use case | Size | FPS | Duration | Quality |
 |---|---|---|---|---|
-| Twitter / X embed | 512 | 15 | 4–8 beats | 10 |
-| Discord preview | 480 | 15 | 8 beats | 10 |
-| Portfolio thumbnail | 720 | 20 | 4 beats | 5 |
-| Big banner | 1280 | 30 | 16 beats | 3 |
+| Twitter / X embed | 480p | 15 | 4–8 beats | Balanced (10) |
+| Discord preview | 480p | 15 | 8 beats | Balanced (10) |
+| Portfolio thumbnail | 720p | 20 | 4 beats | Best (5) |
+| Big banner | 1080p | 24 | 8 beats | Best (5) |
 
 ## WebM — high-quality video
 
@@ -68,7 +69,7 @@ WebM is much smaller per second than GIF and supports higher resolution. Best fo
 - YouTube uploads
 - Editing software import (DaVinci, Premiere, etc.)
 - Higher visual fidelity than GIF allows
-- Multi-minute takes up to the 5-minute per-file cap
+- Takes up to the 60-second ceiling — the longest option the SECONDS selector offers
 
 The recorder uses the browser's native `MediaRecorder` with VP9 if supported (Chrome, Edge, Firefox 113+), falling back to VP8.
 
@@ -76,14 +77,14 @@ The recorder uses the browser's native `MediaRecorder` with VP9 if supported (Ch
 
 | Setting | Default | Limit |
 |---|---|---|
-| Resolution | matches canvas | no enforced cap — render the canvas at the size you want |
-| FPS | 60 | no enforced cap; 60 is the practical sweet spot |
-| Duration | 10 s default; you usually stop manually | hard cap at **5 minutes per file** to keep editor imports reasonable |
+| Resolution | from the ASPECT + SIZE selectors (Native = the canvas) | capped at 1920 px per axis — a larger canvas is scaled down, aspect preserved |
+| FPS | 60 | fixed — the panel always records WebM at 60 fps |
+| Duration | 10 s default | picked from the SECONDS selector — tops out at **60 seconds per file** |
 | Codec | VP9 if supported, else VP8 | depends on browser |
 
 Memory usage is much lower than GIF — ~50–100 MB for a 60-second 1080p capture. The composite pipeline (WebGL → 2D overlay with watermark → MediaStream) adds negligible CPU overhead.
 
-If you need a take longer than 5 minutes, record back-to-back files and concatenate them in any video editor (`ffmpeg -f concat -i list.txt -c copy out.webm` is the one-liner).
+If you need a longer take, record back-to-back 60-second files and concatenate them in any video editor (`ffmpeg -f concat -i list.txt -c copy out.webm` is the one-liner).
 
 ### Browser support
 
@@ -98,7 +99,7 @@ Safari users: WebM is unreliable. Stick to GIF, or use OBS with the Virtual Came
 
 ## Watermark
 
-Both recorders draw a "VIMATHIC" text watermark in the bottom-left corner of the output. It's an attribution marker, not a copyright claim — your creative output belongs to you (with the usual caveats around the audio you record over). The watermark cannot be disabled in the UI; see `LICENSE.txt` for the legal context.
+Both recorders draw a "VIMATHIC" text watermark in the bottom-right corner of the output. It's an attribution marker, not a copyright claim — your creative output belongs to you (with the usual caveats around the audio you record over). The watermark cannot be disabled in the UI; see `LICENSE.txt` for the legal context.
 
 ## Choosing GIF vs WebM
 
@@ -114,9 +115,9 @@ Both recorders draw a "VIMATHIC" text watermark in the bottom-left corner of the
 
 ## Tips
 
-- **GIF at high settings is heavy.** Start at 512×15fps and increase only if needed. Doubling resolution quadruples encode time.
+- **GIF at high settings is heavy.** Start at 480p × 15 fps — the SIZE and FPS defaults — and increase only if needed. Doubling resolution quadruples encode time.
 - **Beat-sync is the killer feature.** A 4-beat or 8-beat loop at the right tempo creates content that just keeps playing without seams.
-- **WebM with 60fps gives buttery smooth motion** but doubles file size. 30fps is fine for most uses.
+- **WebM always records at 60fps** — buttery smooth motion out of the box. The FPS selector applies to GIF only.
 - **Don't record with developer tools open.** DevTools adds noticeable overhead, especially with the Performance tab active.
 - **Don't multi-task during long captures.** The browser tab needs to stay in the foreground for `MediaRecorder` to behave reliably.
 

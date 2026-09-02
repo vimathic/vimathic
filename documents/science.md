@@ -55,7 +55,7 @@ Findings relevant here:
 - A **brief 5.5-minute AVS** session produced anxiety improvements numerically similar to **11–22 minutes of meditation**, suggesting AVS may be a shorter-onset alternative — though this comparison was not significant in formal contrast.
 - The AVS device used (an LED array with synchronised audio pulsing in alpha/theta range) is a different stimulus from VIMATHIC.
 
-> VIMATHIC is an audiovisual stimulus driven by music the user chooses, with mathematical animation synchronised to bass / mid / treble bands and detected beats. It is not the ELA device used in this study, and no claim is made that VIMATHIC reproduces the study's effects.
+> VIMATHIC is an audiovisual stimulus driven by music the user chooses, with mathematical animation synchronised to bass / mid / treble bands, to 24 critical-band (Bark-scale) levels — including a stereo left/right term — and to detected beats. It is not the ELA device used in this study, and no claim is made that VIMATHIC reproduces the study's effects.
 
 ---
 
@@ -65,7 +65,7 @@ Neither of the studies above tested anything quite like what VIMATHIC does: a li
 
 - **Real mathematics, not pre-rendered animation.** The height of every vertex, the colour of every fragment, and the acceleration of every camera movement is computed from audio analysis and mathematical functions at frame rate — nothing is pre-baked. The engine evaluates canonical mathematical expressions per frame on both of its paths: Jacobi theta sums (θ₃(q) and the Ramanujan theta, plus a τ(n)-weighted lattice) in the GPU shaders, Bessel functions and Gray-Scott reaction-diffusion in the CPU math worker. The rest of the GPU ladder is trigonometric interference, and the GPU section of MATHEMATICAL_ACCURACY.md says which branch computes what.
 - **User-chosen music.** The AVS devices in Johnson et al. (2024) used pre-programmed alpha/theta pulses. VIMATHIC processes whatever audio the user provides — a favourite album, a live mic feed, a DJ set — and maps the actual spectral content (bass energy, treble sharpness, beat timing) onto the visual output. The emotional connection to one's own music may amplify or alter the effects measured in laboratory settings — but this has not been studied.
-- **Mathematical variety as a variable.** Hägerhäll et al. (2008) showed that different fractal dimensions produce different EEG signatures. VIMATHIC provides 192 formula systems with widely varying mathematical properties, plus configurable deformation modes (Surface / Volume / Collapse) and post-processing effects (bloom, god rays, motion blur). The interaction between mathematical structure and neurological response across this parameter space is entirely unexplored.
+- **Mathematical variety as a variable.** Hägerhäll et al. (2008) showed that different fractal dimensions produce different EEG signatures. VIMATHIC provides 192 formula systems with widely varying mathematical properties, plus configurable deformation modes (Surface / Volume / Collapse) and the post-processing the panel exposes — bloom strength, and the afterglow the smoke particle style brings in points mode. The interaction between mathematical structure and neurological response across this parameter space is entirely unexplored.
 
 ---
 

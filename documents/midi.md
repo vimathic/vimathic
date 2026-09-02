@@ -7,7 +7,7 @@ description: Map any hardware MIDI controller to any VIMATHIC parameter using on
 
 # MIDI Setup
 
-VIMATHIC reads MIDI Control Change (CC) messages from any USB or Bluetooth MIDI controller. You can map any CC to any tweakable parameter — color scheme, amplitude, wave intensity, bloom, bass/treble sensitivity, auto-rotate speed. Mappings are saved to your browser's `localStorage` and survive page reloads.
+VIMATHIC reads MIDI Control Change (CC) messages from any USB or Bluetooth MIDI controller. You can map any CC to any tweakable parameter — color scheme, amplitude, wave intensity, spectrum rings, bloom, bass/treble sensitivity, auto-rotate speed. Mappings are saved to your browser's `localStorage` and survive page reloads.
 
 ## Browser requirements
 
@@ -56,6 +56,7 @@ Every parameter that has a slider in the panel is mappable, plus a few that aren
 |---|---|---|
 | Amplitude | 0.2 – 1.5 | Overall displacement strength |
 | Wave Intensity | 0.3 – 3.5 | Detail / harmonics scaling |
+| Spectrum Rings | 0 – 1.0 | Depth of the 24-band body layer |
 | Bass Sensitivity | 0 – 2.5 | How much bass moves the geometry |
 | Treble Sensitivity | 0 – 2.5 | How much treble brightens edges |
 | Bloom | 0 – 1.5 | Post-process bloom strength |
