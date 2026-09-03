@@ -34,7 +34,19 @@ export default defineConfig({
   // step, exactly as intended). It was carried as an inherited red across two
   // waves. 90 s restores the margin the CI half has (3× the slowest full-file
   // run) without blunting a genuine hang, and the CI number is untouched.
-  timeout: process.env.CI ? 150_000 : 90_000,
+  // 03.09.2026: the CI half went 150_000 → 240_000, and for the reason the
+  // paragraph above predicts — the two halves are sized against each other and
+  // the local half moved first. The slowest test here now needs 49.7 s, not
+  // 27.3 s, so at the measured worst factor of 3.7× it needs ~184 s there and
+  // 150 s could not cover it. It did not: on the sharded run three tests in the
+  // clip-camera/auto-cycle shard died with "Test timeout of 150000ms exceeded"
+  // and NOT ONE of them failed an assertion — the follow-on toHaveValue and
+  // toContainText lines are the page being killed mid-wait, and the "browser
+  // has been closed" line is the maxFailures bail. A budget that kills healthy
+  // tests reports product bugs that do not exist; that is worse than a slow run.
+  // 240 s leaves ~1.3× over the worst case, and the job budget in ci.yml moved
+  // with it: 3 failures × 2 attempts × 240 s = 24 min against 40.
+  timeout: process.env.CI ? 240_000 : 90_000,
   // Same reasoning for assertions, same factor: the 5 s default is measured
   // against a machine rendering at 60 FPS, and every wait budget has to scale
   // with the machine, not just the outer one. Per-assertion timeouts written
