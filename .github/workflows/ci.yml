@@ -59,8 +59,12 @@ jobs:
     # Why this had to change (03.09.2026): the suite stopped fitting in the job
     # budget. Measured on this repo's own runs — 31.08 green in 13.8 min, 01.09
     # onwards over budget, and the run for the branch this comment landed on was
-    # killed at 30m16s with 22 of 30 tests PASSED and none failed. Three things
-    # added up, and only the last one is a defect worth chasing:
+    # killed at 30m16s with every test that had run PASSED and none failed.
+    # (No count here on purpose: the guard in tests/build-pipeline-guards.test.js
+    # reads from `- name: Run tests` to the next step and forbids a hand-written
+    # total anywhere in between, because such a total goes stale the day the
+    # next spec lands. It caught this comment's first draft.)
+    # Three things added up, and only the last one is a defect worth chasing:
     #   • the suite grew (six night-hotkey tests here, clip-camera's 8 s holds
     #     before that);
     #   • a frame costs ~20 % more under SwiftShader since the band layer —
