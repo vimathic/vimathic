@@ -41,13 +41,15 @@
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildBandMap, sampleLattice, radialU, ANALYSIS_GRID, buildBodyCurvature,
+  buildBandMap, sampleLattice, radialU, splatToLattice, ANALYSIS_GRID,
+  buildBodyCurvature,
 } from '../src/band-map.js';
 import { BAND_MAP_REF_TIME } from '../src/math-visualizer.js';
 import {
   getFormula, generateSurfaceFromFormula, generateCollapseScalarField,
-  generateCollapseAnalysisField, collapseChart, collapseChartToAnalysis,
-  collapseAnalysisToChart, FIELD_EXTENT,
+  generateCollapseAnalysisField, volumeMagnitudeAtVertices,
+  collapseChart, collapseChartToAnalysis,
+  collapseAnalysisToChart, VOLUME_FORMULAS, FIELD_EXTENT,
 } from '../src/math-collections.js';
 
 // The class under test in the last block builds a Worker in its constructor.
@@ -92,16 +94,29 @@ function surfaceMap(fn, v) {
   return buildBandMap(field, G, E, { x: v.x, z: v.z, R: v.R, k: v.k });
 }
 
-/** The map as COLLAPSE builds it — kernel read on its own chart. */
-function collapseMap(fn, v) {
-  const field = generateCollapseAnalysisField(fn, P, G, T);
-  const { theta, phi } = collapseChart(v.base);
+/** The per-vertex chart coordinates both 3D modes rank on. */
+function chartCoords(v) {
+  const chart = collapseChart(v.base);
   const V = v.x.length;
   const ax = new Float32Array(V), az = new Float32Array(V);
   for (let i = 0; i < V; i++) {
-    const [a, b] = collapseChartToAnalysis(theta[i], phi[i], E);
+    const [a, b] = collapseChartToAnalysis(chart.theta[i], chart.phi[i], E);
     ax[i] = a; az[i] = b;
   }
+  return { chart, ax, az };
+}
+
+/** The map as COLLAPSE builds it — kernel read on its own chart. */
+function collapseMap(fn, v) {
+  const { ax, az } = chartCoords(v);
+  return buildBandMap(generateCollapseAnalysisField(fn, P, G, T), G, E,
+                      { x: v.x, z: v.z, R: v.R, k: v.k, ax, az });
+}
+
+/** The map as VOLUME builds it — |d| read at the vertices, laid on the chart. */
+function volumeMap(fn, v) {
+  const { ax, az } = chartCoords(v);
+  const field = splatToLattice(volumeMagnitudeAtVertices(fn, P, T, v.base), ax, az, G, E);
   return buildBandMap(field, G, E, { x: v.x, z: v.z, R: v.R, k: v.k, ax, az });
 }
 
@@ -410,6 +425,205 @@ describe('the two sides of a closed body', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('VOLUME is read as the vector field it is', () => {
+
+  const KEYS = Object.keys(VOLUME_FORMULAS);
+
+  test('the scalar is the magnitude of the displacement the mode applies', () => {
+    // Not "a plausible scalar of a vector field" — the same displacement
+    // generateVolumeFromFormula hands the tick, measured at the same vertices.
+    const geo = new THREE.SphereGeometry(3.5, 16, 16);
+    const base = Float32Array.from(geo.attributes.position.array);
+    const probe = (x, y, z) => ({ dx: x, dy: 2 * y, dz: 0 });
+    const s = volumeMagnitudeAtVertices(probe, P, T, base);
+    for (let i = 0; i < s.length; i += 37) {
+      const want = Math.hypot(base[i * 3], 2 * base[i * 3 + 1], 0);
+      assert.ok(Math.abs(s[i] - want) < 1e-4, `vertex ${i}: ${s[i]} against ${want}`);
+    }
+  });
+
+  test('a kernel that throws or returns nothing costs a vertex, not the layer', () => {
+    const base = Float32Array.from(new THREE.SphereGeometry(3.5, 8, 8).attributes.position.array);
+    for (const bad of [() => { throw new Error('no'); }, () => null,
+                       () => ({ dx: NaN, dy: Infinity, dz: undefined })]) {
+      const s = volumeMagnitudeAtVertices(bad, P, T, base);
+      assert.equal(s.length, base.length / 3);
+      assert.ok(s.every(Number.isFinite), 'a non-finite value reached the scalar');
+    }
+  });
+
+  test('a field that does not vary over its body hands back nothing to rank', () => {
+    // The honest degenerate case, and the one that decided the uniform cut.
+    // A sphere's surface is ONE radius, so a field of |p| alone pushes every
+    // vertex equally: measured, `breathe` varies over it by 1.19e-7, which is
+    // float32 noise. Without the cut that noise was equalised into a full
+    // 24-band layout — a picture invented out of rounding.
+    const v = verticesOf(new THREE.SphereGeometry(3.5, 40, 40));
+    const s = volumeMagnitudeAtVertices(VOLUME_FORMULAS.breathe.f, P, T, v.base);
+    const lo = Math.min(...s), hi = Math.max(...s);
+    assert.ok((hi - lo) < 1e-5, `precondition: breathe varies by ${hi - lo} on a sphere`);
+
+    const { ax, az } = chartCoords(v);
+    const field = splatToLattice(s, ax, az, G, E);
+    assert.ok(field.every(c => c === 0), 'the uniform cut did not fire');
+
+    const m = buildBandMap(field, G, E, { x: v.x, z: v.z, R: v.R, k: v.k, ax, az });
+    assert.equal(m.conf, 0, 'a uniform field still bought a layout');
+    assert.deepEqual(m.stages, ['radius'], 'the cascade claimed a stage on a constant');
+    for (let i = 0; i < m.u.length; i++) {
+      assert.ok(Math.abs(m.u[i] - radialU(v.x[i], v.z[i], v.R)) < 1e-6,
+        'the documented degradation is the radius rule, and this is not it');
+    }
+  });
+
+  test('control — on a body whose radius varies, the same field is not cut', () => {
+    // Without this the cut above could be swallowing every radial field rather
+    // than the degenerate case. On a torus `breathe` varies by 145% of its own
+    // mean, and the mean-radius shell that lost to this candidate read 0.00 for
+    // exactly this case.
+    const v = verticesOf(new THREE.TorusGeometry(2.8, 1.1, 32, 40));
+    const s = volumeMagnitudeAtVertices(VOLUME_FORMULAS.breathe.f, P, T, v.base);
+    const lo = Math.min(...s), hi = Math.max(...s);
+    assert.ok((hi - lo) > 0.1, `breathe varies by only ${hi - lo} on a torus`);
+
+    const { ax, az } = chartCoords(v);
+    const field = splatToLattice(s, ax, az, G, E);
+    assert.ok(field.some(c => c !== 0), 'the cut fired on a field that does vary');
+    const m = buildBandMap(field, G, E, { x: v.x, z: v.z, R: v.R, k: v.k, ax, az });
+    assert.ok(m.conf > 0.5, `a varying field still got no layout (conf ${m.conf})`);
+  });
+
+  test('every lattice cell is filled, on bodies that leave most of them empty', () => {
+    // 65^2 cells against a few thousand vertices: on a torus only 633 of 4225
+    // get one. An unfilled cell reads as flat, and the cascade reads flat as
+    // "no local frequency here" — so a hole would have become a signal.
+    for (const [name, geo] of [
+      ['sphere', new THREE.SphereGeometry(3.5, 40, 40)],
+      ['torus', new THREE.TorusGeometry(2.8, 1.1, 32, 40)],
+      ['cylinder', new THREE.CylinderGeometry(2.5, 2.5, 5, 40, 32)],
+    ]) {
+      const v = verticesOf(geo);
+      const { ax, az } = chartCoords(v);
+      const field = splatToLattice(
+        volumeMagnitudeAtVertices(VOLUME_FORMULAS.twist.f, P, T, v.base), ax, az, G, E);
+      const zeros = field.reduce((n, c) => n + (c === 0 ? 1 : 0), 0);
+      assert.equal(zeros, 0, `${name}: ${zeros} cells of ${G * G} were left empty`);
+    }
+  });
+
+  test('an empty or degenerate input is a lattice of zeros, not a throw', () => {
+    assert.ok(splatToLattice(new Float32Array(0), null, null, G, E).every(c => c === 0));
+    const ax = new Float32Array(3), az = new Float32Array(3);
+    assert.ok(splatToLattice(new Float32Array([NaN, NaN, NaN]), ax, az, G, E).every(c => c === 0));
+  });
+
+  test('the six volume fields get six different layouts', () => {
+    // The defect, in one assertion. What shipped built the map from the last
+    // SURFACE kernel, which does not change when the volume formula does — so
+    // all six wore one identical layout, 0.00 bands apart, on a body being
+    // displaced six different ways.
+    //
+    // On a TORUS, because that is where all six genuinely vary over the body
+    // (78% to 232% of their own mean). The sphere is the wrong instrument for
+    // this question and the next test says why.
+    //
+    // The threshold is 2 of 24 against a measured minimum of 2.87 here (2.84 on
+    // a box, 5.44 on a cylinder) — deliberately near the floor rather than near
+    // the 7.67 two independent maps would give, because these six fields are
+    // not independent of each other: two of them are functions of |p| alone and
+    // are expected to resemble one another wherever a body has radial extent.
+    // What the assertion is for is the contrast with 0.00, which is what shipped.
+    const v = verticesOf(new THREE.TorusGeometry(2.8, 1.1, 32, 40));
+    const maps = KEYS.map(k => volumeMap(VOLUME_FORMULAS[k].f, v).u);
+    for (let i = 0; i < maps.length; i++) {
+      for (let j = i + 1; j < maps.length; j++) {
+        const d = bandsApart(maps[i], maps[j]);
+        assert.ok(d > 2,
+          `${KEYS[i]} and ${KEYS[j]} lay out only ${d.toFixed(3)} bands apart`);
+      }
+    }
+  });
+
+  test('on a sphere the two radial fields coincide — and that is the right answer', () => {
+    // `breathe` and `rippleVolume` are functions of |p| alone, and a sphere's
+    // surface is one radius: both push every vertex of it equally. They are
+    // literally the same picture there, so one layout for both is correct, and
+    // it is the documented degradation — the radius rule — rather than two
+    // layouts invented to look different.
+    //
+    // This is asserted rather than left out because it is the case that would
+    // otherwise read as the defect coming back.
+    const v = verticesOf(new THREE.SphereGeometry(3.5, 40, 40));
+    const a = volumeMap(VOLUME_FORMULAS.breathe.f, v);
+    const b = volumeMap(VOLUME_FORMULAS.rippleVolume.f, v);
+    assert.equal(a.conf, 0);
+    assert.equal(b.conf, 0);
+    assert.equal(bandsApart(a.u, b.u), 0);
+
+    // …and the four that DO vary over a sphere still get layouts of their own.
+    const others = ['lorenzField', 'twist', 'magneticDipole', 'fluidVortex'];
+    for (let i = 0; i < others.length; i++) {
+      const m = volumeMap(VOLUME_FORMULAS[others[i]].f, v);
+      assert.ok(m.conf > 0.5, `${others[i]} fell back to radius on a sphere`);
+      for (let j = i + 1; j < others.length; j++) {
+        const d = bandsApart(m.u, volumeMap(VOLUME_FORMULAS[others[j]].f, v).u);
+        // Measured minimum among these four on a sphere: 3.47.
+        assert.ok(d > 2, `${others[i]} and ${others[j]} only ${d.toFixed(3)} bands apart`);
+      }
+    }
+  });
+
+  test('control — the same volume field twice is exactly zero apart', () => {
+    const v = verticesOf(new THREE.SphereGeometry(3.5, 24, 24));
+    const f = VOLUME_FORMULAS.twist.f;
+    assert.equal(bandsApart(volumeMap(f, v).u, volumeMap(f, v).u), 0);
+  });
+
+  test('control — the layouts are not the radius rule wearing six coats', () => {
+    const v = verticesOf(new THREE.TorusGeometry(2.8, 1.1, 32, 40));
+    for (const k of KEYS) {
+      const m = volumeMap(VOLUME_FORMULAS[k].f, v);
+      assert.ok(m.conf > 0.3, `${k} fell back to radius (conf ${m.conf})`);
+      let ringLike = 0;
+      for (let i = 0; i < m.u.length; i++) {
+        if (Math.abs(m.u[i] - radialU(v.x[i], v.z[i], v.R)) * LAST_BAND < 1) ringLike++;
+      }
+      assert.ok(ringLike < m.u.length * 0.5,
+        `${k} is ${(100 * ringLike / m.u.length).toFixed(0)}% the plain radius rule`);
+    }
+  });
+
+  test('and it separates the two sides of a closed body', () => {
+    // The property the flat (x, z) lattice cannot have at any resolution, and
+    // the reason that candidate was rejected: it separated 3.5% of these pairs.
+    const v = verticesOf(new THREE.SphereGeometry(3.5, 40, 40));
+    const base = v.base, N = base.length / 3;
+    const cell = new Map();
+    const q = value => Math.round(value * 40) / 40;
+    for (let i = 0; i < N; i++) {
+      const key = q(base[i * 3]) + '|' + q(base[i * 3 + 2]);
+      if (!cell.has(key)) cell.set(key, []);
+      cell.get(key).push(i);
+    }
+    const pairs = [];
+    for (const ids of cell.values()) {
+      for (let a = 0; a < ids.length; a++) {
+        for (let b = a + 1; b < ids.length; b++) {
+          if (Math.abs(base[ids[a] * 3 + 1] - base[ids[b] * 3 + 1]) >= 0.4) pairs.push([ids[a], ids[b]]);
+        }
+      }
+    }
+    assert.ok(pairs.length > 500);
+
+    const u = volumeMap(VOLUME_FORMULAS.lorenzField.f, v).u;
+    let sep = 0;
+    for (const [i, j] of pairs) if (Math.abs(u[i] - u[j]) * LAST_BAND >= 1) sep++;
+    assert.ok(sep > pairs.length * 0.3,
+      `only ${(100 * sep / pairs.length).toFixed(1)}% of two-sided pairs separate`);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The wiring, through the class the app actually uses. This is the block that
 // fails on the old tree: there, setMode() left the map alone AND the rebuild
 // knew only one reading, so the layer handed back the identical `u` in both
@@ -417,7 +631,7 @@ describe('the two sides of a closed body', () => {
 // ever asks for the right one.
 describe('the app swaps the layout when the DEFORM mode changes', () => {
 
-  function makeViz() {
+  function makeViz(opts = {}) {
     const geometry = new THREE.SphereGeometry(3.5, 40, 40);
     const render = {
       isMobile: false,
@@ -441,7 +655,7 @@ describe('the app swaps the layout when the DEFORM mode changes', () => {
     };
     const viz = new MathVisualizer(render, audio);
     viz.onShapeChange();                       // pristine snapshot, as main.js does
-    viz.setFormula('fractals', 'mandelbrot');
+    if (!opts.noFormula) viz.setFormula('fractals', 'mandelbrot');
     return viz;
   }
 
@@ -485,6 +699,41 @@ describe('the app swaps the layout when the DEFORM mode changes', () => {
     const layer = viz._bandLayer();
     assert.ok(layer, 'the band layer is off in this harness');
     assert.ok(layer.u instanceof Float32Array, 'no character map was built');
+    assert.equal(layer.u.length, viz._pristinePositions.length / 3);
+  });
+
+  test('changing the VOLUME formula changes the layout', () => {
+    // The regression this whole VOLUME branch exists for. On the old tree the
+    // map was built from _formulaFn, which setVolumeFormula does not touch, so
+    // these two reads returned the identical array.
+    const viz = makeViz();
+    viz.setVolumeFormula('breathe');
+    const a = Float32Array.from(viz._bandLayer().u);
+    viz.setVolumeFormula('twist');
+    const b = Float32Array.from(viz._bandLayer().u);
+    const d = bandsApart(a, b);
+    assert.ok(d > 3, `the layer did not follow the volume formula: ${d.toFixed(3)} bands apart`);
+  });
+
+  test('VOLUME does not wear the layout of the surface formula it left behind', () => {
+    const viz = makeViz();                       // boots with a surface formula
+    const surf = Float32Array.from(viz._bandLayer().u);
+    viz.setVolumeFormula('lorenzField');
+    const vol = Float32Array.from(viz._bandLayer().u);
+    const d = bandsApart(surf, vol);
+    assert.ok(d > 3, `VOLUME kept the surface kernel's layout: ${d.toFixed(3)} bands apart`);
+  });
+
+  test('a session that never picked a surface formula still gets a map', () => {
+    // Reachable: the panel can enter VOLUME and choose a field without a CPU
+    // surface formula ever having been set. The old guard asked for _formulaFn
+    // and returned, so the layer fell back to plain rings for the whole session
+    // and nothing said why.
+    const viz = makeViz({ noFormula: true });
+    assert.equal(viz._formulaFn, null, 'precondition: no surface formula');
+    viz.setVolumeFormula('fluidVortex');
+    const layer = viz._bandLayer();
+    assert.ok(layer.u instanceof Float32Array, 'VOLUME got no character map of its own');
     assert.equal(layer.u.length, viz._pristinePositions.length / 3);
   });
 });

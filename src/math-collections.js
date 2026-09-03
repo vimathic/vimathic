@@ -5733,11 +5733,13 @@ export function collapseChart(basePositions, out = null) {
   const radialToPhi = radial > 1e-9 ? Math.PI / radial : 0;
 
   // Per-vertex spherical coords
+  let rbar = 0;
   for (let i = 0; i < N; i++) {
     const dx = basePositions[i * 3]     - cx;
     const dy = basePositions[i * 3 + 1] - cy;
     const dz = basePositions[i * 3 + 2] - cz;
     const r  = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    rbar += r;
     theta[i] = Math.atan2(dz, dx);
     phi[i]   = flat
       ? Math.sqrt(dx * dx + dz * dz) * radialToPhi
@@ -5817,6 +5819,79 @@ export function generateCollapseAnalysisField(fn, params = {}, g = 65, time = 0)
       try { v = fn(theta, phi, time, { amp, freq, comp }); } catch (_) {}
       out[j * g + i] = isFinite(v) ? v : 0;
     }
+  }
+  return out;
+}
+
+/**
+ * How hard a VOLUME field pushes, at every vertex of the body.
+ *
+ * The scalar the band character map ranks in VOLUME mode — the third and last
+ * reading of a kernel this app has, and the only one that cannot be a lattice
+ * of its own. SURFACE reads f(x, z) and COLLAPSE reads f(theta, phi), so both
+ * ARE two-dimensional fields and can be sampled on a grid. A volume kernel is a
+ * VECTOR field of a POINT, f(x, y, z) -> (dx, dy, dz): ranking it needs a
+ * scalar and a two-dimensional chart to rank it on, and neither is implied.
+ *
+ * ── What was measured before choosing ───────────────────────────────────────
+ * Seven candidates, over three bodies and all six volume kernels, against an
+ * oracle that uses NEITHER a lattice nor a chart — the same rms wavenumber the
+ * cascade's estimator K computes, estimated instead on the vertex cloud by 3D
+ * neighbours, so no candidate could win by being what the measure was written
+ * from (~/notes/vimathic-volume-band-candidates.mjs).
+ *
+ *                                  tracks the   neighbour   separates    tells the
+ *                                  field's      step, in    the two      six kernels
+ *                                  texture      bands       sides        apart
+ *   what shipped (surface kernel)   -0.098        1.91         3.3%        0.00
+ *   |d| on the flat (x,z) lattice    0.016        0.82         3.5%        7.75
+ *   d.r (signed radial part)         0.019        1.91        53.7%        7.39
+ *   cloud estimate, world units      n/a          0.74        25.5%        4.68
+ *   |d| on a mean-radius shell       0.235        1.13        57.8%        6.67
+ *   |d| on the body's true radius    0.024        1.67        62.1%        6.18
+ *   THIS: |d| at the vertices        0.068        1.98        62.0%        7.21
+ *
+ * Read the first column against the last: what shipped scores 0.00 on "tells
+ * the six kernels apart", because it was not built from the volume field at all
+ * — it was built from whichever SURFACE kernel was last picked, so all six
+ * volume formulas wore one identical layout. That is the defect, and it is the
+ * same one the band map was invented to cure, one mode over.
+ *
+ * Four alternatives are rejected on one number each:
+ *   • the flat (x, z) lattice separates 3.5% of the two-sided vertex pairs —
+ *     the projection defect COLLAPSE was just cured of;
+ *   • the signed radial part carries none of the field's texture (0.019);
+ *   • the cloud estimate in world units is the calmest map here (0.74) and the
+ *     most tempting, and it is calm because 61.2% of its vertices land on the
+ *     plain radius rule and its cascade gives up outright 3 times in 18 — quiet
+ *     because it is rings, which is the complaint the layer exists to answer;
+ *   • the mean-radius shell scores BEST on the oracle and is still wrong, which
+ *     is why the oracle is not the only column. A sphere of one radius cannot
+ *     see a field that varies with radius: `breathe` and `rippleVolume` vary
+ *     over a torus by 145% and 193% of their own mean, and the shell reads
+ *     0.00 for both. Its 0.235 came from the seam of a UV sphere pulling the
+ *     vertex centroid 0.053 off the body's centre, so the shell missed the body
+ *     and sampled a gradient that is a property of the MESH. Fabricating
+ *     structure scores better than being blind to it, and is worse.
+ *
+ * So the field is read where the mode applies it: at the body's own vertices.
+ * That costs the smoothest map — 1.98 bands of neighbour step against the
+ * shell's 1.13 — but 1.98 is what the SURFACE path already reads on the same
+ * bodies (1.91), so it is this app's normal graininess, not a new one.
+ *
+ * @param {Function}     fn             f(x, y, z, time, params) -> {dx, dy, dz}
+ * @param {object}       params         { amp, freq, comp }
+ * @param {number}       time           the FROZEN reference time — band-map.js says why
+ * @param {Float32Array} basePositions  flat [x,y,z,…], undisplaced
+ * @returns {Float32Array} |d| per vertex
+ */
+export function volumeMagnitudeAtVertices(fn, params = {}, time = 0, basePositions) {
+  const df = generateVolumeFromFormula(fn, params, 1, FIELD_EXTENT, time, basePositions);
+  const V = basePositions.length / 3;
+  const out = new Float32Array(V);
+  for (let i = 0; i < V; i++) {
+    const dx = df[i * 3], dy = df[i * 3 + 1], dz = df[i * 3 + 2];
+    out[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
   return out;
 }

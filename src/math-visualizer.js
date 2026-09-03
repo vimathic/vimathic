@@ -53,11 +53,12 @@ import {
   collapseChart,
   collapseChartToAnalysis,
   generateCollapseAnalysisField,
+  volumeMagnitudeAtVertices,
   applyCollapseField,
   VOLUME_FORMULAS,
   FIELD_EXTENT,
 } from './math-collections.js';
-import { buildBandMap, buildBodyCurvature, ANALYSIS_GRID } from './band-map.js';
+import { buildBandMap, buildBodyCurvature, splatToLattice, ANALYSIS_GRID } from './band-map.js';
 import { BAND_PAN_TILT } from './audio.js';
 
 /**
@@ -1866,12 +1867,30 @@ export class MathVisualizer {
    * and south of a sphere pulsed on one band while the mode's own field pushed
    * them by different amounts. See the numbers on setMode.
    *
-   * VOLUME is deliberately NOT branched here and keeps the surface reading. Its
-   * tick runs _volumeFn, a vector field of (x, y, z) that this method never
-   * sees, so the map it wears describes _formulaFn — whichever surface kernel
-   * happened to be picked last. That is a defect of the same family and a
-   * different fix (a scalar to rank has to be chosen for a vector field first);
-   * doing it here would be guessing, so it is named rather than half-done.
+   * VOLUME had the same disease and a worse symptom. Its tick runs _volumeFn, a
+   * vector field of (x, y, z) this method never saw, so the map described
+   * _formulaFn — whichever SURFACE kernel happened to be picked last. Measured,
+   * that made the layout identical for all six volume formulas: 0.00 bands of
+   * 24 between any two of them, on a body being displaced six different ways.
+   * The band layer exists to answer "the same rings under any figure"; in this
+   * mode it WAS the same rings under any field.
+   *
+   * Curing it needed a scalar and a chart, neither implied by a vector field,
+   * so seven candidates were measured against a lattice-free, chart-free oracle
+   * before one was chosen. The table and the rejections are on
+   * volumeMagnitudeAtVertices; two of them are worth carrying here, because
+   * both are what a reasonable person reaches for first and both LOOK right:
+   *
+   *   • ranking in WORLD units off the vertex cloud gives the calmest map of
+   *     all, and is calm because 61.2% of it is the plain radius rule;
+   *   • sampling the field on a shell of the body's mean radius scores BEST of
+   *     the seven against the oracle, and is blind by construction to a field
+   *     that varies with radius — `breathe` varies over a torus by 145% of its
+   *     own mean and the shell reads 0.00. Its winning score came from a UV
+   *     sphere's seam pulling the vertex centroid 0.053 off the body's centre,
+   *     so it sampled a gradient belonging to the MESH.
+   *
+   * Calm and wrong looks like working; so does scoring well on one number.
    */
   _rebuildBandMap() {
     this._bandMapDirty = false;
@@ -1881,41 +1900,50 @@ export class MathVisualizer {
     this._bandMapBuiltR = null;
     this._bandMapBuiltMode = null;
     const base = this._pristinePositions;
-    if (!base || !this._formulaFn) return;
+    const mode = this._mode;
+    // The function THIS mode runs, not "the formula": VOLUME's tick reads
+    // _volumeFn and may have no _formulaFn at all — a session that went straight
+    // to a volume field used to leave this method at the guard below and wear no
+    // map, which is a second way the mode never got one of its own.
+    const fn = mode === 'volume' ? this._volumeFn : this._formulaFn;
+    if (!base || !fn) return;
 
     const V = base.length / 3;
     const x = new Float32Array(V), z = new Float32Array(V);
     for (let i = 0; i < V; i++) { x[i] = base[i * 3]; z[i] = base[i * 3 + 2]; }
     const R = this.render.U?.uBandR?.value ?? FIELD_EXTENT;
-    const mode = this._mode;
+    const P = { amp: 1, freq: 1, comp: 0.5 };
 
     try {
-      // The two readings, and the coordinates that go with each. World (x, z)
-      // stay in `verts` either way: the radius rule, the gesture and the stereo
-      // tilt are about where a point is ON THE BODY, not where the kernel is
-      // being read — see the note on buildBandMap's ax/az.
+      // The three readings, and the coordinates that go with each. World (x, z)
+      // stay in `verts` in all of them: the radius rule, the gesture and the
+      // stereo tilt are about where a point is ON THE BODY, not where the kernel
+      // is being read — see the note on buildBandMap's ax/az.
       //
-      // COLLAPSE takes the chart from collapseChart(), the same function
-      // generateCollapseScalarField calls, on the same pristine positions the
-      // mode's baseline is snapshotted from. One source, so the map and the
-      // displacement cannot describe two different charts.
+      // Both 3D modes take the chart from collapseChart(), the same function
+      // generateCollapseScalarField calls, on the same pristine positions their
+      // baseline is snapshotted from. One source, so a map and a displacement
+      // cannot describe two different charts.
       let field, ax, az;
-      if (mode === 'collapse') {
-        field = generateCollapseAnalysisField(
-          this._formulaFn, { amp: 1, freq: 1, comp: 0.5 },
-          ANALYSIS_GRID, BAND_MAP_REF_TIME);
-        const { theta, phi } = collapseChart(base);
+      if (mode === 'collapse' || mode === 'volume') {
+        const chart = collapseChart(base);
         ax = new Float32Array(V); az = new Float32Array(V);
         // One scratch pair for the whole loop — see the note on the callee.
         const xz = [0, 0];
         for (let i = 0; i < V; i++) {
-          collapseChartToAnalysis(theta[i], phi[i], FIELD_EXTENT, xz);
+          collapseChartToAnalysis(chart.theta[i], chart.phi[i], FIELD_EXTENT, xz);
           ax[i] = xz[0]; az[i] = xz[1];
         }
+        // COLLAPSE's kernel IS a function of the chart, so it is sampled on the
+        // lattice directly. VOLUME's is a vector field of a point in space and
+        // is not a function of anything two-dimensional, so it is read where
+        // the mode applies it — at the vertices — and laid down after.
+        field = mode === 'volume'
+          ? splatToLattice(volumeMagnitudeAtVertices(fn, P, BAND_MAP_REF_TIME, base),
+                           ax, az, ANALYSIS_GRID, FIELD_EXTENT)
+          : generateCollapseAnalysisField(fn, P, ANALYSIS_GRID, BAND_MAP_REF_TIME);
       } else {
-        field = generateSurfaceFromFormula(
-          this._formulaFn, { amp: 1, freq: 1, comp: 0.5 },
-          ANALYSIS_GRID, FIELD_EXTENT, BAND_MAP_REF_TIME);
+        field = generateSurfaceFromFormula(fn, P, ANALYSIS_GRID, FIELD_EXTENT, BAND_MAP_REF_TIME);
       }
       // The SAME curvature array the shader was handed in aBodyK — measured
       // once in _capturePristine, spent twice. Two independent measurements of

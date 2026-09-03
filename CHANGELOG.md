@@ -258,9 +258,29 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   report said "on some formulas", so the sweep covers the catalogue: all 192
   kernels now lay out differently in the two modes, none under 4 bands of 24,
   mean 7.658 — and none of them falls back to the plain radius rule on the way.
-  The SURFACE path is untouched and asserted bit-identical. VOLUME is a defect
-  of the same family, named in the code and deliberately not guessed at: its
-  tick runs a vector field the map never sees.
+  The SURFACE path is untouched and asserted bit-identical.
+- **…and VOLUME gets a layout of its own too.** The same disease with a worse
+  symptom: its tick runs a vector field the map never saw, so the map described
+  whichever SURFACE kernel had last been picked — and since picking a volume
+  formula does not change that, all six volume fields wore one identical
+  layout, 0.00 bands apart, on a body being displaced six different ways. A
+  vector field implies neither a scalar to rank nor a chart to rank it on, so
+  seven candidates were measured over three bodies and all six fields against
+  an oracle that uses no lattice and no chart. Two that look right lost:
+  ranking in world units off the vertex cloud gives the calmest map of all and
+  is calm because 61.2 % of it is the plain radius rule; sampling on a shell of
+  the body's mean radius scores best against the oracle and is blind by
+  construction to a field that varies with radius — `breathe` varies over a
+  torus by 145 % of its own mean and the shell reads 0.00, its winning score
+  coming from a UV sphere's seam pulling the vertex centroid 0.053 off the
+  body's centre. What ships reads the displacement's magnitude where the mode
+  applies it, at the body's own vertices, and lays it on the chart COLLAPSE
+  already uses: the six fields now sit 2.84 to 9.78 bands apart. Where a field
+  genuinely has nothing to say the layer steps back to rings, and that case is
+  real rather than theoretical — Radial Breathe on a Sphere varies over the
+  body by 1.19e-7, so it is cut before float noise can be equalised into a
+  layout. A session that never picked a CPU surface formula now gets a map at
+  all, which it did not.
 - **NIGHT keeps the `E` key.** The mode narrows every unattended palette
   picker to its ten dark schemes — `Q`, `R` and AUTO COLOUR all draw from the
   narrowed pool — and `E` did not: it stepped `(colorIdx + 1) % 54`, the whole
