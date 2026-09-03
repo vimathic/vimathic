@@ -69,6 +69,35 @@ export const NIGHT_SCHEMES = Array.from(
   { length: COLOR_SCHEME_COUNT - NIGHT_SCHEME_FIRST }, (_, i) => NIGHT_SCHEME_FIRST + i);
 export const ALL_SCHEMES = Array.from({ length: COLOR_SCHEME_COUNT }, (_, i) => i);
 
+/**
+ * The next scheme along, INSIDE a pool — the rule behind the E hotkey.
+ *
+ * It lives here rather than in main.js's keydown switch for the reason
+ * controls.js gives for the other three that moved: nothing in tests/ can reach
+ * that switch, and that is where it was wrong. E stepped
+ * `(colorIdx + 1) % COLOR_SCHEME_COUNT` — the whole catalogue — while NIGHT was
+ * narrowing every other unattended picker to the ten dark schemes, so ten
+ * presses of "next colour" walked out of the mode and onto scheme 0.
+ *
+ * Two behaviours worth stating because both are load-bearing:
+ *   • On ALL_SCHEMES, indexOf(i) === i, so this IS `(i + 1) % count` — the
+ *     step outside NIGHT is bit-identical to the line it replaces.
+ *   • A `current` the pool does not contain gives indexOf === -1 and
+ *     (-1 + 1) % n = 0, i.e. the first entry of the pool. That is the right
+ *     answer rather than an accident: the dropdown is deliberately NOT narrowed
+ *     by NIGHT (the mode is about what the app picks unattended), and a preset
+ *     carries its own palette, so a bright scheme under NIGHT is reachable and
+ *     E has to step INTO the series from it rather than stand still.
+ *
+ * @param {number[]} pool     ALL_SCHEMES or NIGHT_SCHEMES
+ * @param {number}   current  the scheme on screen
+ * @returns {number} the next scheme, or `current` for an empty pool
+ */
+export function nextInPool(pool, current) {
+  if (!pool || !pool.length) return current;
+  return pool[(pool.indexOf(current) + 1) % pool.length];
+}
+
 // Floor for hold-and-drag. Some params allow min = 0 (bassSens, trebleSens,
 // bloom), and dragging one to exactly 0 makes the visualiser go silent, which
 // reads as broken mid-performance — 0.1 keeps a sliver of motion. min stays 0

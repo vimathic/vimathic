@@ -240,6 +240,38 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Fixed
 
+- **Spectrum Rings follow the deformation mode.** Switching SURFACE → COLLAPSE
+  left the rings where they were on many formulas, and they were not merely
+  similar: measured, the layouts were bit-for-bit identical, 0.000 bands of 24
+  apart. Two causes and neither alone would have shown — `setMode()` did not
+  invalidate the character map, and the rebuild knew only one reading of a
+  kernel, as a height field over (x, z). COLLAPSE evaluates the same kernel as
+  f(θ, φ) about the body's centroid, so it now gets the map that reading
+  deserves: the analysis lattice is that chart, taken from the one function the
+  displacement itself calls. What the old map could not express is sharpest on
+  a closed body — (x, z) is a projection, so on the sphere all 6 339 vertex
+  pairs that share a column but sit on opposite sides landed on the SAME band,
+  while the mode's own field separates the two sides by 0.458 world units on
+  average. Over sphere, torus, cylinder and plane and five kernels the right
+  map sits 6.9–8.9 bands away from the one COLLAPSE wore, against an
+  independence ceiling of 23/3 = 7.67 — unrelated, not merely different. The
+  report said "on some formulas", so the sweep covers the catalogue: all 192
+  kernels now lay out differently in the two modes, none under 4 bands of 24,
+  mean 7.658 — and none of them falls back to the plain radius rule on the way.
+  The SURFACE path is untouched and asserted bit-identical. VOLUME is a defect
+  of the same family, named in the code and deliberately not guessed at: its
+  tick runs a vector field the map never sees.
+- **NIGHT keeps the `E` key.** The mode narrows every unattended palette
+  picker to its ten dark schemes — `Q`, `R` and AUTO COLOUR all draw from the
+  narrowed pool — and `E` did not: it stepped `(colorIdx + 1) % 54`, the whole
+  catalogue. Since the mode opens on scheme 44, ten presses of "next colour"
+  walked out of the series and onto scheme 0, the brightest thing in the
+  build, with the mode still on. The step now moves inside the pool and wraps
+  from its last entry to its first; outside NIGHT the arithmetic is
+  bit-identical to the line it replaces. It lived in `main.js`'s keydown
+  switch, which no test can reach because importing the file boots the whole
+  app, so the rule moved to `params.js` — the same remedy the four hotkeys
+  before it took — and is pinned there.
 - **The pyramid can carry a pattern.** `pyramid` was built with four radial
   segments — the pyramid *is* its four flat faces — so all 423 vertices sat on
   four rays along x = 0 and z = 0 and a face had no interior vertex. On Rule

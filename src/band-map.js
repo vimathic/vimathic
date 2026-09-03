@@ -217,8 +217,18 @@ const smoothstep = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
-/** Bilinear read of a lattice quantity at a world (x, z), edges clamped. */
-function sampleLattice(a, g, extent, x, z) {
+/**
+ * Bilinear read of a lattice quantity at an analysis coordinate, edges clamped.
+ *
+ * Exported for the same reason radialU is: it defines WHERE a coordinate lands
+ * on the lattice, and COLLAPSE now has a second chart that has to land on the
+ * same cells (collapseChartToAnalysis / collapseAnalysisToChart in
+ * math-collections.js). A chart whose inverse is only argued rather than
+ * measured is how a map ends up describing the right field in the wrong place,
+ * so tests/band-map-modes.test.js reads the round trip through THIS function
+ * rather than through a second copy of its arithmetic.
+ */
+export function sampleLattice(a, g, extent, x, z) {
   const step = (extent * 2) / (g - 1);
   const fx = Math.min(g - 1, Math.max(0, (x + extent) / step));
   const fz = Math.min(g - 1, Math.max(0, (z + extent) / step));
@@ -421,9 +431,23 @@ export function applyBodyShift(u, bodyK) {
  *                               reference time — see the note on freezing below
  * @param {number} g             lattice size (ANALYSIS_GRID)
  * @param {number} extent        half-width the lattice covers, in world units
- * @param {{x: Float32Array, z: Float32Array, R: number, k: ?Float32Array}} verts
+ * @param {{x: Float32Array, z: Float32Array, R: number, k: ?Float32Array,
+ *          ax: ?Float32Array, az: ?Float32Array}} verts
  *        k is the body's own curvature term from buildBodyCurvature, in
  *        [-1, 1], or null/absent for a body that has no curvature texture.
+ *
+ *        ax/az are the ANALYSIS coordinates — where each vertex sits in the
+ *        chart `field` was sampled over — and they default to x/z, which is
+ *        what SURFACE mode wants: it reads the formula as a height field over
+ *        (x, z), so the lattice and the body share one coordinate system.
+ *        COLLAPSE does not. It reads the same kernel as f(theta, phi) about the
+ *        body's centroid, so its lattice is that chart and a vertex's place in
+ *        it is its own (theta, phi) — see MathVisualizer._rebuildBandMap. The
+ *        world (x, z) stay in verts because three things still need them and
+ *        none of them is the chart: the radius rule (the fallback, the
+ *        tie-break, and the low-confidence blend below), the gesture's rr, and
+ *        the stereo tilt in bandRingValue. Passing the chart for those instead
+ *        would move the rings off the body and onto an abstraction of it.
  * @returns {{u: Float32Array, r: Float32Array, tb: Float32Array, conf: number,
  *            stages: string[], body: boolean}}
  *          u ∈ [0,1] per vertex — multiply by 23 to get the band;
@@ -549,8 +573,14 @@ export function buildBandMap(field, g, extent, verts) {
   // Sample the accumulated ranking where the body's vertices actually are, then
   // equalise over THOSE vertices — so every band gets the same share of the
   // surface no matter how the field's values are distributed.
+  //
+  // "Where they are" means where they are IN THE CHART the field was sampled
+  // over, which is x/z for a height field and (theta, phi) for COLLAPSE. Same
+  // arrays when the caller passes neither, so the surface path is unchanged.
+  const ax = (verts.ax && verts.ax.length === V) ? verts.ax : verts.x;
+  const az = (verts.az && verts.az.length === V) ? verts.az : verts.z;
   const eV = new Float32Array(V);
-  for (let i = 0; i < V; i++) eV[i] = sampleLattice(acc, g, extent, verts.x[i], verts.z[i]);
+  for (let i = 0; i < V; i++) eV[i] = sampleLattice(acc, g, extent, ax[i], az[i]);
 
   const lo = percentile(eV, 0.005), hi = percentile(eV, 0.995);
   const span = hi - lo;

@@ -50,6 +50,9 @@ import {
   generateVolumeFromFormula,
   applyDisplacementField,
   generateCollapseScalarField,
+  collapseChart,
+  collapseChartToAnalysis,
+  generateCollapseAnalysisField,
   applyCollapseField,
   VOLUME_FORMULAS,
   FIELD_EXTENT,
@@ -795,6 +798,27 @@ export class MathVisualizer {
   setMode(mode) {
     if (mode === this._mode) return;
     this._generation++;
+    // FIX(collapse-bands): a DEFORM mode is a different reading of the same
+    // kernel, so the character map built for the mode being left does not
+    // describe the one being entered — SURFACE reads f as a height field over
+    // (x, z), COLLAPSE reads it as f(theta, phi) about the centroid. Nothing
+    // invalidated the map here, and _rebuildBandMap only knew the surface
+    // reading, so the rings kept the SURFACE layout in COLLAPSE: measured on
+    // sphere, torus, cylinder and plane over five kernels, the map the mode
+    // deserves sits 6.9–8.9 bands of 24 away from the one it wore, against an
+    // independence ceiling of 23/3 = 7.67 — i.e. unrelated, not merely
+    // different. The sharpest reading is the two-sided one: on the sphere all
+    // 6339 vertex pairs that share an (x, z) column but sit on opposite sides
+    // of the body landed in the SAME band, while the collapse field itself
+    // differs between the two sides by 0.458 world units on average.
+    //
+    // The complaint was "on SOME formulas", so the answer has to cover the
+    // catalogue rather than a handful: swept over all 192 kernels on the
+    // sphere, every one of them now lays out differently in the two modes —
+    // none below 4 bands of 24, 129 between 6 and 8, mean 7.658. Before, the
+    // two layouts were not merely similar but bit-identical for every kernel,
+    // because both modes reached the same builder with the same arguments.
+    this._invalidateBandMap();
     // Invalidate any in-flight worker response and the pending buffer.
     // A switch out of surface mode means whatever the worker is currently
     // computing (or has already returned) is no longer wanted.
@@ -1786,6 +1810,12 @@ export class MathVisualizer {
     // modules together — and catches anything else that moves the radius too.
     const liveR = this.render.U?.uBandR?.value ?? FIELD_EXTENT;
     if (wantMap && this._bandMap && this._bandMapBuiltR !== liveR) this._invalidateBandMap();
+    // And the same for the DEFORM mode, which decides WHICH READING of the
+    // kernel the map ranks. setMode invalidates on every transition, so this is
+    // belt and braces on the same pattern as the radius above: a mode that
+    // reached _mode by some other road cannot leave a map describing the other
+    // one behind it.
+    if (wantMap && this._bandMap && this._bandMapBuiltMode !== this._mode) this._invalidateBandMap();
     if (wantMap && this._bandMapDirty) this._rebuildBandMap();
     return {
       // The profile-weighted copy, the same array the shader is handed — see
@@ -1825,6 +1855,23 @@ export class MathVisualizer {
    * note in src/band-map.js. Two things follow: the layout does not crawl while
    * the music plays through it, and the audio-driven parameters cannot feed
    * back into the choice of which band a point listens to.
+   *
+   * FIX(collapse-bands): sampled the way THIS MODE reads the kernel, which used
+   * to be "as a height field over (x, z)" unconditionally. That is right for
+   * SURFACE and wrong for COLLAPSE, whose tick evaluates f(theta, phi) about
+   * the body's centroid (generateCollapseScalarField). The consequence was the
+   * owner's report — switch SURF→COLLAPSE and on many kernels the rings keep
+   * their shape — and it is worse than "the same picture twice": the (x, z)
+   * projection cannot tell the two sides of a closed body apart, so the north
+   * and south of a sphere pulsed on one band while the mode's own field pushed
+   * them by different amounts. See the numbers on setMode.
+   *
+   * VOLUME is deliberately NOT branched here and keeps the surface reading. Its
+   * tick runs _volumeFn, a vector field of (x, y, z) that this method never
+   * sees, so the map it wears describes _formulaFn — whichever surface kernel
+   * happened to be picked last. That is a defect of the same family and a
+   * different fix (a scalar to rank has to be chosen for a vector field first);
+   * doing it here would be guessing, so it is named rather than half-done.
    */
   _rebuildBandMap() {
     this._bandMapDirty = false;
@@ -1832,6 +1879,7 @@ export class MathVisualizer {
     this._bandMapR = null;
     this._bandMapTb = null;
     this._bandMapBuiltR = null;
+    this._bandMapBuiltMode = null;
     const base = this._pristinePositions;
     if (!base || !this._formulaFn) return;
 
@@ -1839,22 +1887,48 @@ export class MathVisualizer {
     const x = new Float32Array(V), z = new Float32Array(V);
     for (let i = 0; i < V; i++) { x[i] = base[i * 3]; z[i] = base[i * 3 + 2]; }
     const R = this.render.U?.uBandR?.value ?? FIELD_EXTENT;
+    const mode = this._mode;
 
     try {
-      const field = generateSurfaceFromFormula(
-        this._formulaFn, { amp: 1, freq: 1, comp: 0.5 },
-        ANALYSIS_GRID, FIELD_EXTENT, BAND_MAP_REF_TIME);
+      // The two readings, and the coordinates that go with each. World (x, z)
+      // stay in `verts` either way: the radius rule, the gesture and the stereo
+      // tilt are about where a point is ON THE BODY, not where the kernel is
+      // being read — see the note on buildBandMap's ax/az.
+      //
+      // COLLAPSE takes the chart from collapseChart(), the same function
+      // generateCollapseScalarField calls, on the same pristine positions the
+      // mode's baseline is snapshotted from. One source, so the map and the
+      // displacement cannot describe two different charts.
+      let field, ax, az;
+      if (mode === 'collapse') {
+        field = generateCollapseAnalysisField(
+          this._formulaFn, { amp: 1, freq: 1, comp: 0.5 },
+          ANALYSIS_GRID, BAND_MAP_REF_TIME);
+        const { theta, phi } = collapseChart(base);
+        ax = new Float32Array(V); az = new Float32Array(V);
+        // One scratch pair for the whole loop — see the note on the callee.
+        const xz = [0, 0];
+        for (let i = 0; i < V; i++) {
+          collapseChartToAnalysis(theta[i], phi[i], FIELD_EXTENT, xz);
+          ax[i] = xz[0]; az[i] = xz[1];
+        }
+      } else {
+        field = generateSurfaceFromFormula(
+          this._formulaFn, { amp: 1, freq: 1, comp: 0.5 },
+          ANALYSIS_GRID, FIELD_EXTENT, BAND_MAP_REF_TIME);
+      }
       // The SAME curvature array the shader was handed in aBodyK — measured
       // once in _capturePristine, spent twice. Two independent measurements of
       // "how curved is this body here" would agree until the day one of them
       // was updated, and the symptom would be the CPU and GPU paths laying the
       // spectrum out differently on one shape under one slider.
       const k = (this._bodyCurv && this._bodyCurv.length === V) ? this._bodyCurv : null;
-      const { u, r, tb } = buildBandMap(field, ANALYSIS_GRID, FIELD_EXTENT, { x, z, R, k });
+      const { u, r, tb } = buildBandMap(field, ANALYSIS_GRID, FIELD_EXTENT, { x, z, R, k, ax, az });
       this._bandMap = u;
       this._bandMapR = r;
       this._bandMapTb = tb;
       this._bandMapBuiltR = R;
+      this._bandMapBuiltMode = mode;
     } catch (_) {
       // A formula that throws on this lattice keeps the radius rule rather than
       // taking the layer down with it.

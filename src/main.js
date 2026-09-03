@@ -11,7 +11,11 @@ import { ShaderEditor, ModelLoader } from './shaders.js';
 import { CameraSystem } from './camera.js';
 import { UIController, ClipPlayer } from './ui/controller.js';
 import { MIDIController, ShuffleBag } from './utils.js';
-import { applyParam, syncParamUI, COLOR_SCHEME_COUNT, NIGHT_SCHEMES, ALL_SCHEMES, PARAMS } from './params.js';
+// COLOR_SCHEME_COUNT is deliberately NOT imported any more: every colour pick
+// in this file now goes through a POOL (ALL_SCHEMES or NIGHT_SCHEMES), and a
+// count in scope beside them is the thing that invites a fourth spelling of
+// "how many palettes are there". ALL_SCHEMES.length is the same number.
+import { applyParam, syncParamUI, NIGHT_SCHEMES, ALL_SCHEMES, nextInPool, PARAMS } from './params.js';
 import { OutputManager, SecondScreen } from './outputs.js';
 import { GifRecorder, WebmRecorder } from './recorder.js';
 import { MathVisualizer } from './math-visualizer.js';
@@ -126,8 +130,11 @@ ui.bootPersist();
 // ── Non-repeating randomization pools ────────────────────────────────────────
 // Shared instances so 'R', 'Q', and 'F' never collide:
 //   • _shapeBag    — shape pool for 'R'
-//   • _colorBag    — color pool for 'R' and 'Q' (same instance; Q won't reproduce
-//                    a color R just set, and vice versa)
+//   • _colorPool   — the schemes 'Q', 'E' and 'R' may reach: the whole
+//                    catalogue, or the NIGHT ten while that mode is on
+//   • _colorBag    — the shuffled deck over _colorPool, for 'R' and 'Q' (same
+//                    instance; Q won't reproduce a color R just set, and vice
+//                    versa). 'E' walks the pool in order and needs no deck.
 //   • _picker      — formula pool for 'R' and 'F' (same instance), covering
 //                    BOTH families in #gpu-sel: GPU shaders and CPU formulas
 // Each bag deals every value once before reshuffling; the reshuffle guarantees
@@ -142,20 +149,27 @@ ui.bootPersist();
 // draws from the whitelist itself, so a shape added to the picker joins the
 // randomiser by construction rather than by remembering.
 const _shapeBag = new ShuffleBag(SHAPE_NAMES);
-// Color pool size sourced from params.js — single source of truth.
+// Color pool sourced from params.js — single source of truth.
 // Previously a local COLOR_COUNT=36 lived here, which was correct but invited
 // drift if shaders.js gained another palette.
-let _colorBag = new ShuffleBag(ALL_SCHEMES);
+//
+// The POOL is named as well as the bag, because the three colour hotkeys use it
+// two different ways: Q and R take a shuffled draw from the bag, E steps to the
+// next entry along. E used to step the CATALOGUE instead — see FIX(night) on
+// its case below, which is the bug this pair of names exists to close.
+let _colorPool = ALL_SCHEMES;
+let _colorBag  = new ShuffleBag(_colorPool);
 
-// NIGHT narrows R and Q to the NIGHT series. The bag lives here, so the mode
+// NIGHT narrows Q, E and R to the NIGHT series. The pool lives here, so the mode
 // asks for the swap rather than reaching in: ui.setNightly calls this hook, and
 // controls.js does the same to its own AUTO COLOUR cycler.
 //
-// Rebuilt, not filtered — a ShuffleBag's no-repeat guard is a dealt deck, and a
-// deck holding schemes that just left the pool would keep dealing them until it
-// emptied.
+// The bag is rebuilt, not filtered — a ShuffleBag's no-repeat guard is a dealt
+// deck, and a deck holding schemes that just left the pool would keep dealing
+// them until it emptied.
 ui.onColorPoolChange = night => {
-  _colorBag = new ShuffleBag(night ? NIGHT_SCHEMES : ALL_SCHEMES);
+  _colorPool = night ? NIGHT_SCHEMES : ALL_SCHEMES;
+  _colorBag  = new ShuffleBag(_colorPool);
 };
 // bootPersist() above may already have restored a snapshot with NIGHT on, back
 // when this hook did not exist yet. Sync once so the pool matches the mode
@@ -306,10 +320,27 @@ window.addEventListener('keydown', e => {
     case 'q':
       _pickColorScheme(_colorBag.next(audio.colorIdx));
       break;
+    // E — step to the next scheme IN THE CURRENT POOL, looping. Was hardcoded
+    // to %24, which silently skipped schemes 24-35; then to
+    // %COLOR_SCHEME_COUNT, which is the whole catalogue.
+    //
+    // FIX(night): the catalogue was one mode too wide. NIGHT narrows what the
+    // app picks unattended, and controls.js states the invariant in as many
+    // words — narrowing one picker and not the other "would leave a bright
+    // palette one keypress away from a mode whose whole claim is that it does
+    // not do that". Q and R were narrowed through the shuffle bag; E was not,
+    // and it is the one key that walks in a straight line: the mode opens on
+    // scheme 44, so ten presses of "next colour" left the NIGHT ten and landed
+    // on scheme 0, the brightest thing in the build. Nothing turned the mode
+    // off on the way, so the room stayed dark and the picture did not.
+    //
+    // The step itself is nextInPool() in params.js, not an expression here —
+    // this switch is the one place in the app no test can reach, and it is
+    // where the rule was wrong. Its two edge cases (outside NIGHT the step is
+    // bit-identical to the old line; a scheme the pool does not hold steps INTO
+    // the pool) are documented and pinned there.
     case 'e':
-      // Cycle forward through every defined scheme. Was hardcoded to %24,
-      // which silently skipped schemes 24-35.
-      _pickColorScheme((audio.colorIdx + 1) % COLOR_SCHEME_COUNT);
+      _pickColorScheme(nextInPool(_colorPool, audio.colorIdx));
       break;
     // W — flip to the other side of the subject. The camera system owns
     // rotAngle and the camera, so it owns the turn; see flipAzimuth().

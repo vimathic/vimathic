@@ -5644,10 +5644,59 @@ export function applyCollapseField(geometry, scalarField, basePositions, baseNor
  *
  * @returns Float32Array of length basePositions.length / 3
  */
+// Scratch for the per-frame path below. It runs every frame in COLLAPSE, and
+// the chart is two Float32Arrays of the vertex count — 1.6 MB per call on the
+// largest body this app builds, i.e. ~94 MB/s of garbage at 60 fps, on a phone.
+// The chart is consumed inside the same synchronous call, so one buffer pair
+// per module is enough here; anything that KEEPS a chart passes its own (see
+// MathVisualizer._rebuildBandMap), which is also what stops the two aliasing.
+//
+// ONE pair, and the case where that is not free, said out loud: a points proxy
+// with geometry of its OWN has a different vertex count, and a frame that asks
+// for both charts would resize the scratch twice. That branch does not ship —
+// the proxy borrows the mesh's geometry (render.js FIX(#3)) — and even in it
+// the two reallocations sit beside the `out` array this function has always
+// allocated per call, so it is a doubling of a cost, not a new one.
+let _chartScratch = null;
+
 export function generateCollapseScalarField(fn, params = {}, basePositions, time = 0) {
   const { amp = 1, freq = 1, comp = 0.5 } = params;
   const N = basePositions.length / 3;
   const out = new Float32Array(N);
+  if (!_chartScratch || _chartScratch.theta.length !== N) {
+    _chartScratch = { theta: new Float32Array(N), phi: new Float32Array(N) };
+  }
+  const { theta, phi } = collapseChart(basePositions, _chartScratch);
+
+  for (let i = 0; i < N; i++) {
+    let s = 0;
+    try { s = fn(theta[i], phi[i], time, { amp, freq, comp }); } catch (_) {}
+    out[i] = isFinite(s) ? s : 0;
+  }
+  return out;
+}
+
+/**
+ * WHERE each vertex sits in the chart COLLAPSE reads the kernel on.
+ *
+ * Split out of generateCollapseScalarField rather than copied, because a second
+ * caller arrived and the two must not be allowed to disagree: the band
+ * character map has to know which part of the chart a vertex occupies in order
+ * to rank the field's texture there (src/math-visualizer.js _rebuildBandMap).
+ * Two spellings of "where is this vertex in the chart" would show up as a body
+ * DISPLACED by one layout and BANDED by another — and nothing would throw.
+ *
+ * @param {Float32Array} basePositions  flat [x,y,z,…], undisplaced
+ * @param {?{theta: Float32Array, phi: Float32Array}} out  buffers to fill, when
+ *        the caller has a pair of the right length to reuse. Anything else —
+ *        absent, or the wrong length — is allocated here, so a caller can
+ *        always ignore this parameter and always get correct arrays.
+ * @returns {{theta: Float32Array, phi: Float32Array}} one angle pair per vertex
+ */
+export function collapseChart(basePositions, out = null) {
+  const N = basePositions.length / 3;
+  const theta = (out && out.theta && out.theta.length === N) ? out.theta : new Float32Array(N);
+  const phi   = (out && out.phi   && out.phi.length   === N) ? out.phi   : new Float32Array(N);
 
   // Compute centroid
   let cx = 0, cy = 0, cz = 0;
@@ -5683,20 +5732,91 @@ export function generateCollapseScalarField(fn, params = {}, basePositions, time
   const flat = vertical <= 1e-6 * Math.max(radial, 1e-9);
   const radialToPhi = radial > 1e-9 ? Math.PI / radial : 0;
 
-  // Per-vertex spherical coords + formula evaluation
+  // Per-vertex spherical coords
   for (let i = 0; i < N; i++) {
     const dx = basePositions[i * 3]     - cx;
     const dy = basePositions[i * 3 + 1] - cy;
     const dz = basePositions[i * 3 + 2] - cz;
     const r  = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const theta = Math.atan2(dz, dx);
-    const phi   = flat
+    theta[i] = Math.atan2(dz, dx);
+    phi[i]   = flat
       ? Math.sqrt(dx * dx + dz * dz) * radialToPhi
       : (r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, dy / r))) : 0);
+  }
+  return { theta, phi };
+}
 
-    let s = 0;
-    try { s = fn(theta, phi, time, { amp, freq, comp }); } catch (_) {}
-    out[i] = isFinite(s) ? s : 0;
+// ── The chart, laid on the analysis lattice ─────────────────────────────────
+//
+// The band character map ranks how finely a field is corrugated, and it does
+// that on a g×g lattice (src/band-map.js). For SURFACE the lattice is the world
+// (x, z) the height field is sampled over, so the body and the lattice share a
+// coordinate system and nothing has to be said. COLLAPSE reads the same kernel
+// as f(theta, phi), so ITS lattice is the chart above — and the two functions
+// below are how a vertex finds its place in it, and how a lattice cell finds
+// the angles it stands for. They are inverses of each other; the round trip is
+// pinned in tests/band-map-modes.test.js, because an unpinned inverse is how
+// a map ends up describing the right field in the wrong place.
+//
+// The chart is stretched onto the same SQUARE the surface lattice covers, and
+// that is a real approximation rather than a change of units: theta spans 2*pi
+// and phi spans pi, so one lattice step means twice as much angle across as it
+// does down. The cascade's estimators use one isotropic step, so texture along
+// phi is weighted half as heavily as texture along theta. Stated rather than
+// hidden — the alternative is a rectangular lattice and a second estimator
+// pair, for a factor of two on a quantity that is then histogram-equalised.
+
+/**
+ * Where a vertex at (theta, phi) sits on the analysis lattice's square.
+ *
+ * `out` exists so the per-vertex loop that builds a map has one array rather
+ * than one per vertex — 196 608 of them on the largest body this app meshes.
+ * A vectorised twin would have been the other way to get that, and it would
+ * have been a SECOND spelling of the two lines below, which is the drift this
+ * whole pairing is written to avoid. Omit it and you get a fresh array, so a
+ * one-off caller (and every test here) needs to know nothing about this.
+ *
+ * @param {number} theta
+ * @param {number} phi
+ * @param {number} extent
+ * @param {number[]} [out]  a 2-element array to fill
+ * @returns {number[]} [ax, az] — `out`, when one was given
+ */
+export function collapseChartToAnalysis(theta, phi, extent = FIELD_EXTENT, out = [0, 0]) {
+  out[0] = (theta / Math.PI) * extent;
+  out[1] = (phi / Math.PI * 2 - 1) * extent;
+  return out;
+}
+
+/** The angles lattice cell (i, j) of a g×g grid stands for. */
+export function collapseAnalysisToChart(i, j, g) {
+  return [(-1 + 2 * i / (g - 1)) * Math.PI, (j / (g - 1)) * Math.PI];
+}
+
+/**
+ * The kernel sampled over the COLLAPSE chart, on the band map's analysis
+ * lattice — the collapse-mode counterpart of generateSurfaceFromFormula.
+ *
+ * Row-major with theta across and phi down, so it is read by exactly the same
+ * sampleLattice() the surface field is, at the coordinates
+ * collapseChartToAnalysis hands back.
+ *
+ * @param {Function} fn      the kernel, f(theta, phi, time, params) → number
+ * @param {object}   params  { amp, freq, comp }
+ * @param {number}   g       lattice size (ANALYSIS_GRID)
+ * @param {number}   time    the FROZEN reference time — see band-map.js on why
+ * @returns {Float32Array}   g² values
+ */
+export function generateCollapseAnalysisField(fn, params = {}, g = 65, time = 0) {
+  const { amp = 1, freq = 1, comp = 0.5 } = params;
+  const out = new Float32Array(g * g);
+  for (let j = 0; j < g; j++) {
+    for (let i = 0; i < g; i++) {
+      const [theta, phi] = collapseAnalysisToChart(i, j, g);
+      let v = 0;
+      try { v = fn(theta, phi, time, { amp, freq, comp }); } catch (_) {}
+      out[j * g + i] = isFinite(v) ? v : 0;
+    }
   }
   return out;
 }

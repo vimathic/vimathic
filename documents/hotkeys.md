@@ -19,8 +19,8 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 | <kbd>F</kbd> | Random formula — GPU shader or CPU math formula |
 | <kbd>D</kbd> | Next shape (sequential, looping through all 32 shapes) |
 | <kbd>T</kbd> | Next surface material — Matte / Glossy / Metal / Mirror / Velvet / Glass (SURFACE mode only) |
-| <kbd>Q</kbd> | Random color scheme |
-| <kbd>E</kbd> | Next color scheme (cycles through all 54) |
+| <kbd>Q</kbd> | Random color scheme — from all 54, or from the NIGHT ten while that mode is on |
+| <kbd>E</kbd> | Next color scheme — steps through all 54, or around the NIGHT ten while that mode is on |
 | <kbd>W</kbd> | Flip camera 180° around its orbit |
 | <kbd>G</kbd> | Toggle ground grid |
 | <kbd>Y</kbd> | Glitch punch — a brief bloom surge plus ~200 ms of viewport jitter, with the beat ring flashed once |
@@ -30,6 +30,8 @@ VIMATHIC has two kinds of keyboard shortcuts: **tap** keys that trigger an actio
 The randomization keys (`R`, `Q`, `F`) use a **shuffle bag**: every color, shape, and formula will appear before any repeats. You will not see the same value twice in a row, ever — even at deck boundaries the next pick is guaranteed different from the last.
 
 > **Note on `F` and `R`:** the FORMULA dropdown holds two families — 38 GPU shaders and 192 CPU math formulas — and both randomizers draw from both. The choice of family is a coin flip, then the shuffle bag picks inside it, so a shader comes up about as often as a formula even though there are five times more formulas. Each family keeps its own no-repeat deck.
+
+> **Note on NIGHT:** the mode narrows what the app picks *unattended*, so all three colour keys draw from the same ten NIGHT schemes while it is on — `Q` and `R` by shuffle, `E` by stepping around the series and wrapping from the last back to the first. The COLOR SCHEME dropdown is deliberately left free: the mode is about what the app chooses, not about what you may. If you pick a bright palette from it under NIGHT, the next `E` steps back into the series rather than continuing along the catalogue. Until 03.09.2026 `E` ignored the mode entirely and walked out of the ten onto scheme 0 after ten presses.
 
 > **Note on `R`:** `R` rotates colour, formula and shape across their full pools — 54 schemes, 38 shaders + 192 formulas, and all 32 shapes. With NIGHT on, the colour half of that pool narrows to the 10 NIGHT schemes; the dropdown is unaffected. Until August 2026 the shape half drew from a curated subset of nine, and the other eleven (disc, ring, circle, hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth, dodecahedron, star, solar) were reachable only through the Shape dropdown or `D`. Nothing recorded why those nine; the list had simply stopped being extended as shapes were added. The pool is the shape whitelist itself now, so a shape that appears in the dropdown appears under `R`.
 
