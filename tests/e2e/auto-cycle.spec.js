@@ -62,10 +62,34 @@ test.describe('AUTO colour', () => {
     await expect(label).not.toHaveAttribute('placeholder', beforeLabel);
 
     // Switching off is not a revert: the palette it reached stays on screen.
-    const reached = await sel.inputValue();
+    //
+    // Read AFTER the disarm, not before it. The old form took `reached` while
+    // AUTO was still running and asserted the value equalled it afterwards,
+    // which is a race the test loses on a slow machine: on a GPU-less runner
+    // another tick lands between the read and the click, and the assertion
+    // reports "expected 25, received 16" — the cycler doing exactly its job.
+    // It cost two red CI runs on 03.09.2026 while the product was fine.
+    //
+    // This is not a weakening — it is strictly stronger. The claim has two
+    // halves and both are checked: it must not go back to where it started (a
+    // revert), and it must stand still once disarmed (no further ticks). The
+    // old form could not check the second half at all, because it compared
+    // against a value read while the cycler was still running.
+    //
+    // 13 s, and that number is not arbitrary: with no music playing — and
+    // nothing plays in this spec — AutoCycler's period is `idleMs`, which
+    // defaults to 12 000 ms and is not overridden for colour (src/ui/auto-
+    // cycle.js, ui.autoColor in src/ui/controls.js). A wait shorter than one
+    // period would pass on a cycler that never stopped, which is exactly the
+    // failure this half is here to catch. That same 12 s period is what the old
+    // form raced against: on a slow runner the steps between reading the value
+    // and disarming took longer than one period, so a tick landed in between.
     await btn.click();
     await expect(btn).not.toHaveClass(/active/);
-    await expect(sel).toHaveValue(reached);
+    const settled = await sel.inputValue();
+    expect(settled).not.toBe(before);
+    await page.waitForTimeout(13000);
+    await expect(sel).toHaveValue(settled);
   });
 });
 
