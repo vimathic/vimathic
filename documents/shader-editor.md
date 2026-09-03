@@ -66,7 +66,7 @@ The scaffold defines:
 
 | Variable | Type | Meaning |
 |---|---|---|
-| `t` | `float` | Normalized height, 0–1 from the current vertex Y, then shifted by the Spectrum Rings band that region listens to — the same shift the built-in fragment shader gets, so a custom body starts from the same ramp. Set Spectrum Rings to 0 and it is the plain height |
+| `t` | `float` | The palette ramp, `clamp((vH + 0.8) * 0.6, 0.03, 0.97)`, then shifted by the Spectrum Rings band that region listens to — the same shift the built-in fragment shader gets. What `vH` carries depends on the mode: the shader's own `y` in GPU mode, the CPU height field in **Surface** formula mode, and the vertex Y itself — base included — in **Volume** and **Collapse**. In GPU and Surface modes it equals the vertex Y only on a body whose base Y is zero, such as the plane. Set Spectrum Rings to 0 and the shift goes away |
 | `c` | `vec3` | **Output** — assign your color here |
 | `uCM`, `uCMNext`, `uCMBlend` | uniforms | Active palette index and crossfade |
 | `uTime`, `uBass`, `uMid`, `uTreble`, `uBeat` | uniforms | Audio-reactive globals |

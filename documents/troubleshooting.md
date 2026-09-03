@@ -105,7 +105,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 ### **Wrong parameter responds to my knob**
 
 - Two knobs sending the same CC number. Disconnect one, re-learn the other.
-- Mapping is leftover from a previous session. Click **CLEAR** in MIDI section to wipe all mappings, start fresh.
+- Mapping is leftover from a previous session. Click **✕ CLEAR** in the **MIDI MAPPING** section (under **ADVANCED**) to wipe all mappings, start fresh.
 
 ## Recording
 

@@ -276,10 +276,11 @@ export function bindControls(ui) {
    * Can the CPU deformation own pos.y right now?
    *
    * A GPU shader owns it unless the selection is a CPU formula (`m:…`) or
-   * there is no selection at all — the same rule presets.js:445 states in
-   * writing and enforces when it decides whether a snapshot's volume mode can
-   * be restored. setVolumeFormula sets uMathMode = 1 and shaders.js:109 gates
-   * the shader's ENTIRE displacement on uMathMode == 0, so the two cannot both
+   * there is no selection at all — the same rule applyState's deformTarget
+   * expression states in writing (presets.js) and enforces when it decides
+   * whether a snapshot's volume mode can be restored. setVolumeFormula sets
+   * uMathMode = 1 and the `if(uMathMode==0)` branch of the vertex program in
+   * shaders.js gates the shader's ENTIRE displacement, so the two cannot both
    * be on: one of them draws nothing.
    */
   const _cpuOwnsSurface = () => {
@@ -292,13 +293,21 @@ export function bindControls(ui) {
   const _volSel        = document.getElementById('volume-formula-sel');
   const _volDesc       = document.getElementById('volume-formula-desc');
 
+  // Verbatim copies of VOLUME_FORMULAS[key].description (math-collections.js),
+  // and the only text a user ever reads: getVolumeFormulaKeys, the accessor on
+  // MathVisualizer, has no caller. So the two tables have to be kept in
+  // step by hand — when a description over there is corrected, copy it here in
+  // the same commit, or the panel goes on describing the formula that was
+  // measured wrong. That is exactly how `breathe`, `lorenzField`,
+  // `magneticDipole` and `fluidVortex` ended up stale here after the FIX notes
+  // in math-collections.js replaced all four.
   const _volDescriptions = {
-    breathe:       'Uniform expansion/contraction along surface normals',
-    lorenzField:   'Classic chaotic attractor as displacement field',
+    breathe:       'Wave travelling outward along the radius from the centre',
+    lorenzField:   'Lorenz field σ=10, ρ=28, β=8/3 — the vector field itself, one displacement per vertex',
     twist:         'Rotation around Y axis proportional to height',
     rippleVolume:  'Spherical wavefronts emanating from origin',
-    magneticDipole:'B-field of a magnetic dipole at origin',
-    fluidVortex:   'Incompressible vortex flow (curl field)',
+    magneticDipole:'B-field of a magnetic dipole at the origin, regularised at r→0',
+    fluidVortex:   'Incompressible vortex flow — ∇·v = 0 exactly',
   };
 
   // Set deform mode and update UI. `runFormula` (optional) is called inside
@@ -312,9 +321,10 @@ export function bindControls(ui) {
     // active and opened the formula row while the engine never entered volume
     // mode. Making the engine follow instead would be worse — it would switch
     // off the displacement of a shader #gpu-sel still names, and produce a
-    // state applyState explicitly refuses to restore (presets.js:445), so the
-    // operator could reach a view they cannot save. The shader wins, and the
-    // panel says so, in the same voice as the volume→collapse refusal below.
+    // state applyState explicitly refuses to restore (see deformTarget in
+    // presets.js), so the operator could reach a view they cannot save. The
+    // shader wins, and the panel says so, in the same voice as the
+    // volume→collapse refusal below.
     // No caller pairs 'volume' with runFormula today; if one ever does, its
     // work still happens — a refused mode is not a reason to drop it.
     if (mode === 'volume' && !_cpuOwnsSurface()) {
@@ -462,11 +472,10 @@ export function bindControls(ui) {
     // `_mode` where it was, so the engine left volume mode and nothing told the
     // panel: VOLUME stayed highlighted with its formula row open, describing a
     // mode nothing was in, and a second click on the lit button was refused by
-    // the guard above. Worse, captureState reads mathViz._mode
-    // (presets.js:223), so the snapshot carried deformMode:'volume' beside a
-    // numeric gpuSelVal — the one pair applyState refuses to restore
-    // (presets.js:466), which means the preset came back as SURFACE rather than
-    // as the screen it was saved from.
+    // the guard above. Worse, captureState reads mathViz._mode, so the snapshot
+    // carried deformMode:'volume' beside a numeric gpuSelVal — the one pair
+    // applyState's deformTarget refuses to restore, which means the preset came
+    // back as SURFACE rather than as the screen it was saved from.
     //
     // 'surface' rather than 'collapse' for the same reason applyState picks it:
     // with the CPU deformation off, an undeformed surface under the shader is
@@ -637,17 +646,22 @@ export function bindControls(ui) {
   DOM.colorAuto?.addEventListener('click', () => ui.autoColor.toggle());
 
   // ── NIGHT ─────────────────────────────────────────────────────────────────
-  // One switch for a dark room. Everything it does is furniture and choice —
-  // it writes no shader uniform, no bloom setting and no palette number, so
-  // with it off the frame is bit-for-bit what it always was, and there is
-  // nothing to prove about that.
+  // One switch for a dark room. It writes no bloom setting. Through
+  // r.setNightly it writes one shader uniform — uGlare, the lamp multiplier,
+  // 0.65 → 0.45 — and, when it is switched on over a scheme below
+  // NIGHT_SCHEME_FIRST, one palette number; over a NIGHT palette it leaves the
+  // choice alone. Both writes are guarded on the mode being ON, so switching it
+  // off restores uGlare and touches nothing else — the palette it moved you to
+  // stays, because a palette is a choice and the mode does not take choices
+  // back.
   //
-  // What it does NOT do, deliberately: the specular stays white and keyed to
-  // treble (owner, 28.08 — "leave it, we'll take it out if it looks bad"),
-  // and bloom keeps its shipped threshold so the dark can still be lifted with
-  // it. The NIGHT palettes are built to clear that threshold on peaks and to
-  // sit under it at rest, which is where the mode's darkness actually comes
-  // from — not from turning lights down.
+  // What it does NOT do, deliberately: it moves no bloom setting, so the dark
+  // can still be lifted with it. The specular keeps its colour and its treble
+  // keying — the 28.08 decision (owner: "leave it, we'll take it out if it
+  // looks bad") — but since 01.09 NIGHT scales it, along with the studio
+  // soft-boxes and the material highlight, through uGlare. The mode's darkness
+  // comes from the NIGHT palettes clearing the bloom threshold on peaks and
+  // sitting under it at rest, and from that lamp multiplier, together.
   //
   // @param {boolean} on
   // @param {{keepPalette?: boolean}} [opts] — keepPalette leaves the current
@@ -797,8 +811,8 @@ export function bindControls(ui) {
     if (r.grid) r.grid.visible = false;
     DOM.btnToggleGrid.style.opacity = '0.45';
 
-    // All registered params (amp, wave-int, bass/treble-sens, bloom, colorIdx,
-    // rotSpeed) reset to their factory defaults declared in params.js.
+    // All registered params (amp, wave-int, bandDepth, bass/treble-sens, bloom,
+    // colorIdx, rotSpeed) reset to their factory defaults declared in params.js.
     resetParamsToDefault(ctx);
 
     // ── Camera — bottom-up view of the object ─────────────────────────────

@@ -26,7 +26,7 @@ If you connect a controller after the page is loaded, VIMATHIC picks it up autom
 
 Learn mode binds the next incoming CC message to a parameter of your choice.
 
-1. Open the **MIDI** section in the control panel.
+1. Open **ADVANCED** in the control panel, then expand **MIDI MAPPING** — both ship collapsed.
 2. In the empty row at the bottom of the mapping list, pick the parameter from the dropdown.
 3. Click **⊙ LEARN** on that row — it starts listening.
 4. Move the knob or fader you want to use.
@@ -77,7 +77,7 @@ Latency on Bluetooth is usually fine for slow knob movements; for fast performan
 
 ## Clear / reset
 
-The **CLEAR** button in the MIDI section removes all mappings at once. There is no per-mapping undo — clear and re-learn if you make a mistake.
+The **CLEAR** button in the MIDI MAPPING section removes all mappings at once. There is no per-mapping undo — clear and re-learn if you make a mistake.
 
 ## Tips
 

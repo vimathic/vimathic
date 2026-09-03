@@ -167,8 +167,11 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   white that cut the eyes is answered by `uGlare`, a multiplier on the lamps —
   the three studio soft-boxes, the material's own highlight, the lighting
   specular, and deliberately not the reflections — at 0.65 normally and 0.45
-  in NIGHT, where a mirror had measured 1.57× the mean luma of the same body
-  in matte, on the mode whose whole promise is a dark picture. `S` now drives
+  in NIGHT, where a mirror had measured well above the same body in matte, on
+  the mode whose whole promise is a dark picture. (The ratio is left un-quoted
+  here on purpose: the tree carries two tables of that one measurement, in the
+  `studioEnv` note and in `tests/glare-lamps.test.js`, and they disagree —
+  1.67× against 1.58×. One re-measurement retires the wrong one.) `S` now drives
   Spectrum Rings as a hold-and-drag parameter and the glitch punch it used to
   fire lives on `Y`, because a letter cannot hold both. And 3D SHAPE, SHADER
   MODE and COLOR SCHEME are read-only dropdowns again — along with VOLUME
@@ -275,8 +278,8 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   ground plane travelled together and a closed body could not change its
   thickness at all — 1.2e-7 across 25 921 vertices on the sphere. It now
   follows the surface normal on the bodies measurement says can carry it — the
-  four at the time, sphere, torus, icosahedron-smooth and solar, joined since by
-  the parametric and implicit bodies that pass the same test — capped at 0.8 of
+  four at the time, sphere, torus, icosahedron-smooth and solar, joined by
+  `catenoid` and `hyperboloid` when the parametric wave landed — capped at 0.8 of
   the local medial radius; every other body keeps the vertical rule and was
   bit-identical to what `main` drew. Hard edges keep it because welding their normals trades
   an open seam for a fold, and the thin disc keeps it because pushing its

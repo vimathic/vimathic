@@ -105,7 +105,7 @@ states**.
 
 That's before:
 
-- 8 audio-reactive sliders (amplitude, wave intensity, Spectrum Rings, bass/treble sensitivity, bloom, colour, rotate-speed)
+- 6 audio-reactive sliders in the panel (amplitude, wave intensity, Spectrum Rings, bass/treble sensitivity, bloom), plus two more parameters on the same registry with no slider of their own — colour scheme and auto-rotate speed
 - The MIDI mapping table (any CC → any parameter)
 - 6 post-processing passes in the engine covering 7 effects (Film Grain and Vignette share a pass), two of them reachable from the app — the bloom slider above and the afterglow the *smoke* particle style brings in PTS mode
 - The **Camera Programmer** (arbitrary JavaScript camera scripts + keyframe timeline)
@@ -131,7 +131,7 @@ Integral Transforms · Topology & Geometry · Cellular Automata · Quantum Mecha
 | Tier | Count | What it means |
 |------|-------|---------------|
 | 🟢 A | 122 | IEEE 754 double precision — machine accuracy |
-| 🔵 B | 35 | Bounded approximation, error ≤ 10⁻³ to 10⁻⁷ — documented per formula and read at the factory sliders (amp 0.7, freq 1, comp 0.5), not as one ceiling over the whole tier. Two entries exceed it and say so in their rows: `dragon` reaches 1.8×10⁻³ at a single vertex there, and `manifoldCurvature` 3.24 world units over a third of the plate at the loudest the audio path drives it unaided. |
+| 🔵 B | 35 | Bounded approximation, error ≤ 10⁻³ to 10⁻⁷ — documented per formula and read at the factory sliders (amp 0.7, freq 1, comp 0.5), not as one ceiling over the whole tier. Two entries exceed it and say so in their rows: `manifoldCurvature`, 3.24 world units over a third of the plate at the loudest the audio path drives it unaided, and `ornsteinUhlenbeck`, 17 % on the two statistics that define its process. |
 | 🟡 C | 35 | Visualization-grade — qualitatively faithful, not numerically exact |
 
 This is not "math-flavoured visuals". These are canonical implementations —

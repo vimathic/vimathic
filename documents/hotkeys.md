@@ -46,7 +46,7 @@ Hold the key, then drag horizontally with mouse, two-finger touchpad swipe, or s
 | <kbd>B</kbd> / <kbd>A</kbd> | Bloom | 0.1 – 2.0 |
 | <kbd>S</kbd> | Spectrum Rings | 0.1 – 2.5 |
 
-Each range is one full window sweep of the drag; the panel slider shows the narrower everyday range and grows to fit when a drag takes a value past it. The floor is 0.1 even where the parameter itself allows 0 — dragging one to exactly zero makes the picture go still, which reads as a fault mid-set.
+Each range is one 600-pixel sweep of the drag — a fixed distance, not a fraction of your window; the panel slider shows the narrower everyday range and grows to fit when a drag takes a value past it. The floor is 0.1 even where the parameter itself allows 0 — dragging one to exactly zero makes the picture go still, which reads as a fault mid-set.
 
 These are the "performance" keys — they're chosen so you can hold one with the left hand and aim the mouse with the right, like a modulation wheel. The slider in the side panel moves in sync as you drag.
 

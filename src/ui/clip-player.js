@@ -234,20 +234,6 @@ export class ClipPlayer {
   }
 
   /**
-   * Reconcile player position with wall-clock after a long throttled period.
-   *
-   * Called when the tab returns to visibility. The browser may have throttled
-   * our setTimeout for seconds-to-minutes; meanwhile audio kept playing and
-   * the user's perceived timeline advanced. We compute how much real time has
-   * passed since the current step's start, walk forward through the step
-   * sequence until we find the one that should be active *now*, and jump
-   * there with a fresh _runStep().
-   *
-   * If we are still inside the current step's window, do nothing — the
-   * already-scheduled setTimeout will fire as expected (browser usually
-   * resumes pending timers promptly after focus regain).
-   */
-  /**
    * What a step costs beyond its hold: the morph the next preset animates
    * through before its hold window opens. _runStep pushes _stepStartMs past it
    * and arms its timeout at hold + this, so the schedule's real period is the
@@ -270,6 +256,20 @@ export class ClipPlayer {
     return half * 2;
   }
 
+  /**
+   * Reconcile player position with wall-clock after a long throttled period.
+   *
+   * Called when the tab returns to visibility. The browser may have throttled
+   * our setTimeout for seconds-to-minutes; meanwhile audio kept playing and
+   * the user's perceived timeline advanced. We compute how much real time has
+   * passed since the current step's start, walk forward through the step
+   * sequence until we find the one that should be active *now*, and jump
+   * there with a fresh _runStep().
+   *
+   * If we are still inside the current step's window, do nothing — the
+   * already-scheduled setTimeout will fire as expected (browser usually
+   * resumes pending timers promptly after focus regain).
+   */
   _catchUp() {
     if (!this._steps.length) return;
 

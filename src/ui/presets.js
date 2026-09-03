@@ -373,10 +373,12 @@ export const PresetMixin = {
     const se  = this.shaderEditor;
     const ctx = { audio: this.audio, render: r, camera: cam };
 
-    // ── Param fields (audio sensitivities, amp, wave-int, bloom, colorIdx) ──
-    // applyParam keeps the slider + display in sync as a side effect.
-    // colorIdx is skipped while AUTO COLOUR owns the palette (opts.preserveColor
-    // — set per step by ClipPlayer); the other five are unaffected by it.
+    // ── Param fields ────────────────────────────────────────────────────────
+    // All seven of PARAM_FIELDS: audio sensitivities, amp, wave-int, bloom,
+    // colorIdx and bandDepth (Spectrum Rings). applyParam keeps the slider +
+    // display in sync as a side effect. colorIdx is skipped while AUTO COLOUR
+    // owns the palette (opts.preserveColor — set per step by ClipPlayer); the
+    // other six are unaffected by it.
     for (const id of PARAM_FIELDS) {
       if (opts.preserveColor && id === 'colorIdx') continue;
       if (s[id] != null) applyParam(ctx, id, s[id]);
@@ -1055,8 +1057,11 @@ export const PresetMixin = {
           <p style="margin:0 0 10px 0;color:#bbc;font-size:11px;line-height:1.55">
             This preset includes JavaScript code for the Camera Programmer.
             Running untrusted code can read your data and contact remote servers.<br>
-            <strong style="color:var(--green)">If you keep the code it will NOT auto-run</strong> — you'll
-            still need to open Camera Programmer manually and click Apply.<br>
+            <strong style="color:var(--green)">If you keep the code, the MAIN script will NOT
+            auto-run</strong> — you'd still have to open Camera Programmer and click Apply.<br>
+            <strong style="color:var(--accent)">Keyframe code is different.</strong> It lands on the
+            timeline and fires as soon as ANY script is driving the camera — including the built-in
+            default template already sitting in the editor. Discard if you have not read it.<br>
             Review below:
           </p>
           <pre id="_vsc_code" style="background:#050510;border:1px solid #223;border-radius:5px;

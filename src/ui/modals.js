@@ -1,6 +1,6 @@
 // modals.js — DOM event wiring for every overlay and panel section.
 //
-// Five surfaces share this file because each is a small bag of DOM
+// Six surfaces share this file because each is a small bag of DOM
 // listeners that doesn't justify its own module; together they form the
 // "every modal opens, closes, and reacts" layer that sits between the
 // services (audio, render, camera…) and the HTML.

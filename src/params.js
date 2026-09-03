@@ -27,9 +27,10 @@
 //                 applyParam, preset apply) can set values arbitrarily
 //                 higher and the slider will grow to fit them. extendedMax
 //                 only controls (a) the speed scaling of keyboard-drag —
-//                 a full window sweep covers [min..extendedMax], not
-//                 [min..Infinity] — and (b) the default upper bound when
-//                 a tool needs a "sensible default range".
+//                 600 px of drag, a fixed distance and not a fraction of
+//                 the window, covers [max(min, DRAG_FLOOR)..extendedMax],
+//                 not [min..Infinity] — and (b) the default upper bound
+//                 when a tool needs a "sensible default range".
 //
 // ── Slider-grow rationale ────────────────────────────────────────────────
 // HTML5 <input type="range"> silently clamps any .value above `max`.
@@ -82,8 +83,9 @@ export const PARAMS = {
     slider:  'amplitude',
     display: 'ampv',
     min: 0.2, max: 1.5, default: 0.7,
-    // J + drag covers up to 2.0 at full window sweep — typical performance
-    // over-drive range. Values above 2.0 are reachable via click-to-type.
+    // J + drag covers up to 2.0 over a 600-pixel sweep — typical
+    // performance over-drive range. Values above 2.0 are reachable via
+    // click-to-type.
     extendedMax: 2.0,
     format: v => v.toFixed(2),
     get: ctx => ctx.audio.amp,
@@ -98,7 +100,7 @@ export const PARAMS = {
     // Range matches index.html slider (was 0..2.0 — drift from HTML 0.3..3.5).
     // Keep them aligned: index.html is the visible truth for slider geometry.
     min: 0.3, max: 3.5, default: 1.0,
-    // N + drag covers up to 5.0 at full window sweep — comfortable range
+    // N + drag covers up to 5.0 over a 600-pixel sweep — comfortable range
     // before FFT phase wraps so densely the surface aliases. Higher values
     // are reachable via click-to-type if the user wants extreme ripple.
     extendedMax: 5.0,
@@ -145,9 +147,9 @@ export const PARAMS = {
     // three aligned: audio.js (`this.bassSens = 1.2`) is the engine truth and
     // index.html is the visible truth (slider value="1.2", <span id="bsv">1.20</span>).
     min: 0, max: 2.5, default: 1.2,
-    // L + drag covers up to 3.0 at full window sweep — comfortable range
-    // for very quiet tracks. Click-to-type can go higher (e.g. 500 for
-    // ambient material).
+    // L + drag covers 0.1..3.0 over a 600-pixel sweep — the bottom is
+    // DRAG_FLOOR, not min. Comfortable range for very quiet tracks;
+    // click-to-type can go higher (e.g. 500 for ambient material).
     extendedMax: 3.0,
     format: v => v.toFixed(2),
     get: ctx => ctx.audio.bassSens,
@@ -160,8 +162,8 @@ export const PARAMS = {
     slider:  'trebleSens',
     display: 'tsv',
     min: 0, max: 2.5, default: 1.0,
-    // K + drag covers up to 3.0 at full window sweep — symmetry with bass.
-    // Click-to-type can go higher.
+    // K + drag covers 0.1..3.0 over a 600-pixel sweep — symmetry with bass,
+    // same DRAG_FLOOR bottom. Click-to-type can go higher.
     extendedMax: 3.0,
     format: v => v.toFixed(2),
     get: ctx => ctx.audio.trebleSens,
@@ -174,10 +176,11 @@ export const PARAMS = {
     slider:  'bloom',
     display: 'blmv',
     min: 0, max: 1.5, default: 0.55,
-    // B + drag covers up to 2.0 at full window sweep. Above ~2 the
-    // EffectComposer's bloom pass clips highlights to flat white; the
-    // visual signal stops responding past that point, so extending via
-    // click-to-type rarely helps — but it's allowed.
+    // B + drag covers 0.1..2.0 over a 600-pixel sweep (the bottom is
+    // DRAG_FLOOR, not min). Above ~2 the EffectComposer's bloom pass clips
+    // highlights to flat white; the visual signal stops responding past
+    // that point, so extending via click-to-type rarely helps — but it's
+    // allowed.
     extendedMax: 2.0,
     format: v => v.toFixed(2),
     get: ctx => ctx.render.bloomPass.strength,
@@ -203,9 +206,11 @@ export const PARAMS = {
     min: 0, max: COLOR_SCHEME_COUNT - 1, default: 16,
     integer: true,
     // The one enumerated param in the registry, so the one that needs a real
-    // ceiling: past 43 there is no palette and no <option>, the shader falls
-    // back to a fixed look and DOM.colorSel.selectedIndex goes -1, i.e. the
-    // dropdown blanks and the operator cannot see where they are. An encoder
+    // ceiling: past COLOR_SCHEME_COUNT-1 there is no palette and no <option>,
+    // the shader falls back to a fixed look and DOM.colorSel.selectedIndex
+    // goes -1, i.e. the dropdown blanks and the operator cannot see where
+    // they are. Named as the constant, not as a literal, so the next appended
+    // series cannot rot it — the NIGHT series already did once. An encoder
     // on a palette selector should be endless, and 'E' already cycles with
     // `(colorIdx + 1) % COLOR_SCHEME_COUNT`, so wrap rather than clamp.
     wrap: true,

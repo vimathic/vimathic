@@ -963,7 +963,7 @@
       <button id="color-auto" class="autobtn"
         title="AUTO COLOUR — keeps changing the palette on its own, always as a crossfade that fills the whole period, so the palette is never standing still. On the beat while music plays (8 bars), on a timer while it doesn't. While it is on, clip-player steps stop applying their preset's colour.">⟳ AUTO</button>
       <button id="night-btn" class="autobtn"
-        title="NIGHT — for a dark room. Narrows the palette pool to the NIGHT series, hides the starfield and dims the grid, so the mathematics is the brightest thing on screen. Bloom, the specular and every palette number are left alone; G still works. The dropdown stays free — this changes what the app picks for you, not what you can pick.">☾ NIGHT</button>
+        title="NIGHT — for a dark room. Narrows the palette pool to the NIGHT series, hides the starfield, dims the grid and turns the lamps down (glare 0.65 → 0.45), so the mathematics is the brightest thing on screen. Bloom is left alone and G still works. Switched on over a bright scheme it moves the palette to the first NIGHT one; over a NIGHT palette it leaves your choice alone. The dropdown stays free — this changes what the app picks for you, not what you can pick.">☾ NIGHT</button>
       </div></div>
     <div class="cg"><label>Surface Material</label>
       <div class="cg-row">
@@ -1375,7 +1375,7 @@
       <input type="file" id="state-file" accept=".json" style="display:none">
     </div>
     <div class="out-note" style="border-left-color:rgba(0,255,200,.18)">
-       Presets are stored in this browser's <b>localStorage</b> (per-domain, not in files). Use <b>EXPORT</b> to back them up to a <code>.json</code> file you can share or restore later via IMPORT.
+       Presets live in this browser's <b>localStorage</b> (per-domain, not in files) — clearing site data deletes them, and nothing here backs the list up. <b>EXPORT</b> writes one <code>.json</code> of the look on screen right now; <b>IMPORT</b> applies that file the way loading a preset does.
     </div>
     <div style="display:flex;gap:6px;align-items:center">
       <input id="preset-name" placeholder="Preset name…"
@@ -1819,9 +1819,14 @@
         <div id="rec-progress-label" style="font-size:8px;color:#556;font-family:monospace;margin-top:3px">Capturing…</div>
       </div>
       <div class="out-note">
-        💡 <b>Beat mode</b> needs an audio track playing — capture starts immediately,
-        stops after exactly N detected beats. Result loops perfectly with the music.
-        Heavy combos (720p · 30fps · 60s) can use 1 GB+ RAM — adjust if your tab struggles.
+        💡 <b>Beat mode</b> needs an audio track playing — capture starts on the first
+        detected beat and stops after exactly N beats, so the loop lines up with the bar.
+        GIF keeps every frame as uncompressed RGBA, so the recorder prices the clip
+        before it starts and refuses anything over 1500 MB rather than recording it —
+        720p · 30fps · 60s prices at 5273 MB and produces no file. 480p · 15fps · 60s
+        fits, and so does 720p · 30fps · 10s; ASPECT: Native is priced at up to
+        1280×720 whatever SIZE shows. WebM streams to the encoder, so it has no
+        such ceiling.
       </div>
     </div>
 

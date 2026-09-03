@@ -9,17 +9,29 @@
 // NIGHT is a dark-room mode that writes ONE shader uniform — uGlare, how much
 // white the surface throws back — plus the furniture: the starfield off, the
 // grid dimmed, and, in controls.js rather than here, the unattended palette
-// pickers narrowed. It writes no bloom setting and no palette number, and that
-// restraint is still worth pinning.
+// pickers narrowed. It writes no bloom setting, and RenderEngine.setNightly —
+// the entry point this file drives — writes no palette number. The write lives in
+// controls.js next to the pool narrowing: switched on over a scheme below
+// NIGHT_SCHEME_FIRST it moves the choice to the first NIGHT palette; over a
+// NIGHT palette it leaves the choice alone. That restraint is still worth
+// pinning.
 //
 // Until 01.09 it wrote no uniform at all, and the specular was left white and
 // keyed to treble on the owner's call ("leave it, we'll take it out if it looks
 // bad"). It looked bad: measured on the shipped tree at one camera and one
-// position in the track, a mirror in NIGHT read 1.57x the mean luma of the same
-// body in matte — on the mode whose whole promise is a dark picture — with p99
-// luma 0.409 against matte's 0.232. With uGlare the same four measurements read
-// 0.82x and 0.094. The uniform is therefore part of the claim now, and the
-// tests below say which way it may move.
+// position in the track, a mirror in NIGHT came out well above the same body in
+// matte — on the mode whose whole promise is a dark picture. The figures and
+// the reasoning behind them are in the note on studioEnv in src/shaders.js and
+// are not restated here.
+//
+// Open, and not for this file to settle: that note and the header of
+// tests/glare-lamps.test.js both claim the SAME measurement — plane, Eigenvector
+// Field, the owner's sliders, six frames per configuration, median — and give
+// different numbers (NIGHT mirror mean 0.233 against 0.216, NIGHT matte 0.139
+// against 0.137, normal mirror p99 0.467 against 0.566). The ratio quoted for
+// the mode therefore comes out 1.67x from one table and 1.58x from the other.
+// One re-measurement retires the wrong table; until then, neither number should
+// be copied into a third place.
 //
 // ── Why the starfield needs a test at all ────────────────────────────────────
 // It now has two owners. setTransparentBackground hides it for its own reason

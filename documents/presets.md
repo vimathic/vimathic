@@ -12,7 +12,7 @@ VIMATHIC's preset system captures *the entire look* — shape, color, formula, a
 ## Saving a preset
 
 1. Get the look you want (shape, color, formula, slider values — everything).
-2. In the **PRESETS** section of the panel, type a name.
+2. Open **ADVANCED** in the panel — it ships collapsed — and type a name under **▸ STATE & PRESETS**.
 3. Click **SAVE**.
 
 The preset appears in the list below with a Load button. Saving a name that already exists **overwrites** it without confirmation.
@@ -55,7 +55,7 @@ Each preset row has a small number field — the hold time in seconds. This is u
 
 ## The Clip Player
 
-The Clip Player cycles through your saved presets like a slideshow. Open it from the panel:
+The Clip Player cycles through your saved presets like a slideshow. It sits under **▸ CLIP PLAYER**, in the same ADVANCED section as the presets themselves:
 
 - **▶ PLAY** — start cycling from the first preset
 - **■ STOP** — stop cycling, hold current preset
@@ -110,7 +110,7 @@ This matters because audio (Web Audio) keeps playing in the background while vis
 
 ### Export current state
 
-Click **EXPORT** in the panel. A JSON file downloads with the complete state (one preset's worth of data). Use it for:
+Click **⬇ EXPORT** under **▸ STATE & PRESETS** in ADVANCED. A JSON file downloads with the complete state (one preset's worth of data). Use it for:
 
 - Backup before risky changes
 - Sharing a look with someone else
