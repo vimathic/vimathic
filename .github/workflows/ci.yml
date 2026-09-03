@@ -17,7 +17,14 @@ jobs:
   test:
     name: Math validation tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 10, not 5. The suite itself needs ~40 s locally and ran in 59 s here on
+    # 03.09.2026 — and the very next run on the same commit range was killed at
+    # 5m13s with nothing failed, because checkout + setup-node + `npm ci` had
+    # eaten 4m27s of the budget before the first test printed. A budget sized
+    # against the tests alone is a budget that fails on the runner's bad night,
+    # and a job killed by its own budget reports nothing at all — which reads
+    # like a product failure and is not one.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
