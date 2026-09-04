@@ -240,6 +240,27 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Fixed
 
+- **The points cloud drew every vertex about six times.** The POINTS proxy was
+  built over the mesh geometry along with its index, and `THREE.Points` honours
+  an index — one built for triangles, which names each vertex once per triangle
+  around it. Drawn as points that is the same vertex, at the same pixel,
+  submitted about six times, each time running the whole 47 KB vertex program:
+  measured in the browser on the shipped boot shape, `drawElements(POINTS, 38880)`
+  against a position buffer of 6883 vertices. Nothing on screen said so, because
+  duplicates land on the same pixel and ordinary blending ignores the second one.
+  The cost was invisible on desktop GL and Vulkan, where a point is a primitive,
+  and visible on Windows, where Direct3D has none and ANGLE expands every sprite
+  with a geometry shader. The proxy now keeps one geometry for the lifetime of
+  the engine and re-points it at the mesh's current attributes without the index;
+  the attributes are shared rather than copied, so there is still one upload and
+  one buffer. Measured on the deployed build: `POINTS:38880` becomes
+  `POINTS:6883`, with SURFACE and WIREFRAME unmoved at `TRIANGLES:38880` and
+  `LINES:77760`. One look did depend on the duplicates: `smoke` blends
+  additively, so their sum WAS its brightness. It is restored by a coverage
+  multiplier fixed at the catalogue's median index-to-vertex ratio, 5.74 — a
+  constant rather than the current shape's ratio, because six of the 32 shapes
+  carry no index at all and smoke was already ~5.7× darker on them. (#68)
+
 - **Spectrum Rings follow the deformation mode.** Switching SURFACE → COLLAPSE
   left the rings where they were on many formulas, and they were not merely
   similar: measured, the layouts were bit-for-bit identical, 0.000 bands of 24

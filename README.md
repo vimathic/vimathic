@@ -239,7 +239,7 @@ documents/             — Markdown documentation (loaded into About modal + ind
 
 **Stack:** Three.js (WebGL) · Web Audio API · Web MIDI API · Vite + vite-plugin-singlefile · micromark (build-time)
 **Tests:** `node --test` — no test framework dependency
-**CI:** GitHub Actions — full unit suite + Playwright smoke tests + single-file build verification on every push
+**CI:** GitHub Actions, on pull requests to `main` and on pushes to `main` — the full unit suite, the Playwright suite split across three shards behind one summary check, the single-file build, and CodeQL analysis. A push to any other branch runs nothing; open a pull request to get a run
 
 ---
 

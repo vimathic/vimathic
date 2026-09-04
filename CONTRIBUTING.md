@@ -55,13 +55,13 @@ Use the [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.md). I
 ### Pull requests
 
 1. **Open an issue first** for anything non-trivial. A two-line "this is what I want to do, OK?" before writing the code saves both of us from a closed PR.
-2. **Fork → branch → PR against `main`**. Branch protection requires required CI status checks (`test`, `build`) to pass and squash-merge as the only allowed method.
+2. **Fork → branch → PR against `main`**. Branch protection requires the CI checks to pass, and squash-merge is the only allowed method. What reports on a PR: Math validation tests (the whole unit suite, despite the name), three Playwright e2e shards behind a "Playwright smoke tests" summary, Vite build (single-file), CodeQL, and a Cloudflare Pages preview.
 3. **One concern per PR.** A docs typo fix + a CSS tweak + a bug fix = three PRs.
 4. **Run the test suite locally before pushing:**
 
 ```bash
    npm test           # every unit suite in tests/ — the count is whatever the run prints
-   npm run test:e2e   # Playwright smoke tests
+   npm run test:e2e   # the whole Playwright suite in Chromium, one worker
    npm run build      # single-file build check
 ```
 
@@ -122,7 +122,7 @@ Required: **Node.js 22+**.
 Tests:
 
 ```bash
-npm test                # math validation, fast
+npm test                # the whole unit suite in tests/, not only the maths
 npm run test:e2e        # Playwright in Chromium, slower
 npm run build           # single-file build, ~10s
 ```

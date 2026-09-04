@@ -99,9 +99,11 @@ jobs:
     # continue-on-error was removed here: it had been masking a real product
     # regression (RESET ALL restored colour scheme 0 instead of 16) plus three
     # tests that no longer matched the UI, so the suite was red and nobody saw
-    # it. The 8 smoke tests pass again (14 e2e in total with the clip-camera
-    # suite), and hosted runners have no GPU either, so the single-worker
-    # setting in playwright.config.js is what keeps them stable.
+    # it. The suite passes again — how many tests that is, the run prints, for
+    # the same reason the unit job above stopped stating a total: any number
+    # written here goes stale and then misleads. Hosted runners have no GPU
+    # either, so the single-worker setting in playwright.config.js is what
+    # keeps them stable.
     # Restore this line only as a deliberate, temporary decision — not as the
     # default place for e2e to live.
     needs: test

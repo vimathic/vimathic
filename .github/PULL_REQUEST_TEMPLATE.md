@@ -50,7 +50,7 @@ Closes #
 <!-- Tick all that apply and add details where useful. -->
 
 - [ ] `npm test` passes (208 tests across the unit suites in tests/)
-- [ ] `npm run test:e2e` passes (Playwright smoke tests)
+- [ ] `npm run test:e2e` passes (the whole Playwright suite)
 - [ ] `npm run build` succeeds and `dist/` looks correct
 - [ ] Manually tested in browser — please specify which browser(s) and OS
 
