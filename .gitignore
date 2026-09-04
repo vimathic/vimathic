@@ -68,13 +68,6 @@ logs/
 .cache/
 tmp/
 
-# Linked worktrees. A worktree checked out inside the repository shows up as an
-# untracked directory: it cannot be committed as content — git stops at the
-# nested repository boundary — but adding it by path stages a gitlink, which
-# breaks `clone` for everybody. Narrow on purpose: only the worktrees are
-# hidden, so tracked configuration in that directory stays visible.
-/.claude/worktrees/
-
 # Project-specific: working drafts that shouldn't ship
 NOTES.md
 TODO.md
