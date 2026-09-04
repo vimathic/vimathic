@@ -217,8 +217,18 @@ const smoothstep = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
-/** Bilinear read of a lattice quantity at a world (x, z), edges clamped. */
-function sampleLattice(a, g, extent, x, z) {
+/**
+ * Bilinear read of a lattice quantity at an analysis coordinate, edges clamped.
+ *
+ * Exported for the same reason radialU is: it defines WHERE a coordinate lands
+ * on the lattice, and COLLAPSE now has a second chart that has to land on the
+ * same cells (collapseChartToAnalysis / collapseAnalysisToChart in
+ * math-collections.js). A chart whose inverse is only argued rather than
+ * measured is how a map ends up describing the right field in the wrong place,
+ * so tests/band-map-modes.test.js reads the round trip through THIS function
+ * rather than through a second copy of its arithmetic.
+ */
+export function sampleLattice(a, g, extent, x, z) {
   const step = (extent * 2) / (g - 1);
   const fx = Math.min(g - 1, Math.max(0, (x + extent) / step));
   const fz = Math.min(g - 1, Math.max(0, (z + extent) / step));
@@ -232,6 +242,124 @@ function sampleLattice(a, g, extent, x, z) {
 /** The old rule, kept as a named function because it is still the fallback. */
 export function radialU(x, z, R) {
   return Math.min(1, Math.sqrt(x * x + z * z) / Math.max(R, 1e-3));
+}
+
+/**
+ * How uniform a per-vertex quantity has to be before it counts as having no
+ * structure at all: peak-to-peak below this fraction of its own mean.
+ *
+ * Not a tuned number — the gap it sits in is five orders of magnitude wide.
+ * Measured over the six volume fields on four bodies: a field that genuinely
+ * varies over its body reads 78% to 789%, and the two that are functions of
+ * |p| alone read 0.0000% and 0.0002% on a sphere, where a sphere's surface is
+ * one radius and there is nothing for them to vary over. Without the cut those
+ * two built a full 24-band layout out of float32 noise at the 1e-7 level.
+ */
+const UNIFORM_EPS = 1e-2;
+
+/**
+ * Lay a per-vertex quantity on the analysis lattice, so the cascade can rank it.
+ *
+ * The other two readings hand buildBandMap a field they SAMPLED on a lattice:
+ * a height field over (x, z), a kernel over (theta, phi). A volume field cannot
+ * be one — it is a function of a point in space, and the only place its value
+ * is defined for THIS body is at the body's own vertices (see
+ * volumeMagnitudeAtVertices for the seven candidates and why reading it
+ * anywhere else lost). So the values arrive per vertex and are laid down here.
+ *
+ * Two things this does beyond averaging:
+ *
+ *   • THE UNIFORM CUT. A body over which the field does not vary has nothing to
+ *     spend 24 bands on, and the honest answer is the radius rule — which is
+ *     what a constant lattice produces, through the cascade's own confidence
+ *     floor, with no special case downstream. `breathe` on a sphere is exactly
+ *     this: every vertex is at one radius, so a field of |p| pushes all of them
+ *     equally. Without the cut, float32 noise at 1e-7 was equalised into a full
+ *     layout — a picture invented out of rounding.
+ *   • HOLE FILLING. 65² cells against a body of a few thousand vertices leaves
+ *     most cells empty — 633 of 4225 filled on a torus is typical, because the
+ *     chart's cells are not where a mesh puts its vertices. Empty cells are
+ *     grown from filled neighbours rather than set to the mean: the mean makes
+ *     an empty region FLAT, and the cascade reads flat as "no local frequency
+ *     here", so a hole would have become a signal. Measured: no body in the
+ *     catalogue leaves a cell unfilled after this.
+ *
+ * @param {ArrayLike<number>} values  one per vertex
+ * @param {Float32Array} ax  analysis coordinate, x
+ * @param {Float32Array} az  analysis coordinate, z
+ * @param {number} g         lattice size (ANALYSIS_GRID)
+ * @param {number} extent    half-width the lattice covers
+ * @returns {Float32Array} g² values — all zero when the input is uniform, which
+ *          is how "there is nothing here" reaches buildBandMap
+ */
+export function splatToLattice(values, ax, az, g, extent) {
+  const out = new Float32Array(g * g);
+  const V = values.length;
+  if (!V || !ax || !az) return out;
+
+  let lo = Infinity, hi = -Infinity, mean = 0;
+  for (let i = 0; i < V; i++) {
+    const v = values[i];
+    if (!Number.isFinite(v)) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+    mean += v;
+  }
+  mean /= V;
+  if (!(hi - lo > Math.abs(mean) * UNIFORM_EPS)) return out;
+
+  const sum = new Float64Array(g * g), cnt = new Int32Array(g * g);
+  const step = (extent * 2) / (g - 1);
+  for (let i = 0; i < V; i++) {
+    const v = values[i];
+    if (!Number.isFinite(v)) continue;
+    const cx = Math.min(g - 1, Math.max(0, Math.round((ax[i] + extent) / step)));
+    const cz = Math.min(g - 1, Math.max(0, Math.round((az[i] + extent) / step)));
+    const c = cz * g + cx;
+    sum[c] += v; cnt[c]++;
+  }
+  let filledMean = 0, filled = 0;
+  for (let c = 0; c < g * g; c++) {
+    if (!cnt[c]) continue;
+    out[c] = sum[c] / cnt[c];
+    filledMean += out[c]; filled++;
+  }
+  if (!filled) return out;
+  filledMean /= filled;
+
+  // Grow the filled region outward one ring per pass. The bound is the lattice's
+  // own diagonal, so the loop cannot outlive the thing it is filling.
+  const have = new Uint8Array(g * g);
+  for (let c = 0; c < g * g; c++) have[c] = cnt[c] ? 1 : 0;
+  const nextOut = new Float32Array(g * g), nextHave = new Uint8Array(g * g);
+  for (let pass = 0; pass < 2 * g; pass++) {
+    nextOut.set(out); nextHave.set(have);
+    let grew = 0;
+    for (let j = 0; j < g; j++) {
+      for (let i = 0; i < g; i++) {
+        const c = j * g + i;
+        if (have[c]) continue;
+        let acc = 0, m = 0;
+        for (let dj = -1; dj <= 1; dj++) {
+          const jj = j + dj;
+          if (jj < 0 || jj >= g) continue;
+          for (let di = -1; di <= 1; di++) {
+            const ii = i + di;
+            if (ii < 0 || ii >= g) continue;
+            const cc = jj * g + ii;
+            if (have[cc]) { acc += out[cc]; m++; }
+          }
+        }
+        if (m) { nextOut[c] = acc / m; nextHave[c] = 1; grew++; }
+      }
+    }
+    out.set(nextOut); have.set(nextHave);
+    if (!grew) break;
+  }
+  // A lattice with no filled neighbour anywhere left — unreached on this
+  // catalogue, and the mean is the only answer that adds no structure.
+  for (let c = 0; c < g * g; c++) if (!have[c]) out[c] = filledMean;
+  return out;
 }
 
 // ── The body's own share of the coordinate ──────────────────────────────────
@@ -421,9 +549,23 @@ export function applyBodyShift(u, bodyK) {
  *                               reference time — see the note on freezing below
  * @param {number} g             lattice size (ANALYSIS_GRID)
  * @param {number} extent        half-width the lattice covers, in world units
- * @param {{x: Float32Array, z: Float32Array, R: number, k: ?Float32Array}} verts
+ * @param {{x: Float32Array, z: Float32Array, R: number, k: ?Float32Array,
+ *          ax: ?Float32Array, az: ?Float32Array}} verts
  *        k is the body's own curvature term from buildBodyCurvature, in
  *        [-1, 1], or null/absent for a body that has no curvature texture.
+ *
+ *        ax/az are the ANALYSIS coordinates — where each vertex sits in the
+ *        chart `field` was sampled over — and they default to x/z, which is
+ *        what SURFACE mode wants: it reads the formula as a height field over
+ *        (x, z), so the lattice and the body share one coordinate system.
+ *        COLLAPSE does not. It reads the same kernel as f(theta, phi) about the
+ *        body's centroid, so its lattice is that chart and a vertex's place in
+ *        it is its own (theta, phi) — see MathVisualizer._rebuildBandMap. The
+ *        world (x, z) stay in verts because three things still need them and
+ *        none of them is the chart: the radius rule (the fallback, the
+ *        tie-break, and the low-confidence blend below), the gesture's rr, and
+ *        the stereo tilt in bandRingValue. Passing the chart for those instead
+ *        would move the rings off the body and onto an abstraction of it.
  * @returns {{u: Float32Array, r: Float32Array, tb: Float32Array, conf: number,
  *            stages: string[], body: boolean}}
  *          u ∈ [0,1] per vertex — multiply by 23 to get the band;
@@ -549,8 +691,14 @@ export function buildBandMap(field, g, extent, verts) {
   // Sample the accumulated ranking where the body's vertices actually are, then
   // equalise over THOSE vertices — so every band gets the same share of the
   // surface no matter how the field's values are distributed.
+  //
+  // "Where they are" means where they are IN THE CHART the field was sampled
+  // over, which is x/z for a height field and (theta, phi) for COLLAPSE. Same
+  // arrays when the caller passes neither, so the surface path is unchanged.
+  const ax = (verts.ax && verts.ax.length === V) ? verts.ax : verts.x;
+  const az = (verts.az && verts.az.length === V) ? verts.az : verts.z;
   const eV = new Float32Array(V);
-  for (let i = 0; i < V; i++) eV[i] = sampleLattice(acc, g, extent, verts.x[i], verts.z[i]);
+  for (let i = 0; i < V; i++) eV[i] = sampleLattice(acc, g, extent, ax[i], az[i]);
 
   const lo = percentile(eV, 0.005), hi = percentile(eV, 0.995);
   const span = hi - lo;

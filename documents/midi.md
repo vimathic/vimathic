@@ -7,7 +7,7 @@ description: Map any hardware MIDI controller to any VIMATHIC parameter using on
 
 # MIDI Setup
 
-VIMATHIC reads MIDI Control Change (CC) messages from any USB or Bluetooth MIDI controller. You can map any CC to any tweakable parameter — color scheme, amplitude, wave intensity, bloom, bass/treble sensitivity, auto-rotate speed. Mappings are saved to your browser's `localStorage` and survive page reloads.
+VIMATHIC reads MIDI Control Change (CC) messages from any USB or Bluetooth MIDI controller. You can map any CC to any tweakable parameter — color scheme, amplitude, wave intensity, spectrum rings, bloom, bass/treble sensitivity, auto-rotate speed. Mappings are saved to your browser's `localStorage` and survive page reloads.
 
 ## Browser requirements
 
@@ -26,7 +26,7 @@ If you connect a controller after the page is loaded, VIMATHIC picks it up autom
 
 Learn mode binds the next incoming CC message to a parameter of your choice.
 
-1. Open the **MIDI** section in the control panel.
+1. Open **ADVANCED** in the control panel, then expand **MIDI MAPPING** — both ship collapsed.
 2. In the empty row at the bottom of the mapping list, pick the parameter from the dropdown.
 3. Click **⊙ LEARN** on that row — it starts listening.
 4. Move the knob or fader you want to use.
@@ -56,6 +56,7 @@ Every parameter that has a slider in the panel is mappable, plus a few that aren
 |---|---|---|
 | Amplitude | 0.2 – 1.5 | Overall displacement strength |
 | Wave Intensity | 0.3 – 3.5 | Detail / harmonics scaling |
+| Spectrum Rings | 0 – 1.0 | Depth of the 24-band body layer |
 | Bass Sensitivity | 0 – 2.5 | How much bass moves the geometry |
 | Treble Sensitivity | 0 – 2.5 | How much treble brightens edges |
 | Bloom | 0 – 1.5 | Post-process bloom strength |
@@ -76,7 +77,7 @@ Latency on Bluetooth is usually fine for slow knob movements; for fast performan
 
 ## Clear / reset
 
-The **CLEAR** button in the MIDI section removes all mappings at once. There is no per-mapping undo — clear and re-learn if you make a mistake.
+The **CLEAR** button in the MIDI MAPPING section removes all mappings at once. There is no per-mapping undo — clear and re-learn if you make a mistake.
 
 ## Tips
 

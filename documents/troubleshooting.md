@@ -35,7 +35,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 ### **Crossfade glitch between tracks**
 
-- Audio decoding takes longer than the crossfade window. Increase crossfade duration in the Audio Source modal, or pre-load tracks by clicking through the playlist once before starting.
+- Audio decoding takes longer than the crossfade window — the crossfade is fixed at 1.5 s and has no control in the UI. Pre-load tracks by clicking through the playlist once before starting.
 
 ## Visual / Performance
 
@@ -43,7 +43,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 - Window too large. Resize the browser to ~1280×720; performance scales quadratically with pixel count.
 - Heavy formula on heavy mesh. Switch to a simpler formula (try **Surface → Trigonometry** category) or a smaller shape (Plane, Cylinder).
-- Post-processing stack is heavy. Disable **God Rays** and **Motion Blur** in the panel (they auto-disable on mobile).
+- Post-processing stack is heavy, and the panel cannot lighten it. The Bloom slider sets the glow's *strength*, not whether the pass runs: the bright-pass extract, the five blurred mip levels and the composite all execute at 0 exactly as they do at 1.5. Shrink the window instead. (God Rays and Motion Blur exist in the engine but ship disabled, with no panel control — they are never the culprit. The one pass you can switch off is the afterglow the **smoke** particle style borrows in PTS mode: pick *squares* or *dots* and it stops rendering.)
 - Browser tab is in the background. Some browsers throttle backgrounded tabs to 1 fps. Bring the tab to foreground.
 
 ### **Web Worker not active (math runs slow)**
@@ -77,7 +77,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 - The dropdown mixes both ladders. **Numbered** entries (*1. Bass Reactive
   Waves* … *38. Spectral Centroid*) switch the renderer onto the GPU shader
   path. **Unnumbered** entries (*Nonlinear Pendulum Phase*, *Mandelbrot
-  Escape*, *Lorenz Attractor Slice*, …) are CPU formulas evaluated in the math
+  Escape*, *Lorenz Attractor Density*, …) are CPU formulas evaluated in the math
   Web Worker.
 - This is the single most common source of confusion when debugging: uniforms,
   the Shader Editor, and GPU-only behaviour all look "dead" simply because the
@@ -85,7 +85,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 ### **Shader Editor says "Compiled & applied" but nothing changes**
 
-- You're in CPU mode. The Shader Editor only affects rendering when a **numbered** GPU shader is active (entries like *1. Bass Reactive Waves*, *2. Spectrogram Mode*, … *38. Spectral Centroid* in the SHADER MODE dropdown). CPU formulas (entries without numbers, like *Mandelbrot Escape*, *Lorenz Attractor Slice*) bypass the Shader Editor.
+- You're in CPU mode. Custom **vertex** displacement only shows when a **numbered** GPU shader is active (entries like *1. Bass Reactive Waves*, *2. Damped Radial Rings*, … *38. Spectral Centroid* in the SHADER MODE dropdown). CPU formulas (entries without numbers, like *Mandelbrot Escape*, *Lorenz Attractor Density*) ignore it — only custom fragment color reaches them.
 - Fix: pick a numbered entry from the SHADER MODE dropdown, then APPLY your shader again. See the [Shader Editor](./shader-editor.md) doc for the full prerequisite explanation.
 
 ## MIDI
@@ -105,7 +105,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 ### **Wrong parameter responds to my knob**
 
 - Two knobs sending the same CC number. Disconnect one, re-learn the other.
-- Mapping is leftover from a previous session. Click **CLEAR** in MIDI section to wipe all mappings, start fresh.
+- Mapping is leftover from a previous session. Click **✕ CLEAR** in the **MIDI MAPPING** section (under **ADVANCED**) to wipe all mappings, start fresh.
 
 ## Recording
 
@@ -180,7 +180,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 ### **Page hangs on a specific formula**
 
-- Some Tier-C formulas use heavy CPU computations (Gray-Scott, FitzHugh-Nagumo, 3D Conway). On lower-end mobile, they can lock the main thread for seconds before the worker fallback kicks in. If page is unresponsive: close the tab, reopen, pick a lighter formula on first load.
+- Some Tier-C formulas use heavy CPU computations (Gray-Scott, Excitable Medium (Barkley spirals), 3D Conway). On lower-end mobile, they can lock the main thread for seconds before the worker fallback kicks in. If page is unresponsive: close the tab, reopen, pick a lighter formula on first load.
 
 ## Performance expectations
 
@@ -189,13 +189,13 @@ With the math worker enabled (default):
 - **Desktop, modern Chrome/Edge:** 60 fps stable on all formulas.
 - **Mid-range laptop (integrated GPU):** 60 fps on formulas with grid ≤ 64², 50–60 fps on heavier ones.
 - **Mid-range mobile:** 60 fps on simple formulas, 30–40 fps on heavy ones (Gray-Scott, 3D Conway). Render rate is capped at ~30 fps on mobile to manage thermal load.
-- **Old mobile / low-end devices:** graceful degradation; post-processing effects auto-disabled.
+- **Old mobile / low-end devices:** graceful degradation — half render rate, lower mesh resolution. The post-processing stack is not thinned: Bloom and the vignette run on every device, the vignette merely lightened. The passes you never pay for are God Rays and Motion Blur, which are not built on mobile at all.
 
 Without the worker (sync fallback):
 
 - **Desktop:** 60 fps on most formulas, drops to 30–40 fps on the heaviest.
 - **Mid-range mobile:** 30 fps on simple formulas, 15–20 fps on heavy.
-- **Mobile is essentially unusable** for the new C-tier formulas (FitzHugh-Nagumo, Gray-Scott).
+- **Mobile is essentially unusable** for the new C-tier formulas (Excitable Medium, Gray-Scott).
 
 If you're seeing lower performance than the above, check that `_vimathic_worker_active` is `true` in the console.
 

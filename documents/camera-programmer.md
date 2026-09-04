@@ -11,17 +11,17 @@ The Camera Programmer lets you write small JavaScript snippets that run every fr
 
 ## Opening it
 
-In the control panel, click **CAMERA PROGRAMMER** (under the camera section). A modal opens with three panes:
+In the control panel, open **CAMERA PROGRAMMER** (under ADVANCED) and click **PROGRAM CAM.** A modal opens with three panes:
 
 - **CODE** — your script
 - **PARAMS** — sliders for tunables (rotSpeed, radius, height, gravity, etc.)
-- **TIMELINE** — keyframes that swap scripts at moments in the track
+- **TIMELINE** — keyframes that layer extra script code at moments in the track
 
-The **PRESETS** strip across the top has eight starter scripts to try. Click one to load it into the editor.
+The preset strip beneath the code editor has eight starter scripts to try. Click one to load it into the editor.
 
 ## How it runs
 
-Your script is wrapped in a function and called once per animation frame, while auto-rotate is ON. Stop conditions: the user drags the camera (returns control), auto-rotate gets toggled off, or you click **RESET**.
+Your script is wrapped in a function and called once per animation frame, while auto-rotate is ON. Stop conditions: a drag held past half a second, which switches auto-rotate off with it; auto-rotate toggled off directly; or you click **RESET**. A short drag or a wheel zoom only pauses the script while it lasts — it resumes by itself when you let go.
 
 The script receives a `ctx` object — but in your code you write the variables directly (they're destructured for you). Modify `ctx.cam.x`, `ctx.cam.y`, `ctx.cam.z` to position the camera; `ctx.target.x/y/z` to aim; `ctx.fov` to zoom; `ctx.roll` to bank.
 
@@ -35,7 +35,7 @@ Arming the programmer during a Clip Player run takes the camera away from the pl
 
 | Variable | What it is | Range |
 |---|---|---|
-| `time` | Seconds since page load (slow drift) | grows monotonically |
+| `time` | The app's animation clock — 0.48 units per real second, held still by STOP MOTION | grows monotonically |
 | `bass` | Bass band energy | 0.0 – 1.2 typical |
 | `mid` | Mid band energy | 0.0 – 1.0 typical |
 | `treble` | Treble band energy | 0.0 – 1.2 typical |
@@ -97,8 +97,8 @@ ctx.cam.y = sin(state.phase) * 3;
 | 🎡 Spiral | Tight inward zoom on beats, then expand |
 | 🔭 Telescope | Close-in narrow FOV, treble-driven zoom |
 | 🎢 Roller | Looping rollercoaster path with bass-driven climbs |
-| 🌑 Dark Matter | Default — slow steady orbit |
-| 🌙 Moon | Hopping vertical motion at ~0.4 Hz |
+| 🌑 Dark Matter | Slow spiral orbit with bass pull and gentle vertical wobble |
+| 🌙 Moon | Slow hopping vertical motion — a hop every ~8 s, quickening with bass |
 
 Click a preset name to load its code into the editor. You can then click **APPLY** to run it, edit freely, or **RESET** to go back to the default.
 
@@ -117,12 +117,14 @@ ctx.fov = lerp(ctx.fov, p.fov + beat * 10, 0.15);
 
 ## Keyframes
 
-The **TIMELINE** pane lets you swap scripts at specific points in the track:
+The **TIMELINE** pane lets you layer scripts at specific points in the track:
 
 1. Position the audio playhead where you want a change.
 2. Click **+** to add a keyframe at that moment.
 3. The keyframe captures the current editor code.
-4. As the track plays, the active keyframe automatically becomes the running script.
+4. As the track plays, the latest keyframe you've passed runs every frame as a *pre-script* — it executes just before your main script, which runs on top of it and can override what it set. Keyframes fire only while a script is armed via **APPLY**.
+
+Markers on the bar drag to retime a keyframe, the ✕ on a list row deletes it, and clicking the bar scrubs the track to that point.
 
 This is how you compose a multi-part "shot list" — different camera language for verse, chorus, bridge.
 
@@ -132,7 +134,7 @@ This is how you compose a multi-part "shot list" — different camera language f
 - **Use `state` for velocities**, not derivatives. Computing `vel = (newPos - oldPos)` per frame creates jitter; integrating `vel += accel * dt` and `pos += vel` is stable.
 - **Don't write `Math.random()` per frame** — it produces visible noise. Sample once into `state` and reuse.
 - **Beats are short impulses.** `beat * 0.05` gives a frame-long nudge; for smoother reactions use `state.kick = state.kick * 0.85 + beat * 0.5`.
-- **Test your script with auto-rotate ON** — that's when it actually runs. If you drag the camera, the script is paused.
+- **Test your script with auto-rotate ON** — that's when it actually runs. Dragging the camera pauses the script for as long as you hold it; hold the drag past half a second and auto-rotate switches off too, so the script stays stopped until you flip auto-rotate back on. A quick drag or a wheel zoom never gets that far — the script resumes by itself when you let go.
 
 ## Safety note
 

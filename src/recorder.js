@@ -297,8 +297,8 @@ function clampOptions(opts) {
  * Two run modes, picked by the options passed to start():
  *
  *   Time-based  — capture for `duration` ms, then encode.
- *   Beat-sync   — pass { stopOnBeats: N, audioEngine }; capture begins
- *                 immediately and stops after exactly N detected beats.
+ *   Beat-sync   — pass { stopOnBeats: N, audioEngine }; capture begins on the
+ *                 FIRST detected beat and stops after exactly N beats.
  *                 Gives a music-aligned loop suitable for "perfect" GIFs
  *                 that line up with the bar.
  *

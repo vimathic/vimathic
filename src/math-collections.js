@@ -5644,10 +5644,59 @@ export function applyCollapseField(geometry, scalarField, basePositions, baseNor
  *
  * @returns Float32Array of length basePositions.length / 3
  */
+// Scratch for the per-frame path below. It runs every frame in COLLAPSE, and
+// the chart is two Float32Arrays of the vertex count — 1.6 MB per call on the
+// largest body this app builds, i.e. ~94 MB/s of garbage at 60 fps, on a phone.
+// The chart is consumed inside the same synchronous call, so one buffer pair
+// per module is enough here; anything that KEEPS a chart passes its own (see
+// MathVisualizer._rebuildBandMap), which is also what stops the two aliasing.
+//
+// ONE pair, and the case where that is not free, said out loud: a points proxy
+// with geometry of its OWN has a different vertex count, and a frame that asks
+// for both charts would resize the scratch twice. That branch does not ship —
+// the proxy borrows the mesh's geometry (render.js FIX(#3)) — and even in it
+// the two reallocations sit beside the `out` array this function has always
+// allocated per call, so it is a doubling of a cost, not a new one.
+let _chartScratch = null;
+
 export function generateCollapseScalarField(fn, params = {}, basePositions, time = 0) {
   const { amp = 1, freq = 1, comp = 0.5 } = params;
   const N = basePositions.length / 3;
   const out = new Float32Array(N);
+  if (!_chartScratch || _chartScratch.theta.length !== N) {
+    _chartScratch = { theta: new Float32Array(N), phi: new Float32Array(N) };
+  }
+  const { theta, phi } = collapseChart(basePositions, _chartScratch);
+
+  for (let i = 0; i < N; i++) {
+    let s = 0;
+    try { s = fn(theta[i], phi[i], time, { amp, freq, comp }); } catch (_) {}
+    out[i] = isFinite(s) ? s : 0;
+  }
+  return out;
+}
+
+/**
+ * WHERE each vertex sits in the chart COLLAPSE reads the kernel on.
+ *
+ * Split out of generateCollapseScalarField rather than copied, because a second
+ * caller arrived and the two must not be allowed to disagree: the band
+ * character map has to know which part of the chart a vertex occupies in order
+ * to rank the field's texture there (src/math-visualizer.js _rebuildBandMap).
+ * Two spellings of "where is this vertex in the chart" would show up as a body
+ * DISPLACED by one layout and BANDED by another — and nothing would throw.
+ *
+ * @param {Float32Array} basePositions  flat [x,y,z,…], undisplaced
+ * @param {?{theta: Float32Array, phi: Float32Array}} out  buffers to fill, when
+ *        the caller has a pair of the right length to reuse. Anything else —
+ *        absent, or the wrong length — is allocated here, so a caller can
+ *        always ignore this parameter and always get correct arrays.
+ * @returns {{theta: Float32Array, phi: Float32Array}} one angle pair per vertex
+ */
+export function collapseChart(basePositions, out = null) {
+  const N = basePositions.length / 3;
+  const theta = (out && out.theta && out.theta.length === N) ? out.theta : new Float32Array(N);
+  const phi   = (out && out.phi   && out.phi.length   === N) ? out.phi   : new Float32Array(N);
 
   // Compute centroid
   let cx = 0, cy = 0, cz = 0;
@@ -5683,20 +5732,166 @@ export function generateCollapseScalarField(fn, params = {}, basePositions, time
   const flat = vertical <= 1e-6 * Math.max(radial, 1e-9);
   const radialToPhi = radial > 1e-9 ? Math.PI / radial : 0;
 
-  // Per-vertex spherical coords + formula evaluation
+  // Per-vertex spherical coords
+  let rbar = 0;
   for (let i = 0; i < N; i++) {
     const dx = basePositions[i * 3]     - cx;
     const dy = basePositions[i * 3 + 1] - cy;
     const dz = basePositions[i * 3 + 2] - cz;
     const r  = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const theta = Math.atan2(dz, dx);
-    const phi   = flat
+    rbar += r;
+    theta[i] = Math.atan2(dz, dx);
+    phi[i]   = flat
       ? Math.sqrt(dx * dx + dz * dz) * radialToPhi
       : (r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, dy / r))) : 0);
+  }
+  return { theta, phi };
+}
 
-    let s = 0;
-    try { s = fn(theta, phi, time, { amp, freq, comp }); } catch (_) {}
-    out[i] = isFinite(s) ? s : 0;
+// ── The chart, laid on the analysis lattice ─────────────────────────────────
+//
+// The band character map ranks how finely a field is corrugated, and it does
+// that on a g×g lattice (src/band-map.js). For SURFACE the lattice is the world
+// (x, z) the height field is sampled over, so the body and the lattice share a
+// coordinate system and nothing has to be said. COLLAPSE reads the same kernel
+// as f(theta, phi), so ITS lattice is the chart above — and the two functions
+// below are how a vertex finds its place in it, and how a lattice cell finds
+// the angles it stands for. They are inverses of each other; the round trip is
+// pinned in tests/band-map-modes.test.js, because an unpinned inverse is how
+// a map ends up describing the right field in the wrong place.
+//
+// The chart is stretched onto the same SQUARE the surface lattice covers, and
+// that is a real approximation rather than a change of units: theta spans 2*pi
+// and phi spans pi, so one lattice step means twice as much angle across as it
+// does down. The cascade's estimators use one isotropic step, so texture along
+// phi is weighted half as heavily as texture along theta. Stated rather than
+// hidden — the alternative is a rectangular lattice and a second estimator
+// pair, for a factor of two on a quantity that is then histogram-equalised.
+
+/**
+ * Where a vertex at (theta, phi) sits on the analysis lattice's square.
+ *
+ * `out` exists so the per-vertex loop that builds a map has one array rather
+ * than one per vertex — 196 608 of them on the largest body this app meshes.
+ * A vectorised twin would have been the other way to get that, and it would
+ * have been a SECOND spelling of the two lines below, which is the drift this
+ * whole pairing is written to avoid. Omit it and you get a fresh array, so a
+ * one-off caller (and every test here) needs to know nothing about this.
+ *
+ * @param {number} theta
+ * @param {number} phi
+ * @param {number} extent
+ * @param {number[]} [out]  a 2-element array to fill
+ * @returns {number[]} [ax, az] — `out`, when one was given
+ */
+export function collapseChartToAnalysis(theta, phi, extent = FIELD_EXTENT, out = [0, 0]) {
+  out[0] = (theta / Math.PI) * extent;
+  out[1] = (phi / Math.PI * 2 - 1) * extent;
+  return out;
+}
+
+/** The angles lattice cell (i, j) of a g×g grid stands for. */
+export function collapseAnalysisToChart(i, j, g) {
+  return [(-1 + 2 * i / (g - 1)) * Math.PI, (j / (g - 1)) * Math.PI];
+}
+
+/**
+ * The kernel sampled over the COLLAPSE chart, on the band map's analysis
+ * lattice — the collapse-mode counterpart of generateSurfaceFromFormula.
+ *
+ * Row-major with theta across and phi down, so it is read by exactly the same
+ * sampleLattice() the surface field is, at the coordinates
+ * collapseChartToAnalysis hands back.
+ *
+ * @param {Function} fn      the kernel, f(theta, phi, time, params) → number
+ * @param {object}   params  { amp, freq, comp }
+ * @param {number}   g       lattice size (ANALYSIS_GRID)
+ * @param {number}   time    the FROZEN reference time — see band-map.js on why
+ * @returns {Float32Array}   g² values
+ */
+export function generateCollapseAnalysisField(fn, params = {}, g = 65, time = 0) {
+  const { amp = 1, freq = 1, comp = 0.5 } = params;
+  const out = new Float32Array(g * g);
+  for (let j = 0; j < g; j++) {
+    for (let i = 0; i < g; i++) {
+      const [theta, phi] = collapseAnalysisToChart(i, j, g);
+      let v = 0;
+      try { v = fn(theta, phi, time, { amp, freq, comp }); } catch (_) {}
+      out[j * g + i] = isFinite(v) ? v : 0;
+    }
+  }
+  return out;
+}
+
+/**
+ * How hard a VOLUME field pushes, at every vertex of the body.
+ *
+ * The scalar the band character map ranks in VOLUME mode — the third and last
+ * reading of a kernel this app has, and the only one that cannot be a lattice
+ * of its own. SURFACE reads f(x, z) and COLLAPSE reads f(theta, phi), so both
+ * ARE two-dimensional fields and can be sampled on a grid. A volume kernel is a
+ * VECTOR field of a POINT, f(x, y, z) -> (dx, dy, dz): ranking it needs a
+ * scalar and a two-dimensional chart to rank it on, and neither is implied.
+ *
+ * ── What was measured before choosing ───────────────────────────────────────
+ * Seven candidates, over three bodies and all six volume kernels, against an
+ * oracle that uses NEITHER a lattice nor a chart — the same rms wavenumber the
+ * cascade's estimator K computes, estimated instead on the vertex cloud by 3D
+ * neighbours, so no candidate could win by being what the measure was written
+ * from (~/notes/vimathic-volume-band-candidates.mjs).
+ *
+ *                                  tracks the   neighbour   separates    tells the
+ *                                  field's      step, in    the two      six kernels
+ *                                  texture      bands       sides        apart
+ *   what shipped (surface kernel)   -0.098        1.91         3.3%        0.00
+ *   |d| on the flat (x,z) lattice    0.016        0.82         3.5%        7.75
+ *   d.r (signed radial part)         0.019        1.91        53.7%        7.39
+ *   cloud estimate, world units      n/a          0.74        25.5%        4.68
+ *   |d| on a mean-radius shell       0.235        1.13        57.8%        6.67
+ *   |d| on the body's true radius    0.024        1.67        62.1%        6.18
+ *   THIS: |d| at the vertices        0.068        1.98        62.0%        7.21
+ *
+ * Read the first column against the last: what shipped scores 0.00 on "tells
+ * the six kernels apart", because it was not built from the volume field at all
+ * — it was built from whichever SURFACE kernel was last picked, so all six
+ * volume formulas wore one identical layout. That is the defect, and it is the
+ * same one the band map was invented to cure, one mode over.
+ *
+ * Four alternatives are rejected on one number each:
+ *   • the flat (x, z) lattice separates 3.5% of the two-sided vertex pairs —
+ *     the projection defect COLLAPSE was just cured of;
+ *   • the signed radial part carries none of the field's texture (0.019);
+ *   • the cloud estimate in world units is the calmest map here (0.74) and the
+ *     most tempting, and it is calm because 61.2% of its vertices land on the
+ *     plain radius rule and its cascade gives up outright 3 times in 18 — quiet
+ *     because it is rings, which is the complaint the layer exists to answer;
+ *   • the mean-radius shell scores BEST on the oracle and is still wrong, which
+ *     is why the oracle is not the only column. A sphere of one radius cannot
+ *     see a field that varies with radius: `breathe` and `rippleVolume` vary
+ *     over a torus by 145% and 193% of their own mean, and the shell reads
+ *     0.00 for both. Its 0.235 came from the seam of a UV sphere pulling the
+ *     vertex centroid 0.053 off the body's centre, so the shell missed the body
+ *     and sampled a gradient that is a property of the MESH. Fabricating
+ *     structure scores better than being blind to it, and is worse.
+ *
+ * So the field is read where the mode applies it: at the body's own vertices.
+ * That costs the smoothest map — 1.98 bands of neighbour step against the
+ * shell's 1.13 — but 1.98 is what the SURFACE path already reads on the same
+ * bodies (1.91), so it is this app's normal graininess, not a new one.
+ *
+ * @param {Function}     fn             f(x, y, z, time, params) -> {dx, dy, dz}
+ * @param {object}       params         { amp, freq, comp }
+ * @param {number}       time           the FROZEN reference time — band-map.js says why
+ * @param {Float32Array} basePositions  flat [x,y,z,…], undisplaced
+ * @returns {Float32Array} |d| per vertex
+ */
+export function volumeMagnitudeAtVertices(fn, params = {}, time = 0, basePositions) {
+  const df = generateVolumeFromFormula(fn, params, 1, FIELD_EXTENT, time, basePositions);
+  const V = basePositions.length / 3;
+  const out = new Float32Array(V);
+  for (let i = 0; i < V; i++) {
+    const dx = df[i * 3], dy = df[i * 3 + 1], dz = df[i * 3 + 2];
+    out[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
   return out;
 }

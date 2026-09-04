@@ -1387,11 +1387,11 @@ function snapRingsToPolygon(geo, sides) {
  * which has one value per column. So a fractal that is defined by what it
  * REMOVES from a solid can only arrive as geometry.
  *
- * This one arrives with an interior: at depth 5, 780 of its 2050 distinct
- * vertices (38.0 %) are strictly inside the hull; at depth 6, 4200 of 8194
- * (51.3 %). That interior is the whole point — it is what makes POINTS mode
- * show a cloud with depth in it rather than a lit skin, and it is what the
- * flat `rule90` relief on a pyramid can never be.
+ * This one arrives with an interior: at the shipped desktop depth 7, 20 412 of
+ * its 32 770 distinct vertices (62.3 %) are strictly inside the hull; on mobile
+ * at depth 6, 4200 of 8194 (51.3 %). That interior is the whole point — it is
+ * what makes POINTS mode show a cloud with depth in it rather than a lit skin,
+ * and it is what the flat `rule90` relief on a pyramid can never be.
  *
  * Construction is the IFS: four maps p ↦ (p + vᵢ)/2, applied `depth` times,
  * giving 4^depth cells and 4·4^depth triangles. Each of the four faces of the
@@ -1405,16 +1405,22 @@ function snapRingsToPolygon(geo, sides) {
  * Non-indexed on purpose, and that is what makes POINTS work. THREE.Points here
  * shares gpuMesh.geometry rather than owning one, so the cloud IS the mesh's
  * vertex buffer: written out per triangle, every cell contributes its own
- * twelve and depth 5 draws 12 288 points. An indexed build would weld those
- * down to the 2050 corners the cells share and thin the cloud by a factor of
+ * twelve and depth 7 draws 196 608 points. An indexed build would weld those
+ * down to the 32 770 corners the cells share and thin the cloud by a factor of
  * six, exactly where the figure is densest.
  *
- * Depth is 5 on desktop and 4 on mobile, and the ceiling is not the geometry —
- * it is COLLAPSE, which is per-vertex and synchronous on the main thread. 12 288
- * vertices put this between `pyramid` (6883) and `plane` (25 921), i.e. inside
- * the cost envelope the app already has. Depth 6 would be 49 152, twice the
- * heaviest body in the catalogue, and its COLLAPSE worst case lands near 150 ms
- * — a body that cannot be worn at 60 fps is not worth the extra octave.
+ * Depth is 7 on desktop and 6 on mobile — 4^7·12 = 196 608 vertices written
+ * out, and 4^6·12 = 49 152. It shipped at 5/4 first, held there by a COLLAPSE
+ * cost — per-vertex and synchronous on the main thread — that turned out not
+ * to be this body's: what collapsed was the rule90 family, and that was
+ * cellularRule rebuilding its automaton on every sample (fixed in
+ * math-collections.js). With that repaired and measured on this device from
+ * the edge-midpoint axis — the view the fractal is recognised in — depth 7
+ * draws at 27 FPS, and 30 under a GPU shader. It is also where the silhouette
+ * stops reading as a coarse polyhedron: 16 384 cells against 1 024. What the
+ * depth does cost is a one-shot COLLAPSE near 583 ms — this body carries
+ * 32 770 vertices against `plane`'s 25 921 and `pyramid`'s 6 883, and the
+ * collapse walks all of them, which is why mobile keeps one level back.
  *
  * Size follows `pyramid`, base circumradius 3.2, because that is the body a
  * viewer compares it against; a regular tetrahedron then fixes the rest, edge
@@ -1706,7 +1712,7 @@ export class RenderEngine {
     // to run this instead. setGridLitOpacity is that caller; see both.
     this._gridFadeSettle = null;
 
-    // NIGHT mode. Owns nothing in the shader — see setNightly().
+    // NIGHT mode. Owns one uniform in the shader, uGlare — see setNightly().
     this.nightly = false;
 
     // ── GPU mesh + uniforms ───────────────────────────────────────────────────
@@ -3101,8 +3107,10 @@ export class RenderEngine {
   }
 
   /**
-   * Fade the ground grid in or out. The only writer of grid.material.opacity
-   * outside construction.
+   * Fade the ground grid in or out. One of the two writers of
+   * grid.material.opacity outside construction — setGridLitOpacity is the
+   * other, and shares the 'grid-fade' slot with it so the two cannot fight
+   * over that number.
    *
    * FIX: the fade used to live in main.js's G handler as a bare rAF loop that
    * approached its target geometrically and stopped at ~0.1% opacity, then set
@@ -3110,7 +3118,8 @@ export class RenderEngine {
    * showing the grid — the ⊞ GRID button, a preset, leaving transparent
    * background — writes only `visible`. So after one G the grid could be
    * switched "on" and stay invisible, with the button lit and reporting ON.
-   * Ending both directions at GRID_OPACITY keeps those paths honest.
+   * Ending both directions at gridLitOpacity — GRID_OPACITY normally,
+   * NIGHT_GRID_OPACITY under NIGHT — keeps those paths honest.
    *
    * Fading IN also had to raise `visible` up front: with it set only at the
    * end, the whole fade ran on a hidden object and the grid popped in at full
@@ -3292,7 +3301,10 @@ export class RenderEngine {
   }
 
   /**
-   * Punch the bloom up for a moment — the S hotkey's flash.
+   * Punch the bloom up for a moment — the Y hotkey's flash. It answered to S
+   * until 01.09, when S became a hold-and-drag key for Spectrum Rings and lost
+   * its tap-action altogether (see controls.js _fsParams); main.js's 'y' case
+   * is the only caller.
    *
    * FIX: this lived in main.js's key handler, which captured the strength on
    * the first press and wrote it back 200 ms later without asking what the

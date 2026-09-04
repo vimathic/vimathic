@@ -10,12 +10,13 @@ VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern
 
 ## What it does
 
-The visualizer takes any audio source and decomposes it into bass and treble bands plus beat detection. Bass and treble drive geometric deformation through canonical mathematical functions — Bessel functions, theta sums, fractals, reaction-diffusion equations, and others — rather than from pre-rendered animations. The beat detector runs in the background: its BPM feeds the Camera Programmer and the beat-synced GIF recorder, while its direct effect on the default visualisation is intentionally muted.
+The visualizer takes any audio source and decomposes it into bass and treble bands, twenty-four Bark bands of spectral hearing that different regions of the body answer to (the Spectrum Rings layer, on by default), plus beat detection. Bass and treble drive geometric deformation through canonical mathematical functions — Bessel functions, theta sums, fractals, reaction-diffusion equations, and others — rather than from pre-rendered animations. The beat detector runs in the background: its BPM feeds the Camera Programmer and the beat-synced GIF recorder, while its direct effect on the default visualisation is intentionally muted.
 
 - **192 CPU formulas** across 12 mathematical domains (fractals, special functions, probability, linear algebra, trigonometry, complex analysis, Fourier series, differential equations, integral transforms, topology, cellular automata, quantum mechanics)
 - **38 GPU shaders** (audio-reactive vertex and fragment programs) running on the graphics card for real-time performance
 - **54 colour schemes** ranging from cinematic to synthwave to scientific to dark, including a Night collection for dark rooms
-- **27 base 3D shapes** with three render modes (surface, wireframe, points) and three deformation modes (surface, volume, collapse)
+- **32 base 3D shapes** with three render modes (surface, wireframe, points) and three deformation modes (surface, volume, collapse)
+- **Custom model import** — drop your own OBJ, GLTF or GLB file into the panel and the audio-reactive shader deforms your mesh in place of a built-in shape
 - **MIDI controller support** for any controller that sends standard CC messages
 - **Recording suite** for animated GIF (beat-synchronized loops) and high-quality WebM video
 - **Live performance tools**: clip player, second-screen output, virtual camera, OBS integration
@@ -26,7 +27,7 @@ Every formula is documented with its accuracy tier. 122 formulas use closed-form
 
 ## Single-file deployment
 
-The entire application — UI, renderer, audio engine, math engine, shader compiler, GIF recorder, WebM recorder, and full documentation — is bundled into four runtime files: `index.html` (~1.1 MB, the main app), a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. The app runs offline after first load and makes no runtime network requests beyond fetching the intro track once.
+The entire application — UI, renderer, audio engine, math engine, shader compiler, GIF recorder, WebM recorder, and full documentation — is bundled into four runtime files: `index.html` (~1.2 MB, the main app), a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. The app makes no third-party requests: everything it loads after the page opens — the intro track (re-fetched each visit until you click Clear in the playlist), the math worker, the images in these pages, and the second-screen popup — comes from the same site. The offline build from GitHub runs with no network at all.
 
 ## Documentation
 
@@ -70,6 +71,7 @@ VIMATHIC is built with Three.js for WebGL rendering, the Web Audio API for spect
 ## Browser support
 
 VIMATHIC targets modern browsers with WebGL 2.0 and the Web Audio API. Chrome and Edge have the fullest feature support including Web MIDI and tab audio capture. Firefox and Safari work for the core visualizer but lack Web MIDI. On mobile, Chrome on Android is the most capable platform; iOS Safari works for playback but has limitations on recording and audio capture.
+
 ---
 
 *VIMATHIC™ · v1.0 (Beta) · Mathematical VJ Studio*

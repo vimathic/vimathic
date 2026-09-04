@@ -13,10 +13,10 @@ VIMATHIC can send its video to other apps and displays. Four output paths are bu
 
 The simplest case: a separate window showing only the canvas, intended for a projector or external display.
 
-1. Click **SECOND SCREEN** in the Output modal (or in the panel directly).
+1. Open **ADVANCED** in the panel, expand **VIDEO OUTPUT & AUDIO IN** — both ship collapsed — and click **SECOND SCREEN**.
 2. A popup window opens at full-screen size on the available screen.
 3. Drag it to your projector / external monitor, double-click for full-screen.
-4. Use `F` inside the popup to toggle full-screen; `Esc` to exit; `F5` to reconnect if the stream drops.
+4. Use `F` or double-click inside the popup for full-screen; `Esc` to exit. If the stream drops, the popup reconnects on its own — reloading it also works.
 
 How it works under the hood:
 
@@ -48,7 +48,7 @@ This is zero-config and works on Windows / macOS / Linux. The Browser Source met
 
 ### Alternative: in-app Virtual Camera
 
-The Output modal has a **Virtual Camera** section. Click **START** — the canvas is exposed as a `MediaStream` at a configurable FPS (default 60). A small preview window shows the active stream.
+The Output modal has a **Virtual Camera** section. Click **▶ START** — the canvas is exposed as a `MediaStream` at a configurable FPS (default 60). A **PREVIEW** button appears beside it; click it to pop a small floating preview of the active stream.
 
 To use it elsewhere:
 
@@ -69,7 +69,7 @@ VIMATHIC **does not implement NDI natively** — that requires the NDI SDK runti
 
 ### For developers: postMessage bridge
 
-VIMATHIC fires `window.postMessage({ type: 'VIMATHIC_NDI_FRAME', ... })` events at frame rate when NDI output is enabled. A companion Electron app or native bridge can intercept these and forward to the NDI SDK. The architecture is in `outputs.js` — see `NDIOutput` class for the message format.
+VIMATHIC is built to fire `window.postMessage({ type: 'VIMATHIC_NDI_FRAME', ... })` events at frame rate when NDI output is enabled, so a companion script or native bridge can intercept them and forward to the NDI SDK. Today that browser path does not deliver: the send loop calls `convertToBlob()`, which only `OffscreenCanvas` implements, so the first frame throws — frames currently flow only under an Electron host, and there via `window.electronAPI.ndiSendFrame(...)` rather than postMessage. The architecture is in `outputs.js` — see the `NDIOutput` class for the message format.
 
 This stub exists so the integration surface is documented. It's not a finished solution; you need to write the bridge.
 
@@ -85,7 +85,7 @@ Use [SpoutToNDI](https://github.com/leadedge/SpoutToNDI) to bridge from Spout to
 
 ### For developers: Electron with spout-node
 
-If you're packaging VIMATHIC as a desktop app via Electron, install `spout-node` in the main process and implement `window.electronAPI.spoutSendFrame(dataUrl)`. The renderer process in `outputs.js` calls this every frame when Spout output is enabled.
+If you're packaging VIMATHIC as a desktop app via Electron, install `spout-node` in the main process and implement `window.electronAPI.spoutSendFrame(dataUrl)`. The renderer process in `outputs.js` calls this at ~30 fps when Spout output is enabled — frames are deliberately throttled to halve the PNG-encode cost on the main thread.
 
 The browser build ships **no Spout control** — there is nothing to click in the Output modal, which has exactly three sections: Transparent Background, Virtual Camera and Record Clip. Like `NDIOutput` above, `SpoutOutput` exists in `outputs.js` as a documented integration surface for an Electron host; started without one it answers "Spout requires Electron wrapper — cannot access DirectX from a browser sandbox."
 

@@ -15,6 +15,53 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Added
 
+- **Twenty-four bands the body answers with.** The whole spectrum used to
+  arrive as three numbers — bass, mid, treble — and every part of the surface
+  answered all three the same way. A second 4096-point analyser now folds the
+  signal into 24 Bark bands, and each region of the body answers its own: the
+  formula's local roughness picks which band a point listens to (behind a
+  "Rings follow the formula" checkbox; unchecked, the bands are the concentric
+  rings they were before), the body's own curvature gets a say, and each band
+  plays a gesture rather than a loudness — BREATHE, RIPPLE or SHATTER by how
+  rough its region is. The layer arrives switched on at `bandDepth` 0.30,
+  beside Amplitude and Wave Intensity rather than three clicks deep in
+  ADVANCED. A depth profile weights bass 1.94× against treble 0.62×, so a kick
+  moves the body and a cymbal draws on it; in PTS a loud band throws its
+  region off the surface as grains and swells them; a zone's colour shifts,
+  statically, with the band it listens to, so the layout reads as a map of the
+  spectrum; and a channel splitter makes the analysis stereo — a band's pan
+  tilts its displacement from side to side, with pan 0 bit-identical to mono.
+  Dragging the slider to zero restores, bit for bit, the picture the catalogue
+  had before the layer existed. (#64)
+- **Five bodies that have an equation but no parametrisation** — a gyroid,
+  Schwarz P, the smooth Chmutov quartic, the Clebsch cubic and a clipped
+  Cayley cubic, under a new — IMPLICIT — group in the picker, plus the
+  marching-cubes mesher that turns a level set into a mesh. Every shape until
+  now said where a surface is; these five say where it isn't. Three of the
+  five labels carry a parenthetical, and none of them is modesty: "Chmutov
+  Quartic (smooth level set)", because the nodal members the name belongs to
+  live at level −1 and this is not one of them; "Clebsch Cubic (24 of its 27
+  lines)", because the other three lie in the plane at infinity; and "Cayley
+  Cubic (clipped before its 4 nodes)". Neither periodic body says "minimal
+  surface": what ships is the trigonometric nodal approximation, and the
+  catalogue's own estimator says so — mean |H|·L 0.040 for the gyroid against
+  0.00017 for the catenoid. Alongside them, `foldRadius`: the cap on how far a
+  field may push a body along its normals now respects the body's own
+  curvature as well as the nearest opposing sheet, because a patch pushed past
+  the centre of its curvature turns over — which the helicoid had been quietly
+  doing since round 11. (#62)
+- **Seven shapes a height field cannot be.** The catalogue had been assembled
+  from the renderer's constructor rather than from mathematics — sixteen of
+  its twenty entries were three.js primitives straight out of the box — and
+  the gap was exactly everything three does not ship. This branch adopts a
+  rule: a body that is the graph of a function over the plane belongs to the
+  formula catalogue, and a shape earns its slot only when it is closed,
+  one-sided, self-intersecting, multi-sheeted or fractal. Under it arrive the
+  Möbius strip, the Klein bottle, the catenoid, the helicoid, the hyperboloid
+  and the pseudosphere — and `sierpinski-tetra`, four contractions recursed to
+  depth 7 on desktop and 6 on mobile; at depth 7 that is 16 384 cells, 32 770
+  distinct vertices, 62.3 % of them strictly inside the hull. The one body in
+  the catalogue with an inside, where every other has zero. (#60)
 - **A NIGHT mode, and ten palettes dark enough for it.** The existing DARK
   series is not dark: five of its eight clear the bloom threshold in silence, so
   they glow on their own with no music playing, and the comment describing them
@@ -28,9 +75,15 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   burgundy-into-black and red-into-deep-blue.
   The **☾ NIGHT** button sits beside ⟳ AUTO and does only what a dark room needs:
   it narrows the unattended pickers — AUTO COLOUR and the R/Q bag — to those ten,
-  hides the starfield, and dims the grid. It writes no shader uniform, no bloom
-  setting and no palette number, so with it off the frame is unchanged and there
-  is nothing to prove about that. The dropdown stays free: the mode changes what
+  hides the starfield, and dims the grid. It writes no bloom setting; it writes
+  exactly one shader uniform — `uGlare`, the multiplier on the lamps, turned
+  down from 0.65 to 0.45 while the mode is on, since the glare work (#66) — and
+  one palette number, but only when it has to: turned on over a bright scheme it
+  moves the palette to the first NIGHT one, because opening the mode under a
+  glaring picture and leaving it there is not what the button is for. Turned on
+  over a NIGHT palette it leaves the choice alone. With it off the frame is
+  unchanged and there is nothing to prove about that. The dropdown stays free:
+  the mode changes what
   the app picks for you, not what you can pick. `G` is untouched. Bloom keeps its
   shipped strength, radius and threshold, so the dark can still be lifted with
   it. It rides in snapshots, because a look captured at 3 a.m. that comes back
@@ -105,6 +158,26 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Changed
 
+- **The grid, the glare, the S key, and three fields that stopped taking
+  text.** The four-harmonic noise under the SHATTER gesture was `abs(sin·cos)`
+  — separable and kinked, so its creases ran along X and Z of the undisplaced
+  world: the same still lattice under every formula and every shape, only
+  scaled by the music. Four tilted plane waves fitted to the old moments
+  replace it, and the measured crease excess falls from 1.63× to 0.96×. The
+  white that cut the eyes is answered by `uGlare`, a multiplier on the lamps —
+  the three studio soft-boxes, the material's own highlight, the lighting
+  specular, and deliberately not the reflections — at 0.65 normally and 0.45
+  in NIGHT, where a mirror had measured well above the same body in matte, on
+  the mode whose whole promise is a dark picture. (The ratio is left un-quoted
+  here on purpose: the tree carries two tables of that one measurement, in the
+  `studioEnv` note and in `tests/glare-lamps.test.js`, and they disagree —
+  1.67× against 1.58×. One re-measurement retires the wrong one.) `S` now drives
+  Spectrum Rings as a hold-and-drag parameter and the glitch punch it used to
+  fire lives on `Y`, because a letter cannot hold both. And 3D SHAPE, SHADER
+  MODE and COLOR SCHEME are read-only dropdowns again — along with VOLUME
+  FORMULA, which the same wrapper takes the moment VOLUME mode reveals it — the
+  filter went with the typing, so a phone stops raising its keyboard over a list
+  you can only pick from. (#66)
 - **AUTO no longer parks between changes.** The fade was 0.35 of the period
   under a 3-second ceiling, and the ceiling was doing the damage: at the shipped
   8-bar cadence that is three seconds of crossfade followed by thirteen seconds
@@ -119,7 +192,9 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   clamp left: below it a fade would outlast its own period and each change would
   cancel the one before it half way through. AUTO ships off, so nothing changes
   for anyone who has not switched it on.
-- **`R` can reach all twenty shapes.** The randomiser drew its shape from a
+- **`R` can reach every shape in the picker** — all twenty at the time, all
+  thirty-two now that the parametric and implicit waves have landed, because
+  the pool is the catalogue itself. The randomiser drew its shape from a
   nine-name literal in `main.js`, so eleven of the twenty — disc, ring, circle,
   hex, pyramid-smooth, tetrahedron, octahedron, icosahedron-smooth,
   dodecahedron, star, solar — never appeared under `R`, although
@@ -165,6 +240,292 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Fixed
 
+- **Spectrum Rings follow the deformation mode.** Switching SURFACE → COLLAPSE
+  left the rings where they were on many formulas, and they were not merely
+  similar: measured, the layouts were bit-for-bit identical, 0.000 bands of 24
+  apart. Two causes and neither alone would have shown — `setMode()` did not
+  invalidate the character map, and the rebuild knew only one reading of a
+  kernel, as a height field over (x, z). COLLAPSE evaluates the same kernel as
+  f(θ, φ) about the body's centroid, so it now gets the map that reading
+  deserves: the analysis lattice is that chart, taken from the one function the
+  displacement itself calls. What the old map could not express is sharpest on
+  a closed body — (x, z) is a projection, so on the sphere all 6 339 vertex
+  pairs that share a column but sit on opposite sides landed on the SAME band,
+  while the mode's own field separates the two sides by 0.458 world units on
+  average. Over sphere, torus, cylinder and plane and five kernels the right
+  map sits 6.9–8.9 bands away from the one COLLAPSE wore, against an
+  independence ceiling of 23/3 = 7.67 — unrelated, not merely different. The
+  report said "on some formulas", so the sweep covers the catalogue: all 192
+  kernels now lay out differently in the two modes, none under 4 bands of 24,
+  mean 7.658 — and none of them falls back to the plain radius rule on the way.
+  The SURFACE path is untouched and asserted bit-identical.
+- **…and VOLUME gets a layout of its own too.** The same disease with a worse
+  symptom: its tick runs a vector field the map never saw, so the map described
+  whichever SURFACE kernel had last been picked — and since picking a volume
+  formula does not change that, all six volume fields wore one identical
+  layout, 0.00 bands apart, on a body being displaced six different ways. A
+  vector field implies neither a scalar to rank nor a chart to rank it on, so
+  seven candidates were measured over three bodies and all six fields against
+  an oracle that uses no lattice and no chart. Two that look right lost:
+  ranking in world units off the vertex cloud gives the calmest map of all and
+  is calm because 61.2 % of it is the plain radius rule; sampling on a shell of
+  the body's mean radius scores best against the oracle and is blind by
+  construction to a field that varies with radius — `breathe` varies over a
+  torus by 145 % of its own mean and the shell reads 0.00, its winning score
+  coming from a UV sphere's seam pulling the vertex centroid 0.053 off the
+  body's centre. What ships reads the displacement's magnitude where the mode
+  applies it, at the body's own vertices, and lays it on the chart COLLAPSE
+  already uses: the six fields now sit 2.84 to 9.78 bands apart. Where a field
+  genuinely has nothing to say the layer steps back to rings, and that case is
+  real rather than theoretical — Radial Breathe on a Sphere varies over the
+  body by 1.19e-7, so it is cut before float noise can be equalised into a
+  layout. A session that never picked a CPU surface formula now gets a map at
+  all, which it did not.
+- **NIGHT keeps the `E` key.** The mode narrows every unattended palette
+  picker to its ten dark schemes — `Q`, `R` and AUTO COLOUR all draw from the
+  narrowed pool — and `E` did not: it stepped `(colorIdx + 1) % 54`, the whole
+  catalogue. Since the mode opens on scheme 44, ten presses of "next colour"
+  walked out of the series and onto scheme 0, the brightest thing in the
+  build, with the mode still on. The step now moves inside the pool and wraps
+  from its last entry to its first; outside NIGHT the arithmetic is
+  bit-identical to the line it replaces. It lived in `main.js`'s keydown
+  switch, which no test can reach because importing the file boots the whole
+  app, so the rule moved to `params.js` — the same remedy the four hotkeys
+  before it took — and is pinned there.
+- **The pyramid can carry a pattern.** `pyramid` was built with four radial
+  segments — the pyramid *is* its four flat faces — so all 423 vertices sat on
+  four rays along x = 0 and z = 0 and a face had no interior vertex. On Rule
+  90 both sampled lines happened to be dead, so the whole body took one
+  height: the pyramid sank as a rigid block and drew no pattern whatever. It
+  is built from the smooth segment count now with each ring snapped back onto
+  the square — the same trick the disc already plays — so the body does not
+  move (same four planes, same volume to 34.1440) while the population goes
+  423 → 6 883 vertices and Rule 90 goes from one distinct height to 1 181:
+  the Sierpiński gasket, in relief, on the pyramid. (#59)
+- **A foreign viz mode resolves instead of falling through, and the points
+  proxy stops re-buying shared work.** A `vizMode` string from another build —
+  preset, import, clip step or localStorage — fell into the "not points, not
+  surface" gap: surface material with lighting off, no proxy built, no mode
+  button lit, and nothing said why. `normalizeVizMode()` closes it the way
+  `shapes.js` already closes shape values — known strings pass through
+  untouched, anything else lands on `surface` and says so on the console,
+  because silent was the whole defect. And since the PTS proxy borrows the GPU
+  mesh's geometry, every "and now the same for the proxy" branch was doing its
+  per-vertex work a second time on the same buffers — a full formula pass per
+  tick in collapse mode, byte-identical second copies of the pristine arrays —
+  which it no longer does. (#57)
+- **The formula clock keeps one speed at every frame rate.** `time += 0.008`
+  sat after the frame-skip early-return, so formula time was a multiple of the
+  render rate: ×4.8 between the mobile path at 60 Hz and a 144 Hz desktop,
+  ×9.6 across the matrix — and a desktop opened in a narrow window sat at half
+  speed for the whole session, because `isMobile` reads the width once at
+  load. The clock is measured now rather than counted: dt off
+  `performance.now()`, capped at `0.05·RENDER_FRAME_SKIP`, floored at 1e-4, at
+  0.48 units per second — which keeps a 60 Hz desktop at exactly its old speed
+  and converges every other configuration to it. The mobile path doubles;
+  that is the fix, not a side effect, and presets tuned by eye on a phone will
+  look different. (#56)
+- **A height field deforms a closed body instead of shearing it.** The field
+  only ever moved a vertex along +Y, so every vertex sharing a shadow on the
+  ground plane travelled together and a closed body could not change its
+  thickness at all — 1.2e-7 across 25 921 vertices on the sphere. It now
+  follows the surface normal on the bodies measurement says can carry it — the
+  four at the time, sphere, torus, icosahedron-smooth and solar, joined by
+  `catenoid` and `hyperboloid` when the parametric wave landed — capped at 0.8 of
+  the local medial radius; every other body keeps the vertical rule and was
+  bit-identical to what `main` drew. Hard edges keep it because welding their normals trades
+  an open seam for a fold, and the thin disc keeps it because pushing its
+  faces apart measured a thickness of −0.606. Colour rides in its own
+  attribute now, since along a normal the old base-y subtraction stops being
+  the field; and the shape-change hitch this brought is paid down in the same
+  change — sphere 64.6 → 22.6 ms, plane 25.5 → 1.31 — with no answer moved.
+  (#54)
+- **Round 11's tail: seven more labels, a GPU one, and the report's Name
+  column.** Seven more entries whose visible label named something the plate
+  does not draw — `complexSin` (the real part of a holomorphic function must
+  be harmonic; this has Δu = −0.75u), `argandField`, `reynoldsFlow`,
+  `hankelTransform`, `continuousWavelet`, `hyperbolicGeom`, `langtonAnt` —
+  plus GPU mode 1, which had no chirp. The accuracy report's Name column now
+  holds the name a viewer actually sees: 146 of 192 rows carried an older or
+  shortened caption, and a test keeps catalogue, picker and report in step.
+  Three rows were corrected against measurement, and the tag entry below
+  gained its correction note: checked on the tagged commit, none of
+  Mandelbrot, Lorenz or Schrödinger was in those 38 branches. (#53)
+- **The output paths, where five controls did something other than they
+  said.** STOP saved the partial GIF the documentation says it discards. SIZE
+  sat live but inert under ASPECT: Native and said nothing — it is disabled
+  now, with the reason in its title. Virtual Camera accepted 0 fps and went
+  green, because `captureStream(0)` does not throw. A blocked Second Screen
+  popup left its captureStream running with nothing able to reach it. And
+  relative MIDI encoders decoded as sign-magnitude while the class header
+  declares two's complement — mirror images, so one detent anticlockwise swept
+  the whole parameter range. Nine tests; six fail against the unpatched
+  source. (#51)
+- **The background, the fog and the grid are the colours they were written
+  as.** three.js converts a colour given as sRGB bytes into its working linear
+  space on construction, and the conversion back out lives in a chunk only its
+  own materials carry — this app draws its frame through its own GLSL, so an
+  authored colour reached the screen linearised: `#050515` displayed as
+  `#000002`, `#88aaff` as `#3f67ff`. The repair is deliberately narrow: these
+  colours are declared in the space they are written to, because a
+  renderer-level output transform would also shift every shader palette — 44
+  at the time — none of which pass through `THREE.Color` and all of which land
+  as authored. One of the three tests is a source-level guard, since this is a
+  one-token regression whose symptom is that the background looks a bit dark,
+  which nobody files. (#52)
+- **The analysis half of the audio engine, which nothing had ever tested.**
+  The bass band was pinned at its ceiling: the analyser dB window sat at the
+  Web Audio defaults (−100..−30), so every bin at or above −30 dBFS reads 255
+  and mixed material read 1.000 constantly — the window is −85..−10 now, and
+  the 1.4/1.2 band multipliers are gone. The beat detector had no baseline —
+  an absolute level test that was always true, so the beat rate was the 190 ms
+  refractory period and `estimatedBpm` converged on ~300 for any track; it is
+  a surge in the band's linear power over its running mean now, and a 120 BPM
+  pattern reads 120.0. The beat flash faded per frame rather than per second,
+  bin geometry was hardcoded for 44.1 kHz, and the refractory period and the
+  BPM estimate ran on two different clocks. Six tests in a new file — this
+  half of the engine had none. (#50)
+- **RESET ALL resets, auto-save saves, and a preset stops typing over you.**
+  RESET ALL switched auto-rotate ON — the comment above the call claimed it
+  did not — and restored only one of the camera programmer's eight knobs; they
+  have a named default object now, and the editor sliders are told. Auto-save
+  starved itself: a 1500 ms debounce re-armed by a 1000 ms interval writes
+  nothing while anything keeps changing, so a maximum wait was added — and its
+  fingerprint watched 6 values against the snapshot's 13 keys. And a preset
+  carrying a custom shader rewrote the editor buffer on every apply, throwing
+  away unapplied keystrokes every few seconds during clip playback. Fifteen
+  tests, two stubs made faithful first. (#49)
+- **The two simulations that restarted twenty times a second.** The cached
+  heavy sampler calls its simulator on every rebuild — 16 to 20 per second —
+  and both media re-seeded their fields each time, so neither ever advanced
+  past its first hundred Euler steps. Gray–Scott showed one blob, and removing
+  the restart alone floods the lattice to 100 % coverage with zero interface;
+  the path runs Pearson δ→θ now, from a deterministic scatter.
+  FitzHugh–Nagumo could not sustain a wave at any step count — measured 0.0 %
+  excited from step 1000 on — and is replaced by Barkley, and the label says
+  so. Both continue across rebuilds through a cache, and a test requires the
+  continued field and the cold field to be equal to the bit. (#48)
+- **The two deform modes reach the whole mesh and the whole slider.** WAVE
+  INTENSITY did nothing in VOLUME — the mode built its frequency without the
+  slider, so every vector field saw [1.00, 1.30] wherever it stood. The volume
+  field stopped short of the mesh: gridSize² entries against the vertex count
+  left 326 vertices across 8 of the 20 shapes that never moved — two whole
+  rows of a cap; it is evaluated per vertex now. And COLLAPSE had one dead
+  coordinate on a flat figure — φ = acos(dy/r) is exactly π/2 when dy = 0,
+  measured on all 162 vertices of circle — where the polar radius now takes
+  its place; bodies with height are untouched, and a control pins that. (#47)
+- **Round 11: the label is the claim, and four of them were false.** The only
+  text a viewer ever sees is the `<option>` label, and four names promised
+  objects the plate does not draw — `crossCap` (a graph over the plane cannot
+  be RP²), `enneperSurface` (a quadric where Enneper is minimal),
+  `hopfFibration` (96–100 % residual against every Hopf coordinate),
+  `pythagorean` (sin²−cos², the double-angle identity) — and are renamed to
+  what they compute. Three kernels contradicted rulings already written down
+  here: two stationary states carried a pulse a stationary state cannot have,
+  and `dragon` ran a private chaos game at every vertex, so neighbours were
+  independent samples of the attractor — one cached orbit draws the set now,
+  Jaccard 0.971 against a paper-folding dragon built with no IFS at all. New
+  coverage: all 192 names must equal their `<option>` label. (#46)
+- **The deform panel leaves VOLUME when a GPU shader takes the surface.** Two
+  of the three doors out of VOLUME were guarded in round 4; a shader picked
+  while VOLUME was lit went through neither, so the button stayed lit with its
+  formula row open, a second click on it was refused by the guard above, and
+  the saved preset carried `deformMode: volume` beside a numeric shader value
+  — the one pair `applyState` refuses — so it came back as SURFACE rather than
+  the screen it was saved from. The engine mode is written as well as the
+  panel; COLLAPSE is left alone, because it never touches `uMathMode` and
+  round-trips over a shader. (#45)
+- **Round 10: the twenty base shapes measured against what they claim to
+  be.** Nine rounds checked what the formulas say; nothing had checked the
+  bodies carrying them. Eight defects, four visible in the built app, one in
+  the boot shape: cone and both pyramids missing half their lateral surface
+  (64.507 against an analytic 96.140), disc and hex standing on edge, Surface
+  drawing a permutation of the formula on nineteen shapes of twenty, and the
+  GPU path collapsing every (x,z) column onto one point. The colour ramp
+  follows the fix — vH carries the displacement rather than the absolute
+  height on the two paths this round touches, so the palette stays the audio
+  channel it was calibrated to be — while GPU mode is bit-identical to before
+  and Volume and Collapse are untouched, to the float32 word. Tests
+  923 → 1054. (#44)
+- **A written rule for what a caption may leave unsaid, and 95 captions made
+  true under it.** The catalogue had no rule for which of a kernel's factors a
+  caption must name, and it had drifted into disagreeing with itself in a way
+  no reader could catch by eye — `hydrogenS` forgiven for absorbing its 1/π
+  into the display scale while `maxwellBoltzmann` was charged, in the same
+  round, for absorbing its normalisation. Those look identical on the page;
+  they are not, and the difference is measurable. MATHEMATICAL_ACCURACY.md now
+  carries the rule in three clauses — a factor may be omitted iff
+  `drawn ÷ named` is one positive constant over the whole plate and the whole
+  reachable slider box; anything that offsets, saturates, wraps, blanks or
+  changes sign must be stated; a time gain is forgiven only where the named
+  object is not required to be time-independent — with the numbers that
+  separate the cases, and a section on what the rule costs. (#43)
+- **Round 8: the reference sweep repaired, and the rows made to say what the
+  kernels draw.** The 192-entry sweep against mpmath, scipy, sympy,
+  numpy-LAPACK and PARI found 151 in agreement, 20 carrying a tier higher than
+  they earned and 11 drawing something other than what they named — and
+  repaired nothing; this is the repair. Four entries drew a different object
+  than the one they named: `lorenz` and `duffing` were the same affine-sheet
+  defect round 6 found in `rossler` and `chua` and did not look for next door.
+  A sweep of every guard constant found the largest in the file guarding
+  nothing, and `beamBending` drawing a plate 6.8e-4 world units tall while
+  exact to 4.3e-18 against sympy. Twelve folding entries now state their
+  measured fold coverage, four tiers move A → C on one statistic applied to
+  all twelve, and the three slider settings the rows quote by number are
+  finally written in the file, so a headline percentage is reproducible.
+  (#42)
+- **The two repairs from round 6 that cost more than they bought.** Found by
+  an adversarial review that finished after the round had merged, and both had
+  passed CI, the whole unit suite, every e2e spec and the round's own
+  measurements.
+  The Rössler attractor redrew itself from scratch about twenty times a second:
+  its RK4-orbit cache rebuilt under a `c` wired to the Compression slider, so
+  every rebuild came back a different realisation of the same invariant
+  measure — not evolution, a fresh Monte-Carlo sample. Between consecutive
+  frames 75.4 % of the plate's own norm changed with nothing playing, which at
+  ~20 Hz is flashing, the thing DISCLAIMER warns photosensitive users about by
+  name. `c` is the canonical 5.7 now and the same measurement gives 0.24 %.
+  And Ornstein–Uhlenbeck grew a tabletop just above the factory slider — the
+  rewrite scaled x by freq and left the recentring alone, so the left half of
+  every row indexed to the same sample. (#41)
+- **Rounds 5 and 6: the maths checked against references, and the surfaces
+  made watchable.** Round 5 checked the catalogue against outside references
+  rather than against the code that produced it; round 6 repairs the 159
+  findings its adversarial pass left standing. Kernels that computed a
+  different quantity than their name: `spectralRadius` returned the eigenvalue
+  spread, `eigenField` computed nothing eigen and went identically flat every
+  65 s, the 1s hydrogen orbital blinked out completely every 21.8 seconds, and
+  `rossler` and `chua` integrated a two-hundredth of one loop, so both were
+  planes to six digits — they splat an RK4 orbit density now. Five entries
+  were unbounded inside the drawn region, their peak set by whichever vertex
+  landed nearest the pole; each got the remedy for its own singularity rather
+  than a clamp. Twelve entries asserted an accuracy tier their method cannot
+  deliver, each now measured against a reference computed a different way and
+  checked first on a case with a known answer. (#40)
+- **Round 4, remainder: mode refusals, leftovers, docs and test
+  sensitivity.** The panel stops claiming modes the engine never entered:
+  ⬡ VOLUME lit up and opened its formula row with a GPU shader selected,
+  though the two cannot both be on — the button now refuses and names the
+  selection in the way, rather than reaching a view no preset could save. The
+  unfinished half of the third audit: a live capture no longer gets an
+  abandoned track played over it, the loading bar belongs to whoever raised
+  it, and a Matte chosen in SURF is what a preset records. Closed overlays
+  leave the tab order. Thirteen documents brought back into agreement with the
+  code, and eleven blind spots in the suite — code a green run would have
+  stayed green through — now have assertions, each verified by breaking what
+  it guards. (#39)
+- **Round 4: recorder lifecycle, preset camera sanitising, catalog and
+  build.** The recorder now gives back what a take borrows — the encoder, its
+  worker threads and the scratch canvas — on the successful path and not only
+  on abort; clears its destination canvas between frames; recomputes the
+  cover-crop rect per frame; keeps a real failure diagnostic from being
+  overwritten by its own teardown; and no longer delivers a file after an
+  abort, or a timed GIF one frame short of its own plan. Preset apply drops an
+  unusable camera coordinate instead of tweening to NaN and committing it
+  permanently; a reload no longer eats the camera script, and DISCARD CODE now
+  discards it. Alongside: the 192-formula catalog swept over its declared
+  ranges, the main-thread and worker paths pinned to one contract, and a
+  two-way `dist/` spec in CI. (#38)
 - **Every document promised GPL v3 a year later than the license grants it.**
   LICENSE.txt sets the Change Date as a rule with two halves — four years after
   a version is published, or 2031-05-09, whichever comes first — and seven
@@ -176,6 +537,14 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   computes the date from the clause rather than repeating it, so the documents
   cannot drift from the license again in silence.
 
+- **58 logical defects from the third audit, with regression tests.** The one
+  high-severity defect: the timeline ✕ deleted a different keyframe than the
+  row clicked. The rest fall into four shapes — a control describing state it
+  does not own, work queued for a later frame landing after the world moved
+  on, a capability answered by brand rather than by test, and something taken
+  and not given back. Each fix has a regression test written first and failing
+  against the unfixed code, with controls that pass on both sides. Tests
+  256 → 454. (#35)
 - **`R` and `F` can land on a GPU shader.** The FORMULA dropdown holds two
   families — 38 GPU shaders (numeric values) and 192 CPU math formulas
   (`m:collection:key`) — and the randomiser built its pool from
@@ -266,7 +635,9 @@ full creative-control toolchain — packaged as a single-file deployment.
 
 <!-- Counts below are the v1.0.0-beta record, not today's `main` — 36
      schemes and ~900 KB were the figures at tag 03caff7. Don't "correct" them
-     to the current 44 / ~1.1 MB; that would falsify the release history. -->
+     to whatever `main` ships now; that would falsify the release history. The
+     live figures are carried by CONTRIBUTING.md and documents/index.md, which
+     is where they belong — naming them here only dates this comment. -->
 ### Features
 
 - **192 mathematical formulas** across 12 domains (fractals, special

@@ -477,9 +477,9 @@ export class AudioEngine {
         this._bandAnalyser.fftSize = 4096;
         this._bandAnalyser.minDecibels = this.analyser.minDecibels;
         this._bandAnalyser.maxDecibels = this.analyser.maxDecibels;
-        // Its own smoothing is off: the 0.3/0.7 pole in _updateBands is the one
-        // that shapes these, and two smoothers in series would make the outer
-        // rings lag the beat by a visible amount.
+        // Its own smoothing is off: the BAND_TAU pole in _updateBands is the
+        // one that shapes these, and two smoothers in series would make the
+        // outer rings lag the beat by a visible amount.
         this._bandAnalyser.smoothingTimeConstant = 0;
         this._bandFft = new Uint8Array(this._bandAnalyser.frequencyBinCount);
         this._bandFpb = this._nyq / this._bandAnalyser.frequencyBinCount;
@@ -1168,17 +1168,17 @@ export class AudioEngine {
   _now() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
 
   /**
-   * Mean linear power over a band, undoing the analyser's dB mapping.
-   * byte 0…255 spans [minDecibels, maxDecibels], so dB = min + byte/255·(max−min)
-   * and power = 10^(dB/10). Used by the beat detector; the display bands stay
-   * on the byte average, which is the perceptual curve they want.
-   */
-  /**
-   * Fill `this.bands` from the 4096-point tap: 24 Bark bands, each normalised
-   * against its own decaying peak, then smoothed with the same 0.3/0.7 pole the
-   * three legacy bands use.
+   * Fill `this.bands` from the 4096-point tap: 24 Bark bands, each the mean of
+   * its bins, with BAND_NOISE_FLOOR subtracted and the fixed BAND_TILT faded in
+   * over BAND_TILT_GATE. Those tilted levels are then normalised against ONE
+   * shared reference — the loudest of them, decaying by BAND_REF_HALFLIFE and
+   * floored at BAND_REF_FLOOR — and smoothed by a wall-clock one-pole at
+   * BAND_TAU. No per-band feedback anywhere: see BAND_TILT for why a per-band
+   * AGC is the wrong answer, and BAND_TAU for why the pole is a time constant
+   * rather than the 0.3/0.7 per-frame fraction the legacy three still use.
    *
-   * @param {number} dt seconds since the previous call, for the peak decay
+   * @param {number} dt seconds since the previous call — it drives both the
+   *   shared reference's decay and the pole
    */
   _updateBands(dt) {
     const fft = this._bandFft, a = this._bandAnalyser;
@@ -1334,6 +1334,12 @@ export class AudioEngine {
     this._bandRef = Math.max(BAND_REF_FLOOR, this._bandRef * Math.pow(0.5, dt / BAND_REF_HALFLIFE));
   }
 
+  /**
+   * Mean linear power over a band, undoing the analyser's dB mapping.
+   * byte 0…255 spans [minDecibels, maxDecibels], so dB = min + byte/255·(max−min)
+   * and power = 10^(dB/10). Used by the beat detector; the display bands stay
+   * on the byte average, which is the perceptual curve they want.
+   */
   _energyLinear(lo, hi) {
     if (!this.fftData || !this.analyser) return 0;
     const min = this.analyser.minDecibels ?? -100, max = this.analyser.maxDecibels ?? -30;

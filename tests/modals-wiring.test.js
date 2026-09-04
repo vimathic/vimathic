@@ -280,8 +280,8 @@ describe('the camera PARAMS sliders are told when something else changes them', 
 describe('the recorder STOP button does what the documentation promises', () => {
 
   test('during capture it aborts rather than saving a partial GIF', () => {
-    // documents/recording.md:131 — "For GIF, this aborts the worker and
-    // discards partial frames — no file is saved". During capture
+    // documents/recording.md, "Stopping early" — "For GIF, this aborts the
+    // worker and discards partial frames — no file is saved". During capture
     // gif.encoding is false, so the old branch called stop(), and
     // GifRecorder.stop() with frames collected renders and downloads them.
     ui.gifRec.encoding = false;

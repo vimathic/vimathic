@@ -1411,9 +1411,13 @@ y = sin(r * 8.0 * wi + T) * (0.2 + b * 0.8) * a
 //  44  burgundyBlack  45 crimsonAbyss      46 tarnishedGold   47 fathomBlue
 //  48  cedarSmoke     49 fernShadow        50 orchidAsh       51 driedRose
 //  52  deepJade       53 rustSlate
-const SE_DEFAULT_FRAG = `// t = normalised height 0..1   uCM = scheme index 0..53
+const SE_DEFAULT_FRAG = `// t = palette ramp 0.03..0.97 — the DISPLACEMENT at this point, not the
+// absolute height: the shader's own y in GPU mode, the height field in
+// Surface mode. In Volume and Collapse nothing writes a field, so it falls
+// back to pos.y after the morph scale. Then shifted by this
+// point's Spectrum Rings band.   uCM = scheme index 0..53
 // Audio comes in as uniforms here, not short locals: uBass uMid uTreble uBeat
-// uTime. Note t is the height ramp here, not treble as in the vertex tab.
+// uTime. Note t is that ramp, not treble as in the vertex tab.
 // getColor(uCM, t) dispatches to one of 54 palettes. You can also call
 // any palette by name directly, e.g.  c = lava(t)  or  c = cyberpunkGold(t);
 c = getColor(uCM, t);`;

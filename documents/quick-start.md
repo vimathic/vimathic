@@ -19,7 +19,7 @@ If you want to play your own music instead:
 
 - **Drag-and-drop** an MP3, WAV, FLAC or OGG file onto the window. Multiple files at once queue up as a playlist.
 - Click **CLEAR** in the playlist to remove the intro track first, then drop your files.
-- Open **AUDIO SOURCE** in the panel and pick microphone, browser tab, or system audio for live input instead of a file.
+- Open **ADVANCED** in the panel, expand **VIDEO OUTPUT & AUDIO IN** — both ship collapsed — and click **AUDIO SOURCE** (it reads *AUDIO SOURCE: FILE* until you change it) to pick microphone, browser tab, or system audio for live input instead of a file.
 
 Once you click Clear, the intro track won't auto-load on future visits — VIMATHIC remembers you prefer your own music. You can clear localStorage to bring it back if you change your mind.
 
@@ -33,7 +33,7 @@ The visualizer is already running with sensible defaults: Pyramid Smooth shape, 
 - **Treble** sharpens edges and detail.
 - A **beat detector** runs in the background. Its output is intentionally muted in the default look (so the picture stays musical, not strobe-like), but it's available where it matters: BPM feeds the Camera Programmer, and the GIF recorder can beat-sync perfect loops.
 
-If nothing visibly happens — your audio is probably very quiet, or muted. Check the **Amplitude** and **Bass Sensitivity** sliders in the control panel.
+If nothing visibly happens — your audio is probably very quiet, or muted. Check the **Amplitude** slider in the control panel, and **Bass Sensitivity** under **ADVANCED** → **▸ AUDIO SENSITIVITY**.
 
 ## 3. Try a few hotkeys
 
@@ -48,7 +48,7 @@ That's enough to get a feel for what the system can do. See the **Hotkeys** tab 
 
 ## 4. Find a look you like
 
-The control panel on the left exposes the main knobs:
+The control panel in the bottom-right corner exposes the main knobs — on narrow screens it becomes a full-width sheet along the bottom edge:
 
 - **Visual Style** — Surface / Wireframe / Points rendering modes.
 - **Shape** — Pyramid, Sphere, Torus, Icosahedron, and others. The mesh that the math deforms.
@@ -59,20 +59,23 @@ The control panel on the left exposes the main knobs:
 - **⟳ AUTO** — the button beside either of those two lets it drive itself: a new palette (or finish) at random, always as a crossfade, never a cut. With music playing the changes land on the beat — every 8 bars for colour, 16 for material, off the detected BPM; with the track stopped they come on a timer instead. While AUTO is on it owns that parameter: **clip player** steps apply everything else their preset holds but stop overwriting the colour / material it is cycling. Loading a preset by hand still applies both, and RESET ALL switches AUTO off.
 - **Spectrum Rings** — the one slider that changes what the body is *listening to*. The other audio controls hand the shape three lumped numbers (bass, mid, treble); this one spreads twenty-four bands of hearing **across the body**, so different regions answer different parts of the spectrum instead of all of them answering all of it. It ships at 0.30, which is enough to see without the music taking the formula over; drag it to 0 and you get exactly the picture the app drew before the layer existed.
   - **Rings follow the formula** (checked by default) decides where the bands land. Unchecked, they are concentric rings from the axis — the same layout under every figure. Checked, the layout is built from the **formula's own texture**: where the equation is broad and lazy a region listens to the bass, where it is finely corrugated it listens to the cymbals. Each band also moves in its own way — a slow breath at the smooth end, a travelling ripple in the middle, a shimmer where the detail is finest. The body's own curvature has a say too, so the same formula on a gyroid and on a sphere does not land the same way.
+  - The layout also follows the **deformation mode**, because the three modes read one equation differently: SURFACE reads it as a height over the ground plane, COLLAPSE reads it around the body from its centre, and VOLUME runs a different equation entirely — a vector field that pushes each point in three dimensions. Switching between them re-lays the spectrum. Until 03.09.2026 none of that reached the layer: COLLAPSE wore the layout SURFACE had built, which on a closed body meant the top and the bottom of it pulsed on one band while the mode's own displacement moved them by different amounts; and VOLUME wore whichever surface formula had last been chosen, so all six volume fields shared one identical layout.
+  - Where an equation genuinely has nothing to say on a given body, the layer still steps back to plain concentric rings — as it always has. **Radial Breathe** on a **Sphere** is the clearest case: a sphere's surface is all one radius, so a field of distance-from-centre pushes every part of it equally, and there is nothing for twenty-four bands to divide up. Put the same field on a Torus and the layout comes back.
   - Bass moves the body further than treble does, for the same loudness — closer to how sound is actually felt. And a zone's place on the colour ramp tells you which part of the spectrum it belongs to, so the layout reads as a map. That tint is fixed per region: it does not flash with the music (see **Safety** for why nothing here is beat-driven by default).
   - In **Points** mode a loud band also throws its grains off the surface and swells them, so the body reads as a cloud the music stirs.
-- **Audio sliders** — Amplitude, Wave Intensity, Bass/Treble Sensitivity, Bloom.
-- **Camera** — Reset camera position, toggle Auto-Rotate.
+- **Audio sliders** — Amplitude, Wave Intensity and Bloom sit in the panel itself; Bass/Treble Sensitivity are under **ADVANCED** → **▸ AUDIO SENSITIVITY**.
+- **Camera** — **RESET CAMERA** sits in the panel itself; **CAM ROTATE** (auto-rotate) is under **ADVANCED** → **CAMERA PROGRAMMER**, two collapsed levels down.
+- **⏸ STOP MOTION** — in the FPS row near the bottom of the panel, beside the FPS counter and the **i** button, it freezes the picture on its current frame; the music keeps playing, and a second click resumes exactly where it held.
 
 ## 5. Save what you like — and play it back
 
 When you've got a look you want to keep:
 
-1. Type a name in **PRESET NAME**, click **SAVE**.
+1. Open **ADVANCED** in the panel — it ships collapsed — and under **▸ STATE & PRESETS** type a name into the field marked *Preset name…*, then click **＋ SAVE**.
 2. It appears in the preset list with its own thumbnail-style button.
 3. Click any saved preset to load it back instantly.
 
-For VJ sets there's also **CLIP PLAYER** — auto-cycle through your presets with a configurable hold time (seconds or musical bars). Click ▶ to start, ⏹ to stop.
+For VJ sets there's also **CLIP PLAYER**, under **ADVANCED** → **▸ CLIP PLAYER** — auto-cycle through your presets with a configurable hold time (seconds or musical bars). Click ▶ PLAY to start, ■ STOP to stop.
 
 ## What next
 
@@ -82,4 +85,4 @@ For VJ sets there's also **CLIP PLAYER** — auto-cycle through your presets wit
 - **Shader Editor** — write your own GLSL fragments and vertex code
 - **Recording** — export GIF or WebM of what you see
 
-The **i** button (top of FPS panel) opens this documentation any time.
+The **i** button, in that same FPS row, opens this documentation any time.

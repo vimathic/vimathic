@@ -399,11 +399,12 @@ export class CameraSystem {
    * ctx.rotAngle; we copy the final values back onto the three.js camera
    * and orbit controls afterwards.
    *
-   * Errors in either script flip cpActive off — a script that throws
-   * every frame would otherwise flood the console and steal frame budget.
-   * Keyframe errors are swallowed silently because they're usually
-   * transient (still being edited); main-script errors surface to the
-   * status badge so the user sees what broke.
+   * Errors in the MAIN script flip cpActive off — a script that throws
+   * every frame would otherwise flood the console and steal frame budget;
+   * the failure also surfaces to the status badge so the user sees what
+   * broke. Keyframe errors are swallowed and do NOT disarm: the keyframe
+   * is usually still being edited, so it costs one caught exception per
+   * frame until it compiles or the user moves off it.
    */
   runScript(time, bass, mid, treble, beatInt) {
     if (!this.cpFn || !this.isScriptDriving()) return;

@@ -17,7 +17,14 @@ jobs:
   test:
     name: Math validation tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 10, not 5. The suite itself needs ~40 s locally and ran in 59 s here on
+    # 03.09.2026 — and the very next run on the same commit range was killed at
+    # 5m13s with nothing failed, because checkout + setup-node + `npm ci` had
+    # eaten 4m27s of the budget before the first test printed. A budget sized
+    # against the tests alone is a budget that fails on the runner's bad night,
+    # and a job killed by its own budget reports nothing at all — which reads
+    # like a product failure and is not one.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -47,18 +54,48 @@ jobs:
         run: npm test
 
   e2e:
-    name: Playwright smoke tests
+    name: Playwright e2e (shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
-    # This is the JOB budget. The PER-TEST budget is in playwright.config.js and
-    # is a different number for CI — the two are sized against each other, so
-    # move them together.
+    # Three shards, one worker each — NOT three workers in one job. The
+    # single-worker setting in playwright.config.js is there because a GPU-less
+    # runner falls back to SwiftShader and parallel WebGL contexts starve each
+    # other; sharding buys the same wall clock without putting two scenes on one
+    # CPU. fail-fast is off so a red shard does not cancel the other and cost us
+    # half the signal.
     #
-    # 30, not 15: at one worker on a GPU-less runner the suite needs ~3-4 min
-    # of wall clock locally and every failure costs two retries on top, and the
-    # 15-minute budget this job was given ran out mid-run — the job was killed
-    # with "exceeded the maximum execution time" and reported nothing at all,
-    # which reads exactly like a product failure and is not one.
-    timeout-minutes: 30
+    # Why this had to change (03.09.2026): the suite stopped fitting in the job
+    # budget. Measured on this repo's own runs — 31.08 green in 13.8 min, 01.09
+    # onwards over budget, and the run for the branch this comment landed on was
+    # killed at 30m16s with every test that had run PASSED and none failed.
+    # (No count here on purpose: the guard in tests/build-pipeline-guards.test.js
+    # reads from `- name: Run tests` to the next step and forbids a hand-written
+    # total anywhere in between, because such a total goes stale the day the
+    # next spec lands. It caught this comment's first draft.)
+    # Three things added up, and only the last one is a defect worth chasing:
+    #   • the suite grew (six night-hotkey tests here, clip-camera's 8 s holds
+    #     before that);
+    #   • a frame costs ~20 % more under SwiftShader since the band layer —
+    #     measured 167 ms → 200 ms per frame with no GPU, and 16.7 ms with one,
+    #     i.e. 60 FPS on every build. Real devices do not pay this; runners do;
+    #   • a job killed by its own budget reports nothing, which reads like a
+    #     product failure and is not one — the same trap the 15-minute budget
+    #     sprang before.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    # This is the JOB budget, now per shard. The PER-TEST budget is in
+    # playwright.config.js and is a different number for CI — the two are sized
+    # against each other, so move them together.
+    #
+    # 40 per shard. It has to cover the worst RED run, not the green one: with
+    # the per-test budget at 240 s and one retry, three failures cost
+    # 3 × 2 × 240 s = 24 min before the maxFailures bail, on top of whatever
+    # passed first. The green run is far under this — the slowest shard took
+    # 20 min on 03.09, on a runner measurably slower than the same day's
+    # morning one. Move this number with the per-test one in
+    # playwright.config.js; they are sized against each other.
+    timeout-minutes: 40
     # continue-on-error was removed here: it had been masking a real product
     # regression (RESET ALL restored colour scheme 0 instead of 16) plus three
     # tests that no longer matched the UI, so the suite was red and nobody saw
@@ -86,7 +123,26 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
-        run: npm run test:e2e
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/3
+
+  # The name below is load-bearing: branch protection matches required checks by
+  # NAME, so sharding the job above would have silently removed the check `main`
+  # requires — the PR would then wait forever on something that can no longer
+  # report. This job keeps that name alive and fails when any shard failed.
+  # `if: always()` is what makes it run after a red shard at all; without it the
+  # required check would go missing exactly when it matters.
+  e2e-result:
+    name: Playwright smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: e2e
+    if: always()
+
+    steps:
+      - name: Collect shard results
+        run: |
+          echo "shards: ${{ needs.e2e.result }}"
+          test "${{ needs.e2e.result }}" = "success"
 
   build:
     name: Vite build (single-file)
