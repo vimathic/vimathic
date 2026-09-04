@@ -5769,9 +5769,9 @@ describe('Round 8 — what the whole catalogue said against what an oracle says 
   // Both entries were replaced wholesale and neither had a test. Every check below
   // is a property recovered FROM THE DRAWING: no test reads a constant out of the
   // kernel it is testing, so none of them would survive the entry being swapped
-  // back for its predecessor. Verified by mutation — see
-  // ~/notes/audits/vimathic-round8-2026-08-16/roman-boys.md for which mutation each
-  // assertion catches, and for the mpmath/sympy work that fixed the tolerances.
+  // back for its predecessor. Verified by mutation: the audit that records
+  // which mutation each assertion catches, and the mpmath/sympy work that
+  // fixed the tolerances, is kept outside the repository.
   //
   // Helpers are inlined per test on purpose: this fragment shares a describe block
   // with other round-8 fragments and must not claim any names at block scope.

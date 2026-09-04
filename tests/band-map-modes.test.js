@@ -6,8 +6,8 @@
 //   node --test tests/band-map-modes.test.js
 //
 // ── The defect these pin ─────────────────────────────────────────────────────
-// The owner's report: "при смене SURF на COLLAPSE на некоторых формулах
-// Spectrum Rings не изменяют формы, а остаются как SURF". Two causes, both in
+// The report: switching SURF to COLLAPSE left Spectrum Rings unchanged on many
+// formulas — the layout stayed the one built for SURF. Two causes, both in
 // this file's blast radius:
 //
 //   1. setMode() did not invalidate the map, so a switch kept the layout built
@@ -20,8 +20,8 @@
 // ── Why the numbers below are the ones asserted ──────────────────────────────
 // Both maps are histogram-equalised, so u is uniform on [0, 1] and two
 // INDEPENDENT maps of one body sit E|X-Y|*23 = 23/3 = 7.67 bands apart.
-// Measured before the fix (~/notes/vimathic-collapse-band-probe.mjs, over
-// sphere/torus/cylinder/plane and five kernels): 6.9 to 8.9. That is not
+// Measured before the fix, over sphere/torus/cylinder/plane and five
+// kernels: 6.9 to 8.9. That is not
 // "different", it is unrelated — the map COLLAPSE wore was as informative about
 // its own picture as a different formula's map would have been (the probe's own
 // control read 7.41 for two different kernels, 7.64 for a shuffled map).

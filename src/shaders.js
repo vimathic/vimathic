@@ -1028,9 +1028,9 @@ const _STUDIO_ENV = `
 // (keeps the single-file bundle asset-free).
 //
 // ── uGlare, and why it multiplies the LAMPS and not the whole environment ───
-// The complaint (owner, 01.09) is that the white cuts the eyes, in NIGHT most
-// of all. Measured on the shipped tree — plane, Eigenvector Field, the owner's
-// own slider values, six frames per configuration, median:
+// The complaint (01.09) is that the white cuts the eyes, in NIGHT most of all.
+// Measured on the shipped tree — plane, Eigenvector Field, the slider values
+// from the report, six frames per configuration, median:
 //
 //                    p99 luma   share > 0.7   mean of lit pixels
 //   normal  mirror     0.467       0.006 %          0.170
@@ -1207,7 +1207,7 @@ void main(){
     // The sparkle is the one term here that is NOT the palette's colour, and on
     // the shipped tree it is the brightest thing in the frame on a matte body:
     // p99 luma 0.828 against a mirror's 0.467, 3.59 % of the frame above 0.7.
-    // uGlare is what the owner's "the white cuts the eyes" turns into — see the
+    // uGlare is what that complaint about white turns into — see the
     // note on studioEnv. The diffuse, the ambient floor and the coloured rim are
     // untouched, so the body keeps its brightness and loses the glint.
     float ambient = 0.30;

@@ -68,15 +68,6 @@ logs/
 .cache/
 tmp/
 
-# Agent worktrees. `git worktree add .claude/worktrees/<name>` leaves a linked
-# checkout of this repository inside the repository, and `git status` reports the
-# directory as untracked. It cannot be committed as content — git stops at the
-# nested repository boundary — but adding it by path stages a gitlink, which
-# breaks `clone` for everybody. Narrow on purpose: only the worktrees are hidden,
-# so .claude/settings.json, .claude/skills/ and anything else a project might
-# genuinely want to track stay visible.
-/.claude/worktrees/
-
 # Project-specific: working drafts that shouldn't ship
 NOTES.md
 TODO.md

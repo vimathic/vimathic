@@ -143,9 +143,9 @@ export class AutoCycler {
    * The whole period, by default — so there is no dwell at all: a value
    * arrives and is already on its way to the next one.
    *
-   * This used to be 0.35 of the period under a 3 s ceiling, and the ceiling is
-   * what the owner was looking at when he said "the palette just hangs there
-   * for ages". At the shipped 8-bar cadence that is 3 s of crossfade and 13 s
+   * This used to be 0.35 of the period under a 3 s ceiling, and that ceiling is
+   * what made the palette appear to hang in place for long stretches. At the
+   * shipped 8-bar cadence that is 3 s of crossfade and 13 s
    * of a still picture (16 bars for material: 3 s and 29 s) — which reads as a
    * switch, not as drift, because the in-between shades go past in a fifth of
    * the time they are on screen. The old rationale here — "slow ones don't

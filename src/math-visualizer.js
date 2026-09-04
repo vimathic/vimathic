@@ -1872,7 +1872,7 @@ export class MathVisualizer {
    * to be "as a height field over (x, z)" unconditionally. That is right for
    * SURFACE and wrong for COLLAPSE, whose tick evaluates f(theta, phi) about
    * the body's centroid (generateCollapseScalarField). The consequence was the
-   * owner's report — switch SURF→COLLAPSE and on many kernels the rings keep
+   * reported symptom — switch SURF→COLLAPSE and on many kernels the rings keep
    * their shape — and it is worse than "the same picture twice": the (x, z)
    * projection cannot tell the two sides of a closed body apart, so the north
    * and south of a sphere pulsed on one band while the mode's own field pushed

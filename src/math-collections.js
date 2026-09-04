@@ -5838,7 +5838,7 @@ export function generateCollapseAnalysisField(fn, params = {}, g = 65, time = 0)
  * oracle that uses NEITHER a lattice nor a chart — the same rms wavenumber the
  * cascade's estimator K computes, estimated instead on the vertex cloud by 3D
  * neighbours, so no candidate could win by being what the measure was written
- * from (~/notes/vimathic-volume-band-candidates.mjs).
+ * from (measured with a probe kept outside the repository).
  *
  *                                  tracks the   neighbour   separates    tells the
  *                                  field's      step, in    the two      six kernels

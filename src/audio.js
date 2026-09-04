@@ -348,8 +348,8 @@ export class AudioEngine {
      *
      * This shipped at 0 — off — on the argument that the layer changes what
      * every shape looks like, so it should be something a user turns on rather
-     * than something an update turns on for them. The owner overruled that, and
-     * the reason the argument was weak is worth writing down: a feature that
+     * than something an update turns on for them. That argument was overruled, and
+     * the reason it was weak is worth writing down: a feature that
      * ships off and lives three clicks deep in ADVANCED has an impact of exactly
      * zero for everyone who does not go looking, which is nearly everyone. The
      * whole point of the layer is that the body answers the SPECTRUM rather than

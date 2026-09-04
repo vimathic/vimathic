@@ -77,7 +77,7 @@ import {
 // material numbers in _buildSolarSystem, nothing else. The starfield
 // (`── Stars ──` block), updateGlitch(), and the '⚡ Reactive' entry of
 // CP_PRESETS in camera.js (jitters ctx.cam.x/z every frame) stay on
-// Math.random() by the owner's choice, so a frame is NOT bit-identical
+// Math.random() by design, so a frame is NOT bit-identical
 // between sessions.
 // ═════════════════════════════════════════════════════════════════════════════
 const _solarTexCache = new Map();
@@ -1004,8 +1004,8 @@ export const NIGHT_GRID_OPACITY = 0.04;
 // reflMix would cost a mirror its reflectivity, and the complaint was the
 // glare, not the chrome. See the note on studioEnv in src/shaders.js.
 //
-// 1.0 is what shipped before 01.09. These two are the owner's call ("the white
-// cuts the eyes, in NIGHT most of all") turned into numbers, and the numbers are
+// 1.0 is what shipped before 01.09. These two turn the reported complaint — the
+// white cuts the eyes, in NIGHT most of all — into numbers, and the numbers are
 // measured rather than picked — the figures and the reasoning are in that same
 // note. NIGHT gets the lower one because its palettes are built to a contract
 // (max channel 0.55, Y 0.28 at every stop) that a lamp added after the palette
@@ -1561,7 +1561,7 @@ export class RenderEngine {
    * shipped with.
    *
    * The number is the median of the catalogue's index-to-vertex ratio, measured
-   * over all 32 shapes (`~/notes/vimathic-pts-index-ratio.mjs`): 26 indexed
+   * over all 32 shapes: 26 indexed
    * bodies run 4.92 … 6.00, and six carry no index at all. So the brightness
    * this replaces was never one brightness — it was whatever the tessellation
    * happened to be, and on the six unindexed shapes (tetrahedron, octahedron,
@@ -3305,8 +3305,8 @@ export class RenderEngine {
    *
    * It now touches ONE thing in the shader: uGlare, the multiplier on the white
    * the surface throws back. That is the 28.08 note coming due — the specular
-   * was left white and keyed to treble on the owner's call, "leave it, we'll
-   * take it out if it looks bad", and on 01.09 it looked bad: measured, a
+   * was left white and keyed to treble deliberately, to be revisited if it
+   * looked wrong on real frames. On 01.09 it did: measured, a
    * mirror in NIGHT read 1.67x the mean luma of the same body in matte, on the
    * mode that exists to keep the picture dark. Bloom still keeps its shipped
    * strength/radius/threshold so the darkness can be lifted deliberately, and

@@ -11,10 +11,10 @@
 // The first version of the band layer decided that by ONE rule: distance from
 // the body's axis. It is a rule that knows nothing about what is being drawn,
 // so a Mandelbrot, a Chebyshev quartic and a cellular automaton all pulsed in
-// identical concentric rings, and the owner said so: "как будто под фигурой
-// какая бы она ни была, пульсируют одни и те же кольца".
+// identical concentric rings: the same rings under the body, whatever the body
+// happened to be.
 //
-// He was right, and it is measurable. Over 24 formulas from different
+// That is measurable. Over 24 formulas from different
 // collections, the share of the field's variance explained by radius ALONE runs
 // from 0.5 % (rule 90, square wave) to 99.8 % (Bessel J0). Only 8 of the 24 are
 // genuinely radial. For the other two thirds the rings were imposed from
