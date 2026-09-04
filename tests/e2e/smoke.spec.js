@@ -324,3 +324,33 @@ test.describe('Math worker', () => {
     expect(flag).toBe(true);
   });
 });
+
+// ── 8. The intro track waits for a gesture (regression guard) ──
+//
+// It is guarding a race, not a preference. The track is 3.9 MB fetched at
+// priority High; the worker module is requested at VeryLow over the same
+// connection, so a track started during load can starve it past the 15s
+// cold-start watchdog in math-visualizer.js and push every surface frame onto
+// the main thread. Asserting "not before the gesture" is what keeps the two
+// off the wire at the same time; asserting "after it" is what keeps the guard
+// from passing on an intro that simply stopped loading at all.
+test.describe('Intro track', () => {
+  test('is not fetched before the first gesture, and is after one', async ({ page }) => {
+    const intro = [];
+    page.on('request', r => {
+      if (r.url().includes('vimathic-intro.mp3')) intro.push(r.url());
+    });
+
+    await page.goto('/');
+    await page.locator('canvas').waitFor();
+    // Well past the point where the old code had the fetch in flight: it was
+    // issued from module scope, before RenderEngine even existed.
+    await page.waitForTimeout(2000);
+    expect(intro).toEqual([]);
+
+    // Shift is the gesture: it is a real keydown, and main.js's hotkey switch
+    // has no case for it, so nothing else in the app moves in response.
+    await page.keyboard.press('Shift');
+    await expect.poll(() => intro.length, { timeout: 10_000 }).toBeGreaterThan(0);
+  });
+});
