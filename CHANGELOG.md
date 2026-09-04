@@ -158,6 +158,20 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Changed
 
+- **The smoke particle style, and its wake, are drawn at a third of their
+  brightness.** The additive coverage multiplier the style carries is now the
+  measured one at a third: `PTS_GLOW_GAIN` (5.74, what the duplicate draws the
+  points cloud used to make were worth) times `PTS_SMOKE_DIM` (1/3, the level
+  the style is drawn at). Observed at the GL boundary rather than argued from
+  the source — the value reaching `uPtGain` goes 5.7400 to 1.9133, with the
+  ordinary-blended styles unmoved at 1.0000. Additive blending is linear in
+  coverage, so the wake dims by the same factor without being touched: it is an
+  AfterimagePass accumulation of those same particles, and every frame it
+  accumulates is dimmer. The trail's *length* is unchanged — that is `trail` in
+  `PARTICLE_STYLES`, still 0.93. The two numbers are kept apart on purpose: one
+  is a measurement and one is a choice, and folding them into a single literal
+  would hide which of the two a later edit moved.
+
 - **The grid, the glare, the S key, and three fields that stopped taking
   text.** The four-harmonic noise under the SHATTER gesture was `abs(sin·cos)`
   — separable and kinked, so its creases ran along X and Z of the undisplaced

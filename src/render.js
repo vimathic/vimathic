@@ -1571,6 +1571,28 @@ export class RenderEngine {
    */
   static PTS_GLOW_GAIN = 5.74;
 
+  /**
+   * How much of that restored brightness the smoke style actually keeps.
+   *
+   * The gain above is a measurement — it says what the duplicates were worth,
+   * and it is not a matter of taste. This is the taste, kept separate so that
+   * neither number quietly stands in for the other: the style is drawn at a
+   * third of the brightness the duplicates used to sum to.
+   *
+   * Additive blending is linear in coverage, so one factor covers both halves
+   * of the look. The particles lose two thirds of their weight, and the wake —
+   * an AfterimagePass accumulation of those same particles — loses exactly the
+   * same two thirds, because every frame it accumulates is dimmer by that
+   * factor. Its LENGTH is untouched: that is `trail` in PARTICLE_STYLES, and
+   * shortening the trail is a different change from dimming it.
+   */
+  static PTS_SMOKE_DIM = 1 / 3;
+
+  /** Coverage multiplier actually pushed into uPtGain for the additive style. */
+  static get PTS_GLOW_GAIN_EFFECTIVE() {
+    return RenderEngine.PTS_GLOW_GAIN * RenderEngine.PTS_SMOKE_DIM;
+  }
+
   // ── Composer pipeline order ───────────────────────────────────────────────
   // Property names of every pass, in the order the composer must execute them.
   // The composer renders passes in array order, so this list IS the picture:
@@ -2568,7 +2590,9 @@ export class RenderEngine {
     // Only the additive style needs it. An ordinary-blended particle never got
     // anything from the duplicates, so raising it there would brighten a look
     // that was already exactly what it is now.
-    if (this.U.uPtGain) this.U.uPtGain.value = style.glow ? RenderEngine.PTS_GLOW_GAIN : 1.0;
+    if (this.U.uPtGain) {
+      this.U.uPtGain.value = style.glow ? RenderEngine.PTS_GLOW_GAIN_EFFECTIVE : 1.0;
+    }
 
     const m = this.gpuPtsProxy?.material;
     if (m) {

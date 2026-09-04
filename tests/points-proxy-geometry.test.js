@@ -203,8 +203,8 @@ describe('the additive style keeps its brightness', () => {
     r.setParticleStyle('dots');
     assert.equal(r.U.uPtGain.value, 1);
     r.setParticleStyle('smoke');
-    assert.equal(r.U.uPtGain.value, RenderEngine.PTS_GLOW_GAIN,
-      'additive blending summed them, and that sum was the look');
+    assert.equal(r.U.uPtGain.value, RenderEngine.PTS_GLOW_GAIN_EFFECTIVE,
+      'additive blending summed them, and that sum is what the style is drawn from');
   });
 
   test('the gain is the measured ratio, not a number someone liked', () => {
@@ -215,11 +215,34 @@ describe('the additive style keeps its brightness', () => {
       `PTS_GLOW_GAIN=${RenderEngine.PTS_GLOW_GAIN} is outside the catalogue's ratio range`);
   });
 
+  test('the measurement and the level it is drawn at stay separate numbers', () => {
+    // The gain answers "what were the duplicates worth"; the dim answers "how
+    // much of that do we keep". Folding them into one literal would lose which
+    // half a future edit is changing.
+    assert.ok(Math.abs(RenderEngine.PTS_SMOKE_DIM - 1 / 3) < 1e-12,
+      `PTS_SMOKE_DIM=${RenderEngine.PTS_SMOKE_DIM}, expected a third`);
+    assert.ok(Math.abs(RenderEngine.PTS_GLOW_GAIN_EFFECTIVE
+                       - RenderEngine.PTS_GLOW_GAIN / 3) < 1e-12,
+      'the effective gain is the measured one at a third');
+  });
+
+  test('the wake dims with the particles and keeps its length', () => {
+    // Additive blending is linear in coverage and the AfterimagePass accumulates
+    // the frames the particles are drawn into, so one factor dims both. The trail
+    // damp is what sets LENGTH, and dimming must not have touched it.
+    const r = makeRender();
+    r.setVizModeGPU('points');
+    r.setParticleStyle('smoke');
+    assert.equal(RenderEngine.PARTICLE_STYLES.smoke.trail, 0.93,
+      'the wake is dimmer, not shorter');
+    assert.equal(r.U.uPtGain.value, RenderEngine.PTS_GLOW_GAIN_EFFECTIVE);
+  });
+
   test('it does not leak out of PTS', () => {
     const r = makeRender();
     r.setVizModeGPU('points');
     r.setParticleStyle('smoke');
-    assert.equal(r.U.uPtGain.value, RenderEngine.PTS_GLOW_GAIN, 'precondition');
+    assert.equal(r.U.uPtGain.value, RenderEngine.PTS_GLOW_GAIN_EFFECTIVE, 'precondition');
     r.setVizModeGPU('surface');
     assert.equal(r.U.uPtGain.value, 1,
       'a gain left standing would multiply a surface that never asked for one');
@@ -231,7 +254,7 @@ describe('the additive style keeps its brightness', () => {
     r.setParticleStyle('smoke');
     r.setVizModeGPU('wireframe');
     r.setVizModeGPU('points');
-    assert.equal(r.U.uPtGain.value, RenderEngine.PTS_GLOW_GAIN,
+    assert.equal(r.U.uPtGain.value, RenderEngine.PTS_GLOW_GAIN_EFFECTIVE,
       'the style is remembered, so its gain has to come back with it');
   });
 

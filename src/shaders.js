@@ -989,7 +989,9 @@ uniform int uPtStyle;
 // for copies the cloud used to draw and no longer does: the proxy borrowed the
 // mesh's triangle INDEX, so each vertex was submitted about six times at the
 // same pixel, and under additive blending those six summed into the brightness
-// smoke shipped with. See RenderEngine.PTS_GLOW_GAIN for the measurement.
+// smoke shipped with. See RenderEngine.PTS_GLOW_GAIN for the measurement — and
+// PTS_SMOKE_DIM beside it for how much of that brightness the style keeps, which
+// is a third: the number arriving here is the product of the two.
 //
 // It is allowed to push the fragment's alpha above 1, and that is the whole
 // reason one draw can stand in for six: additive blending weights by src.a, so
