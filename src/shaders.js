@@ -984,7 +984,23 @@ uniform float uGlare;`;
 // particle styles too, for the same reason the material block is shared: one
 // owner, no drift between the built-in look and the user's.
 const _POINT_UNIFORMS = `
-uniform int uPtStyle;`;
+uniform int uPtStyle;
+// Coverage multiplier for the additive style, 1.0 everywhere else. It stands in
+// for copies the cloud used to draw and no longer does: the proxy borrowed the
+// mesh's triangle INDEX, so each vertex was submitted about six times at the
+// same pixel, and under additive blending those six summed into the brightness
+// smoke shipped with. See RenderEngine.PTS_GLOW_GAIN for the measurement.
+//
+// It is allowed to push the fragment's alpha above 1, and that is the whole
+// reason one draw can stand in for six: additive blending weights by src.a, so
+// six draws at a and one draw at 6a are the same sum. GLSL ES 1.00 would have
+// clamped the output to [0,1] and made this a cap rather than a sum — but a
+// ShaderMaterial in three r169 is compiled as "#version 300 es" with
+// "layout(location = 0) out highp vec4 pc_fragColor" (verified on the running
+// app: all 22 programs), and an ES 3.00 output into the composer's HalfFloat
+// target is not clamped. Change either of those two facts and the gain silently
+// becomes a ceiling.
+uniform float uPtGain;`;
 
 const _POINT_MASK = `
   float _pAlpha = 1.0;
@@ -999,6 +1015,11 @@ const _POINT_MASK = `
       ? pow(1.0 - _pd, 2.2)
       // Dot: solid core, antialiased rim.
       : smoothstep(1.0, 0.55, _pd);
+    // Additive blending weights the colour by this, so multiplying here is the
+    // same arithmetic the duplicate draws used to do — one draw carrying the
+    // sum instead of N draws accumulating it. Left at 1.0 for the blended
+    // styles, where a duplicate never showed and a gain would be a change.
+    _pAlpha *= uPtGain;
   }`;
 
 const _STUDIO_ENV = `

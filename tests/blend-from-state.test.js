@@ -301,10 +301,13 @@ describe('aBaseY falls back to a value the app chose', () => {
       modelMeshes: [],
       currentParticleStyle: 'dots',
       activeVS: 'VS', activeFS: 'FS',
-      U: { uPointSize: { value: 1 }, uPtStyle: { value: 0 }, uLighting: { value: 0 } },
+      U: { uPointSize: { value: 1 }, uPtStyle: { value: 0 }, uLighting: { value: 0 },
+           uPtGain: { value: 1 } },
       setAfterglow() {},
     };
     host.setParticleStyle = n => RenderEngine.prototype.setParticleStyle.call(host, n);
+    host._ptsGeo          = null;
+    host._pointsGeometry  = g => RenderEngine.prototype._pointsGeometry.call(host, g);
     RenderEngine.prototype.setVizModeGPU.call(host, 'points');
     const dav = host.gpuPtsProxy.material.defaultAttributeValues;
     assert.deepEqual(dav.aBaseY, [0],
