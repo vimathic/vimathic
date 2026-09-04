@@ -359,7 +359,7 @@ window.addEventListener('keydown', e => {
     // have no tap-action — the drag handler owns them. Adding a tap-action
     // for any of them here would fight the drag arming via preventDefault.
     //
-    // S joined that list on 01.09 (owner's request: it drives Spectrum Rings),
+    // S joined that list on 01.09 (it drives Spectrum Rings),
     // which is why the glitch below answers to Y and not to S any more.
 
     case 'y': {

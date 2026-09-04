@@ -1009,7 +1009,7 @@ export function bindControls(ui) {
     'v': 'amp',
     'c': 'waveInt',
     'a': 'bloom',
-    // Spectrum Rings, by the owner's request (01.09). It has no alias in the
+    // Spectrum Rings, added 01.09. It has no alias in the
     // other cluster because the letter next to it is taken; S sits by the left
     // cluster, where the fingers already are.
     //

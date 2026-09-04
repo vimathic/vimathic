@@ -6,9 +6,9 @@
 //   node --test tests/glare-lamps.test.js
 //
 // ── What this is guarding ────────────────────────────────────────────────────
-// The owner's complaint (01.09) was that the white cuts the eyes, in NIGHT most
-// of all. Measured on the shipped tree — plane, Eigenvector Field, his own
-// slider values, one camera, one position in the track, six frames per
+// The complaint (01.09) was that the white cuts the eyes, in NIGHT most of all.
+// Measured on the shipped tree — plane, Eigenvector Field, the slider values
+// from the report, one camera, one position in the track, six frames per
 // configuration, median:
 //
 //                    p99 luma   share > 0.7   mean of lit pixels

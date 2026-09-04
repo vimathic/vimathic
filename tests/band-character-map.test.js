@@ -7,7 +7,7 @@
 //   node --test tests/band-character-map.test.js
 //
 // ── What these are for ───────────────────────────────────────────────────────
-// The complaint this replaces was "одни и те же кольца под любой фигурой", so
+// The complaint this replaces was the same rings under every shape, so
 // the load-bearing property is not correctness in the usual sense — it is
 // DIFFERENCE. A map that is subtly wrong still looks like magic; a map that is
 // the same for every formula is the bug being fixed, wearing a new coat. So the

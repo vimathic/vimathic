@@ -17,8 +17,8 @@
 // pinning.
 //
 // Until 01.09 it wrote no uniform at all, and the specular was left white and
-// keyed to treble on the owner's call ("leave it, we'll take it out if it looks
-// bad"). It looked bad: measured on the shipped tree at one camera and one
+// keyed to treble deliberately, to be revisited if it looked wrong on real
+// frames. It did: measured on the shipped tree at one camera and one
 // position in the track, a mirror in NIGHT came out well above the same body in
 // matte — on the mode whose whole promise is a dark picture. The figures and
 // the reasoning behind them are in the note on studioEnv in src/shaders.js and
@@ -26,7 +26,7 @@
 //
 // Open, and not for this file to settle: that note and the header of
 // tests/glare-lamps.test.js both claim the SAME measurement — plane, Eigenvector
-// Field, the owner's sliders, six frames per configuration, median — and give
+// Field, the same sliders, six frames per configuration, median — and give
 // different numbers (NIGHT mirror mean 0.233 against 0.216, NIGHT matte 0.139
 // against 0.137, normal mirror p99 0.467 against 0.566). The ratio quoted for
 // the mode therefore comes out 1.67x from one table and 1.58x from the other.
@@ -370,8 +370,8 @@ describe('NIGHT and transparent background share the starfield', () => {
 
 describe('NIGHT leaves the rest of the picture alone', () => {
   // The mode's darkness comes from the NIGHT palettes sitting under the bloom
-  // gate at rest, not from turning things down wholesale, and the owner asked
-  // for bloom to stay reachable so the dark can be lifted with it deliberately.
+  // gate at rest, not from turning things down wholesale, and bloom stays
+  // reachable so the dark can be lifted with it deliberately.
   //
   // This test read `deepEqual(touched, [])` until 01.09 — NIGHT touched nothing
   // at all — and it went red on the uGlare change, which is what it was for.
