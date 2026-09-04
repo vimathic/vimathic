@@ -1352,22 +1352,33 @@ export class MathVisualizer {
    * mutated the live attribute past recognition.
    */
   /**
-   * FIX(#52): the geometry the points proxy carries — but only when it is the
-   * proxy's OWN. In the shipped app the proxy BORROWS gpuMesh.geometry
-   * (render.js FIX(#3): construction shares it, every shape swap re-shares
-   * it), so all per-vertex work done for the mesh has already landed in the
-   * proxy's buffers, and every "and now the same for the proxy" branch was
+   * FIX(#52): the geometry the points proxy carries — but only when its
+   * BUFFERS are its own. In the shipped app they never are: the proxy draws
+   * the mesh's own attributes (render.js FIX(#3) shared the whole geometry;
+   * _pointsGeometry now shares the attributes and drops only the index, and
+   * every shape swap re-points it), so all per-vertex work done for the mesh
+   * has already landed in the proxy's buffers, and every "…and now the same
+   * for the proxy" branch was
    * doing that work a second time on the same arrays — Collapse recomputed
    * the whole scalar field once per tick, Volume re-applied the displacement
    * pass, the snapshot methods held a byte-identical second copy of every
    * pristine/base array (~1.2 MB at 161²). _tickSurface has guarded with
    * `ptsGeo !== geo` since FIX(r11); this helper is that guard for everyone.
-   * A proxy that one day owns distinct geometry gets served exactly as
+   * A proxy that one day owns distinct BUFFERS gets served exactly as
    * before — that is the branch these call sites keep existing for.
    */
   _ownPtsGeometry() {
     const ptsGeo = this.render.gpuPtsProxy?.geometry;
-    return (ptsGeo && ptsGeo !== this.render.gpuMesh.geometry) ? ptsGeo : null;
+    if (!ptsGeo) return null;
+    // Compared by ATTRIBUTE, not by geometry object. Since _pointsGeometry the
+    // proxy always carries a geometry of its own — a second BufferGeometry over
+    // the mesh's very buffers, minus the index — so `ptsGeo !== gpuMesh.geometry`
+    // became true for the shipped app and would have turned every branch below
+    // back on: the same arrays walked twice per tick, which is the exact cost
+    // FIX(#52) removed. What these callers need to know is whether the ARRAYS
+    // are distinct, and position is the one every one of them writes.
+    const geo = this.render.gpuMesh.geometry;
+    return ptsGeo.attributes?.position !== geo?.attributes?.position ? ptsGeo : null;
   }
 
   _capturePristine() {

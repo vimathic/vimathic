@@ -1548,6 +1548,29 @@ export class RenderEngine {
     smoke:   { size: 3.4, mask: 2, glow: true,  trail: 0.93 },
   };
 
+  /**
+   * What an additive particle multiplies its coverage by, to stand in for the
+   * duplicates the cloud used to draw.
+   *
+   * The POINTS proxy borrowed the mesh's geometry INDEX along with its buffers,
+   * and an index built for triangles names each vertex once per triangle it
+   * belongs to. Drawn as points that is the same point, at the same pixel,
+   * submitted about six times. For `squares` and `dots` — ordinary blending —
+   * the copies land on top of each other and nothing on screen knew; for
+   * `smoke` — additive — they summed, and that sum IS the brightness the style
+   * shipped with.
+   *
+   * The number is the median of the catalogue's index-to-vertex ratio, measured
+   * over all 32 shapes (`~/notes/vimathic-pts-index-ratio.mjs`): 26 indexed
+   * bodies run 4.92 … 6.00, and six carry no index at all. So the brightness
+   * this replaces was never one brightness — it was whatever the tessellation
+   * happened to be, and on the six unindexed shapes (tetrahedron, octahedron,
+   * both icosahedra, dodecahedron, sierpinski-tetra) smoke was already ~5.7×
+   * darker than everywhere else. A constant is therefore not an approximation
+   * of the old look; it is the old look with an accident taken out of it.
+   */
+  static PTS_GLOW_GAIN = 5.74;
+
   // ── Composer pipeline order ───────────────────────────────────────────────
   // Property names of every pass, in the order the composer must execute them.
   // The composer renders passes in array order, so this list IS the picture:
@@ -1788,6 +1811,10 @@ export class RenderEngine {
                // is a no-op for. Only ever raised while the POINTS proxy draws:
                // gl_PointCoord is undefined for triangles. See setParticleStyle.
                uPtStyle:      { value: 0   },
+               // What an additive particle multiplies its coverage by. 1 is the
+               // no-op every mode but smoke keeps; see PTS_GLOW_GAIN for why the
+               // smoke style needs a number above it at all.
+               uPtGain:       { value: 1.0 },
              };
     this.gpuMat  = new THREE.ShaderMaterial({
       vertexShader: VS, fragmentShader: FS, uniforms: this.U,
@@ -1819,6 +1846,10 @@ export class RenderEngine {
     this.gpuMesh = new THREE.Mesh(gpuGeo, this.gpuMat);
     this.scene.add(this.gpuMesh);
     this.gpuPtsProxy = null;
+    // The geometry that proxy draws — see _pointsGeometry(). One object for the
+    // lifetime of the engine, re-pointed at whatever the mesh currently carries,
+    // because it owns no GPU buffer of its own and so must never be disposed.
+    this._ptsGeo = null;
 
     // The meshes of an imported model, while one is on the stage. Empty means
     // the procedural mesh is what draws. ModelLoader hands them over through
@@ -2352,6 +2383,53 @@ export class RenderEngine {
     this.setVizModeGPU(this.vizMode);
   }
 
+  /**
+   * The geometry the POINTS proxy draws: the mesh's own attribute buffers,
+   * without the mesh's index.
+   *
+   * An index is a triangle's answer to "which vertices am I made of", and it
+   * names a vertex once per triangle around it. THREE.Points honours the index
+   * too, so the proxy was submitting each vertex ~5.7 times, at one pixel, each
+   * time running the whole vertex program. Measured on the shipped boot shape:
+   * 38 880 point invocations for 6 883 vertices. On desktop GL that waste is
+   * absorbed; through ANGLE's D3D11 backend, where a point sprite has to be
+   * expanded by a geometry shader because Direct3D has no point primitive, it
+   * is paid in full, every frame — which is why PTS was slow on Windows and
+   * fine on Linux.
+   *
+   * Attributes are SHARED, not copied: `setAttribute` takes the very
+   * BufferAttribute objects the mesh uses, so there is one upload, one buffer
+   * and one array for MathVisualizer to write — the reason cloning was rejected
+   * when the proxy was first built (see the dispose note in setVizModeGPU).
+   * That sharing is also why this geometry must never be disposed: three's
+   * dispose deletes the GL buffer of every attribute it holds, and those
+   * buffers belong to the live mesh. Hence one instance for the lifetime of the
+   * engine, re-pointed rather than rebuilt.
+   *
+   * @param {THREE.BufferGeometry} src — whatever gpuMesh currently draws
+   * @returns {THREE.BufferGeometry} the un-indexed view of it
+   */
+  _pointsGeometry(src) {
+    const g = this._ptsGeo ??= new THREE.BufferGeometry();
+    // A shape swap can drop an attribute (not every body carries aBandU), and a
+    // stale one left behind would be read against the new positions.
+    for (const name of Object.keys(g.attributes)) {
+      if (!src.attributes[name]) g.deleteAttribute(name);
+    }
+    for (const name of Object.keys(src.attributes)) {
+      g.setAttribute(name, src.attributes[name]);
+    }
+    // Borrowed as well, so the proxy is culled by the same volume as the mesh
+    // rather than computing a second one from the same positions. Null is a
+    // valid answer — three then computes it on demand, from the shared buffer.
+    // `?? null` and not a plain copy: null is three's "not measured yet, ask me
+    // later", and undefined would pass its `=== null` check while being no
+    // sphere at all.
+    g.boundingSphere = src.boundingSphere ?? null;
+    g.boundingBox    = src.boundingBox    ?? null;
+    return g;
+  }
+
   // ── Viz modes ────────────────────────────────────────────────────────────────
   setVizModeGPU(mode) {
     // FIX(#51): resolve the argument here, the way setShape does — this is the
@@ -2381,6 +2459,9 @@ export class RenderEngine {
     // uPointSize and uPtStyle keep. Optional because the unit stands build a U
     // with only the uniforms they are about (tests/particle-style.test.js).
     if (this.U.uPtBand) this.U.uPtBand.value = 0.0;
+    // Same discipline, same reason: the gain belongs to the additive style, and
+    // a value left standing would multiply a surface that never asked for it.
+    if (this.U.uPtGain) this.U.uPtGain.value = 1.0;
     if (mode !== 'points') {
       // Leaving PTS: the particle mask must not run over triangles, and the
       // smoke style's afterglow belongs to the style, not to the session — a
@@ -2429,9 +2510,11 @@ export class RenderEngine {
       ptsMat.defaultAttributeValues.aBand  = [0];
       ptsMat.defaultAttributeValues.aBodyK = [0];
       ptsMat.defaultAttributeValues.aBandU = [-1];
-      // Geometry is deliberately shared with gpuMesh, not cloned — see the
-      // dispose note at the top of this method.
-      this.gpuPtsProxy = new THREE.Points(this.gpuMesh.geometry, ptsMat);
+      // Buffers are deliberately shared with gpuMesh, not cloned — see the
+      // dispose note at the top of this method. The INDEX is not shared, and
+      // that is the whole of _pointsGeometry: see it for why an index makes a
+      // point cloud draw every vertex about six times.
+      this.gpuPtsProxy = new THREE.Points(this._pointsGeometry(this.gpuMesh.geometry), ptsMat);
       this.scene.add(this.gpuPtsProxy);
       // Point size, mask, blending and trail all come from the style rather
       // than from a literal here — the proxy is rebuilt on every entry into
@@ -2482,6 +2565,10 @@ export class RenderEngine {
     // to be right today and would stop being right the first time anything else
     // lowered it. The guard above already refuses models and non-PTS modes.
     if (this.U.uPtBand) this.U.uPtBand.value = 1.0;
+    // Only the additive style needs it. An ordinary-blended particle never got
+    // anything from the duplicates, so raising it there would brighten a look
+    // that was already exactly what it is now.
+    if (this.U.uPtGain) this.U.uPtGain.value = style.glow ? RenderEngine.PTS_GLOW_GAIN : 1.0;
 
     const m = this.gpuPtsProxy?.material;
     if (m) {
@@ -2659,7 +2746,10 @@ export class RenderEngine {
     // guarantees we dispose it even if pendingShape triggers another swap
     // before this callback runs.
     this.gpuMesh.geometry = newGeo;
-    if (this.gpuPtsProxy) this.gpuPtsProxy.geometry = newGeo;
+    // Re-pointed, not replaced: _pointsGeometry keeps one instance and moves it
+    // onto the new buffers, so the proxy follows the shape without ever holding
+    // an index — and without a geometry per swap that could never be disposed.
+    if (this.gpuPtsProxy) this.gpuPtsProxy.geometry = this._pointsGeometry(newGeo);
     // Optional-chained because setShape is called by probes and tests against a
     // stub whose U carries only the uniforms that probe is about; a shape swap
     // must not depend on the band layer existing.
@@ -2669,7 +2759,11 @@ export class RenderEngine {
       // Guard against double-dispose: a rapid second swap may have already
       // replaced gpuMesh.geometry with something newer.
       if (oldGpuGeo !== this.gpuMesh.geometry) oldGpuGeo.dispose();
-      if (oldPtsGeo && oldPtsGeo !== newGeo && oldPtsGeo !== oldGpuGeo) oldPtsGeo.dispose();
+      // ...and never the proxy's own view: it holds no buffer of its own, only
+      // borrowed ones, and disposing it would delete the GL buffers the live
+      // mesh is drawing from. oldGpuGeo above already frees everything it lent.
+      if (oldPtsGeo && oldPtsGeo !== newGeo && oldPtsGeo !== oldGpuGeo
+          && oldPtsGeo !== this._ptsGeo) oldPtsGeo.dispose();
       this.isShapeChanging = false;
       if (this.pendingShape) { const n = this.pendingShape; this.pendingShape = null; this.setShape(n); }
     });

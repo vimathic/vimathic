@@ -56,6 +56,7 @@ function makeRender() {
     uTime: { value: 0 }, uBass: { value: 0 }, uMid: { value: 0 }, uTreble: { value: 0 },
     uAmp: { value: 1 }, uBeat: { value: 0 }, uWI: { value: 1 },
     uPointSize: { value: 1 }, uLighting: { value: 1 }, uPtStyle: { value: 0 },
+    uPtGain: { value: 1 },
     uMode: { value: 0 }, uMathMode: { value: 0 }, uModeNext: { value: 0 },
     uMorphProgress: { value: 1 }, uModeBlend: { value: 0 },
   };
@@ -104,6 +105,8 @@ function makeRender() {
     afterglow: null,
     setAfterglow(on, amount) { this.afterglow = { on, amount }; },
     applyShaderSource(...a) { return RenderEngine.prototype.applyShaderSource.apply(this, a); },
+    _pointsGeometry(...a) { return RenderEngine.prototype._pointsGeometry.apply(this, a); },
+    _ptsGeo: null,
     setVizModeGPU(...a)     { return RenderEngine.prototype.setVizModeGPU.apply(this, a); },
     setParticleStyle(...a)  { return RenderEngine.prototype.setParticleStyle.apply(this, a); },
   };

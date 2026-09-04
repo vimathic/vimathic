@@ -64,12 +64,15 @@ beforeEach(() => {
     modelMeshes:  [],
     currentParticleStyle: 'dots',
     activeVS: 'VS-SOURCE', activeFS: 'FS-SOURCE',
-    U: { uPointSize: { value: 1 }, uPtStyle: { value: 0 }, uLighting: { value: 0 } },
+    U: { uPointSize: { value: 1 }, uPtStyle: { value: 0 }, uLighting: { value: 0 },
+         uPtGain: { value: 1 } },
     setAfterglow(on) { this._afterglow = on; },
   };
   // The real style and viz-mode paths, so the engine's own calls between them
   // are the ones under test rather than stand-ins.
   host.setParticleStyle = n => RenderEngine.prototype.setParticleStyle.call(host, n);
+  host._ptsGeo          = null;
+  host._pointsGeometry  = g => RenderEngine.prototype._pointsGeometry.call(host, g);
   host.setVizModeGPU    = m => RenderEngine.prototype.setVizModeGPU.call(host, m);
 });
 
