@@ -427,14 +427,22 @@ float bandCoordOfMode(int mode, vec2 xz, float a, float wi){
   const float C = 4.0;           // the coarse step is C times the fine one
   const float BAND_T = 7.0;      // the same reference instant the CPU map uses
   // Two slopes, at two scales, with the audio pinned at 0.5 and the clock held.
+  // PROBE BUILD — NOT FOR MERGE. Seven of the eight taps are aliased onto the
+  // first one, so the 38-branch ladder is inlined once here instead of eight
+  // times: live copies per vertex fall 18 -> 4 (two direct calls in main() plus
+  // one per bandCoordOfMode call site). Everything else in the file is
+  // byte-identical to the branch this sits on. The band coordinate is CONSTANT
+  // in this build — gFine and gCoarse both collapse to zero, the ratio is 1 and
+  // u is 0.5 — so the layer is visually wrong on purpose. The only number this
+  // build exists to produce is Load in the Network panel.
   float fx1 = computeMode(mode, xz + vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
-  float fx0 = computeMode(mode, xz - vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
-  float fz1 = computeMode(mode, xz + vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
-  float fz0 = computeMode(mode, xz - vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
-  float cx1 = computeMode(mode, xz + vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
-  float cx0 = computeMode(mode, xz - vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
-  float cz1 = computeMode(mode, xz + vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
-  float cz0 = computeMode(mode, xz - vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
+  float fx0 = fx1;
+  float fz1 = fx1;
+  float fz0 = fx1;
+  float cx1 = fx1;
+  float cx0 = fx1;
+  float cz1 = fx1;
+  float cz0 = fx1;
   float gFine   = length(vec2(fx1 - fx0, fz1 - fz0)) / (2.*E);
   float gCoarse = length(vec2(cx1 - cx0, cz1 - cz0)) / (2.*C*E);
   // The RATIO of the two, which is what makes this a frequency rather than a
