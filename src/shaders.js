@@ -490,8 +490,13 @@ float bandCoordOfMode(int mode, vec2 xz, float a, float wi){
  * name so a change to one names the other.
  */
 float bandTermOfMode(vec2 xz, float a, float wi, float T, float bodyK, out float uOut){
-  float u = bandCoordOfMode(uMode, xz, a, wi);
-  if (uModeBlend > 0.) u = mix(u, bandCoordOfMode(uModeNext, xz, a, wi), uModeBlend);
+  // PROBE BUILD — NOT FOR MERGE. Second dose of the same experiment: the band
+  // coordinate stops calling computeMode at all, so bandCoordOfMode goes dead
+  // and live copies per vertex fall 4 -> 2 — the shape this shader had before
+  // PR #64. The layer is visually wrong on purpose; the only number this build
+  // exists to produce is Load in the Network panel.
+  float u = length(xz);
+  if (uModeBlend > 0.) u = mix(u, length(xz)*1.001, uModeBlend);
   u = clamp(u + (4.0 / 23.0) * bodyK, 0., 1.);
   // Handed back rather than recomputed by the caller: the coordinate costs
   // eight computeMode calls, and the colour tint needs exactly the one the
