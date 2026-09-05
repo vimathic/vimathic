@@ -352,11 +352,19 @@ float computeMode(int mode, vec2 xz, float b, float t, float m,
 // ── Where the music lands, decided by the MODE rather than by the radius ─────
 // The CPU path builds this as a map, once per formula change, because it can
 // sample the field on a lattice (src/band-map.js). A shader has no neighbours
-// and no memory — but it does have the field itself, so it can ask for it four
-// more times and measure the texture directly. Measured on this device's GPU
-// (PowerVR through Vulkan): four extra computeMode calls cost 60 -> 59 fps on
-// the plane and 55 -> 53 on sierpinski-tetra's 196 608 vertices. The vertex
-// program is not what limits this scene, so the honest answer was to spend it.
+// and no memory — but it does have the field itself, so it can ask for it eight
+// more times and measure the texture directly.
+//
+// THE ONLY FRAME-TIME FIGURE THIS FILE EVER RECORDED DOES NOT DESCRIBE THIS
+// CODE, and saying so is cheaper than leaving a number that reads as current.
+// It used to stand here: "four extra computeMode calls cost 60 -> 59 fps on the
+// plane and 55 -> 53 on sierpinski-tetra's 196 608 vertices", measured on this
+// device's GPU (PowerVR through Vulkan). The stencil below takes EIGHT taps,
+// not four, and "git log -S" puts the sentence and the eight taps in the same
+// commit (80c3e75, #64) — so the figure was measured on a draft that never
+// reached this branch, and no eight-tap frame time has been recorded since.
+// Treat it as history, not as the current budget. What HAS been measured since
+// is compile time, and that measurement is in bandCoordOfMode below.
 //
 // TWO THINGS ARE HELD FIXED, and both matter:
 //   * the audio arguments are pinned at 0.5 rather than the live bass/treble.
@@ -427,16 +435,66 @@ float bandCoordOfMode(int mode, vec2 xz, float a, float wi){
   const float C = 4.0;           // the coarse step is C times the fine one
   const float BAND_T = 7.0;      // the same reference instant the CPU map uses
   // Two slopes, at two scales, with the audio pinned at 0.5 and the clock held.
-  float fx1 = computeMode(mode, xz + vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
-  float fx0 = computeMode(mode, xz - vec2(E,0.),   .5,.5,.5, 0., a, wi, BAND_T);
-  float fz1 = computeMode(mode, xz + vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
-  float fz0 = computeMode(mode, xz - vec2(0.,E),   .5,.5,.5, 0., a, wi, BAND_T);
-  float cx1 = computeMode(mode, xz + vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
-  float cx0 = computeMode(mode, xz - vec2(C*E,0.), .5,.5,.5, 0., a, wi, BAND_T);
-  float cz1 = computeMode(mode, xz + vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
-  float cz0 = computeMode(mode, xz - vec2(0.,C*E), .5,.5,.5, 0., a, wi, BAND_T);
-  float gFine   = length(vec2(fx1 - fx0, fz1 - fz0)) / (2.*E);
-  float gCoarse = length(vec2(cx1 - cx0, cz1 - cz0)) / (2.*C*E);
+  //
+  // BOTH DIFFERENCES ARE CENTRED, and that is not tidiness. For a local
+  // A*sin(kx+phi) the centred difference is A*sin(kE)/E * cos(kx+phi) at the
+  // fine step and A*sin(kCE)/(CE) * cos(kx+phi) at the coarse one, so the
+  // cos(kx+phi) — amplitude AND phase — cancels in the ratio below and what
+  // survives is a function of kE alone. A one-sided difference is centred half
+  // a step away from the vertex, that cancellation stops holding, and the ratio
+  // starts reading where the phase happened to land instead of how fine the
+  // field is. Sharing one centre is the reason the stencil costs eight taps and
+  // not five.
+  //
+  // EIGHT TAPS, ONE CALL SITE. The loop is not a stylistic choice: it is what
+  // keeps the compiled program small. Each textual computeMode call site is a
+  // separate inlined copy of a 38-branch ladder, and the number of live copies
+  // is the only lever on compile time anyone has found here. Written out, the
+  // eight taps times bandTermOfMode's two coordinates plus main()'s two direct
+  // calls made 18 live copies; gathered here they make 4 (2 + 2). Measured on
+  // the captured uber program through ANGLE into SwiftShader — the only backend
+  // here that answers at all, this device's own driver reading 515/426/493 ms
+  // for the three variants, which is noise — as time to a first drawn pixel,
+  // where a deferred compiler does its work. Three runs each:
+  //     18 copies, taps written out : 4131 / 5011 / 4157 ms
+  //      4 copies, one tap repeated : 2141 / 1596 / 1991 ms
+  //      4 copies, THIS loop        : 1528 / 1440 / 1848 ms
+  // So the translator kept the loop rather than unrolling it back to 18. A
+  // driver that unrolls it anyway costs compile time, not correctness — the
+  // values are the same either way.
+  //
+  // FEWER COPIES IS CHEAPER, BUT NOT IN PROPORTION, and the two toolchains that
+  // have been measured bend in OPPOSITE directions — so no cost per copy is
+  // quoted here, because nothing measured supports one. In the table above 4.5x
+  // the copies costs 2.2x–3.5x the time (means 4433 ms against 1605 ms, 2.8x),
+  // which is SUBlinear: well short of the 4.5x proportionality would ask for.
+  // On the Windows toolchain the complaint came from — three preview builds
+  // opened in one session with data cleared each time — 18 copies took 28.7 s
+  // to load, while 4 copies and 2 copies were both indistinguishable from
+  // instant and were never timed. That is SUPERlinear and steeply so, where
+  // proportionality would have predicted about 6.4 s at four copies. The
+  // direction is known, the shape is not, and the knee between 4 and 18 copies
+  // on the platform that actually hurts has NOT been measured. That is why the
+  // budget in tests/band-coord-inline-budget.test.js sits on 4 — the largest
+  // count measured to be fast there — rather than on a guess in between.
+  vec2 dF = vec2(0.), dC = vec2(0.);
+  for (int i = 0; i < 8; i++) {
+    // 0..3 walk the x arm, 4..7 the z arm. Inside an arm the four taps are
+    // fine +, fine -, coarse +, coarse - — exactly the fx1/fx0/cx1/cx0 that
+    // used to be spelled out, in that order and at those points.
+    int j     = (i < 4) ? i : i - 4;
+    vec2 dir  = (i < 4) ? vec2(1., 0.) : vec2(0., 1.);
+    float h   = (j < 2) ? E : C * E;
+    float sgn = (j == 0 || j == 2) ? 1. : -1.;
+    float v = computeMode(mode, xz + dir * (sgn * h), .5,.5,.5, 0., a, wi, BAND_T);
+    // dF.x accumulates fx1 + (-fx0), which in IEEE is fx1 - fx0; the other arm
+    // only ever adds a signed zero to the component it does not own, and
+    // length() below cannot tell -0. from +0.
+    if (j < 2) dF += dir * (sgn * v);
+    else       dC += dir * (sgn * v);
+  }
+  float gFine   = length(dF) / (2.*E);
+  float gCoarse = length(dC) / (2.*C*E);
   // The RATIO of the two, which is what makes this a frequency rather than a
   // height: amplitude cancels, so a mode spanning 0.2 units and one spanning 5
   // are compared on the same scale. A smooth field measures the same slope at
@@ -455,18 +513,26 @@ float bandCoordOfMode(int mode, vec2 xz, float a, float wi){
 /**
  * The whole band term for the character path: coordinate, amplitude, gesture.
  *
- * One function so the coordinate is computed ONCE — it costs eight computeMode
- * calls — and so the caller can put the whole thing inside a branch. When this
- * was written the layer shipped OFF, and the first version evaluated the
- * coordinate before the depth test, so every user paid for eight extra formula
- * evaluations per vertex to render a feature they had not switched on. Found by
- * an external review.
+ * One function so the coordinate is computed ONCE — it costs eight evaluations
+ * of the ladder, gathered through one call site — and so the caller can put the
+ * whole thing inside a branch. When this was written the layer shipped OFF, and
+ * the first version evaluated the coordinate before the depth test, so every
+ * user paid for eight extra formula evaluations per vertex to render a feature
+ * they had not switched on. Found by an external review.
  *
- * The layer ships ON now (0.30), which changes who pays but not the argument:
- * the branch is what keeps the cost proportional to the feature being used, and
- * it is the difference between the slider at 0 costing nothing and costing eight
- * computeMode calls per vertex. Dragging the layer off has to give the frame
- * time back, or "off" is only off on screen.
+ * TWO COSTS THAT ARE EASY TO READ AS ONE, and the branches below only pay the
+ * first of them:
+ *   * PER VERTEX, PER FRAME: eight evaluations of the ladder. The uBandDepth
+ *     guard at the call site and the uModeBlend > 0. guard here are what keep
+ *     this proportional to the feature being used — the slider at 0 costs
+ *     nothing, and outside a mode fade the second coordinate is not evaluated.
+ *     Dragging the layer off has to give the frame time back, or "off" is only
+ *     off on screen.
+ *   * ONCE, AT COMPILE TIME: one inlined copy of the 38-branch ladder per
+ *     CALL SITE, whatever any runtime guard says. A guard cannot remove text
+ *     from the program; only sharing a call site can. That is why the stencil
+ *     in bandCoordOfMode is a loop, and why the two calls below cost two copies
+ *     rather than sixteen. Read the measurement there before adding a third.
  *
  * The coordinate is blended across a mode crossfade, the same way the surface
  * is. Without it the layout stayed on the outgoing mode for the whole fade and
@@ -486,7 +552,7 @@ float bandTermOfMode(vec2 xz, float a, float wi, float T, float bodyK, out float
   if (uModeBlend > 0.) u = mix(u, bandCoordOfMode(uModeNext, xz, a, wi), uModeBlend);
   u = clamp(u + (4.0 / 23.0) * bodyK, 0., 1.);
   // Handed back rather than recomputed by the caller: the coordinate costs
-  // eight computeMode calls, and the colour tint needs exactly the one the
+  // eight ladder evaluations, and the colour tint needs exactly the one the
   // displacement used. Two evaluations would be two layouts on one body.
   uOut = u;
   return bandMotion(bandAtU(u), u, xz, T, length(xz));
@@ -598,14 +664,14 @@ void main(){
                                 : bandAtU(length(pos.xz) / max(uBandR, 1e-3))) * uBandDepth
       : fBase;
     // f minus the field it was built from IS the band term — the difference of
-    // two locals, not a second evaluation, so the eight computeMode calls stay
+    // two locals, not a second evaluation, so the eight ladder evaluations stay
     // bought once and stay inside the depth guard. At uBandDepth 0 the ternary
     // above returns fBase itself and this is exactly 0.0, which is what keeps
     // "off" costing nothing here too.
     bandHere = f - fBase;
     // Under the radius rule bandTermOfMode never runs, so the coordinate it
     // would have handed back has to be taken here instead. One length() against
-    // the eight computeMode calls the other branch already paid for.
+    // the eight ladder evaluations the other branch already paid for.
     if (uBandDepth > 0. && uBandMode != 1) bandU = length(pos.xz) / max(uBandR, 1e-3);
     pos.y = (pos.y + f) * uMorphProgress;
     // The field alone, scaled the same way — bit-for-bit what vH carried
