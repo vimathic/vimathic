@@ -48,9 +48,9 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 ### **Web Worker not active (math runs slow)**
 
-- After deployment, the math Web Worker is a separate file (`math-worker-XXX.js`). It must be deployed alongside `index.html` at the same path.
-- The console will log `[MathVisualizer] Worker unavailable — math will run synchronously on main thread` once if it fails to load.
-- Fix: re-upload `math-worker-XXX.js` to the same directory as `index.html` on your server.
+- The math Web Worker is embedded in `index.html` and started from a `blob:` URL, so there is no second file to deploy and no request that can fail. If you are looking for a `math-worker-XXX.js` beside `index.html`, builds up to and including 2026-09-04 emitted one; later ones do not.
+- The console will log `[MathVisualizer] Worker unavailable — math will run synchronously on main thread` once if it fails to start.
+- Fix: the usual cause left is a Content-Security-Policy served by your host that has no `worker-src blob:` (or `child-src blob:`) — a blob worker is exactly what such a policy blocks. VIMATHIC itself sets no CSP.
 
 ### **Screen tearing or stuttering**
 
@@ -170,8 +170,8 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 ### **Works in dev mode but not in deployed build**
 
-- The math worker file (`math-worker-XXX.js`) wasn't uploaded alongside `index.html`. Both files must be at the same path on the server, or the worker falls back to slower main-thread computation.
 - CDN cached an old build. Hard reload: `Ctrl+Shift+R` (Cmd+Shift+R on Mac), or clear browser cache for the site.
+- A Content-Security-Policy on the server (dev mode has none) can block the `blob:` URL the math worker starts from, which shows up as slower main-thread computation rather than as an error. See *Web Worker not active* above.
 
 ### **MIDI worked yesterday, not today**
 
@@ -224,6 +224,6 @@ The About modal and the static docs site are pure HTML/CSS/JS and work everywher
 - **Check the browser console** (F12 → Console). Most failures log a clear message.
 - **Try in Chrome incognito mode** — rules out extensions interfering.
 - **Update Chrome / Edge / Firefox** to the latest version.
-- **Verify the math worker is loaded.** Open the browser console and type `_vimathic_worker_active` — should be `true`. If `false`, the `math-worker-*.js` file is missing or at the wrong path.
+- **Verify the math worker is loaded.** Open the browser console and type `_vimathic_worker_active` — should be `true`. If `false`, the worker could not be started from its `blob:` URL; the console line above it says why.
 
 If you've checked all of the above and have a reproducible issue, file it at the project's GitHub repository with: browser + OS, what you did, what you expected, what happened, console output.

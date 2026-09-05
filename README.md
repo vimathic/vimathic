@@ -189,7 +189,7 @@ are engine capability with no control wired to them yet.
 - Automatic "VIMATHIC" watermark on exported media
 
 ### Single-File Deploy
-The entire application builds to one `dist/index.html` (plus a companion Web Worker, the second-screen popup, and an SEO docs site) — no server, no CDN, no external requests.
+The entire application builds to one `dist/index.html` — math Web Worker included, embedded and started from a `blob:` URL — plus the second-screen popup and an SEO docs site. No server, no CDN, no external requests.
 Share it as a file attachment. Open from USB. Works offline.
 
 ---

@@ -19,6 +19,22 @@ import { applyParam, syncParamUI, NIGHT_SCHEMES, ALL_SCHEMES, nextInPool, PARAMS
 import { OutputManager, SecondScreen } from './outputs.js';
 import { GifRecorder, WebmRecorder } from './recorder.js';
 import { MathVisualizer } from './math-visualizer.js';
+// The `?worker&inline` query is the whole point of this line: it makes the
+// bundler carry the worker's own bundle inside index.html as a string and hand
+// back a class that starts it from a blob: URL. Without it the worker is the
+// one file a single-file deploy still has to fetch over the network — and a
+// worker that arrives late does not merely arrive late, it trips the 15s
+// cold-start watchdog in math-visualizer.js and moves every surface frame onto
+// the main thread. Measured on the two builds, same page, same machine: with
+// that file's response held for 20s the watchdog fires and the first reply lands
+// at 20.5s; embedded, there is no request to hold and the first reply lands at
+// 2.8s. What it does NOT fix — measured the same way — is a busy main thread:
+// blocking it for 25s after the first tick trips the identical warning in both
+// builds, because a dedicated worker's startup is dispatched from the main
+// thread whether its code comes off the network or out of memory.
+// The import lives here, in the entry module, because
+// math-visualizer.js has to stay importable by plain node for the unit suite.
+import MathWorkerCtor from './math-worker.js?worker&inline';
 import { getAllFormulasList } from './math-collections.js';
 import { FormulaPicker, isMathValue } from './formula-picker.js';
 import { SHAPE_NAMES } from './shapes.js';
@@ -46,21 +62,23 @@ const audio  = new AudioEngine();
 // user has previously clicked Clear this no-ops silently (see audio.js
 // _loadIntroIfNeeded for the logic).
 //
-// FIX: the wait is what makes the math worker arrive on time. The track is
-// 3.9 MB pulled by fetch(), which Chromium gives priority High, while the
-// module of a dedicated Worker is requested at VeryLow — and both travel the
-// one HTTP/2 connection that also carried the document. On a narrow link the
-// track starves math-worker-*.js outright: measured on a reporting machine,
-// track 27.91s and worker 27.85s, finishing together. Fifteen of those seconds
-// tripped the cold-start watchdog in math-visualizer.js, which then computed
-// every surface frame on the main thread — the visible symptom was "the site
-// opens slowly", and the cause was a download nobody was waiting for.
+// What the wait buys, stated only as far as it was measured: a visitor who
+// never touches the page does not spend 3.9 MB of traffic, and the console
+// stops printing "The AudioContext was not allowed to start" on every load.
+//
+// It does NOT buy the math worker its arrival time, and the first version of
+// this comment claimed it did. The claim was that the track — 3.9 MB by
+// fetch() at priority High — starved the worker module, requested at VeryLow
+// over the same HTTP/2 connection. The deploy that shipped this wait refuted
+// it on the reporting machine: the track fell from 27.91s to 1.06s and the
+// worker stayed at 28.28s, unmoved. The worker's own delay is not on the wire
+// at all (its bytes arrived from disk cache) — it is the main thread, and it
+// is addressed separately, by embedding the worker in the bundle.
 //
 // Waiting costs nothing audible. loadPlay() reaches _startSource() through
 // ensureCtx(), and an AudioContext created without a gesture stays suspended:
-// the track could not be heard before one either way. That suspension is the
-// "AudioContext was not allowed to start" warning this path already printed on
-// every load.
+// the track could not be heard before one either way. That suspension is what
+// the vanished warning was.
 //
 // Deliberately no timeout fallback: a visitor who never touches the page never
 // needs the track, and not spending 3.9 MB of their traffic is the point.
@@ -106,7 +124,7 @@ const secondScreen = new SecondScreen(render.renderer);
 const gifRec  = new GifRecorder(render.renderer);
 const webmRec = new WebmRecorder(render.renderer);
 
-const mathViz = new MathVisualizer(render, audio);
+const mathViz = new MathVisualizer(render, audio, MathWorkerCtor);
 
 // Wire RenderEngine shape changes into MathVisualizer's pristine-snapshot
 // machinery. Fires after every geometry swap (R hotkey, D hotkey, panel

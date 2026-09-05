@@ -82,16 +82,29 @@ export const BAND_MAP_REF_TIME = 7.0;
 // smoke test and an operator debugging a deploy by hand (documents/
 // troubleshooting.md). It is a liveness claim, so every path that disarms the
 // channel must clear it — see MathVisualizer._disableWorker.
-function createMathWorker() {
+//
+// `Ctor` is the class the worker is built FROM, and it is injected rather than
+// named here. The app hands in the wrapper Vite generates for
+// `./math-worker.js?worker&inline` (see src/main.js): it carries the worker's
+// whole bundle as a string and starts it from a blob: URL, so the shipped
+// index.html needs no second file and issues no second request. That specifier
+// is a bundler-only thing — plain node, which runs the unit suite against this
+// module, throws on it (`self is not defined`, and there is no default export),
+// so importing it here would take the suite down with it.
+// The default, `globalThis.Worker`, is the platform class: it is what the unit
+// suite substitutes, and in a browser it is reached only if nobody injected —
+// where `new Worker()` with no URL throws and lands in the catch below, loudly.
+function createMathWorker(Ctor) {
   try {
-    const w = new Worker(new URL('./math-worker.js', import.meta.url), { type: 'module' });
+    const w = new Ctor();
     if (typeof window !== 'undefined') window._vimathic_worker_active = true;
     return w;
   } catch (e) {
     console.warn(
       '[MathVisualizer] Worker unavailable — math will run synchronously on main thread.\n' +
       'Cause:', e.message, '\n' +
-      'Hint: math-worker-*.js must be at the same path as index.html on the server.'
+      'Hint: the worker is embedded in index.html and started from a blob: URL. ' +
+      'A Content-Security-Policy without `worker-src blob:` blocks exactly this.'
     );
     if (typeof window !== 'undefined') window._vimathic_worker_active = false;
     return null;
@@ -442,7 +455,7 @@ function weldWithGroups(rep, normals) {
 }
 
 export class MathVisualizer {
-  constructor(render, audio) {
+  constructor(render, audio, MathWorkerCtor = globalThis.Worker) {
     this.render      = render;
     this.audio       = audio;
     this.active      = false;
@@ -473,7 +486,7 @@ export class MathVisualizer {
     // in flight — we accept 1-frame latency rather than queueing work that
     // would arrive stale. _pendingHF holds the latest result waiting to be
     // applied; it's cleared once consumed.
-    this._worker      = createMathWorker();
+    this._worker      = createMathWorker(MathWorkerCtor);
     this._workerReady = !!this._worker;
     this._pendingHF   = null;
     this._workerBusy  = false;
@@ -1295,7 +1308,8 @@ export class MathVisualizer {
     console.warn(
       '[MathVisualizer] Worker failed — math will run synchronously on main thread.\n' +
       'Cause:', reason, '\n' +
-      'Hint: math-worker-*.js must be at the same path as index.html on the server.'
+      'Hint: the worker is embedded in index.html and started from a blob: URL. ' +
+      'A Content-Security-Policy without `worker-src blob:` blocks exactly this.'
     );
   }
 

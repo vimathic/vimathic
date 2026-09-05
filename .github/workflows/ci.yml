@@ -175,17 +175,20 @@ jobs:
         run: npm run build
 
       - name: Verify dist/ contents (whitelist)
-        # vite-plugin-singlefile inlines all imports into index.html. Web
-        # Worker modules cannot be inlined (they're loaded via
-        # `new Worker(new URL(...))`) and are emitted as separate chunks.
+        # vite-plugin-singlefile inlines all imports into index.html. The math
+        # Web Worker used to be the one exception — `new Worker(new URL(...))`
+        # can only be given a URL, so Vite emitted it as a separate chunk — and
+        # it is now inlined too: main.js imports it as `?worker&inline`, which
+        # embeds the worker's own bundle in index.html as a string and starts it
+        # from a blob: URL. So math-worker-*.js in dist/ is no longer expected,
+        # it is a REGRESSION, and the whitelist below is what says so.
         # The vimathic-docs Vite plugin also emits the static docs site,
         # sitemap, robots.txt, and llms.txt.
         #
         # Full allowed dist/ contents. DEPLOYMENT.md, which this list used to
         # cite, was removed in 3a7b9db — the ALLOWED regex below is the spec:
-        #   dist/index.html           ← main app, self-contained
+        #   dist/index.html           ← main app, self-contained (worker included)
         #   dist/second-screen.html   ← projector/2nd-monitor popup target
-        #   dist/math-worker-*.js     ← Web Worker chunk(s)
         #   dist/vimathic-intro.mp3   ← bundled intro track (S. Melentyev)
         #   dist/support-hero.png     ← support page hero image (PNG fallback)
         #   dist/support-hero.webp    ← support page hero image (WebP, modern browsers)
@@ -201,7 +204,7 @@ jobs:
         # FIX(#37, r4): that was only half a spec, and the half that cannot
         # catch a broken deploy. The list forbade extra files and never asked
         # for the ones a deploy needs, so a build with no second screen, no
-        # worker chunk, no docs site, no sitemap, no robots.txt and no llms.txt
+        # docs site, no sitemap, no robots.txt and no llms.txt
         # went green — every producer of those files fails quietly by design
         # (copySecondScreen is wrapped in `if (fs.existsSync(src))`,
         # vimathicDocs.closeBundle() returns early with a console.warn), and the
@@ -218,7 +221,7 @@ jobs:
           ls -la dist/
           echo ""
           echo "=== Whitelist verification ==="
-          ALLOWED='^(index\.html|second-screen\.html|math-worker-[A-Za-z0-9_-]+\.js|vimathic-intro\.mp3|support-hero\.png|support-hero\.webp|og-image\.png|favicon\.ico|favicon-(16|32|48)\.png|apple-touch-icon\.png|android-chrome-(192|512)\.png|site\.webmanifest|sitemap\.xml|robots\.txt|llms\.txt|docs)$'
+          ALLOWED='^(index\.html|second-screen\.html|vimathic-intro\.mp3|support-hero\.png|support-hero\.webp|og-image\.png|favicon\.ico|favicon-(16|32|48)\.png|apple-touch-icon\.png|android-chrome-(192|512)\.png|site\.webmanifest|sitemap\.xml|robots\.txt|llms\.txt|docs)$'
           UNEXPECTED=$(find dist -maxdepth 1 -mindepth 1 -printf '%f\n' | grep -Ev "$ALLOWED" || true)
           if [ -n "$UNEXPECTED" ]; then
             echo "❌ Unexpected files in dist/:"
@@ -237,21 +240,30 @@ jobs:
                    sitemap.xml robots.txt llms.txt docs/index.html; do
             [ -f "dist/$f" ] || MISSING="$MISSING $f"
           done
-          # The worker chunk is content-hashed, so it is matched by shape — and
-          # index.html has to name the chunk that was actually emitted. A build
-          # that emits one hash while the bundle asks for another is a 404 at
-          # runtime and looks identical to a healthy dist/ from a file listing.
-          WORKERS=$(find dist -maxdepth 1 -name 'math-worker-*.js' -printf '%f\n')
-          if [ -z "$WORKERS" ]; then
-            MISSING="$MISSING math-worker-*.js"
-          else
-            REFERENCED=0
-            for w in $WORKERS; do
-              if grep -qF "$w" dist/index.html; then REFERENCED=1; fi
-            done
-            if [ "$REFERENCED" -eq 0 ]; then
-              MISSING="$MISSING (index.html references no emitted math-worker chunk)"
-            fi
+          # The math worker: the demand is now the OPPOSITE of what it was.
+          # It has to be INSIDE index.html and NOT beside it. Both halves are
+          # asked, because each catches a different way of losing the fix:
+          #
+          #   * a math-worker-*.js back in dist/ means `?worker&inline` stopped
+          #     applying (a refactor back to `new Worker(new URL(...))`, or a
+          #     Vite change) — the whitelist above already fails on it, and this
+          #     message is the one that says why;
+          #   * index.html without the worker's own code in it means the import
+          #     was dropped altogether. That failure is silent at build time and
+          #     at load time: the app falls back to computing every surface
+          #     frame on the main thread and only feels slow.
+          #
+          # The grep looks for a string the worker's protocol owns and nothing
+          # else in the tree contains (src/math-worker.js, "Unknown message
+          # type"). Minifiers rename identifiers; they do not rewrite string
+          # literals. Checked against a build that predates the inlining: the
+          # string is in the chunk and NOT in index.html, so this is a check
+          # that can fail.
+          if find dist -maxdepth 1 -name 'math-worker-*.js' | grep -q .; then
+            MISSING="$MISSING (a separate math-worker-*.js is back in dist/ — it belongs inside index.html)"
+          fi
+          if ! grep -qF 'Unknown message type' dist/index.html; then
+            MISSING="$MISSING (index.html does not contain the inlined math worker)"
           fi
           if [ -n "$MISSING" ]; then
             echo "❌ Missing from dist/:$MISSING"
@@ -266,9 +278,10 @@ jobs:
         # The whole point of single-file deploy is that index.html runs
         # offline. Any <script src="..."> pointing at an external URL
         # (or a separate JS chunk that should have been inlined) breaks
-        # that. Worker imports via `new Worker(new URL(...))` are NOT
-        # <script> tags so they don't match this grep. Data URLs are
-        # excluded because they're inline-by-definition.
+        # that. Data URLs are excluded because they're inline-by-definition.
+        # The math worker never matched this grep in either shape — it was
+        # never a <script> tag — which is why the step above checks for it
+        # by its own means.
         run: |
           set -e
           EXTERNAL=$(grep -E '<script[^>]+src="[^"]+\.js"' dist/index.html | grep -v 'src="data:' || true)

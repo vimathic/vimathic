@@ -327,13 +327,15 @@ test.describe('Math worker', () => {
 
 // ── 8. The intro track waits for a gesture (regression guard) ──
 //
-// It is guarding a race, not a preference. The track is 3.9 MB fetched at
-// priority High; the worker module is requested at VeryLow over the same
-// connection, so a track started during load can starve it past the 15s
-// cold-start watchdog in math-visualizer.js and push every surface frame onto
-// the main thread. Asserting "not before the gesture" is what keeps the two
-// off the wire at the same time; asserting "after it" is what keeps the guard
-// from passing on an intro that simply stopped loading at all.
+// What it guards, stated only as far as it was measured: 3.9 MB that a visitor
+// who never touches the page does not spend. It was first written as a guard
+// against a race — the track at priority High starving the worker module at
+// VeryLow on the same connection — and that claim has since been refuted by
+// the deploy itself: the track fell from 27.91s to 1.06s and the worker did not
+// move (28.28s). The worker's delay was never on the wire, and it is addressed
+// separately, by embedding the worker in the bundle.
+// Asserting "not before the gesture" is the guard; asserting "after it" is what
+// keeps the guard from passing on an intro that stopped loading at all.
 test.describe('Intro track', () => {
   test('is not fetched before the first gesture, and is after one', async ({ page }) => {
     const intro = [];

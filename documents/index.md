@@ -27,7 +27,7 @@ Every formula is documented with its accuracy tier. 122 formulas use closed-form
 
 ## Single-file deployment
 
-The entire application — UI, renderer, audio engine, math engine, shader compiler, GIF recorder, WebM recorder, and full documentation — is bundled into four runtime files: `index.html` (~1.2 MB, the main app), a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. The app makes no third-party requests: everything it loads after the page opens — the intro track (re-fetched each visit until you click Clear in the playlist), the math worker, the images in these pages, and the second-screen popup — comes from the same site. The offline build from GitHub runs with no network at all.
+The entire application — UI, renderer, audio engine, math engine, shader compiler, GIF recorder, WebM recorder, and full documentation — is bundled into three runtime files: `index.html` (~1.3 MB, the main app, with the off-main-thread math worker embedded in it), the second-screen popup target, and the bundled intro track. The app makes no third-party requests: everything it loads after the page opens — the intro track (fetched once you first touch the page, and re-fetched each visit until you click Clear in the playlist), the images in these pages, and the second-screen popup — comes from the same site. The offline build from GitHub runs with no network at all.
 
 ## Documentation
 

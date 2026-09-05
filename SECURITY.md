@@ -8,8 +8,9 @@ VIMATHIC is a client-side, browser-only application — it has no server, no
 authentication, no user data storage outside `localStorage` on the user's own
 machine, and makes no third-party network requests at runtime — everything it
 loads comes from alongside the page itself. The application proper is bundled
-into four self-contained files: `index.html`, `math-worker-*.js`,
-`second-screen.html`, and `vimathic-intro.mp3`.
+into three self-contained files: `index.html` — which carries the math Web
+Worker inside it and starts it from a `blob:` URL — `second-screen.html`, and
+`vimathic-intro.mp3`.
 
 The build ships these alongside a static copy of the documentation
 (`docs/*.html`) and inert site assets — icons, `sitemap.xml`, `llms.txt`,

@@ -66,11 +66,17 @@ function runScript(script, cwd) {
 
 // ── A dist/ to point it at ───────────────────────────────────────────────────
 
-// What a healthy build leaves in dist/. The worker filename is content-hashed,
-// so index.html has to name the very chunk that was emitted.
+// What a healthy build leaves in dist/. The math worker is NOT among them any
+// more: main.js imports it as `?worker&inline`, so its bundle travels inside
+// index.html as a string and a separate math-worker-*.js in dist/ is now a
+// regression rather than a requirement.
 const WORKER = 'math-worker-Djaf2vx2.js';
+// The string the check greps for. It belongs to the worker's own protocol
+// (src/math-worker.js) and to nothing else in the tree; a minifier renames
+// identifiers but does not rewrite string literals.
+const INLINE_MARKER = 'Unknown message type';
 const FULL_DIST = [
-  'index.html', 'second-screen.html', WORKER, 'vimathic-intro.mp3',
+  'index.html', 'second-screen.html', 'vimathic-intro.mp3',
   'support-hero.png', 'support-hero.webp', 'og-image.png',
   'favicon.ico', 'favicon-16.png', 'favicon-32.png', 'favicon-48.png',
   'apple-touch-icon.png', 'android-chrome-192.png', 'android-chrome-512.png',
@@ -79,17 +85,17 @@ const FULL_DIST = [
 ];
 
 const TMPS = [];
-/** A fixture project whose dist/ holds `files`. */
-function distWith(files) {
+/** A fixture project whose dist/ holds `files`. `html` overrides index.html. */
+function distWith(files, html) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vimathic-dist-'));
   TMPS.push(dir);
   for (const f of files) {
     const full = path.join(dir, 'dist', f);
     fs.mkdirSync(path.dirname(full), { recursive: true });
-    // index.html has to be big enough for the size gate and has to reference
-    // the worker chunk, the way the real single-file bundle does.
+    // index.html has to be big enough for the size gate and has to carry the
+    // worker's code, the way the real single-file bundle does.
     fs.writeFileSync(full, f === 'index.html'
-      ? `<!doctype html><script>new Worker(new URL("${WORKER}",import.meta.url))</script>${'x'.repeat(400_000)}`
+      ? (html ?? `<!doctype html><script>const w="${INLINE_MARKER}: "+t</script>${'x'.repeat(400_000)}`)
       : 'x');
   }
   return dir;
@@ -106,11 +112,9 @@ describe('the required build check asks for the files a deploy needs', () => {
   // the sitemap, robots.txt and llms.txt passed all three.
   const script = () => ciRunScript('Verify dist/ contents (whitelist)');
 
-  // [ file removed, what the user loses, what the failure must say ]. The
-  // worker chunk is content-hashed, so the check can only name its shape.
+  // [ file removed, what the user loses, what the failure must say ].
   const MUST_BE_THERE = [
     ['second-screen.html', 'the SECOND SCREEN button opens a 404', /second-screen\.html/],
-    [WORKER,               'the geometry never computes',          /math-worker/],
     ['vimathic-intro.mp3', 'the intro track 404s',                 /vimathic-intro\.mp3/],
     ['sitemap.xml',        'the sitemap is gone',                  /sitemap\.xml/],
     ['robots.txt',         'the crawler policy is gone',           /robots\.txt/],
@@ -127,11 +131,27 @@ describe('the required build check asks for the files a deploy needs', () => {
     });
   }
 
-  test('a dist/ whose index.html points at a worker chunk that was not emitted fails', () => {
-    const dir = distWith(without(WORKER));
-    fs.writeFileSync(path.join(dir, 'dist', 'math-worker-OTHERHASH.js'), 'x');
-    const r = runScript(script(), dir);
+  // The worker demand is the OPPOSITE of what it was, and both halves of the
+  // new one are asked here. The old check required a math-worker-*.js beside
+  // index.html; keeping it would have been a guard defending the letter of a
+  // decision that has been reversed — it would have failed the very build that
+  // fixes the thing it was written about.
+  test('a dist/ with a separate math-worker chunk fails — it belongs inside index.html', () => {
+    const r = runScript(script(), distWith([...FULL_DIST, WORKER]));
     assert.notEqual(r.code, 0, r.output);
+    assert.match(r.output, /math-worker/, 'the failure has to name what leaked');
+  });
+
+  // This is the failure nothing else can see. A build that dropped the
+  // `?worker&inline` import emits no extra file and throws no error: the app
+  // falls back to computing every surface frame on the main thread and merely
+  // feels slow. Measured on the two real builds: the marker is absent from the
+  // index.html that predates the inlining and present in the one that has it.
+  test('an index.html without the worker embedded in it fails', () => {
+    const r = runScript(script(), distWith(FULL_DIST,
+      `<!doctype html><script>const w=1</script>${'x'.repeat(400_000)}`));
+    assert.notEqual(r.code, 0, r.output);
+    assert.match(r.output, /inlined math worker/);
   });
 
   test('control — a complete dist/ passes', () => {
