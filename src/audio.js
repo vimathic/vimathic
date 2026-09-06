@@ -219,6 +219,14 @@ export class AudioEngine {
     // Defaults are no-ops so the engine can run headless during tests.
     this.cb = {
       onLoading:         (v, pct, msg) => {},
+      // FIX(r5): a load that failed, in words for the person who chose the
+      // file. Same shape as the onError channel outputs.js and recorder.js
+      // already use. Before this, a file the browser could not decode was
+      // accepted into the playlist, said nothing on screen, left the clock
+      // showing the previous track's length and put the transport back to
+      // PLAY — the console was the only place the truth appeared, and mid-set
+      // nobody is reading the console.
+      onLoadError:       (msg, name)   => {},
       onPlaylistChange:  ()            => {},
       onPlayState:       (playing)     => {},
       onSeek:            (pct, cur)    => {},
@@ -815,6 +823,16 @@ export class AudioEngine {
       // reporting it would stop a track that is playing perfectly well.
       if (superseded()) return;
       console.error('Track load error:', e);
+      // FIX(r5): and tell the user, not only the console. decodeAudioData
+      // rejects with an EncodingError whose message names no file, so the
+      // filename is added here — with several tracks queued, "one of them is
+      // broken" is not actionable.
+      this.cb.onLoadError(
+        /encoding/i.test(e?.name || '')
+          ? 'could not be decoded — the file may be corrupt or not really audio'
+          : (e?.message || 'could not be loaded'),
+        file?.name || '',
+      );
       // FIX(#7, r3): same invariant — a failed load must not flip the visuals
       // to idle while a live capture is still feeding the analyser. Nothing
       // here touches the capture, so isPlaying follows whether one is wired.

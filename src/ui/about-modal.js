@@ -346,6 +346,16 @@ function showDoc(slug, tabsEl, contentEl) {
   // or without ./ prefix), preventDefault and switch tabs internally.
   // External http(s) links, mailto:, and anchor links (#section) fall
   // through to default browser behaviour.
+  //
+  // FIX(r5): the hrefs arriving here are now `./docs/<slug>.html`, because the
+  // build points them at the published page. Cancelling the click was only ever
+  // half the job — an href is followed by more than the left click this handler
+  // can see. Middle click, "Open link in new tab" and "Copy link address" raise
+  // no `click` event at all, and every one of them used to reach /<slug>.md,
+  // which the host answers with a second copy of the whole application. The
+  // pattern below accepts the `docs/` segment so the in-place switch still
+  // happens; `.md` stays accepted because the same documents are read straight
+  // from the repository, where that is the correct link to write.
   const article = contentEl.querySelector('.about-doc');
   if (article) {
     article.addEventListener('click', (e) => {
@@ -354,8 +364,8 @@ function showDoc(slug, tabsEl, contentEl) {
       const href = a.getAttribute('href') || '';
       // External / mailto / anchor / empty — leave alone.
       if (!href || /^(https?:|mailto:|#)/i.test(href)) return;
-      // Pull out the slug from ./foo.md or foo.md or ./foo.html or foo.html
-      const m = href.match(/^\.?\/?([a-z0-9-]+)\.(md|html)$/i);
+      // Pull the slug out of ./docs/foo.html, ./foo.md, foo.html, /docs/foo.md …
+      const m = href.match(/^(?:\.?\/)?(?:docs\/)?([a-z0-9-]+)\.(md|html)$/i);
       if (!m) return;
       const targetSlug = m[1];
       // Confirm it's a real doc; if not, let browser try (will 404, but

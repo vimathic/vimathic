@@ -21,8 +21,22 @@
   <meta property="og:image:alt"    content="VIMATHIC mathematical visualizer — fractal wireframe reacting to audio">
   <meta name="twitter:image"       content="https://vimathic.com/og-image.png">
   <meta name="twitter:card"       content="summary_large_image">
+  <!-- FIX(r5): card and image were set, title and description were not, so X
+       fell back to the Open Graph pair and the copy written for a 280-character
+       context never appeared. They are shorter than the OG text on purpose. -->
+  <meta name="twitter:title"       content="VIMATHIC — Mathematical VJ Studio">
+  <meta name="twitter:description" content="Turn your music into reactive geometry. 192 formulas, 38 GPU shaders, in the browser.">
   <link rel="canonical" href="https://vimathic.com/">
   <meta name="robots" content="index,follow">
+
+  <!-- FIX(r5): public/site.webmanifest has been deployed since 1.0 and nothing
+       ever pointed at it, so no browser read it and no install prompt was
+       offered for a fullscreen tool people run for a whole set. theme_color is
+       declared in there too, but a browser only reads the manifest after it is
+       linked, and the address bar is painted before that — so the colour is
+       stated here as well, matching the manifest's value. -->
+  <link rel="manifest" href="./site.webmanifest">
+  <meta name="theme-color" content="#0a0d12">
   <style>
 
     :root{
@@ -35,6 +49,12 @@
     /* (font variables --mono and --display defined in earlier :root block) */
     *{box-sizing:border-box}
     body{margin:0;overflow:hidden;font-family:var(--mono);background:var(--bg)}
+
+    /* Read by assistive technology and by crawlers, never painted. Clipped
+       rather than display:none, which would take it out of the accessibility
+       tree along with the layout. */
+    .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;
+      overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
 
 
 
@@ -109,6 +129,14 @@
        the play button and animates while a track is being decoded. */
     #track-loading{height:2px;width:100%;margin-top:4px;background:rgba(255,58,122,.10);
       border-radius:1px;overflow:hidden;opacity:0;transition:opacity .2s;pointer-events:none}
+    /* A failed load, said where the user is already looking. Sized and coloured
+       to be read rather than glanced past: 11px against the panel's 8-9px, and
+       a contrast ratio above 4.5:1 on --panel, which the dim label colours in
+       this panel do not reach. */
+    #track-error{margin-top:6px;font-size:11px;line-height:1.45;color:#ff9db8;
+      background:rgba(255,58,122,.10);border-left:2px solid var(--accent);
+      padding:6px 8px;border-radius:2px;word-break:break-word}
+    #track-error b{color:#fff;font-weight:600}
     #track-loading.active{opacity:1}
     #track-loading-fill{height:100%;width:0%;
       background:linear-gradient(90deg,var(--accent),var(--accent2));
@@ -852,6 +880,12 @@
   </style>
 </head>
 <body>
+<!-- FIX(r5): the document had no h1 — headings began at h3, so the outline a
+     screen reader announces and the one a crawler reads both started mid-air.
+     The visible "VIMATHIC" is a panel header, sized and placed for the control
+     column, and promoting it would have been a heading that names a panel
+     rather than the page. This one names the page and is read, not seen. -->
+<h1 class="sr-only">VIMATHIC — Mathematical VJ Studio</h1>
 <div class="beat-ring" id="beat-ring"></div>
 <div id="hotkey-hint">
   SPACE play/pause · ← → tracks<br>
@@ -880,6 +914,11 @@
       <button class="tbtn" id="next-btn">⏭</button>
     </div>
     <div id="track-loading"><div id="track-loading-fill"></div></div>
+    <!-- FIX(r5): a load that fails now says so here, directly under the
+         transport the user is looking at. role=status so a screen reader
+         announces it without stealing focus. Empty and hidden until there is
+         something to say. -->
+    <div id="track-error" role="status" aria-live="polite" hidden></div>
     <div class="sec">▸ PLAYLIST</div>
     <div class="pl-wrap">
       <div class="pl-head">

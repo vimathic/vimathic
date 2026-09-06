@@ -225,11 +225,67 @@ describe('document assets are addressed relative to the page that shows them', (
       'the .md→.html rewrite must not be caught by the asset rewrite');
   });
 
-  test('control — the modal copy keeps the .md links the modal handles', () => {
+  test('control — the modal copy still addresses its assets next to the bundle', () => {
     const { bySlug } = loadDocs(dir());
-    assert.match(bySlug['roadmap'].html, /href="\.\/index\.md"/);
     assert.match(bySlug['roadmap'].html, /srcset="\.\/support-hero\.webp"/,
       'inside dist/index.html the asset sits next to the page, so ./ is right there');
+  });
+});
+
+describe('a cross-document link survives being opened in a new tab', () => {
+
+  // FIX(r5). The modal copy used to keep `./index.md` verbatim, because
+  // about-modal.js cancels the click and switches document in place. It does —
+  // but only for the click. Middle click, "Open link in new tab" and "Copy link
+  // address" raise no `click` event for anything to cancel, and every one of
+  // them asked the host for /index.md. Measured against the live site on
+  // 06.09.2026: a middle click on Quick Start opened
+  // https://vimathic.com/quick-start.md and got HTTP 200 with 1,284,505 bytes —
+  // the entire application again, at a URL that means nothing, in place of the
+  // document the user asked to read.
+  //
+  // So the href has to be a real page. The one that already exists is the
+  // static docs site this same plugin emits, one directory below the bundle.
+  const dir = () => fixture({
+    'index.md': fm('title: Overview\norder: 0\ndescription: Overview.',
+      'Start with [Quick Start](./quick-start.md), then [Safety](./safety.md).'),
+    'quick-start.md': fm('title: Quick Start\norder: 1\ndescription: First five minutes.', 'Body.'),
+    'safety.md': fm('title: Safety\norder: 2\ndescription: Read this first.', 'Body.'),
+  });
+
+  test('the modal copy points at the published page, not at a bare .md', () => {
+    const { bySlug } = loadDocs(dir());
+    const html = bySlug['index'].html;
+    assert.match(html, /href="\.\/docs\/quick-start\.html"/);
+    assert.match(html, /href="\.\/docs\/safety\.html"/);
+    assert.doesNotMatch(html, /href="\.\/[a-z0-9-]+\.md"/,
+      'a .md href here is a URL the site cannot serve as a document');
+  });
+
+  test('the link is relative, so a sub-path and a file:// deploy both hold', () => {
+    const { bySlug } = loadDocs(dir());
+    assert.doesNotMatch(bySlug['index'].html, /href="\/docs\//,
+      'root-absolute breaks the same two deploys the asset paths are careful about');
+  });
+
+  test('the pattern about-modal.js matches on accepts what the plugin now emits', () => {
+    // The handler and this rewrite are one mechanism in two files; a change to
+    // either alone puts the click path back to a full page navigation.
+    const src = read('src/ui/about-modal.js');
+    const m = src.match(/const m = href\.match\((\/[^\n]+\/i)\)/);
+    assert.ok(m, 'the cross-doc matcher moved — this guard needs its new shape');
+    const pattern = new RegExp(m[1].slice(1, -2), 'i');
+    for (const href of ['./docs/safety.html', 'docs/safety.html', './safety.md', 'safety.html']) {
+      assert.match(href, pattern, `the handler stopped recognising ${href}`);
+    }
+  });
+
+  test('control — the static pages still link to their siblings, not into docs/docs/', () => {
+    const out = emit(dir());
+    const page = out.read('dist/docs/index.html');
+    assert.match(page, /href="\.\/quick-start\.html"/);
+    assert.doesNotMatch(page, /href="\.\/docs\//,
+      'the static page already lives in docs/; a second segment would 404');
   });
 });
 
