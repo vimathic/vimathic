@@ -770,11 +770,35 @@ void main(){
   // in WIRE, under an imported model, and at depth zero.
   if (ptB != 0.) pos += normal * (ptSpray(position) * ptB * 0.8);
   gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
+  // FIX(r6): sanitise the displaced position before anything downstream reads it.
+  //
+  // The displacement above is steered by uAmp and uWI, and neither has a ceiling —
+  // click-to-type grows the slider past extendedMax, and the owner runs 11 against a
+  // designed 1.5. Several of the 38 GPU formulas reach that through pow/exp/division,
+  // so pos can arrive here non-finite. gl_Position then has undefined clip
+  // coordinates, and ANGLE/D3D11 rasterises such a triangle as a LARGE SCREEN-ALIGNED
+  // QUAD. That is the black rectangle — and it is filled only in SURF, which is why
+  // the same frame shows nothing in WIRE (thin lines) or PTS (a few points). Measured:
+  // with the fragment guards alone the rectangles still appeared at a fixed
+  // x=333,len=1085 on five scanlines across three separate frames.
+  //
+  // Bit-identity is preserved for a healthy vertex, which this file's contract
+  // requires (see the note on -0.0 above): the NaN test does not touch pos, and the
+  // clamp only runs for a vertex already outside a range no scene legitimately uses.
+  // Written to a NEW name rather than back into pos on purpose: tests/gpu-shape-y.js
+  // reads the tail of this program and simulates every write to pos in JS, to prove
+  // the displacement does not collapse a shape. An extra assignment to pos is a write
+  // that guard cannot model, and it fails closed. Leaving pos alone keeps that stencil
+  // reading exactly what it read before.
+  vec3 _safePos = !(dot(pos, pos) >= 0.0)
+    ? position
+    : (any(greaterThan(abs(pos), vec3(1.0e4))) ? clamp(pos, vec3(-1.0e4), vec3(1.0e4)) : pos);
+
   // Compute world-space position AFTER all displacement so derived normals are correct
-  vec4 _wp = modelMatrix * vec4(pos, 1.0);
+  vec4 _wp = modelMatrix * vec4(_safePos, 1.0);
   vWorldPos = _wp.xyz;
   vViewDir  = cameraPosition - _wp.xyz;
-  gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(_safePos,1.);
 }`;
 
 // ── Fragment shader — 54 color schemes (0-53) ─────────────────────────────────
@@ -1482,10 +1506,15 @@ void main(){vec3 pos=position;
   float ptB = uPtBand * bandHere * uMorphProgress;
   if (ptB != 0.) pos += normal * (ptSpray(position) * ptB * 0.8);
   gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
-  vec4 _wp = modelMatrix * vec4(pos, 1.0);
+  // FIX(r6): same sanitiser as the built-in vertex shader, and it matters more here —
+  // this body is user code from the shader editor, which can divide by anything.
+  vec3 _safePos = !(dot(pos, pos) >= 0.0)
+    ? position
+    : (any(greaterThan(abs(pos), vec3(1.0e4))) ? clamp(pos, vec3(-1.0e4), vec3(1.0e4)) : pos);
+  vec4 _wp = modelMatrix * vec4(_safePos, 1.0);
   vWorldPos = _wp.xyz;
   vViewDir  = cameraPosition - _wp.xyz;
-  gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);}`;
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(_safePos,1.);}`;
 
 // FIX(#28): counts below track COLOR_SCHEME_COUNT — see the FS header note.
 // Template wrapping user frag body — _COLOR_FUNS provides all 54 color
