@@ -1209,7 +1209,11 @@ const _MATERIAL_BLOCK = `
     vec3 Rm  = reflect(-Vm, Nm);
     vec3 env = studioEnv(Rm);
     env = mix(env, env * 0.4 + vec3(0.04), uRoughness * 0.7);
-    float fresM = pow(1.0 - max(dot(Nm, Vm), 0.0), uFresnelP);
+    // FIX(r6): same defect as the rim term in the lighting block — see the long note
+    // there. Inert while Surface Material is Matte (uMaterial is 0 and this block does
+    // not run), and live for every other finish, with the same Nm = Vm fallback four
+    // lines up making dot(Nm, Vm) >= 1 by construction.
+    float fresM = pow(1.0 - clamp(dot(Nm, Vm), 0.0, 1.0), uFresnelP);
     vec3 metalTint  = mix(vec3(1.0), color, uMetalness);
     vec3 reflection = env * metalTint;
     float reflMix = clamp(uReflect * (uMetalness * 0.6 + fresM * 0.7 + 0.15), 0.0, 1.0);
@@ -1354,7 +1358,23 @@ void main(){
     // Fresnel rim glow. Strong at grazing angles; tinted in the surface's own
     // colour so it reinforces the palette instead of fighting it. Bass swells
     // make the rim breathe with the kick.
-    float fres = pow(1.0 - max(dot(N, V), 0.0), 2.5);
+    // FIX(r6): clamp the dot to 1.0, not just to 0.0. max() alone guards the wrong end.
+    //
+    // N and V are both unit vectors to within a couple of ULP — V through the hardware
+    // normalize at the top of this block, N through the hand-rolled nRaw/nLen — so
+    // dot(N, V) is routinely 1.00000012 rather than 1.0 when the surface faces the eye.
+    // 1.0 - 1.00000012 is -1.19e-7 exactly, and pow() of a negative base is undefined
+    // in GLSL: ANGLE lowers it to exp2(2.5 * log2(x)), and log2 of a negative is NaN.
+    //
+    // That NaN flows into rim and then into all three colour channels while _pAlpha
+    // stays 1.0 — which is exactly the "3 non-finite components out of 7,025,020"
+    // measured in the scene target on a bad frame, and exactly why the artefact is
+    // BLACK: an overflow would arrive as +Inf and read white.
+    //
+    // The degenerate-quad fallback added earlier in this block, N = V, makes it worse
+    // rather than better: on that branch dot(N, V) IS dot(V, V) = |V|^2, which is >= 1
+    // by construction. The guard moved the NaN from normalize() down into pow().
+    float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.5);
     float rim  = fres * (0.55 + uBass * 0.55);
 
     // Compose: ambient floor (so backlit areas keep their hue) + diffuse
