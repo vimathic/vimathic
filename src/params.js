@@ -213,7 +213,20 @@ export const PARAMS = {
     extendedMax: 2.0,
     format: v => v.toFixed(2),
     get: ctx => ctx.render.bloomPass.strength,
-    set: (ctx, v) => { ctx.render.bloomPass.strength = v; },
+    // FIX(r6): strength 0 also switches the pass OFF. Two reasons, and the
+    // first is a correctness one: UnrealBloomPass's composite multiplies the
+    // blurred mips by the strength, and 0 * Inf is NaN — so at exactly 0 a
+    // non-finite texel that the blur had already spread across a mip tile
+    // stops being an invisible overflow and becomes a solid BLACK rectangle.
+    // The slider's min is 0 and its 0.05 step lands on it exactly. The shader
+    // guard in shaders.js removes the non-finite input; this makes the symptom
+    // unreachable even if a future shader reintroduces one.
+    // The second reason is free performance: at strength 0 the pass is a
+    // visual no-op that still costs 12 full-screen passes every frame.
+    set: (ctx, v) => {
+      ctx.render.bloomPass.strength = v;
+      ctx.render.bloomPass.enabled  = v > 0;
+    },
     midi: true,
   },
 

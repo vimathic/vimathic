@@ -1136,13 +1136,43 @@ vec3 studioEnv(vec3 dir){
   return base;
 }`;
 
+// FIX(r6): the last line of defence before the composer. Nothing non-finite may
+// leave a fragment shader in this app, because UnrealBloomPass will carry it
+// down five half-float mips and hand back a screen-scale black rectangle — one
+// NaN pixel becomes a ~670-device-pixel square. The guards at the three
+// normalize() sites remove the causes we know about; this removes the class,
+// including from user shaders typed into the editor, which share this epilogue.
+//
+// Written as a comparison rather than an isnan() call on purpose: NaN fails
+// every comparison, so `!(x >= lo && x <= hi)` is true for NaN AND for ±Inf,
+// and it needs no extension. clamp() alone would not do it — clamp(NaN, ..) is
+// implementation-defined, and on ANGLE/D3D11 it is not reliably the low bound.
+//
+// The ceiling is far above anything the palette and the glare can produce
+// (colour is ~0..2 in normal use), so a healthy frame is bit-for-bit unchanged;
+// it exists only to stop an overflow reaching a HalfFloat target, whose own
+// ceiling is 65504 and which the bloom composite multiplies by 3*strength².
+const _FINITE_GUARD = `
+  if (!(color.r >= 0.0 && color.r <= 64.0) ||
+      !(color.g >= 0.0 && color.g <= 64.0) ||
+      !(color.b >= 0.0 && color.b <= 64.0)) {
+    color = clamp(color, 0.0, 64.0);
+    if (!(dot(color, color) >= 0.0)) color = vec3(0.0);
+  }`;
+
 // Reflection composite. Modifies `color` in place. Reconstructs its own
 // normal from screen-space derivatives so it works regardless of how the
 // vertex was displaced (GPU mode, CPU formula, volume, or user shader).
 const _MATERIAL_BLOCK = `
   if (uMaterial > 0) {
-    vec3 Nm = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+    // FIX(r6): the same unguarded derivative normal as the lighting block —
+    // see the note there. This copy is reachable from every non-Matte Surface
+    // Material, and the Surface Material control is itself SURF-only, so it
+    // doubles the number of NaN sites in exactly the mode that was reported.
+    vec3 nmRaw  = cross(dFdx(vWorldPos), dFdy(vWorldPos));
+    float nmLen = length(nmRaw);
     vec3 Vm = normalize(vViewDir);
+    vec3 Nm = nmLen > 1e-9 ? nmRaw / nmLen : Vm;
     if (dot(Nm, Vm) < 0.0) Nm = -Nm;
     vec3 Rm  = reflect(-Vm, Nm);
     vec3 env = studioEnv(Rm);
@@ -1244,8 +1274,32 @@ void main(){
     // position.y before VS runs). Per-pixel, so it's smoother than per-vertex
     // normals on dense grids and crisply faceted on sparse ones — both fit
     // the VJ aesthetic.
-    vec3 N = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+    // FIX(r6): cross() of the two screen-space derivatives is the ZERO vector
+    // wherever the fragment quad is degenerate — a zero-area triangle, a facet
+    // seen exactly edge-on, two coincident vertices. normalize(vec3(0)) is
+    // 0/0 = NaN, and from there it poisons diff, spec and fres, so the whole
+    // fragment leaves this shader non-finite.
+    //
+    // On its own that is one bad pixel and nobody would ever see it. What makes
+    // it a bug report is the next pass. UnrealBloomPass downsamples the frame
+    // through five half-float mips, the smallest a 32nd of the screen, and the
+    // separable blur spreads that one texel across a whole mip tile; upsampled
+    // and composited it arrives as a LARGE, HARD-EDGED, AXIS-ALIGNED BLACK
+    // SQUARE. That is why the artefact shows up only when Bloom is raised — at
+    // strength 0 the pass adds nothing and the NaN stays a single invisible
+    // pixel. It flickers because the degenerate quads come and go with the
+    // animation, and it lingers on a slow machine because one bad frame is on
+    // screen for ~90 ms at 11 fps. And it is SURF-only for the plainest of
+    // reasons: this block is (uLighting == 1), which no other viz mode sets.
+    //
+    // The fallback normal faces the camera, so a degenerate fragment shades
+    // neutrally instead of punching a hole.
+    vec3 dPdx  = dFdx(vWorldPos);
+    vec3 dPdy  = dFdy(vWorldPos);
+    vec3 nRaw  = cross(dPdx, dPdy);
+    float nLen = length(nRaw);
     vec3 V = normalize(vViewDir);
+    vec3 N = nLen > 1e-9 ? nRaw / nLen : V;
 
     // Slowly orbiting "sun" — period ~18s at speed 0.35.
     // Held above the horizon (y=0.75) so the surface is mostly lit, not mostly black.
@@ -1258,7 +1312,11 @@ void main(){
     float diff  = NdotL * 0.5 + 0.5;
 
     // Blinn-Phong specular. Treble drives the punch — fast transients = sharp glints.
-    vec3  H    = normalize(L + V);
+    // FIX(r6): L + V is the zero vector at the one screen point where the view
+    // direction is exactly opposite the orbiting sun. Same 0/0 as above, same
+    // consequence once bloom gets hold of it.
+    vec3  HV   = L + V;
+    vec3  H    = dot(HV, HV) > 1e-18 ? normalize(HV) : N;
     float spec = pow(max(dot(N, H), 0.0), 28.0) * (0.35 + uTreble * 0.65);
 
     // Fresnel rim glow. Strong at grazing angles; tinted in the surface's own
@@ -1294,6 +1352,7 @@ void main(){
   // so the surface and wireframe paths are bit-for-bit what they were.
   ${_POINT_MASK}
 
+  ${_FINITE_GUARD}
   gl_FragColor = vec4(color, _pAlpha);
 }`;
 
@@ -1468,6 +1527,7 @@ void main(){float t=clamp((vH+.8)*.6,.03,.97);
   vec3 color = c;
   ${_MATERIAL_BLOCK}
   ${_POINT_MASK}
+  ${_FINITE_GUARD}
   gl_FragColor=vec4(color,_pAlpha);}`;
 
 // ── Shader editor default code snippets ───────────────────────────────────────
