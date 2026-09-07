@@ -1182,7 +1182,15 @@ const _FINITE_GUARD = `
       !(color.b >= 0.0 && color.b <= 64.0)) {
     color = clamp(color, 0.0, 64.0);
     if (!(dot(color, color) >= 0.0)) color = vec3(0.0);
-  }`;
+  }
+  // The alpha needs the same treatment and for a sharper reason: it is the operand
+  // of the blend, so one NaN alpha poisons the DESTINATION texel even when the colour
+  // beside it is perfectly finite. Measured on the guarded build: a full scan of the
+  // scene target at the moment a bloom mip went bad found exactly 3 non-finite
+  // components in 7,025,020 — about one pixel — and that one pixel became 2871 of the
+  // 6944 texels in the smallest mip, which is the rectangle. Guarding the colour alone
+  // left this door open.
+  if (!(_pAlpha >= 0.0 && _pAlpha <= 1.0)) _pAlpha = 1.0;`;
 
 // Reflection composite. Modifies `color` in place. Reconstructs its own
 // normal from screen-space derivatives so it works regardless of how the
