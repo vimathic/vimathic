@@ -1828,8 +1828,18 @@ export class ShaderEditor {
       renderer.debug.onShaderError = prevHook;
     }
 
-    if (captured) onFailure(new Error(captured));
-    else onSuccess();
+    // FIX: say whether it worked. Every report this method makes goes to
+    // #se-error and to onCompileResult — both of which live inside the shader
+    // editor overlay, and the overlay is CLOSED on every path that matters.
+    // Applying a preset whose shader does not compile wrote the driver's
+    // message into a hidden div, left the previous program bound, and returned
+    // nothing at all — so applyState went on to report "✔ State loaded" while
+    // the screen showed the old shader and the editor buffer had already been
+    // overwritten with the source that failed, destroying the operator's draft.
+    // The boolean is what lets the caller put that on screen instead.
+    if (captured) { onFailure(new Error(captured)); return false; }
+    onSuccess();
+    return true;
   }
 
   /**

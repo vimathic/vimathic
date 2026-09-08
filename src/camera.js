@@ -294,9 +294,16 @@ export class CameraSystem {
       // it gets no runScript() tick, so the old bank angle would hang around.
       this.cpRoll    = 0;
       this._setScriptStatus('ok', '✔ Running', 2000);
+      return true;
     } catch (e) {
       this._setScriptStatus('error', '⚠ Parse: ' + e.message);
       this.cpActive = false;
+      // FIX: and hand the failure back. _setScriptStatus writes into the camera
+      // programmer overlay, which is closed whenever a preset or a clip step is
+      // what called this — so a script that does not parse disarmed itself where
+      // nobody was looking while the apply reported success. Same shape as
+      // ShaderEditor.compileAndApply, and fixed the same way.
+      return false;
     }
   }
 

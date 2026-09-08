@@ -205,12 +205,31 @@ export class ClipPlayer {
     // auto-rotate wish, no programmer swap). preserveColor / preserveMaterial
     // do the same for the two parameters an AUTO toggle may be cycling — read
     // per step, so switching AUTO off hands them back immediately.
-    if (entry) this._ui.applyState(entry.state, {
-      cameraTransitionMs: camMs,
-      preserveCamera:     this.camOverride,
-      preserveColor:      !!this._ui.autoColor?.enabled,
-      preserveMaterial:   !!this._ui.autoMaterial?.enabled,
-    });
+    // FIX: this ignored BOTH failures it can have. A step naming a preset that
+    // has since been renamed or deleted found no entry and applied nothing; a
+    // step whose snapshot applyState turns away got the documented `false` and
+    // it was dropped. Either way the status line went on counting the step down
+    // as though it were live, and the picture simply did not change — every
+    // other caller of applyState reads that boolean (presets.js 833/979/985/
+    // 1177), and the clip player, the one caller running unattended, did not.
+    //
+    // It reports and carries on rather than stopping: a set with one stale name
+    // in it should lose that step, not halt at it. The schedule below is
+    // deliberately untouched, so the run stays on its wall clock.
+    const applied = entry
+      ? this._ui.applyState(entry.state, {
+          cameraTransitionMs: camMs,
+          preserveCamera:     this.camOverride,
+          preserveColor:      !!this._ui.autoColor?.enabled,
+          preserveMaterial:   !!this._ui.autoMaterial?.enabled,
+        }) !== false
+      : false;
+
+    if (!applied) {
+      const why = entry ? 'was rejected' : 'is missing from the preset list';
+      console.warn(`[clip] step ${this._idx + 1} ("${step.name}") ${why} — nothing applied`);
+      this._ui._showToast?.(`⚠ Clip step "${step.name}" ${why}`, true);
+    }
 
     const morphMs     = this._morphMs();
     this._stepHoldMs  = holdMs;

@@ -695,12 +695,21 @@ export const PresetMixin = {
       cam.cpSelectedKf = null;
       cam.buildTimeline();
       if (cs.active && code) {
+        // FIX: loadScript reports a parse failure into the camera programmer's
+        // status line, and that overlay is closed on every path that gets here.
+        // The script silently did not arm while the apply reported success, so
+        // the camera just sat where the tween left it with nothing saying why.
+        const arm = () => {
+          if (cam.loadScript(code) === false) {
+            this._showToast('⚠ Preset camera script did not parse — not running', true);
+          }
+        };
         if (s.camera) {
           // Camera tween in flight — defer script activation to onDone.
-          postTweenCameraActions.push(() => cam.loadScript(code));
+          postTweenCameraActions.push(arm);
         } else {
           // No camera tween — start script immediately.
-          cam.loadScript(code);
+          arm();
         }
       }
     }
@@ -732,7 +741,17 @@ export const PresetMixin = {
         se._frag = s.shader.frag;
         // Re-apply the custom shader via the compileAndApply path.
         if (DOM.seCode) DOM.seCode.value = se._tab === 'vert' ? se._vert : se._frag;
-        se.compileAndApply();
+        // FIX: compileAndApply writes the driver's message into #se-error —
+        // inside the shader editor overlay, which is closed on every path that
+        // reaches this line. A preset carrying a shader that does not compile
+        // therefore left the previous program bound, reported "✔ State loaded",
+        // and — because the two lines above have already run — overwrote the
+        // editor buffer with the source that failed, destroying whatever draft
+        // the operator had there. The toast is the channel they can actually
+        // see. `=== false` and not `!ok`: only an explicit failure warns.
+        if (se.compileAndApply() === false) {
+          this._showToast('⚠ Preset shader did not compile — previous shader still live', true);
+        }
       }
     } else if (s.shader && (se?.customVS || se?.customFS)) {
       // A snapshot that carries a shader record with hasCustom:false describes
@@ -870,6 +889,28 @@ export const PresetMixin = {
       panel.addEventListener('change', schedule, { capture: true });
       panel.addEventListener('click',  schedule, { capture: true });
     }
+    // FIX: both editor overlays are SIBLINGS of .controls-panel in index.html
+    // (#shader-editor-overlay and #cam-editor-overlay sit at the top level, the
+    // panel is elsewhere), so no event inside either one reached the delegated
+    // listeners above in any phase. Write a shader, press APPLY, close the
+    // editor, change nothing else: nothing was ever scheduled. The 1 s
+    // fingerprint below did not cover them either, which left beforeunload as
+    // the only writer — and that does not run on a GPU-process crash, an OOM
+    // during a WebM take, or a background-tab discard. The snapshot still on
+    // disk then said hasCustom:false and the next boot reverted to the built-in
+    // shader as if the work had never happened.
+    //
+    // The draft text counts, not just an APPLY: captureState stores se._vert /
+    // se._frag whenever no custom program is live, so what is in the buffer IS
+    // the state worth saving. schedule() is debounced, so a keystroke here
+    // costs no more than a slider drag does.
+    for (const sel of ['#shader-editor-overlay', '#cam-editor-overlay']) {
+      const overlay = document.querySelector(sel);
+      if (!overlay) continue;
+      overlay.addEventListener('input',  schedule, { capture: true });
+      overlay.addEventListener('change', schedule, { capture: true });
+      overlay.addEventListener('click',  schedule, { capture: true });
+    }
     // Hotkeys + MIDI + drag-orbit fire outside the panel — catch them via
     // a periodic low-cost tick, comparing a fingerprint to decide whether to
     // schedule a real save.
@@ -880,12 +921,19 @@ export const PresetMixin = {
     // slider, a MIDI CC on anything but colour, a shape change from R — none of
     // them moved it, and none of them scheduled a save. They were only ever
     // written if something else happened to schedule one within the same
-    // session. It covers what the snapshot covers now; the camera stays rounded
-    // to 2 dp so that orbit jitter alone does not keep the timer armed.
+    // session. The camera stays rounded to 2 dp so that orbit jitter alone does
+    // not keep the timer armed.
+    //
+    // FIX: that round's closing claim — "It covers what the snapshot covers
+    // now" — was not true when it was written, and the two fields it missed
+    // were the shader source and the camera script: the only two a user spends
+    // real time on. It is true now, and tests/autosave-coverage.test.js checks
+    // it against captureState's own output rather than against this sentence.
     let _lastFp = '';
     const fingerprint = () => {
       try {
         const a = this.audio, r = this.render, mv = this.mathViz;
+        const se = this.shaderEditor, cam = this.camera;
         const cp = r.camera.position, ct = r.orbit?.target;
         const ctx = { audio: a, render: r, camera: this.camera };
         // Per field, not per fingerprint: one getter reading something that is
@@ -906,6 +954,24 @@ export const PresetMixin = {
           safe(() => DOM.gpuSel?.value), safe(() => r.grid?.visible),
           safe(() => cp.x.toFixed(2)), safe(() => cp.y.toFixed(2)), safe(() => cp.z.toFixed(2)),
           safe(() => ct ? `${ct.x.toFixed(2)},${ct.y.toFixed(2)},${ct.z.toFixed(2)}` : ''),
+          // FIX: the comment below claims "It covers what the snapshot covers
+          // now", and the two most expensive fields in that snapshot were the
+          // two it did not read. The shader source and the camera script are
+          // the things a user spends an hour on; every other field here can be
+          // rebuilt from a slider in seconds. Read exactly what captureState
+          // writes, so the claim is true rather than aspirational:
+          //   shader    → hasCustom, and the bodies that pair with it
+          //   camScript → active, code, params, keyframes
+          // The strings are compared whole rather than hashed. At 1 Hz over a
+          // few KB that is not worth a hash function nobody would trust to be
+          // collision-free on exactly the edit that matters.
+          safe(() => (se?.customVS ? 1 : 0)),
+          safe(() => se?._appliedVert ?? se?._vert),
+          safe(() => se?._appliedFrag ?? se?._frag),
+          safe(() => cam?.cpActive),
+          safe(() => cam?.cpSource ?? DOM.ceCode?.value),
+          safe(() => JSON.stringify(cam?.cpParams ?? {})),
+          safe(() => (cam?.cpKeyframes ?? []).map(k => `${k.t} ${k.code}`).join('')),
           ...params,
         ].join('|');
       } catch (_) { return ''; }

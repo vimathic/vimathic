@@ -26,7 +26,31 @@ import { DOM, elementOwnsKey } from './dom.js';
 import { isAboutModalOpen } from './ui/about-modal.js';
 
 // ── App config ──────────────────────────────────────────────────────────────
-const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
+//
+// FIX: the UA test alone classified every iPad as a desktop. Since iPadOS 13,
+// Safari defaults to Request Desktop Website and reports
+//
+//   Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) … Safari/605.1.15
+//
+// which carries none of the five tokens below, and every iPad but the mini is
+// 768 px or wider in portrait — so the width fallback did not catch it either.
+// This one boolean decides planeSegs (160 vs 80), the render frame skip, the
+// uniform throttle, MSAA, the device-pixel-ratio cap (iPads are DPR 2, so the
+// backing store came out 2.25× the intended area), the perf tier, the math
+// worker's throttle, roughly twenty geometry LOD choices, every transition
+// duration and two GPU-budget refusals. The largest touch class the app has
+// was taking the desktop path through all of it — the exact state the comment
+// at the frame-skip declaration was written to prevent.
+//
+// navigator.maxTouchPoints is the stable signal: iPadOS reports 5 whatever the
+// UA says, and a real Mac reports 0 — macOS ships no touchscreen. Gated on the
+// Macintosh UA so a Windows laptop with a touch panel, which is a desktop by
+// every budget here, is not swept in with it.
+//
+// Kept on one line: tests/clock-rate.test.js and tests/device-class.test.js
+// both lift this declaration out of the file by regexp and execute it against
+// their own navigator/window, so the app is judged by the code it ships.
+const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (/Macintosh/i.test(navigator.userAgent) && (navigator.maxTouchPoints || 0) > 1) || window.innerWidth < 768;
 // FIX(#29): dropped beatCooldown / beatThreshold. They duplicated
 // AudioEngine.BEAT_COOLDOWN / BEAT_FLOOR (audio.js — the second was called
 // BEAT_THRESHOLD until round 11 turned it into a floor) but CFG is only ever
