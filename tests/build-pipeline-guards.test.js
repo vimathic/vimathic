@@ -91,6 +91,10 @@ const FULL_DIST = [
   'favicon.ico', 'favicon-16.png', 'favicon-32.png', 'favicon-48.png',
   'apple-touch-icon.png', 'android-chrome-192.png', 'android-chrome-512.png',
   'site.webmanifest', 'sitemap.xml', 'robots.txt', 'llms.txt',
+  // The MIT notices for the libraries the single file inlines. Emitted by
+  // plugins/vimathic-licenses.js; index.html carries them as a trailing comment
+  // too, because it is the copy that gets shared on its own.
+  'THIRD-PARTY-LICENSES.txt',
   'docs/index.html', 'docs/roadmap.html',
 ];
 
@@ -133,6 +137,9 @@ describe('the required build check asks for the files a deploy needs', () => {
     ['llms.txt',           'the LLM summary is gone',              /llms\.txt/],
     ['docs/index.html',    'the whole docs site is gone',          /docs\/index\.html/],
     ['support-hero.webp',  'the Roadmap hero is broken',           /support-hero\.webp/],
+    ['THIRD-PARTY-LICENSES.txt',
+                           'the shipped build carries no MIT notice for the code it inlines',
+                                                                   /THIRD-PARTY-LICENSES\.txt/],
   ];
 
   for (const [file, consequence, named] of MUST_BE_THERE) {

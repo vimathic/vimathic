@@ -92,7 +92,14 @@ function createMathWorker() {
     console.warn(
       '[MathVisualizer] Worker unavailable — math will run synchronously on main thread.\n' +
       'Cause:', e.message, '\n' +
-      'Hint: math-worker-*.js must be at the same path as index.html on the server.'
+      // FIX: name the case this actually happens in. A page opened over file://
+      // has origin `null`, and a module Worker cannot be constructed from one —
+      // so the deploy README advertises ("open in any modern browser, no server
+      // needed") is precisely the deploy where every deform runs on the main
+      // thread for the whole session. The old hint named a server path, which
+      // is the one situation where there is no server.
+      'Hint: over file:// the page has origin `null` and no worker can be built — serve the ' +
+      'folder over http. Otherwise math-worker-*.js must sit beside index.html on the server.'
     );
     if (typeof window !== 'undefined') window._vimathic_worker_active = false;
     return null;

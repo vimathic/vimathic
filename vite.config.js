@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { vimathicDocs } from './plugins/vimathic-docs.js';
 import { vimathicBuildInfo } from './plugins/vimathic-build-info.js';
+import { vimathicLicenses } from './plugins/vimathic-licenses.js';
 
 /**
  * Tiny inline plugin — copies second-screen.html verbatim into dist/
@@ -34,6 +35,13 @@ export default defineConfig({
     // in the JS graph before singleFile inlines everything into one HTML.
     // Ordering here is belt-and-braces only: vimathicBuildInfo is enforce:'pre'
     // and viteSingleFile is enforce:'post', so Vite already orders them.
+    // vimathicLicenses comes FIRST among the normal plugins on purpose. Every
+    // one of these does its file work in closeBundle, which Vite calls in
+    // plugin order, and vimathicDocs measures dist/index.html to state the
+    // bundle size in llms.txt — so the notices have to be appended before that
+    // measurement, or the figure describes a file that is no longer the one
+    // being shipped.
+    vimathicLicenses(),
     vimathicDocs({ dir: 'documents' }),
     vimathicBuildInfo(),
     viteSingleFile(),

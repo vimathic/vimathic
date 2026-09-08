@@ -1143,11 +1143,25 @@ export class AudioEngine {
 
     if (declined()) return;
 
+    // FIX: the comment that stood here ended "...so this works regardless of
+    // where index.html is hosted (vimathic.com, localhost, file://, etc.)", and
+    // file:// is the one case it got wrong. fetch() refuses the file scheme
+    // outright — Chrome rejects with a TypeError before any request leaves —
+    // so on the deploy README advertises in as many words ("open in any modern
+    // browser, no server needed") the intro track has never once loaded. It
+    // failed into the catch below, which warns to the console and nothing else,
+    // under a comment asserting the opposite. Named here rather than left to
+    // fail, so the reason is in the log instead of a scheme error.
+    if (globalThis.location?.protocol === 'file:') {
+      console.warn('[audio] intro track skipped: fetch() cannot read the file: scheme. ' +
+                   'Serve the folder over http to get it.');
+      return;
+    }
+
     try {
-      // The bundled intro track is emitted to dist/vimathic-intro.mp3 by
-      // Vite (from public/). Using a relative URL means this works
-      // regardless of where index.html is hosted (vimathic.com, localhost,
-      // file://, etc.).
+      // The bundled intro track is emitted to dist/vimathic-intro.mp3 by Vite
+      // (from public/). The relative URL is what makes it work under a sub-path
+      // deploy as well as at the apex — see the file:// case handled above.
       const response = await fetch('./vimathic-intro.mp3');
       if (!response.ok) return;
       const blob = await response.blob();

@@ -177,6 +177,27 @@ mathViz.setFormula('differentialEqs', 'pendulumNonLinear');
 // beforeunload flush, so from this point on the state survives reloads.
 ui.bootPersist();
 
+// ── The file:// deploy costs two things, and said nothing about either ──────
+//
+// README advertises `dist/index.html ← open in any modern browser, no server
+// needed` and "Share it as a file attachment. Open from USB. Works offline."
+// Two of those words are doing more work than the code can support:
+//
+//   • The math worker cannot be built at all. A page opened over file:// has
+//     origin `null`, and a module Worker cannot be constructed from one, so
+//     every deform runs on the main thread for the whole session.
+//   • The bundled intro track cannot be fetched. fetch() refuses the file
+//     scheme, so the playlist starts empty.
+//
+// Both degrade rather than break — the app runs, slower and quieter — and both
+// used to report only to the console, each under a comment claiming file://
+// was supported. One line on screen, once, naming what is missing and what to
+// do about it. Not an error: this deploy is a documented, working one, and the
+// operator chose it. It is only that they were owed the trade-off.
+if (globalThis.location?.protocol === 'file:') {
+  ui._showToast('Opened as a file: no math worker, no intro track. Serve the folder over http for full speed.');
+}
+
 // ── Hotkeys ───────────────────────────────────────────────────────────────────
 // ── Non-repeating randomization pools ────────────────────────────────────────
 // Shared instances so 'R', 'Q', and 'F' never collide:

@@ -1544,9 +1544,9 @@
 </div>
 
 <!-- Shader Editor Overlay -->
-<div id="shader-editor-overlay">
+<div id="shader-editor-overlay" role="dialog" aria-modal="true" aria-labelledby="se-title">
   <div id="shader-editor-box">
-    <div id="se-header"><h3>✎ GLSL SHADER EDITOR</h3><button id="se-close">✕</button></div>
+    <div id="se-header"><h3 id="se-title">✎ GLSL SHADER EDITOR</h3><button id="se-close">✕</button></div>
     <div id="se-body">
       <div id="se-ref">
         <b style="color:#aaa">Uniforms:</b> <span>uTime</span> · <span>uBass</span> 0–1.2 · <span>uMid</span> 0–1 · <span>uTreble</span> 0–1.2 · <span>uBeat</span> 0–1 · <span>uAmp</span> · <span>uWI</span><br>
@@ -1571,9 +1571,9 @@
 </div>
 
 <!-- Camera Programmer Overlay -->
-<div id="cam-editor-overlay">
+<div id="cam-editor-overlay" role="dialog" aria-modal="true" aria-labelledby="ce-title">
   <div id="cam-editor-box">
-    <div id="ce-header"><h3>🎬 CAMERA PROGRAMMER</h3><button id="ce-close">✕</button></div>
+    <div id="ce-header"><h3 id="ce-title">🎬 CAMERA PROGRAMMER</h3><button id="ce-close">✕</button></div>
     <div id="ce-body">
       <div id="ce-ref">
         <b>Read:</b> <span>time bass mid treble beat bpm R</span> &nbsp;
@@ -1627,10 +1627,10 @@
 </div>
 
 <!-- Audio Source Modal -->
-<div id="audio-src-overlay">
+<div id="audio-src-overlay" role="dialog" aria-modal="true" aria-labelledby="as-title">
   <div id="audio-src-box">
     <div id="as-header">
-      <h3>🎙 AUDIO SOURCE</h3>
+      <h3 id="as-title">🎙 AUDIO SOURCE</h3>
       <button id="as-close">✕</button>
     </div>
 
@@ -1711,10 +1711,10 @@
 </div>
 
 <!-- Output Modal -->
-<div id="output-overlay">
+<div id="output-overlay" role="dialog" aria-modal="true" aria-labelledby="out-title">
   <div id="output-box">
     <div id="out-header">
-      <h3>📤 VIDEO OUTPUT</h3>
+      <h3 id="out-title">📤 VIDEO OUTPUT</h3>
       <button id="out-close">✕</button>
     </div>
 

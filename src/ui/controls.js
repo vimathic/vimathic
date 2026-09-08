@@ -10,6 +10,7 @@ import { DOM, elementOwnsKey } from '../dom.js';
 import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam,
          NIGHT_SCHEME_FIRST, NIGHT_SCHEMES, ALL_SCHEMES, DRAG_FLOOR } from '../params.js';
 import { bindAboutModal, closeAbout, isAboutModalOpen } from './about-modal.js';
+import { bindOverlayFocus } from './overlay-focus.js';
 import { AutoCycler } from './auto-cycle.js';
 
 export function bindControls(ui) {
@@ -1255,6 +1256,12 @@ export function bindControls(ui) {
     // arrives.
     if (_fsActive) _exitFS();
   });
+
+  // ── Keyboard containment for every dialog ────────────────────────────────
+  // The Escape loop above closes them; this holds the focus while they are up.
+  // Bound once for all five — see the note in overlay-focus.js on why it
+  // watches the `.open` class instead of being called at each open site.
+  bindOverlayFocus();
 
   // ── About / documentation modal ──────────────────────────────────────────
   // Self-contained: own button, own overlay, own Escape entry above.
