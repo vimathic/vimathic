@@ -142,8 +142,14 @@ function modelMeshMaterial(vs = VS, fs = FS) {
   const ml = Object.create(ModelLoader.prototype);
   ml._render = { U: uniforms() };
   ml._meshes = [];
-  ml._applyShader(group, vs, fs);
-  return { material: ml._meshes[0].material, mesh, meshes: ml._meshes };
+  // _applyShader RETURNS its meshes; it used to push them into ml._meshes. The
+  // shared array is what let two overlapping imports accumulate into one list
+  // and CLEAR MODEL dispose a model it was leaving on screen — see
+  // tests/model-loader-supersession.test.js. Nothing about this file's subject
+  // changes: the material still comes from the real method.
+  const meshes = ml._applyShader(group, vs, fs);
+  assert.deepEqual(ml._meshes, [], '_applyShader wrote into the shared array again');
+  return { material: meshes[0].material, mesh, meshes };
 }
 
 describe('every material that reads aBaseY declares a default for it', () => {

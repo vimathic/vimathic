@@ -1920,15 +1920,46 @@ export class ShaderEditor {
 }
 
 // ── ModelLoader ───────────────────────────────────────────────────────────────
+/**
+ * Release the GPU resources of a group that never reached the scene.
+ *
+ * An abandoned import is the one case where the meshes are not in _meshes, so
+ * clear() cannot reach them — traversal is the only handle on them. Their
+ * materials are still the loader's own here (OBJLoader / GLTFLoader), because
+ * _applyShader has not run: this is called before it, deliberately.
+ */
+function disposeGroup(group) {
+  if (!group?.traverse) return;
+  group.traverse(child => {
+    if (!(child instanceof THREE.Mesh)) return;
+    child.geometry?.dispose?.();
+    (Array.isArray(child.material) ? child.material : [child.material])
+      .forEach(m => m?.dispose?.());
+  });
+}
+
 export class ModelLoader {
   /** @param {import('./render.js').RenderEngine} render */
   constructor(render) {
     this._render = render;
     this._model  = null;
     this._meshes = [];
+    // FIX: the third instance of the supersession idiom AudioEngine.loadPlay
+    // and MathVisualizer._generation already implement. Without it, two
+    // overlapping imports both reached the mutation at the end of load() and
+    // the FIRST one to resolve was stranded: it assigned _model and added its
+    // group to the scene, the second overwrote _model and added its own, and
+    // nothing held a reference to the first group any more. Pressing
+    // ✕ CLEAR MODEL then removed group B while disposing BOTH groups'
+    // geometry and material — so group A stayed on stage, drawn forever from
+    // buffers three re-uploads on the next frame, unreachable, until a reload.
+    this._loadId = 0;
   }
 
   async load(file, onLoading, getCustomShaders) {
+    const loadId = ++this._loadId;
+    const superseded = () => loadId !== this._loadId;
+
     onLoading(true, 0, 'LOADING MODEL…');
     this.clear();
     const r = this._render;
@@ -1945,10 +1976,23 @@ export class ModelLoader {
         group = gltf.scene;
       } else { throw new Error('Unsupported: .' + ext); }
 
+      // A newer import owns the stage. This group was parsed but never added to
+      // the scene, so it is ours alone to dispose — and it must be disposed
+      // here, or the abandoned load leaks exactly what it was meant to stop
+      // leaking. Nothing else is touched: the newer load owns _model, the
+      // meshes, the info line and the loading bar.
+      if (superseded()) { disposeGroup(group); return; }
+
       onLoading(true, 0.95, 'APPLYING SHADER…');
       this._centerAndScale(group);
       const { vs, fs } = getCustomShaders();
-      this._applyShader(group, vs || VS, fs || FS);
+      // _applyShader RETURNS the meshes now instead of pushing into shared
+      // state. Pushing is what turned the stranded group into a disposal bug:
+      // clear() takes an early return while _model is still null — which is
+      // every moment of a load — so the array was never emptied and one CLEAR
+      // MODEL disposed two imports' worth of geometry, including the one it
+      // was leaving on screen.
+      this._meshes = this._applyShader(group, vs || VS, fs || FS);
       this._model = group;
       r.scene.add(group);
       // FIX: the engine takes the stage over, instead of this method reaching
@@ -1959,14 +2003,24 @@ export class ModelLoader {
       document.getElementById('btn-clear-model').style.display = '';
       onLoading(true, 1, 'DONE');
     } catch (e) {
+      // A superseded load failing says nothing about the one that replaced it;
+      // reporting it would overwrite a newer import's info line with an error
+      // about a file the operator has already moved on from.
+      if (superseded()) return;
       console.error('Model load error:', e);
       document.getElementById('model-info').textContent = '⚠ ' + e.message;
       // Nothing took the stage, so give it back — clear() above may have
       // removed a model that was working perfectly well before this attempt.
       r.setExternalModel(null);
+    } finally {
+      // In `finally` because three paths now leave this method — success, the
+      // error report, and the two supersession returns — and the blob URL is
+      // this load's own either way. A `return` inside try still runs it.
+      URL.revokeObjectURL(url);
+      // The bar belongs to whoever is still loading. Ours to take down only if
+      // no newer import has raised it since.
+      setTimeout(() => { if (!superseded()) onLoading(false); }, 300);
     }
-    URL.revokeObjectURL(url);
-    setTimeout(() => onLoading(false), 300);
   }
 
   /**
@@ -1978,13 +2032,22 @@ export class ModelLoader {
    * removed the model and shown nothing at all.
    */
   clear() {
-    if (!this._model) return;
-    this._render.scene.remove(this._model);
-    this._meshes.forEach(m => {
+    // Both fields are taken and reset BEFORE the early return. They are written
+    // together at the end of load(), so a populated _meshes with a null _model
+    // should be impossible — but the old order made the early return skip
+    // `this._meshes = []` entirely, and that is precisely what let one import's
+    // meshes survive into the next one's array and be disposed underneath it.
+    // Resetting first costs nothing and removes the shape of that bug.
+    const model  = this._model;
+    const meshes = this._meshes;
+    this._model  = null;
+    this._meshes = [];
+    if (!model) return;
+    this._render.scene.remove(model);
+    meshes.forEach(m => {
       m.geometry.dispose();
       (Array.isArray(m.material) ? m.material : [m.material]).forEach(mt => mt.dispose());
     });
-    this._model = null; this._meshes = [];
     this._render.setExternalModel(null);
   }
 
@@ -1998,7 +2061,18 @@ export class ModelLoader {
     group.position.y = 0;
   }
 
+  /**
+   * Swap every mesh in the group onto the app's shader material.
+   *
+   * Returns the meshes rather than pushing them into this._meshes. It used to
+   * push, and since clear()'s early return left that array intact for the whole
+   * of a load, two overlapping imports accumulated into one list — so CLEAR
+   * MODEL removed the second group while disposing both groups' geometry and
+   * material, and the first stayed on stage drawn from disposed buffers. The
+   * caller now owns the assignment, one list per load.
+   */
   _applyShader(group, vs, fs) {
+    const meshes = [];
     group.traverse(child => {
       if (!(child instanceof THREE.Mesh)) return;
       (Array.isArray(child.material) ? child.material : [child.material]).forEach(m => m.dispose());
@@ -2020,7 +2094,8 @@ export class ModelLoader {
       mat.defaultAttributeValues.aBodyK = [0];
       mat.defaultAttributeValues.aBandU = [-1];
       child.material = mat;
-      this._meshes.push(child);
+      meshes.push(child);
     });
+    return meshes;
   }
 }
