@@ -862,9 +862,19 @@ function bindShaderEditor(ui) {
   // the failing line and scroll it into view; on success we clear any
   // existing highlight. The −4 offset on scroll keeps a few lines of
   // context visible above the error.
-  se.cb.onCompileResult = ({ ok, message, line }) => {
-    if (ok) {
-      seError.style.color = 'var(--green)';
+  //
+  // FIX: paint by `level`, not by `ok`. A compile can succeed and still be
+  // invisible — a CPU formula is active, so the template discards the body's
+  // `y` — and shaders.js reports that as ok:true with level:'warn'. Painting it
+  // green would put the one message the operator has to read in the colour that
+  // means "nothing to see here". `level` is optional, so a caller that sets only
+  // `ok` keeps the old two-colour behaviour.
+  se.cb.onCompileResult = ({ ok, level, message, line }) => {
+    const kind = level ?? (ok ? 'ok' : 'error');
+    if (kind !== 'error') {
+      // Amber for a warning: the shader is installed and valid, and what is
+      // wrong is the mode the app is in.
+      seError.style.color = kind === 'warn' ? '#fb4' : 'var(--green)';
       _clearErrLine();
     } else {
       seError.style.color = '#f66';

@@ -52,6 +52,40 @@ Your code is the **body** of `main()`. The scaffold provides:
 
 You also have helper functions: `turb(vec2 p)` for fractal turbulence, `ramu(vec2 p)` for the Ramanujan radial pattern, `h_sech(float x)` for hyperbolic secant.
 
+### The 24-band spectrum
+
+The vertex scaffold also hands you the analyser's full 24-band spectrum — the same data Spectrum Rings is drawn from. `uBass`, `uMid` and `uTreble` are three numbers for the whole mix; this is twenty-four, and you can put each one somewhere different on the body.
+
+| Name | Type | Meaning |
+|---|---|---|
+| `bandAtRadius(float r)` | `float` | Band level at distance `r` from the centre. `r = 0` is band 0 (lowest), `r = uBandR` is band 23 (highest) |
+| `bandAtU(float u)` | `float` | The same lookup on a normalised `0…1` coordinate — use it to map bands onto something other than radius |
+| `uBands[24]` | `float[24]` | The raw levels, if you want one specific band. Index with a constant |
+| `uBandR` | `float` | Radius the current body actually occupies, rewritten on every shape change, so band 23 lands on the rim of whatever is on screen |
+| `uBandDepth` | `float` | The Spectrum Rings slider |
+
+**These are vertex-only.** The fragment scaffold has no band functions; its only spectral channel is the `t` ramp, which the vertex stage has already shifted.
+
+**Spectrum Rings already adds one band term**, and its default is 0.30, not 0 — so if you call `bandAtRadius` yourself while the slider is up, the body gets the spectrum twice. Set **Spectrum Rings to 0** and your call is the only band term, which is usually what you want when you are writing the mapping by hand.
+
+A ring for each band, an octave of them from the centre outwards:
+
+```glsl
+y = bandAtRadius(r) * 1.2 * a;
+```
+
+One band on its own — band 3 is low bass, band 20 is air — driving a whole-surface pulse:
+
+```glsl
+y = sin(r * 6.0 - T * 2.0) * uBands[3] * 2.0 * a;
+```
+
+Bands mapped around the body instead of outwards from the centre, so the spectrum wraps the silhouette:
+
+```glsl
+y = bandAtU((ang + 3.14159) / 6.28318) * 1.5 * a;
+```
+
 A minimal example:
 
 ```glsl

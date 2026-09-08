@@ -1637,6 +1637,32 @@ const SE_PRESETS = [
   { name:'🔆 Lava',     tab:'frag', code:`c=lava(t)*(0.7+uBass*0.5+uBeat*0.3);` },
 ];
 
+/**
+ * Does this vertex body write the scaffold's `y`?
+ *
+ * Used to decide whether a successful compile is also a VISIBLE one: the
+ * template discards `y` whenever a CPU formula is active, so a body that writes
+ * it is about to do nothing and the operator should be told at APPLY.
+ *
+ * `pos.y` is deliberately excluded, and that is what the `[^\w.]` is for: a
+ * write straight to `pos` survives in both modes (the tail of the template
+ * scales it by uMorphProgress either way), so such a body is unaffected by the
+ * discard and must not be warned about. `y ==` is a comparison and `y2 =` is a
+ * different variable; both are excluded. Comments are stripped first so `y = …`
+ * inside an explanation does not count.
+ *
+ * A heuristic on text, arranged so its failure mode is a MISSED warning rather
+ * than a false one: a body that reaches `y` through a spelling this does not
+ * recognise simply gets the old behaviour back, which is what shipped for the
+ * whole of 1.0.
+ */
+export function bodyAssignsY(body) {
+  const code = String(body ?? '')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ');
+  return /(^|[^\w.])y\s*(=[^=]|[-+*/]=)/.test(code);
+}
+
 export class ShaderEditor {
   /** @param {import('./render.js').RenderEngine} render */
   constructor(render) {
@@ -1657,7 +1683,14 @@ export class ShaderEditor {
 
     // ── Callbacks — UI wires these in bindAll() ───────────────────────
     this.cb = {
-      /** { ok:bool, message:string, line:number|null } */
+      /**
+       * { ok:bool, level:'ok'|'warn'|'error', message:string, line:number|null }
+       *
+       * `level` was added for the one outcome the boolean cannot describe: a
+       * compile that succeeded and still will not show. `ok` is kept and still
+       * means "the GLSL is valid", so a consumer that only reads it behaves as
+       * before; a warn arrives with ok:true because it did compile.
+       */
       onCompileResult: (_r) => {},
       /** Called when open() is invoked — UI populates presets + textarea */
       onOpen:          (_tab, _code, _presets) => {},
@@ -1748,20 +1781,52 @@ export class ShaderEditor {
       // One call reaches gpuMat, the live POINTS proxy, and any proxy built
       // later — see RenderEngine.applyShaderSource().
       this._render.applyShaderSource(fullVS, fullFS);
-      errEl.style.color = 'var(--green)';
-      errEl.textContent = '✔ Compiled & applied';
-      this.cb.onCompileResult({ ok: true, message: '✔ Compiled & applied', line: null });
+
+      // FIX: "compiled" and "will be visible" are different facts, and only one
+      // of them was ever reported. The template discards the body's `y` whenever
+      // a CPU formula is active — src/shaders.js, the `else` branch of the
+      // `if(uMathMode==0)` line, which writes `pos.y=pos.y*uMorphProgress` and
+      // never reads `y`. So an operator who writes a displacement, presses
+      // APPLY and gets a green "✔ Compiled & applied" sees nothing change, and
+      // the only reasonable conclusion is that their code is wrong. It is not.
+      //
+      // The app BOOTS into that state (main.js activates a CPU formula on the
+      // first frame) and roughly 192 of the ~230 entries in SHADER MODE keep it
+      // there, so this is the ordinary first experience of the editor rather
+      // than an edge case. documents/shader-editor.md has described the trap in
+      // prose since round 4; describing it is not the same as saying it at the
+      // moment it happens, to the person it is happening to.
+      //
+      // Only when the body actually writes `y`: a fragment-only edit is
+      // unaffected — custom colour applies in every mode — and warning there
+      // would be noise on a correct action.
+      const cpuMode = this._render?.U?.uMathMode?.value !== 0;
+      const wasted  = cpuMode && bodyAssignsY(vertBody);
+      const message = wasted
+        ? '⚠ Compiled — a CPU formula is active, so y is discarded. Pick a numbered GPU shader (1–38) in SHADER MODE.'
+        : '✔ Compiled & applied';
+
+      // Amber, not the success green and not the failure red: the shader is
+      // installed and valid, and the thing that is wrong is the app's mode.
+      errEl.style.color = wasted ? '#fb4' : 'var(--green)';
+      errEl.textContent = message;
+      this.cb.onCompileResult({ ok: true, level: wasted ? 'warn' : 'ok', message, line: null });
       // FIX: keep the handle. This tidy-up used to outlive whatever came next,
       // so a failure reported within two seconds — pressing APPLY twice while
       // fixing a typo is the ordinary way to get there — had its red message
       // and its line number blanked by the previous run's timer, leaving an
       // editor that said nothing about a shader that had not compiled. The
       // camera programmer's status line had the same defect.
+      //
+      // The warning gets longer than the tick. Two seconds is right for "✔" —
+      // it is a confirmation of something the operator just watched happen —
+      // and wrong for a sentence they have to read and act on, in a status line
+      // at 9px that they were not expecting to say anything.
       this._okTimer = setTimeout(() => {
         this._okTimer = null;
         errEl.textContent = '';
-        this.cb.onCompileResult({ ok: true, message: '', line: null });
-      }, 2000);
+        this.cb.onCompileResult({ ok: true, level: 'ok', message: '', line: null });
+      }, wasted ? 10000 : 2000);
     };
 
     const onFailure = (err) => {
