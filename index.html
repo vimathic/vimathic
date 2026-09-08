@@ -583,6 +583,10 @@
     .se-btn-apply{background:rgba(0,255,170,.1);border-color:var(--green);color:var(--green)}
     .se-btn-apply:hover{background:rgba(0,255,170,.2);transform:scale(var(--btn-scale-hover))}
     .se-btn-reset{background:rgba(255,58,122,.08);border-color:rgba(255,58,122,.4);color:var(--accent)}
+    /* TIDY is neither the destructive one nor the one that runs: amber, the
+       same colour the status line uses for "valid but not what you meant". */
+    .se-btn-tidy{background:rgba(255,187,68,.08);border-color:rgba(255,187,68,.4);color:#fb4}
+    .se-btn-tidy:hover{background:rgba(255,187,68,.18);transform:scale(var(--btn-scale-hover))}
     #se-preset-wrap{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
     .se-preset{background:rgba(0,255,255,.06);border:1px solid rgba(0,255,255,.2);border-radius:5px;
       padding:3px 9px;font-size:8px;color:var(--accent2);cursor:pointer;font-family:monospace;
@@ -1584,6 +1588,10 @@
       <div id="se-preset-wrap"></div>
       <div id="se-footer">
         <div id="se-error"></div>
+        <!-- TIDY rewrites what is in the box; it does not compile. Separate
+             from APPLY on purpose: the operator sees the edit before it runs,
+             and the text that compiles stays the text they are looking at. -->
+        <button class="se-btn se-btn-tidy" id="se-btn-tidy" title="Add missing decimal points, expand ^ to pow(), and use the scaffold's names">✎ TIDY</button>
         <button class="se-btn se-btn-reset" id="se-btn-reset">↺ RESET</button>
         <button class="se-btn se-btn-apply" id="se-btn-apply">▶ APPLY  Ctrl+S</button>
       </div>

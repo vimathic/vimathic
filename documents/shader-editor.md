@@ -31,8 +31,27 @@ Open **ADVANCED** in the control panel, expand **SHADER EDITOR**, and click **�
 - **Tabs** — switch between vertex and fragment code
 - **Presets strip** — eight starters covering both tab types
 - **Editor textarea** — your code goes here
+- **TIDY** — fix the three things GLSL is fussy about, without compiling
 - **APPLY** — compile and use; errors appear in red below
 - **RESET** — discard custom code, revert to built-ins
+
+## TIDY — write it as maths, press one button
+
+GLSL is stricter than the notation you think in, and three of its rules cause most of the red text a newcomer sees. **✎ TIDY** rewrites your code in the box to satisfy them. It does not compile anything and it does not save anything — you read the result, then press APPLY yourself.
+
+| You write | TIDY makes it | Why |
+|---|---|---|
+| `r * 8` | `r * 8.0` | GLSL has no automatic int→float, so `r * 8` is a type error — the single most common one |
+| `r^2` | `pow(r, 2.0)` | `^` is bitwise XOR in GLSL and does not accept floats at all |
+| `bass`, `time`, `spectrum(r)` | `b`, `T`, `bandAtRadius(r)` | The scaffold's own names, which are short because they are typed constantly |
+
+The name table is different per tab, and deliberately so: in the **vertex** body `t` is *treble* and time is `T`, while in the **fragment** body `t` is the palette ramp, so there the audio names expand to `uBass`, `uMid`, `uTreble` and `uTime` instead. `spectrum` is vertex-only, like the band functions it stands for.
+
+It is careful about numbers that must stay whole. Array indices (`uBands[3]`), `for` loop counters, and any statement that mentions `int` are left alone, as is anything already a float (`8.0`, `.5`, `1e-3`) and anything inside a comment.
+
+Where it is not sure, it does nothing. `a ^ b` with something complicated on either side is left as you wrote it rather than guessed at — a rewrite that compiles and means something else is worse than one that never happened. Ctrl+Z takes a tidy back.
+
+`beat` is not in the name table. The scaffold pins `bt` to 0 because beat-driven displacement flashes the surface on every onset — see the note in the preset table below — so opting in stays something you write by hand.
 
 ## What you write — vertex tab
 

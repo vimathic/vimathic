@@ -28,6 +28,7 @@
 
 import { MIDI_PARAMS } from '../utils.js';
 import { downloadBlob } from '../recorder.js';
+import { tidyGlsl, describeTidy } from '../glsl-tidy.js';
 
 export function bindModals(ui) {
   bindOutputModal(ui);
@@ -911,6 +912,36 @@ function bindShaderEditor(ui) {
   });
   document.getElementById('se-btn-apply').addEventListener('click', () => se.compileAndApply());
   document.getElementById('se-btn-reset').addEventListener('click', () => se.reset());
+
+  // ── TIDY — rewrite what is in the box, and do not compile it ─────────
+  // The result is written back into #se-code, which is the whole point: the
+  // buffer the operator is reading stays the buffer that compiles, so
+  // _parseErrorLine still finds it verbatim, presets still store one thing,
+  // and there is no second source of truth to reconcile. It is a separate
+  // button from APPLY so the edit can be read before it runs.
+  document.getElementById('se-btn-tidy')?.addEventListener('click', () => {
+    const { text, changed, changes } = tidyGlsl(seCode.value, se._tab);
+    if (!changed) {
+      se.cb.onCompileResult({ ok: true, level: 'ok', message: '✎ Nothing to tidy', line: null });
+      return;
+    }
+    // Through the selection rather than by assigning .value, for two reasons
+    // that both bite: assigning wipes the textarea's native undo stack, so a
+    // tidy the operator dislikes cannot be taken back with Ctrl+Z; and it
+    // fires no `input` event, so the delegated autosave listener on this
+    // overlay never sees the change. execCommand is deprecated and is still
+    // the only way to edit a textarea as if a person had typed it.
+    seCode.focus();
+    seCode.setSelectionRange(0, seCode.value.length);
+    let replaced = false;
+    try { replaced = document.execCommand('insertText', false, text); } catch (_) { /* below */ }
+    if (!replaced || seCode.value !== text) {
+      seCode.value = text;
+      seCode.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    _syncLineNums();
+    se.cb.onCompileResult({ ok: true, level: 'ok', message: describeTidy(changes), line: null });
+  });
   document.querySelectorAll('#shader-editor-box .se-tab').forEach(tab =>
     tab.addEventListener('click', () => se.switchTab(tab.dataset.tab)));
 
