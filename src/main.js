@@ -22,7 +22,7 @@ import { MathVisualizer } from './math-visualizer.js';
 import { getAllFormulasList } from './math-collections.js';
 import { FormulaPicker, isMathValue } from './formula-picker.js';
 import { SHAPE_NAMES } from './shapes.js';
-import { DOM } from './dom.js';
+import { DOM, elementOwnsKey } from './dom.js';
 import { isAboutModalOpen } from './ui/about-modal.js';
 
 // ── App config ──────────────────────────────────────────────────────────────
@@ -285,7 +285,11 @@ function _cycleShape() {
 }
 
 window.addEventListener('keydown', e => {
-  if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  // Was ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName),
+  // which let Space through on a focused <button> or <summary> — where the
+  // preventDefault below then cancelled the element's own activation and
+  // toggled playback instead. See elementOwnsKey in dom.js for the measurement.
+  if (elementOwnsKey(document.activeElement, e.key)) return;
   // The About dialog is modal for the pointer and was not for the keyboard, so
   // space toggled playback and D changed the shape behind a reader's back — on
   // first run, where the modal opens itself. Escape still reaches its own

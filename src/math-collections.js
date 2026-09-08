@@ -5029,13 +5029,53 @@ export const MATH_COLLECTIONS = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
+ * Look one entry up in a catalogue that is a plain object literal.
+ *
+ * Every catalogue in this file — MATH_COLLECTIONS, each `.formulas`, and
+ * VOLUME_FORMULAS — is written as `{ ... }`, so it inherits Object.prototype
+ * and `map[key]` answers for "constructor", "__proto__", "toString",
+ * "valueOf", "hasOwnProperty" and the rest. Those are not hypothetical keys:
+ * the volume formula id and the (collection, formula) pair are both restored
+ * from a preset file and from localStorage, so the string comes from outside.
+ *
+ * Measured before this existed: `VOLUME_FORMULAS['constructor']` is truthy, so
+ * the `if (!f)` in setVolumeFormula passed and its "Unknown volume formula"
+ * warning — the guard written for exactly this — never fired. The panel lit
+ * ⬡ VOLUME [ACTIVE], the console stayed silent, the body sat flat and frozen,
+ * and the key persisted itself into vimathic_persisted_state to do it again on
+ * the next boot. `getFormula('fractals', 'constructor')` was worse: it returned
+ * the Object CONSTRUCTOR, a live function whose `.name` is "Object", to a
+ * caller that had asked for a formula.
+ *
+ * Two checks, because either alone still lets something through. hasOwnProperty
+ * rejects the inherited key; the `.f` test rejects an own key whose value is
+ * the wrong shape. All 192 surface formulas and all 6 volume formulas carry
+ * `.f` as a function — counted, not assumed — so nothing real is refused here.
+ *
+ * @param {object} map catalogue keyed by id
+ * @param {string} key id from a preset, localStorage, a worker message or the UI
+ * @returns {object|null} the entry, or null if this catalogue has no such formula
+ */
+export function catalogueEntry(map, key) {
+  if (!map || typeof key !== 'string') return null;
+  if (!Object.prototype.hasOwnProperty.call(map, key)) return null;
+  const entry = map[key];
+  return entry && typeof entry.f === 'function' ? entry : null;
+}
+
+/**
  * Retrieve a single formula function by collection and key.
  * @param {string} collectionId — key in MATH_COLLECTIONS
  * @param {string} formulaKey   — key inside collection.formulas
  * @returns {{ name, formula, f } | null}
  */
 export function getFormula(collectionId, formulaKey) {
-  return MATH_COLLECTIONS[collectionId]?.formulas?.[formulaKey] ?? null;
+  // The collection id needs the own-property check too. It was safe only by
+  // accident: `MATH_COLLECTIONS['constructor']` is the Object constructor, and
+  // what stopped it was the `?.formulas` that follows returning undefined.
+  if (typeof collectionId !== 'string' ||
+      !Object.prototype.hasOwnProperty.call(MATH_COLLECTIONS, collectionId)) return null;
+  return catalogueEntry(MATH_COLLECTIONS[collectionId]?.formulas, formulaKey);
 }
 
 /**

@@ -461,6 +461,22 @@ Sitemap: ${siteUrl}/sitemap.xml
 // quoted to one decimal so the few KB every commit adds do not make it stale
 // again. documents/index.md quotes the same file the same way; keep the two in
 // step and re-check both against dist/index.html after a release build.
+//
+// FIX: "quoted to one decimal so it does not go stale again" did not survive
+// contact with the next few hundred commits. The literal said ~1.1 MB, the
+// built artifact measured 1,295,644 bytes — 1.2 MB — and documents/index.md,
+// the file this comment says to keep in step, already said ~1.2 MB. Worse,
+// tests/build-docs-plugin.test.js asserted /~1\.1 MB/ against llms.txt under
+// the title "control — the bundle size figure FIX(#30, r2) corrected is still
+// stated", so the guard written to stop the number drifting had become the
+// thing holding it stale: correcting the prose would have failed the suite.
+//
+// A number that has to be re-checked by hand is a number that will be wrong.
+// closeBundle() runs after the bundle is written — vite-plugin-singlefile has
+// already inlined everything by then — so dist/index.html is on disk and can
+// simply be measured. The unit is MiB to one decimal, which is what
+// documents/index.md's figure is, and rounding to one decimal is what keeps a
+// commit's few KB from rewriting the file on every build.
 // FIX(#46, r4): the companion-file count was the one number in that paragraph
 // nobody re-checked. It said "plus four companion files" — five files in all —
 // while the two texts a reader would compare it against, SECURITY.md and
@@ -471,7 +487,18 @@ Sitemap: ${siteUrl}/sitemap.xml
 // same words documents/index.md uses: an enumeration cannot drift by one in
 // silence, and tests/build-docs-plugin.test.js checks the count against
 // SECURITY.md's list on every run.
-function renderLlmsTxt(siteUrl, docs) {
+/**
+ * @param {number|null} bundleBytes size of the built dist/index.html, or null
+ *   when there is none to measure (a docs-only emit, or the fixture the tests
+ *   run closeBundle in). Null states no size rather than inventing one: a
+ *   figure that is merely plausible is the failure this whole note is about.
+ */
+function bundleSizePhrase(bundleBytes) {
+  if (!Number.isFinite(bundleBytes) || bundleBytes <= 0) return 'a single HTML file';
+  return `a single HTML file (~${(bundleBytes / 1024 / 1024).toFixed(1)} MB)`;
+}
+
+function renderLlmsTxt(siteUrl, docs, bundleBytes = null) {
   const docLinks = docs
     .filter(d => d.slug !== 'index')
     .map(d => {
@@ -484,7 +511,7 @@ function renderLlmsTxt(siteUrl, docs) {
 
 > VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 54 colour schemes.
 
-VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 four years after each version's release — 2030-05-18 for 1.0.0-beta). The entire application is bundled into a single HTML file (~1.1 MB) plus three companion files: a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
+VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 four years after each version's release — 2030-05-18 for 1.0.0-beta). The entire application is bundled into ${bundleSizePhrase(bundleBytes)} plus three companion files: a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
 
 The math accuracy is documented per-formula with tier classification: 122 formulas at IEEE 754 double precision (~10⁻¹⁴), 42 with bounded numerical approximations (10⁻³ to 10⁻⁷), and 28 at visualisation-grade. Reference values cross-checked against mpmath, scipy.special, and NIST DLMF.
 
@@ -591,8 +618,17 @@ export function vimathicDocs(opts = {}) {
       fs.writeFileSync(path.join(distDir, 'robots.txt'), renderRobots(siteUrl), 'utf8');
       console.log(`[vimathic-docs] Emitted ${out}/robots.txt`);
 
-      fs.writeFileSync(path.join(distDir, 'llms.txt'), renderLlmsTxt(siteUrl, docs), 'utf8');
-      console.log(`[vimathic-docs] Emitted ${out}/llms.txt`);
+      // Measured, not stated. See the note above renderLlmsTxt: the previous
+      // literal disagreed with both the artifact and documents/index.md, and
+      // the test that was supposed to catch that was pinning the stale value.
+      // statSync rather than existsSync + read: the file is ~1.3 MB and only
+      // its length is wanted.
+      let bundleBytes = null;
+      try { bundleBytes = fs.statSync(path.join(distDir, 'index.html')).size; }
+      catch (_) { /* no bundle in this emit — llms.txt states no size */ }
+
+      fs.writeFileSync(path.join(distDir, 'llms.txt'), renderLlmsTxt(siteUrl, docs, bundleBytes), 'utf8');
+      console.log(`[vimathic-docs] Emitted ${out}/llms.txt${bundleBytes ? ` (bundle ${bundleBytes} bytes)` : ' (no bundle to measure)'}`);
     },
   };
 }

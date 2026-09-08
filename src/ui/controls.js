@@ -6,7 +6,7 @@
 //
 // Called once from UIController.bindAll().
 
-import { DOM } from '../dom.js';
+import { DOM, elementOwnsKey } from '../dom.js';
 import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam,
          NIGHT_SCHEME_FIRST, NIGHT_SCHEMES, ALL_SCHEMES, DRAG_FLOOR } from '../params.js';
 import { bindAboutModal, closeAbout, isAboutModalOpen } from './about-modal.js';
@@ -1022,7 +1022,12 @@ export function bindControls(ui) {
   let _dragKey = null;
 
   document.addEventListener('keydown', e => {
-    if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+    // The twin of main.js's stand-down, and it drifted the same way. Every key
+    // in _fsParams is a letter, so no focused control is losing an activation
+    // here today — but the two listeners spelled the same rule twice, and this
+    // is the copy that would be missed when someone adds Space or Enter to the
+    // drag map. One rule, one place: elementOwnsKey in dom.js.
+    if (elementOwnsKey(document.activeElement, e.key)) return;
     // FIX: and not through the About dialog. It is aria-modal and modal for the
     // pointer, but nothing told the keyboard — so a key pressed while reading
     // the docs armed a hold-and-drag on a parameter behind the overlay. A
@@ -1188,7 +1193,7 @@ export function bindControls(ui) {
   }
 
   // ── Import/Export & Preset save ───────────────────────────────────────────
-  document.getElementById('btn-export').addEventListener('click', () => ui.exportSettings());
+  DOM.btnExport.addEventListener('click', () => ui.exportSettings());
   document.getElementById('btn-import').addEventListener('click', () => document.getElementById('state-file').click());
   document.getElementById('state-file').addEventListener('change', e => {
     if (e.target.files[0]) { ui.importSettings(e.target.files[0]); e.target.value = ''; }

@@ -33,7 +33,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # FIX: was '22', which setup-node resolves to the newest 22.x on the
+          # runner. scripts/run-tests.mjs used an entry-point check that does
+          # not exist below 22.18, and below it the runner spawned nothing and
+          # exited 0 — so on any day that resolution landed lower, this required
+          # check was green without executing an assertion. Pin the floor that
+          # package.json's engines field declares.
+          node-version: '22.18'
           cache: 'npm'
 
       - name: Install dependencies
@@ -115,7 +121,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.18'
           cache: 'npm'
 
       - name: Install dependencies
@@ -165,7 +171,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.18'
           cache: 'npm'
 
       - name: Install dependencies

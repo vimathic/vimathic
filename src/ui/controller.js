@@ -1,3 +1,4 @@
+import { DOM } from '../dom.js';
 import { ClipPlayer } from './clip-player.js';
 import { PresetMixin } from './presets.js';
 import { bindModals }  from './modals.js';
@@ -106,7 +107,7 @@ export class UIController {
   // file the user picked, and renderPL() had to be taught the same lesson (see
   // the note there about `<img src=x onerror=…>.mp3`).
   showTrackError(msg, name = '') {
-    const el = document.getElementById('track-error');
+    const el = DOM.trackError;
     if (!el) return;
     clearTimeout(this._trackErrTimer);
     el.textContent = '';
@@ -124,7 +125,7 @@ export class UIController {
   }
 
   clearTrackError() {
-    const el = document.getElementById('track-error');
+    const el = DOM.trackError;
     if (!el) return;
     clearTimeout(this._trackErrTimer);
     el.hidden = true;

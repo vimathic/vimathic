@@ -15,6 +15,10 @@
   ],
   "license": "BUSL-1.1",
   "type": "module",
+  "//engines": "22.18 is the floor because scripts/run-tests.mjs is the entry point npm test delegates to, and the ESM entry-point check it used before that version silently ran zero tests. With .npmrc's engine-strict, npm install refuses here rather than letting the suite report a green run it never had.",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

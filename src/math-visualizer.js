@@ -56,6 +56,7 @@ import {
   volumeMagnitudeAtVertices,
   applyCollapseField,
   VOLUME_FORMULAS,
+  catalogueEntry,
   FIELD_EXTENT,
 } from './math-collections.js';
 import { buildBandMap, buildBodyCurvature, splatToLattice, ANALYSIS_GRID } from './band-map.js';
@@ -741,7 +742,11 @@ export class MathVisualizer {
     // whichever map happened to precede it — the same field pulsing in different
     // places depending on session history.
     this._invalidateBandMap();
-    const f = VOLUME_FORMULAS[key];
+    // Was `VOLUME_FORMULAS[key]`, which is truthy for every Object.prototype
+    // key — so an imported preset with volumeKey:"constructor" walked straight
+    // past the warning below and froze the body in silence. catalogueEntry
+    // checks own-property AND shape; see its docblock in math-collections.js.
+    const f = catalogueEntry(VOLUME_FORMULAS, key);
     if (!f) {
       console.warn(`[MathVisualizer] Unknown volume formula: ${key}`);
       return;

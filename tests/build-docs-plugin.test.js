@@ -347,9 +347,55 @@ describe('llms.txt counts the deploy the way the human documents do', () => {
     assert.match(txt, /intro track/);
   });
 
-  test('control — the bundle size figure FIX(#30, r2) corrected is still stated', () => {
+  // This test used to read:
+  //
+  //   test('control — the bundle size figure FIX(#30, r2) corrected is still stated')
+  //   assert.match(txt, /~1\.1 MB/);
+  //
+  // FIX(#30, r2) had replaced a stale "~900 KB" with a hand-measured "~1.1 MB"
+  // and this pinned it. By the time anyone looked, dist/index.html measured
+  // 1,295,644 bytes — 1.2 MB — and documents/index.md, which that fix's own
+  // comment names as the file to keep in step, already said ~1.2 MB. So the
+  // guard against the number drifting had become the reason it could not be
+  // corrected: fixing the prose would have failed the suite. A test that pins a
+  // constant cannot tell staleness from truth. These derive it instead.
+  test('the bundle size is measured from the artifact, not stated', () => {
+    const dir = fixture({ 'a.md': fm('title: A\norder: 1', 'Body.') });
+    // 1,835,008 bytes = exactly 1.75 MiB, which rounds to 1.8 and is nothing
+    // like any figure the file has ever carried by hand.
+    fs.mkdirSync(path.join(dir, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'dist', 'index.html'), Buffer.alloc(1_835_008));
+
+    const txt = emit(dir).read('dist/llms.txt');
+    assert.match(txt, /a single HTML file \(~1\.8 MB\)/,
+      `llms.txt did not state the size of the file next to it:\n${txt.split('\n')[4]}`);
+  });
+
+  test('a different artifact gives a different figure', () => {
+    // The pair is the point: one size alone could still be a constant that
+    // happens to match.
+    const dir = fixture({ 'a.md': fm('title: A\norder: 1', 'Body.') });
+    fs.mkdirSync(path.join(dir, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'dist', 'index.html'), Buffer.alloc(3_355_443)); // 3.2 MiB
+
+    assert.match(emit(dir).read('dist/llms.txt'), /a single HTML file \(~3\.2 MB\)/);
+  });
+
+  test('with no artifact to measure it states no size at all', () => {
     const txt = emit(fixture({ 'a.md': fm('title: A\norder: 1', 'Body.') })).read('dist/llms.txt');
-    assert.match(txt, /~1\.1 MB/);
+    assert.match(txt, /bundled into a single HTML file plus three companion files/,
+      'the sentence should simply omit the size when there is no bundle beside it');
+    assert.doesNotMatch(txt, /\bMB\b/,
+      'a size was printed with nothing to measure — that is how ~900 KB and ~1.1 MB happened');
+  });
+
+  test('no hand-written megabyte figure is left in the llms.txt template', () => {
+    const src = read('plugins/vimathic-docs.js')
+      .split('\n')
+      .filter(l => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); })
+      .join('\n');
+    assert.doesNotMatch(src, /~\d+(\.\d+)?\s*MB/,
+      'a literal size is back in the plugin; measure dist/index.html instead');
   });
 });
 
