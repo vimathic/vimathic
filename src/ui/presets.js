@@ -15,7 +15,15 @@ import { normalizeVizMode, DEFAULT_VIZ_MODE } from '../viz-mode.js';
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
 // preset JSON until we've thought about migration.
-const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx', 'bandDepth'];
+// The four shader knobs are here because a knob position IS part of a look:
+// a preset carries the shader that reads uK0, so it has to carry where uK0 was.
+// No migration step, and that is the deliberate difference from bandDepth's:
+// bandDepth needed one because its DEFAULT changed under presets that predated
+// it. These default to 0 and always have, applyState skips a null, and no
+// preset written before this commit can contain a shader mentioning uK — the
+// uniforms did not exist to be mentioned.
+const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx', 'bandDepth',
+                      'k0', 'k1', 'k2', 'k3'];
 
 // FIX(#18, r2): the non-param fields applyState() reads. With PARAM_FIELDS this
 // defines "looks like a preset" for migratePreset(), so keep it in step with

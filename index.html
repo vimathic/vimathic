@@ -1522,6 +1522,27 @@
       <details class="adv-sub">
         <summary>SHADER EDITOR</summary>
         <button id="btn-open-editor" class="xp">✎ EDIT GLSL SHADER</button>
+        <!-- Four numbers a custom shader can read and nothing else touches.
+             They exist because a hand-written shader was otherwise frozen: every
+             number in it is baked in, and changing one means reopening a modal
+             that blacks out the screen and disarms every hotkey, editing text,
+             and taking a hard recompile — which is a cut, not a fade. That is
+             not something anyone does mid-set.
+             With these, the shader is written once with uK0..uK3 in it and then
+             PLAYED: they are MIDI-mappable like any other param, so they reach a
+             controller, and they carry in presets. The sliders are here so the
+             feature also works for someone without hardware. -->
+        <div class="xp" style="font-size:8px;color:#556;margin:6px 0 2px;letter-spacing:.5px">
+          SHADER KNOBS — read as <span style="color:#0fc">uK0…uK3</span> in your code
+        </div>
+        <div class="cg xp"><label>Shader Knob 1 <span id="k0v" class="vd">0.00</span></label>
+          <input type="range" id="shader-k0" min="0" max="1" step="0.01" value="0"></div>
+        <div class="cg xp"><label>Shader Knob 2 <span id="k1v" class="vd">0.00</span></label>
+          <input type="range" id="shader-k1" min="0" max="1" step="0.01" value="0"></div>
+        <div class="cg xp"><label>Shader Knob 3 <span id="k2v" class="vd">0.00</span></label>
+          <input type="range" id="shader-k2" min="0" max="1" step="0.01" value="0"></div>
+        <div class="cg xp"><label>Shader Knob 4 <span id="k3v" class="vd">0.00</span></label>
+          <input type="range" id="shader-k3" min="0" max="1" step="0.01" value="0"></div>
       </details>
 
       <details class="adv-sub">
@@ -1575,7 +1596,8 @@
       <div id="se-ref">
         <b style="color:#aaa">Uniforms:</b> <span>uTime</span> · <span>uBass</span> 0–1.2 · <span>uMid</span> 0–1 · <span>uTreble</span> 0–1.2 · <span>uBeat</span> 0–1 · <span>uAmp</span> · <span>uWI</span><br>
         <b style="color:#aaa">Vertex:</b> <span>position</span> vec3 · <span>r</span>=length(xz) · <span>ang</span>=atan(z,x) · write into <span>y</span><br>
-        <b style="color:#aaa">Spectrum (vertex only):</b> <span>bandAtRadius(r)</span> · <span>bandAtU(0–1)</span> · <span>uBands[24]</span> · <span>uBandR</span> body radius — Spectrum Rings already adds one band term, set it to 0 to avoid doubling
+        <b style="color:#aaa">Spectrum (vertex only):</b> <span>bandAtRadius(r)</span> · <span>bandAtU(0–1)</span> · <span>uBands[24]</span> · <span>uBandR</span> body radius — Spectrum Rings already adds one band term, set it to 0 to avoid doubling<br>
+        <b style="color:#aaa">Knobs:</b> <span>uK0</span> · <span>uK1</span> · <span>uK2</span> · <span>uK3</span> 0–1 — sliders under SHADER EDITOR in the panel, and MIDI-mappable; put one where you would type a constant
       </div>
       <div id="se-tabs">
         <div class="se-tab active" data-tab="vert">VERTEX (displacement)</div>

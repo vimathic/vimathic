@@ -303,6 +303,48 @@ export const PARAMS = {
     },
     midi: true,
   },
+
+  // ── Shader knobs — four numbers a custom shader can read ────────────────
+  //
+  // Nothing in the app reads these. They exist only to reach `uK0…uK3` in the
+  // shader editor's scaffolds, and their whole purpose is that a hand-written
+  // shader stops being frozen.
+  //
+  // Before them, every number in a custom shader was baked into its text.
+  // Changing one meant reopening a modal that blacks out the screen and, because
+  // focus sits in a TEXTAREA, disarms every global hotkey — then editing, then a
+  // recompile, which builds a probe scene and a render target and swaps the
+  // program with needsUpdate. That is a CUT. Every other live change in this app
+  // is a tween: a GPU mode crossfades over 1200 ms, a palette over 600, a shape
+  // through a morph. So the one authoring surface the product calls its most
+  // powerful was also the only one that could not be played.
+  //
+  // 0..1 with a default of 0 on purpose: it is the range a MIDI CC maps onto
+  // without a curve, and the author scales it in the shader, where they can see
+  // what they are scaling. Default 0 means a shader that reads uK0 starts from
+  // the knob at rest rather than from a number nobody chose.
+  //
+  // They are in PARAM_FIELDS, so they travel in presets and in the autosave
+  // beside the shader that reads them — a knob position IS part of the look. No
+  // migration: a preset written before these existed simply carries no value,
+  // applyState skips a null, and no shader in such a preset can mention uK
+  // anyway, because the uniforms did not exist when it was written.
+  k0: { label: 'Shader Knob 1', slider: 'shaderK0', display: 'k0v',
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        get: ctx => ctx.render.U.uK0.value,
+        set: (ctx, v) => { ctx.render.U.uK0.value = v; }, midi: true },
+  k1: { label: 'Shader Knob 2', slider: 'shaderK1', display: 'k1v',
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        get: ctx => ctx.render.U.uK1.value,
+        set: (ctx, v) => { ctx.render.U.uK1.value = v; }, midi: true },
+  k2: { label: 'Shader Knob 3', slider: 'shaderK2', display: 'k2v',
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        get: ctx => ctx.render.U.uK2.value,
+        set: (ctx, v) => { ctx.render.U.uK2.value = v; }, midi: true },
+  k3: { label: 'Shader Knob 4', slider: 'shaderK3', display: 'k3v',
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        get: ctx => ctx.render.U.uK3.value,
+        set: (ctx, v) => { ctx.render.U.uK3.value = v; }, midi: true },
 };
 
 // ── DOM-write coalescing ───────────────────────────────────────────────────

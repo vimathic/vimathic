@@ -1743,6 +1743,13 @@ export class RenderEngine {
     gpuGeo.rotateX(-Math.PI/2);
     this.U = { uTime:{value:0}, uBass:{value:0}, uMid:{value:0}, uTreble:{value:0},
                uAmp:{value:.7}, uBeat:{value:0}, uWI:{value:1}, uMode:{value:0}, uCM:{value:0}, uMathMode:{value:0},
+               // Four free scalars for the shader editor, and nothing else in
+               // the app. Declared in both editor scaffolds and in neither
+               // built-in program: the built-ins have no use for them, and a
+               // uniform nothing reads is a uniform that drifts. See PARAMS.k0
+               // in params.js for why they exist. Written only by applyParam,
+               // never per frame.
+               uK0:{value:0}, uK1:{value:0}, uK2:{value:0}, uK3:{value:0},
                // Shape morph: 1 = full displacement, 0 = flat (deflate/inflate)
                uMorphProgress:{ value: 1.0 },
                // GPU mode crossfade: blend from uMode → uModeNext over uModeBlend

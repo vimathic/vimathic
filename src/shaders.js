@@ -1411,6 +1411,12 @@ void main(){
 // ── ShaderEditor ──────────────────────────────────────────────────────────────
 
 const SE_VS_TEMPLATE = body => `uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
+// Four scalars the app never reads and this body may. They are what makes a
+// hand-written shader playable rather than frozen: put uK0 where you would have
+// typed a constant, and it is on a slider and a MIDI CC instead of in the text.
+// See PARAMS.k0 in params.js. Declared in the fragment scaffold too, so a
+// colour body can be played the same way.
+uniform float uK0,uK1,uK2,uK3;
 uniform int uMode,uMathMode,uModeNext;
 uniform float uMorphProgress,uModeBlend;
 // uVHField / aBaseY — see the long note in VS. The editor's fragment template
@@ -1558,6 +1564,8 @@ void main(){vec3 pos=position;
 // reflect(), and read uMetalness/uReflect/etc directly inside their body —
 // the function, uniforms, and vWorldPos/vViewDir varyings are all in scope.
 const SE_FS_TEMPLATE = body => `uniform int uCM,uCMNext;uniform float uCMBlend;
+// The same four knobs the vertex scaffold gets — see the note there.
+uniform float uK0,uK1,uK2,uK3;
 uniform float uTime,uBass,uMid,uTreble,uBeat;
 ${_MATERIAL_UNIFORMS}
 ${_POINT_UNIFORMS}

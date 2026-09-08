@@ -88,6 +88,16 @@ const REQUIRED = {
   bloom:             'bloom',
   blmv:              'blmv',
 
+  // ── Shader knobs — the four free scalars a custom shader can read ───────
+  shaderK0:          'shader-k0',
+  shaderK1:          'shader-k1',
+  shaderK2:          'shader-k2',
+  shaderK3:          'shader-k3',
+  k0v:               'k0v',
+  k1v:               'k1v',
+  k2v:               'k2v',
+  k3v:               'k3v',
+
   // ── Camera buttons ──────────────────────────────────────────────────────
   btnReset:          'btn-reset',
   btnResetAll:       'btn-reset-all',

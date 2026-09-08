@@ -81,7 +81,7 @@ function makeUi(over = {}) {
   const render = {
     currentShape: 'sphere', vizMode: 'surface', currentMaterial: 'matte',
     currentParticleStyle: 'squares',
-    U: { uMode: { value: 3 } },
+    U: { uMode: { value: 3 }, uK0: { value: 0 }, uK1: { value: 0 }, uK2: { value: 0 }, uK3: { value: 0 }, },
     camera: { position: { x: 1, y: 2, z: 3 }, fov: 45 },
     orbit:  { target: { x: 0, y: 0, z: 0 } },
     grid:   { visible: true },
@@ -249,7 +249,7 @@ function makeDistinctUi() {
   });
   Object.assign(ui.render, {
     currentShape: 'torus', vizMode: 'points', currentParticleStyle: 'sparks',
-    U: { uMode: { value: 27 } },
+    U: { uMode: { value: 27 }, uK0: { value: 0 }, uK1: { value: 0 }, uK2: { value: 0 }, uK3: { value: 0 }, },
     camera: { position: { x: 1.5, y: -2.25, z: 3.75 }, fov: 61.5 },
     orbit:  { target: { x: -0.5, y: 0.25, z: -0.75 } },
     grid:   { visible: false },

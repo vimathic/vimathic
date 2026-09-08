@@ -71,6 +71,22 @@ Your code is the **body** of `main()`. The scaffold provides:
 
 You also have helper functions: `turb(vec2 p)` for fractal turbulence, `ramu(vec2 p)` for the Ramanujan radial pattern, `h_sech(float x)` for hyperbolic secant.
 
+### Four knobs — `uK0` … `uK3`
+
+Everything else in your shader is a number typed into the text. These four are not: they are sliders in the panel under **ADVANCED → SHADER EDITOR**, they are MIDI-mappable like any other parameter, and they travel in presets.
+
+```glsl
+y = sin(r * (2.0 + uK0 * 20.0) + T) * (0.2 + uK1) * a;
+```
+
+Written that way, the wave's frequency and its depth are on two knobs. You are no longer editing a shader during a set — you are playing one.
+
+That is the point of them. Without them a custom shader is frozen: to change any number you reopen a modal that blacks out the screen and, because the cursor sits in a text box, disarms every hotkey — then you edit, then APPLY recompiles, which is a hard cut rather than a fade. Every other live change in VIMATHIC is a tween: a GPU mode crossfades over 1.2 seconds, a palette over 0.6, a shape through a morph. The knobs put custom shaders on the same footing.
+
+They run 0–1 with a default of 0, which is what a MIDI CC maps onto without a curve. Scale them in the shader, where you can see what you are scaling — `uK0 * 20.0` above is a frequency, `uK1` a depth. They are available in the fragment tab too.
+
+To put one on a controller: **ADVANCED → MIDI**, pick *Shader Knob 1*, then move the knob.
+
 ### The 24-band spectrum
 
 The vertex scaffold also hands you the analyser's full 24-band spectrum — the same data Spectrum Rings is drawn from. `uBass`, `uMid` and `uTreble` are three numbers for the whole mix; this is twenty-four, and you can put each one somewhere different on the body.

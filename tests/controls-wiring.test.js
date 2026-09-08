@@ -222,7 +222,10 @@ function makeUi() {
       // is headed. A stub without them would send that guard down its
       // `?? a.colorIdx` fallback, i.e. back to the very question the fix
       // stopped asking, and the tests below would pass on the old code.
-      U: { uAmp: { value: 0.7 }, uWI: { value: 1 },
+      U: { // PARAMS.k0..k3 store their value IN the uniform, as bloom does in the
+      // composer pass. A ctx stub that omits them throws on capture and reset.
+      uAmp: { value: 0.7 }, uWI: { value: 1 },
+         uK0: { value: 0 }, uK1: { value: 0 }, uK2: { value: 0 }, uK3: { value: 0 },
            uCM: { value: 16 }, uCMNext: { value: 16 }, uCMBlend: { value: 0 } },
       bloomPass: { strength: 0.6, radius: 0.4, threshold: 0.85 },
       setShapeAnimated: s => calls.push(['setShapeAnimated', s]),
