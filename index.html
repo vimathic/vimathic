@@ -2,7 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <!-- FIX: dropped `user-scalable=no`. It was doing none of the job it looked
+       like it was doing, and all of the damage.
+
+       What it did NOT protect: the canvas. OrbitControls sets
+       `touchAction = 'none'` on renderer.domElement when it connects
+       (three/examples/jsm/controls/OrbitControls.js:204), so a pinch on the
+       visualisation is the camera's and has never reached the browser's zoom.
+
+       What it DID cost: the panel and the documentation modal — the small text
+       a reader might actually want to enlarge. WCAG 1.4.4 asks for 200%.
+
+       And it only ever cost that on Android. Safari has ignored
+       `user-scalable=no` since iOS 10, so every iPad and iPhone has behaved
+       this way for eight years; this brings Android into line with them rather
+       than changing anything for the largest touch class the app has.
+       second-screen.html never carried the token either, so the two documents
+       agree now.
+
+       `width=device-width` stays, which is what keeps Chrome from restoring the
+       300 ms tap delay and double-tap-to-zoom. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VIMATHIC™ — Mathematical VJ Studio</title>
   <meta name="description" content="VIMATHIC — Mathematical VJ Studio. 192 CPU formulas, 38 GPU shaders, MIDI, presets, clip player. Version 1.0 (Beta).">
 

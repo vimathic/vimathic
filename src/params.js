@@ -32,6 +32,27 @@
 //                 not [min..Infinity] — and (b) the default upper bound
 //                 when a tool needs a "sensible default range".
 //
+// DECISION (08.09.2026): the unbounded values stay unbounded. An audit raised
+// the missing ceiling on amp and waveInt as a loose end from the black-squares
+// work, and the owner's answer was to leave it. Recorded here rather than
+// re-litigated, because the case for a cap looks obvious and is wrong:
+//
+//   • The consequence that made it urgent is already closed. Unbounded
+//     displacement produced degenerate quads, and those produced the black
+//     rectangles — but shaders.js now sanitises the displaced position before
+//     gl_Position and clamps the dot product that fed pow() a negative base.
+//     Measured after those two: 0 artefacts in 10,283 frames across seven
+//     conditions. A large number now costs a wrecked picture and frame rate,
+//     which is visible and reversible, not a corrupted frame.
+//
+//   • A cap at extendedMax would have been actively wrong. Amplitude 11 —
+//     against a designed maximum of 1.5 — is one of the conditions the
+//     black-squares report was reproduced under, so the over-drive range well
+//     past extendedMax is a used part of the instrument, not an accident.
+//
+// So: this is a VJ tool, the operator is allowed to over-drive it, and the
+// thing that made over-driving dangerous has been fixed at the other end.
+//
 // ── Slider-grow rationale ────────────────────────────────────────────────
 // HTML5 <input type="range"> silently clamps any .value above `max`.
 // Without slider-grow, a hotkey-driven value of 2.85 on a max=2.5 slider
