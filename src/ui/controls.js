@@ -9,8 +9,8 @@
 import { DOM, elementOwnsKey } from '../dom.js';
 import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam,
          NIGHT_SCHEME_FIRST, NIGHT_SCHEMES, ALL_SCHEMES, DRAG_FLOOR } from '../params.js';
-import { bindAboutModal, closeAbout, isAboutModalOpen } from './about-modal.js';
-import { bindOverlayFocus } from './overlay-focus.js';
+import { bindAboutModal, closeAbout } from './about-modal.js';
+import { bindOverlayFocus, isAnyOverlayOpen } from './overlay-focus.js';
 import { AutoCycler } from './auto-cycle.js';
 
 export function bindControls(ui) {
@@ -1029,13 +1029,17 @@ export function bindControls(ui) {
     // is the copy that would be missed when someone adds Space or Enter to the
     // drag map. One rule, one place: elementOwnsKey in dom.js.
     if (elementOwnsKey(document.activeElement, e.key)) return;
-    // FIX: and not through the About dialog. It is aria-modal and modal for the
+    // FIX: and not through a dialog. One is aria-modal and modal for the
     // pointer, but nothing told the keyboard — so a key pressed while reading
     // the docs armed a hold-and-drag on a parameter behind the overlay. A
-    // brand-new profile is in exactly that state, since the modal auto-opens on
+    // brand-new profile is in exactly that state, since About auto-opens on
     // first run. Escape is a separate listener and deliberately not guarded,
-    // or the modal could not be closed by key.
-    if (isAboutModalOpen()) return;
+    // or the dialog could not be closed by key.
+    //
+    // FIX(r6): all five overlays, not only About — the same widening as the
+    // sibling listener in main.js, and for the same reason. This is the copy the
+    // note above predicted would be missed.
+    if (isAnyOverlayOpen()) return;
     const key = e.key.toLowerCase();
     if (_fsParams[key]) { _dragKey = key; e.preventDefault(); }
   });

@@ -215,6 +215,13 @@ function makeGroupTab(groupKey, docs, tabsEl, contentEl) {
   const menu = document.createElement('div');
   menu.className = 'about-tab-group-menu';
   menu.dataset.group = groupKey;
+  // FIX(r6): this menu is a PART of the About dialog even though it hangs off
+  // document.body (see the note beside the appendChild below). bindOverlayFocus
+  // makes every other body child inert while a dialog is up, and without this
+  // mark it inerted these menus too — so the eleven documentation tabs that sit
+  // behind the group triggers could not be opened at all, in the dialog that
+  // opens itself on a new profile.
+  menu.dataset.overlayPart = 'about-overlay';
   menu.style.cssText = [
     'position:fixed',
     'background:#1a1a22',

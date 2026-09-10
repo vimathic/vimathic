@@ -23,7 +23,7 @@ import { getAllFormulasList } from './math-collections.js';
 import { FormulaPicker, isMathValue } from './formula-picker.js';
 import { SHAPE_NAMES } from './shapes.js';
 import { DOM, elementOwnsKey } from './dom.js';
-import { isAboutModalOpen } from './ui/about-modal.js';
+import { isAnyOverlayOpen } from './ui/overlay-focus.js';
 
 // ── App config ──────────────────────────────────────────────────────────────
 //
@@ -335,11 +335,25 @@ window.addEventListener('keydown', e => {
   // preventDefault below then cancelled the element's own activation and
   // toggled playback instead. See elementOwnsKey in dom.js for the measurement.
   if (elementOwnsKey(document.activeElement, e.key)) return;
-  // The About dialog is modal for the pointer and was not for the keyboard, so
-  // space toggled playback and D changed the shape behind a reader's back — on
-  // first run, where the modal opens itself. Escape still reaches its own
-  // listener in controls.js, which is what closes this.
-  if (isAboutModalOpen()) return;
+  // A dialog is modal for the pointer and was not for the keyboard, so space
+  // toggled playback and D changed the shape behind a reader's back — on first
+  // run, where About opens itself. Escape still reaches its own listener in
+  // controls.js, which is what closes this.
+  //
+  // FIX(r6): EVERY dialog, not just About. This read isAboutModalOpen(), so the
+  // other four — the shader editor, the camera programmer, the audio source
+  // picker, the output dialog — left D, F, R, T and Space live. The shader
+  // editor is the worst of them: overlay-focus parks focus on the overlay
+  // container, dom.js does not treat a bare DIV as owning a key, and the overlay
+  // blacks the canvas out at 82% — so the scene was being randomised behind a
+  // screen the operator could not see.
+  if (isAnyOverlayOpen()) return;
+  // FIX(r6): a modified key belongs to the browser or the OS, never to a hotkey
+  // here. Without this, Ctrl+R ran the `r` case — randomise everything — and the
+  // autosave wrote that state before the reload it was asking for, so a reload
+  // came back to a scene the operator never chose. Ctrl+D, Ctrl+F and Cmd+Space
+  // are the same shape. Not a regression of this branch: upstream has it too.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   // Ignore auto-repeat keydown. Hotkeys here are single-action triggers
   // (D = next shape, F = random formula, R = randomise all, space = play/
   // pause), not held-state inputs. Without this filter, holding D would

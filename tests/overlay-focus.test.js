@@ -355,6 +355,78 @@ describe('the wiring is complete', () => {
   test('controls.js binds it', () => {
     const controls = fs.readFileSync(path.join(ROOT, 'src/ui/controls.js'), 'utf8');
     assert.match(controls, /bindOverlayFocus\(\)/);
-    assert.match(controls, /import\s*\{\s*bindOverlayFocus\s*\}\s*from\s*'\.\/overlay-focus\.js'/);
+    // The IMPORT, not one exact spelling of it. This used to pin a single-name
+    // braces group, so importing a SECOND name from the same module — which is
+    // what isAnyOverlayOpen needed — turned it red for a change that broke
+    // nothing. A guard that fires on a comma teaches people to shape source to
+    // fit a regexp, which is the lesson tests/helpers/glsl.js exists to record
+    // one level down.
+    assert.match(controls, /import\s*\{[^}]*\bbindOverlayFocus\b[^}]*\}\s*from\s*'\.\/overlay-focus\.js'/);
+  });
+
+  test('the hotkey listeners stand down for EVERY dialog, not just About', () => {
+    // The defect: both global keydown listeners asked isAboutModalOpen(), so
+    // D, F, R, T and Space stayed live over the other four overlays. The worst
+    // of them is the shader editor — overlay-focus parks focus on the overlay
+    // container, dom.js does not treat a bare DIV as owning a key, and the
+    // overlay blacks the canvas out at 82%, so the scene was randomised behind
+    // a screen the operator could not see.
+    const main     = fs.readFileSync(path.join(ROOT, 'src/main.js'), 'utf8');
+    const controls = fs.readFileSync(path.join(ROOT, 'src/ui/controls.js'), 'utf8');
+    for (const [name, src] of [['src/main.js', main], ['src/ui/controls.js', controls]]) {
+      assert.match(src, /isAnyOverlayOpen\(\)/,
+        `${name} does not stand its hotkeys down for every overlay`);
+      assert.doesNotMatch(src, /if \(isAboutModalOpen\(\)\) return;/,
+        `${name} still gates on About alone`);
+    }
+    // And a modified key belongs to the browser: Ctrl+R ran the randomise-all
+    // hotkey before the reload it was asking for, and autosave stored it.
+    assert.match(main, /e\.ctrlKey \|\| e\.metaKey \|\| e\.altKey/,
+      'a modified key still reaches the hotkey switch');
+  });
+
+  test('a dialog may own a part outside itself, and it is not made inert', () => {
+    // About's tab-group dropdowns are appended to document.body on purpose, to
+    // escape the overlay's overflow and stacking context. refreshBackground
+    // took "a body child that is not the dialog" to mean "background" and
+    // inerted them — so eleven of the thirteen documentation tabs were
+    // unreachable in the dialog that opens itself on a new profile.
+    const focus = fs.readFileSync(path.join(ROOT, 'src/ui/overlay-focus.js'), 'utf8');
+    const about = fs.readFileSync(path.join(ROOT, 'src/ui/about-modal.js'), 'utf8');
+    assert.match(focus, /overlayPart/,
+      'refreshBackground no longer recognises a dialog part outside the dialog');
+    assert.match(about, /dataset\.overlayPart\s*=\s*'about-overlay'/,
+      'the About group menu no longer marks itself as part of the dialog');
+  });
+});
+
+describe('isAnyOverlayOpen', () => {
+  let isAnyOverlayOpen, OVERLAY_IDS;
+  before(async () => {
+    ({ isAnyOverlayOpen, OVERLAY_IDS } = await import('../src/ui/overlay-focus.js'));
+  });
+
+  const withOpen = (openIds) => {
+    globalThis.document = {
+      getElementById: id => ({ classList: { contains: c => c === 'open' && openIds.includes(id) } }),
+    };
+  };
+
+  test('false when every dialog is shut', () => {
+    withOpen([]);
+    assert.equal(isAnyOverlayOpen(), false);
+  });
+
+  test('true for each one of them in turn — not just About', () => {
+    for (const id of OVERLAY_IDS) {
+      withOpen([id]);
+      assert.equal(isAnyOverlayOpen(), true, `${id} being open was not noticed`);
+    }
+  });
+
+  test('an overlay missing from a trimmed build is not an open one', () => {
+    // second-screen.html carries none of these.
+    globalThis.document = { getElementById: () => null };
+    assert.equal(isAnyOverlayOpen(), false);
   });
 });

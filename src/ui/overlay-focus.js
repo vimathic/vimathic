@@ -54,6 +54,22 @@ export const OVERLAY_IDS = [
   'output-overlay',
 ];
 
+/**
+ * Is any modal dialog on screen?
+ *
+ * FIX(r6): the question two keydown listeners were asking as
+ * `isAboutModalOpen()`. Both are there to stop a global hotkey firing through a
+ * dialog, and both named ONE of the five — so D, F, R, T and Space stayed live
+ * over the shader editor, the camera programmer, the audio source picker and
+ * the output dialog. Typing in the shader editor with focus on the overlay
+ * container (which is where this module deliberately parks it, see enter()
+ * below) randomised the scene behind the blur, and the operator could not see
+ * it happen. Escape is a separate listener in controls.js and is deliberately
+ * not guarded by this, or a dialog could not be closed from the keyboard.
+ */
+export const isAnyOverlayOpen = (ids = OVERLAY_IDS) =>
+  ids.some(id => !!document.getElementById(id)?.classList.contains('open'));
+
 const isRendered = el =>
   !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
 
@@ -105,11 +121,34 @@ export function bindOverlayFocus(ids = OVERLAY_IDS) {
     if (!openNow.size) return;
     for (const el of document.body.children) {
       if (openNow.has(el)) continue;   // an open dialog is not background
+      if (belongsToOpenDialog(el)) continue;
       if (el.inert) continue;          // somebody else's claim; leave it alone
       el.inert = true;
       inerted.push(el);
     }
   };
+
+  /**
+   * Is this body child a PART of a dialog that is open, rather than background?
+   *
+   * FIX(r6): "background" was taken to mean "a child of body that is not the
+   * dialog", and a dialog is allowed to have parts outside itself. About's tab
+   * groups open a dropdown that is appended to document.body on purpose — that
+   * is how it escapes the overlay's overflow and stacking context — so this
+   * loop inerted the menus of the very dialog it was protecting. Eleven of the
+   * thirteen documentation tabs live behind those groups, which made most of
+   * the manual unreachable in the dialog that auto-opens on a new profile.
+   *
+   * Marked rather than sniffed: a part carries data-overlay-part with the id of
+   * the overlay it belongs to, so a future dialog opts in by saying so instead
+   * of by matching a class name this file would have to know about.
+   */
+  function belongsToOpenDialog(el) {
+    const owner = el.dataset?.overlayPart;
+    if (!owner) return false;
+    for (const open of openNow) if (open.id === owner) return true;
+    return false;
+  }
 
   const watch = (overlay) => {
     let returnTo  = null;
