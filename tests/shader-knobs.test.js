@@ -30,9 +30,9 @@ const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const IDS = ['k0', 'k1', 'k2', 'k3'];
 
-let PARAMS, MIDI_PARAMS, REQUIRED_IDS, VS, FS;
+let PARAMS, MIDI_PARAMS, REQUIRED_IDS, VS, FS, resetParamsToDefault;
 before(async () => {
-  ({ PARAMS, MIDI_PARAMS } = await import('../src/params.js'));
+  ({ PARAMS, MIDI_PARAMS, resetParamsToDefault } = await import('../src/params.js'));
   ({ REQUIRED_IDS } = await import('../src/dom.js'));
   ({ VS, FS } = await import('../src/shaders.js'));
 });
@@ -41,6 +41,41 @@ before(async () => {
 const makeCtx = () => ({
   render: { U: { uK0: { value: 0 }, uK1: { value: 0 }, uK2: { value: 0 }, uK3: { value: 0 } } },
 });
+
+/**
+ * A ctx the REAL RESET ALL can be driven against.
+ *
+ * resetParamsToDefault walks every entry in PARAMS, not just the four here, so
+ * it reaches into ctx.audio, ctx.camera and a dozen engine methods this file
+ * has no interest in. Rather than enumerate them — a list that would go stale
+ * the next time a parameter is added, and whose staleness would show up as a
+ * failure in the shader-knob tests — anything not asked about auto-vivifies
+ * into something that can be read, written and called.
+ *
+ * The four uniforms are real slots, so what the knobs do is measured and
+ * everything else is merely tolerated.
+ */
+const permissive = () => new Proxy(function () {}, {
+  get: (t, k) => {
+    if (k === 'then' || typeof k === 'symbol') return undefined;
+    if (!(k in t)) t[k] = permissive();
+    return t[k];
+  },
+  set: (t, k, v) => { t[k] = v; return true; },
+  apply: () => undefined,
+});
+
+const makeResetCtx = () => {
+  // applyParam ends in syncParamUI, which coalesces its DOM writes through
+  // requestAnimationFrame. There is no frame loop in Node and the writes are
+  // not what is under test, so it runs them straight away.
+  globalThis.requestAnimationFrame ??= (fn) => { fn(); return 0; };
+  const ctx = permissive();
+  // U stays permissive — every other parameter writes a uniform through it —
+  // with the four this file is about seeded as real slots.
+  for (let n = 0; n < 4; n++) ctx.render.U[`uK${n}`] = { value: 0 };
+  return ctx;
+};
 
 describe('each knob is wired to its own uniform', () => {
 
@@ -135,10 +170,24 @@ describe('they behave like every other parameter', () => {
   });
 
   test('RESET ALL puts them back to 0', () => {
-    const ctx = makeCtx();
+    // FIX(r6): this used to set each knob to its own `default` by hand and then
+    // assert the uniform was 0 — which is `set(0)` followed by `expect 0`, and
+    // says nothing whatever about RESET ALL. It never touched
+    // resetParamsToDefault, so a knob dropped from the reset path, or a reset
+    // that skipped anything without a slider element present, would have gone
+    // unnoticed by the one test named after it.
+    const ctx = makeResetCtx();
     for (const id of IDS) PARAMS[id].set(ctx, 0.9);
-    for (const id of IDS) PARAMS[id].set(ctx, PARAMS[id].default);
-    for (let n = 0; n < 4; n++) assert.equal(ctx.render.U[`uK${n}`].value, 0);
+    for (let n = 0; n < 4; n++) {
+      assert.equal(ctx.render.U[`uK${n}`].value, 0.9, `precondition: uK${n} was not moved`);
+    }
+
+    resetParamsToDefault(ctx);
+
+    for (let n = 0; n < 4; n++) {
+      assert.equal(ctx.render.U[`uK${n}`].value, 0,
+        `RESET ALL left uK${n} where the operator had put it`);
+    }
   });
 });
 

@@ -136,10 +136,39 @@ describe('both global listeners use the shared rule', () => {
     }
   });
 
-  test('both call elementOwnsKey with the pressed key', () => {
+  test('both call elementOwnsKey with the pressed key AND act on the answer', () => {
+    // FIX(r6): this used to assert only that the CALL appeared. So the
+    // one-character mutation that reopens the bug — ask the shared rule and
+    // throw the answer away — left the whole suite green, which was measured
+    // rather than supposed. What carries the behaviour is the guard: the answer
+    // has to reach a `return`.
+    //
+    // Both shapes a reasonable author would write are accepted, the inline
+    // guard and a named intermediate, so a refactor that changes nothing does
+    // not go red. What is refused is a call whose result goes nowhere.
+    const GUARD = new RegExp(
+      'if\\s*\\(\\s*elementOwnsKey\\(\\s*document\\.activeElement\\s*,\\s*e\\.key\\s*\\)\\s*\\)\\s*return' +
+      '|(?:const|let)\\s+(\\w+)\\s*=\\s*elementOwnsKey\\(\\s*document\\.activeElement\\s*,\\s*e\\.key\\s*\\)' +
+      '[\\s\\S]{0,300}?if\\s*\\(\\s*\\1\\s*\\)\\s*return',
+    );
     for (const file of sources) {
-      assert.match(code(file), /elementOwnsKey\(\s*document\.activeElement\s*,\s*e\.key\s*\)/,
+      const src = code(file);
+      assert.match(src, /elementOwnsKey\(\s*document\.activeElement\s*,\s*e\.key\s*\)/,
         `${file} does not consult the shared rule`);
+      assert.match(src, GUARD,
+        `${file} calls elementOwnsKey and does not stand down on the answer — the call is ` +
+        'there and the protection is not');
+    }
+  });
+
+  test('both stand down for every dialog, not only About', () => {
+    // The sibling rule, and it belonged in this file: a hotkey must not fire
+    // through a modal either. Gated on isAboutModalOpen(), four of the five
+    // overlays left D, F, R, T and Space live — see tests/overlay-focus.test.js
+    // for the behavioural half of this.
+    for (const file of sources) {
+      assert.match(code(file), /if\s*\(\s*isAnyOverlayOpen\(\)\s*\)\s*return/,
+        `${file} does not stand its hotkeys down for an open dialog`);
     }
   });
 
