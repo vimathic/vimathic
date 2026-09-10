@@ -1990,7 +1990,9 @@ export class ShaderEditor {
       const errorLine = sameTab
         ? this._parseErrorLine(errorMsg, src, onVert ? vertBody : fragBody)
         : null;
-      const friendly  = this._friendlyError(errorMsg);
+      // The line goes IN, so the sentence and the gutter mark cannot disagree:
+      // one number, resolved once, or no number anywhere.
+      const friendly  = this._friendlyError(errorMsg, errorLine);
       errEl.style.color = '#f66';
       errEl.textContent = friendly;
       this.cb.onCompileResult({ ok: false, message: friendly, line: errorLine });
@@ -2099,12 +2101,35 @@ export class ShaderEditor {
     return relLine >= 1 && relLine <= userBody.split('\n').length ? relLine : null;
   }
 
-  /** Trim noisy WebGL driver boilerplate for cleaner display */
-  _friendlyError(msg) {
-    // Extract just the first ERROR: line — driver prefixes vary wildly
+  /**
+   * Trim noisy WebGL driver boilerplate for cleaner display, and say WHICH line.
+   *
+   * FIX(r6): this printed no line number at all. The pattern it replaced with
+   * "Line " matched the digits as well as the punctuation around them, so it
+   * consumed the number it meant to present: the driver's
+   * "ERROR: 0:14: 'sin' : wrong operand types" reached the operator as
+   * "Line 'sin' : wrong operand types" — a dangling word with no number. documents/shader-editor.md has promised `Line 8: …` since it was
+   * written, and no test covered the one line that had to produce it. With the
+   * gutter mark this is one of only two line signals in the product.
+   *
+   * The number is NOT the driver's. `0:14` counts through the assembled
+   * program, three.js's own preamble included — a line the operator cannot find
+   * in a buffer they can see, and printing it would be confidently wrong rather
+   * than merely silent. What goes on screen is the body-relative line
+   * _parseErrorLine resolved, which is the same line the gutter paints: the two
+   * signals agree by construction, or neither appears.
+   *
+   * @param {string} msg           the driver's InfoLog
+   * @param {number|null} [line]   body-relative line, or null when it could not
+   *                               be resolved (an error in the template, or a
+   *                               failure in the stage the operator is not on)
+   */
+  _friendlyError(msg, line = null) {
+    // Just the first ERROR: line — driver prefixes vary wildly.
     const m = msg.match(/ERROR:.*$/m);
-    if (m) return m[0].replace(/ERROR:\s*\d+:\d+:\s*/, 'Line ');
-    return msg.split('\n')[0].substring(0, 120);
+    if (!m) return msg.split('\n')[0].substring(0, 120);
+    const text = m[0].replace(/^ERROR:\s*\d+:\d+:\s*/, '').trim();
+    return line === null ? text : `Line ${line}: ${text}`;
   }
 
   /**

@@ -28,9 +28,9 @@ globalThis.document = {
   querySelectorAll: () => [],
 };
 
-let ShaderEditor, VS, FS, THREE;
+let ShaderEditor, VS, FS, SE_VS_TEMPLATE, SE_FS_TEMPLATE, THREE;
 before(async () => {
-  ({ ShaderEditor, VS, FS } = await import('../src/shaders.js'));
+  ({ ShaderEditor, VS, FS, SE_VS_TEMPLATE, SE_FS_TEMPLATE } = await import('../src/shaders.js'));
   THREE = await import('three');
 });
 
@@ -41,7 +41,7 @@ before(async () => {
  * stub could not fail, so the failure path it guards had never been executed by
  * anything.
  */
-function makeRender({ mathMode = 0, throwOnRender = false } = {}) {
+function makeRender({ mathMode = 0, throwOnRender = false, failWith = null } = {}) {
   const U = {
     uTime: { value: 0 }, uBass: { value: 0 }, uMid: { value: 0 }, uTreble: { value: 0 },
     uAmp: { value: 1 }, uBeat: { value: 0 }, uWI: { value: 1 },
@@ -66,7 +66,20 @@ function makeRender({ mathMode = 0, throwOnRender = false } = {}) {
     renderer: {
       debug: {},
       compile() {},
-      render() { if (throwOnRender) throw new Error('context lost mid-probe'); },
+      render() {
+        if (throwOnRender) throw new Error('context lost mid-probe');
+        if (!failWith) return;
+        // A driver-shaped failure: three.js hands the hook the gl objects and
+        // the SOURCE IT COMPILED, which is what _parseErrorLine counts through.
+        this.debug.onShaderError?.(
+          {
+            getShaderInfoLog: sh => (sh === 'VS' ? failWith.vert ?? '' : failWith.frag ?? ''),
+            getProgramInfoLog: () => '',
+            getShaderSource: sh => (sh === 'VS' ? failWith.srcVert : failWith.srcFrag) ?? null,
+          },
+          'PROGRAM', 'VS', 'FS',
+        );
+      },
       getRenderTarget() { return LIVE; },
       setRenderTarget(t) { calls.push(t); },
     },
@@ -153,6 +166,86 @@ describe('the APPLY warning fires where it is actionable and nowhere else', () =
 
     assert.equal(se.compileAndApply(), true);
     assert.equal(seen[0].level, 'ok');
+  });
+});
+
+describe('a failure says WHICH line, and it is a line the operator can find', () => {
+
+  /**
+   * Build the driver's own message for an error on `bodyLine` of `body`.
+   *
+   * The driver numbers through the program it compiled — template preamble and
+   * all — so the number in the InfoLog is deliberately NOT the number that
+   * should reach the screen. Computing it here from the assembled source is
+   * what makes the distinction testable instead of assumed.
+   */
+  const driverFailure = (body, bodyLine, text = "'sin' : wrong operand types") => {
+    const full = SE_VS_TEMPLATE(body);
+    const at = full.indexOf(body);
+    const preamble = full.slice(0, at).split('\n').length - 1;
+    return {
+      driverLine: preamble + bodyLine,
+      log: `ERROR: 0:${preamble + bodyLine}: ${text}`,
+      srcVert: full,
+    };
+  };
+
+  test('the sentence names the body-relative line, not the driver\'s', () => {
+    document._els.clear();
+    const body = 'y = 0.0;\ny = sin(vec3(1.0));\ny = 1.0;';
+    const f = driverFailure(body, 2);
+    const render = makeRender({ mathMode: 0, failWith: { vert: f.log, srcVert: f.srcVert } });
+    const se = new ShaderEditor(render);
+    const seen = results(se);
+    se._tab = 'vert';
+    document.getElementById('se-code').value = body;
+
+    assert.equal(se.compileAndApply(), false, 'a driver error must be reported as failure');
+    assert.equal(seen[0].ok, false);
+    assert.equal(seen[0].line, 2, 'the gutter would be painted on the wrong line');
+    assert.match(seen[0].message, /^Line 2: /,
+      `the sentence lost its line number: ${JSON.stringify(seen[0].message)}`);
+    assert.ok(seen[0].message.includes('wrong operand types'), 'the driver\'s own words were dropped');
+    // The number the operator sees and the number the gutter marks are ONE
+    // number. A message quoting the driver's line would point into a buffer
+    // nobody can open — the preamble alone is over eighty lines.
+    assert.ok(f.driverLine > 10, 'this fixture no longer distinguishes the two numberings');
+    assert.doesNotMatch(seen[0].message, new RegExp(`Line ${f.driverLine}\\b`),
+      'the message quotes the driver\'s line through the assembled program');
+  });
+
+  test('and says no number at all when it cannot resolve one', () => {
+    // A failure in the stage the operator is NOT looking at gets no gutter mark
+    // — its line counts through a different buffer entirely — so the sentence
+    // must not carry a number either. Silence beats a confident wrong answer.
+    document._els.clear();
+    const body = 'y = 0.0;';
+    const render = makeRender({
+      mathMode: 0,
+      failWith: { frag: 'ERROR: 0:42: \'c\' : undeclared identifier', srcFrag: SE_FS_TEMPLATE('c = vec3(1.0);') },
+    });
+    const se = new ShaderEditor(render);
+    const seen = results(se);
+    se._tab = 'vert';
+    document.getElementById('se-code').value = body;
+
+    assert.equal(se.compileAndApply(), false);
+    assert.equal(seen[0].line, null, 'a line from the other stage was painted in this one');
+    assert.doesNotMatch(seen[0].message, /Line \d/,
+      'the sentence claims a line the gutter refused to mark');
+    assert.ok(seen[0].message.includes('undeclared identifier'), 'the driver\'s words were dropped');
+  });
+
+  test('a message with no ERROR: line at all still says something', () => {
+    document._els.clear();
+    const render = makeRender({ mathMode: 0, failWith: { vert: 'Shader failed to link', srcVert: '' } });
+    const se = new ShaderEditor(render);
+    const seen = results(se);
+    se._tab = 'vert';
+    document.getElementById('se-code').value = 'y = 0.0;';
+
+    assert.equal(se.compileAndApply(), false);
+    assert.ok(seen[0].message.length > 0, 'a failure with no ERROR: prefix reported nothing at all');
   });
 });
 

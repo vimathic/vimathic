@@ -89,6 +89,11 @@ async function apply(page) {
       text:   said?.text   ?? el.textContent,
       colour: said?.colour ?? getComputedStyle(el).color,
       errLines: document.querySelectorAll('#se-line-nums .ln-err').length,
+      // WHICH line the gutter marked, as the operator reads it. Counting the
+      // marks was never enough: the status sentence and the gutter are the
+      // product's only two line signals, and a test that checks neither number
+      // passes just as happily when they contradict each other.
+      errLine: Number(document.querySelector('#se-line-nums .ln-err')?.textContent ?? 0) || null,
     };
   });
 }
@@ -274,13 +279,38 @@ test.describe('the oracle can fail', () => {
   test('a body the driver cannot compile is reported red, with the line', async ({ page }) => {
     await openEditor(page);
     await page.locator('.se-tab[data-tab="vert"]').click();
-    await page.locator('#se-code').fill('y = 1.0;\ny = notADeclaredName * 2.0\ny = 2.0;');
+    // An undeclared identifier and nothing else. The previous fixture also had a
+    // missing semicolon, which drivers may attribute to the following line —
+    // fine for "is it red", useless for "which line", and this test is now
+    // about the number.
+    const BODY = 'y = 0.0;\ny = notADeclaredName;\ny = 1.0;';
+    await page.locator('#se-code').fill(BODY);
 
     const v = await apply(page);
-    expect(v.colour, 'a program with an undeclared name and a missing semicolon was accepted')
-      .toBe(RED);
+    expect(v.colour, 'a program with an undeclared name was accepted').toBe(RED);
     expect(v.text).not.toMatch(/^✔/);
     expect(v.errLines, 'the failing line was not marked in the gutter').toBeGreaterThan(0);
+
+    // The sentence has to carry a number. documents/shader-editor.md has
+    // promised `Line 8: 'sin' : wrong operand types` since it was written, and
+    // until r6 the code shipped "Line" with the digits eaten by the very regex
+    // that meant to present them.
+    const m = /^Line (\d+): /.exec(v.text);
+    expect(m, `the status line names no line number: ${JSON.stringify(v.text)}`).not.toBeNull();
+    const said = Number(m[1]);
+
+    // The invariant that matters, and the one that holds on any driver: the two
+    // signals are ONE number. A message counting through the assembled program
+    // — preamble and all — would point into a buffer the operator cannot open.
+    expect(said, 'the sentence and the gutter name different lines').toBe(v.errLine);
+    expect(said, 'the reported line is outside the body the operator typed')
+      .toBeLessThanOrEqual(BODY.split('\n').length);
+    expect(said).toBeGreaterThanOrEqual(1);
+    // Soft: an undeclared identifier is unambiguous, so this should be line 2 on
+    // any sane driver. Soft rather than hard because it is the one assertion
+    // here that depends on the driver's judgement rather than on our arithmetic
+    // — ANGLE locally, SwiftShader on the runner.
+    expect.soft(said, 'the driver blamed a different line than the one holding the bad name').toBe(2);
   });
 
   test('and the previous program stays live after a failure', async ({ page }) => {
