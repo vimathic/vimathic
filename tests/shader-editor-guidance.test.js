@@ -133,9 +133,13 @@ describe('APPLY says when a valid shader will do nothing', () => {
     // every APPLY made while colouring got the geometry warning. The BEHAVIOUR
     // is pinned in tests/shader-editor-status.test.js; this stays as the
     // source-level tripwire beside its own paragraph.
-    assert.match(src, /this\._tab === 'vert' && bodyAssignsY\(vertBody\)/,
-      'the warning is no longer gated on the visible tab, so a fragment-only edit ' +
-      'will be nagged about the vertex half');
+    assert.match(src, /vertBody !== SE_DEFAULT_VERT/,
+      'the warning no longer distinguishes a displacement the operator WROTE from the ' +
+      'untouched default, so it is either noise on every fragment edit or silence on a ' +
+      'discarded one');
+    assert.match(src, /cpuMode && authored && bodyAssignsY\(vertBody\)/,
+      'the three conditions of the warning have changed shape — re-read the behavioural ' +
+      'tests in tests/shader-editor-status.test.js before editing this line');
   });
 
   test('the message names the mode and the way out of it', () => {

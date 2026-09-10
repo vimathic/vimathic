@@ -118,11 +118,42 @@ describe('what the row carries', () => {
       'every knob is at rest, so loading the example shows nothing a knob did');
   });
 
-  test('it is a PARTIAL state — it does not rearrange the operator\'s stage', () => {
-    // _applyStateFields applies a field only when it is present, so leaving
-    // these out is what makes the example safe to click mid-session.
-    for (const owned of ['camera', 'camScript', 'shape', 'material', 'bassSens', 'amp']) {
-      assert.ok(!(owned in state), `the example carries ${owned} and would overwrite it`);
+  test('it omits exactly the fields that are SKIPPED when absent', () => {
+    // These are guarded on the apply side — `if (s.camera && camOwned)`,
+    // `if (s.shape)`, `if (s.vizMode)`, and a PARAM_FIELDS entry is applied only
+    // when it is not null. Leaving them out really does mean "leave it alone".
+    for (const skipped of ['camera', 'camScript', 'shape', 'vizMode', 'bassSens', 'trebleSens', 'amp', 'bloom']) {
+      assert.ok(!(skipped in state), `the example carries ${skipped} and would overwrite it`);
+    }
+  });
+
+  test('and states the ones that would otherwise be DEFAULTED under the operator', () => {
+    // The correction. `s.material ?? 'matte'` and `s.particleStyle ?? 'squares'`
+    // mean an absent field is not "leave it alone" — it is "set it to the
+    // default", which is a change the operator did not ask for and could not
+    // predict. deformMode is the sharper one: with a numeric gpuSelVal and no
+    // deform field, no branch writes the mode at all and mathViz._mode can stay
+    // stuck at 'volume' under a GPU shader that carries none.
+    for (const stated of ['material', 'particleStyle', 'deformMode']) {
+      assert.ok(stated in state, `${stated} is absent, so applying the example defaults it silently`);
+    }
+    assert.equal(state.deformMode, 'surface', 'the example displaces a surface, not a volume');
+    assert.equal(state.volumeKey, null);
+  });
+
+  test('every field it carries is one applyState actually reads', () => {
+    // A field nobody reads is a promise the row cannot keep. STATE_FIELDS plus
+    // PARAM_FIELDS is applyState's own definition of "looks like a preset".
+    const src = read('src/ui/presets.js');
+    const known = new Set([
+      ...JSON.parse('[' + src.match(/const STATE_FIELDS = \[([\s\S]*?)\]/)[1]
+        .replace(/\/\/[^\n]*/g, '').replace(/,\s*$/, '').replace(/'/g, '"') + ']'),
+      ...JSON.parse(src.match(/const PARAM_FIELDS = \[([\s\S]*?)\]/)[1]
+        .replace(/\/\/[^\n]*/g, '').replace(/'/g, '"').replace(/^/, '[').replace(/$/, ']')),
+      '_version', 'gpuMode',
+    ]);
+    for (const k of Object.keys(state)) {
+      assert.ok(known.has(k), `the example carries "${k}", which applyState never reads`);
     }
   });
 

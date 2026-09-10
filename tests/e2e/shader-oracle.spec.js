@@ -76,10 +76,16 @@ async function apply(page) {
   await page.locator('#se-btn-apply').click();
   return page.evaluate(() => {
     const el = document.getElementById('se-error');
-    const said = (window.__seLog ?? []).find(e => e.text.trim());
+    const log = window.__seLog ?? [];
+    const said = log.find(e => e.text.trim());
     return {
-      // The fallback covers the case where nothing mutated at all — which is a
-      // failure of this test's premise and shows up as an empty `text`.
+      // `mutated` is what stops the fallback from reading the PREVIOUS apply's
+      // message off the screen: compileAndApply blanks #se-error before it says
+      // anything, so a press that reaches it always mutates. No mutation means
+      // the button did nothing, and every assertion below has to fail rather
+      // than inherit the last verdict, which within the two-second window would
+      // still be a green tick.
+      mutated: log.length > 0,
       text:   said?.text   ?? el.textContent,
       colour: said?.colour ?? getComputedStyle(el).color,
       errLines: document.querySelectorAll('#se-line-nums .ln-err').length,
@@ -88,6 +94,7 @@ async function apply(page) {
 }
 
 const compiled = (v, what) => {
+  expect(v.mutated, `${what}: APPLY changed nothing on screen — the button did not run`).toBe(true);
   expect(v.colour, `${what}: the driver rejected it — "${v.text}"`).not.toBe(RED);
   expect(v.text, `${what}: APPLY reported nothing, so nothing was compiled`)
     .toMatch(/^[✔⚠] Compiled/);
@@ -102,11 +109,22 @@ test.describe('everything the editor ships compiles on a real driver', () => {
     const n = await buttons.count();
     expect(n, 'the preset gallery is empty').toBeGreaterThanOrEqual(8);
 
+    // Tie each verdict to the body it is about. Without this the loop passes
+    // while the SAME text is compiled n times — a preset button that failed to
+    // fill the box would leave the previous entry's code in it and every
+    // assertion would still be green.
+    const seenBodies = new Set();
     for (let i = 0; i < n; i++) {
       const name = await buttons.nth(i).textContent();
       await buttons.nth(i).click();
-      compiled(await apply(page), `preset ${name}`);
+      const body = await page.locator('#se-code').inputValue();
+      expect(body.length, `preset ${name}: clicking it left the editor empty`).toBeGreaterThan(0);
+      expect(seenBodies.has(body), `preset ${name}: the box still holds a previous preset's body`)
+        .toBe(false);
+      seenBodies.add(body);
+      compiled(await apply(page), `preset ${name} — body:\n${body}`);
     }
+    expect(seenBodies.size, 'the gallery compiled fewer distinct bodies than it has buttons').toBe(n);
   });
 
   test('both shipped default bodies link, on the tab each belongs to', async ({ page }) => {
@@ -128,34 +146,69 @@ test.describe('nothing TIDY emits is rejected by the driver', () => {
   // Every entry is written the way this codebase writes GLSL — `.5`, `8.`,
   // spelled-out audio names, a caret for a power — and the first six are the
   // exact shapes that used to come back out of TIDY as text no driver accepts.
-  const CORPUS = [
+  // Two groups, and the split is the point. REWRITES are bodies TIDY must
+  // change — what the driver then compiles is what TIDY emitted, which is the
+  // thing that used to be invalid. UNTOUCHED are bodies it must decline, and
+  // they are here because every one of them is a protection that a review found
+  // TIDY losing: a comment above a declaration blinded the name view entirely,
+  // and a declarator list with initialisers registered only its first name.
+  // "Nothing to tidy" is the assertion for those, and it is not a weaker one.
+  const REWRITES = [
     ['vert', 'a leading-dot float under a power', 'y = .5^2 * sin(r*8. + T) * a;'],
     ['vert', 'a trailing-dot float as an exponent', 'y = sin(r*8. + T)^2. * a;'],
-    ['vert', 'a local the body declares itself',   'float time = T*2.0;\ny = sin(r*8. + time)*a;'],
-    ['vert', 'an int used where no type is named', 'int n = 3;\nn = n + 2;\ny = float(n)*0.02;'],
-    ['vert', 'an integer vector constructor',      'ivec2 q = ivec2(1, 2);\ny = float(q.x)*0.05;'],
     ['vert', 'a negative base raised to a power',  'y = sin(r)^2 + cos(r)^2;'],
     ['vert', 'bare integers as operands',          'y = sin(r * 8 + T) * (0.2 + b * 0.8) * a;'],
     ['vert', 'the spelled-out audio names',        'y = bass * amp * 0.3 + sin(r*8. + time)*0.2;'],
     ['vert', 'a name table entry under a power',   'y = spectrum(r)^2 * bass * a;'],
-    ['vert', 'a for loop with an int counter',     'float s = 0.;\nfor (int i = 0; i < 4; i++) { s += sin(r*float(i)*3. + T); }\ny = s*0.1*a;'],
+    ['vert', 'a member of a call result, raised',  'y = normalize(pos).x^2 * a;'],
     ['frag', 'the fragment names and a power',     'c = getColor(uCM, t) * (0.5 + bass) + vec3(treble^2 * 0.2);'],
     ['frag', 'a palette called by name',           'c = lava(t) * (0.7 + bass*0.5);'],
     ['frag', 'the crossfading palette lookup',     'c = paletteAt(t) * (0.8 + bass*0.4);'],
     ['frag', 'a body that reads the SURF light',   'c = paletteAt(fract(t + time*0.05)) * (1.0 + treble^2);'],
   ];
+  const UNTOUCHED = [
+    ['vert', 'a local the body declares itself',   'float time = T*2.0;\ny = sin(r*8. + time)*a;'],
+    ['vert', 'a declarator list with initialisers', 'float base = 0.2, time = T*0.5;\ny = sin(r*8. + time)*base*a;'],
+    ['vert', 'an int used where no type is named', 'int n = 3;\nn = n + 2;\ny = float(n)*0.02;'],
+    ['vert', 'an int declared under a comment',    '// how many ripples\nint rings = 3;\nrings = rings + 2;\ny = sin(r*float(rings))*a;'],
+    ['vert', 'an integer vector constructor',      'ivec2 q = ivec2(1, 2);\ny = float(q.x)*0.05;'],
+    ['vert', 'a for loop with an int counter',     'float s = 0.;\nfor (int i = 0; i < 4; i++) { s += sin(r*float(i)*3. + T); }\ny = s*0.1*a;'],
+    ['vert', 'a caret whose operand is in a comment', 'y = sin(r*8. + T) // the ripple\n  * a;'],
+  ];
 
-  for (const [tab, what, body] of CORPUS) {
+  for (const [tab, what, body] of UNTOUCHED) {
+    test(`${tab}: ${what} — TIDY declines, and it still compiles`, async ({ page }) => {
+      await openEditor(page);
+      await page.locator(`.se-tab[data-tab="${tab}"]`).click();
+      await page.locator('#se-code').fill(body);
+
+      await page.locator('#se-btn-tidy').click();
+      await expect(page.locator('#se-error'),
+        `${what}: TIDY rewrote a body it must leave alone`).toHaveText(/Nothing to tidy/);
+      expect(await page.locator('#se-code').inputValue(),
+        `${what}: the buffer changed while the status said nothing was tidied`).toBe(body);
+
+      compiled(await apply(page), `${what} — untouched:\n${body}`);
+    });
+  }
+
+  for (const [tab, what, body] of REWRITES) {
     test(`${tab}: ${what}`, async ({ page }) => {
       await openEditor(page);
       await page.locator(`.se-tab[data-tab="${tab}"]`).click();
       await page.locator('#se-code').fill(body);
 
       await page.locator('#se-btn-tidy').click();
-      // TIDY writes through the selection so the undo stack survives; what
-      // matters here is only that the buffer changed into something.
+      // The corpus exists to compile what TIDY EMITS, so an entry TIDY declines
+      // to touch is testing nothing. Assert it actually rewrote something —
+      // otherwise the raw body is what reaches the driver and the entry has
+      // quietly stopped being about the rewriter at all.
+      await expect(page.locator('#se-error'),
+        `${what}: TIDY had nothing to say, so this entry never exercised it`)
+        .toHaveText(/Tidied/);
       const tidied = await page.locator('#se-code').inputValue();
       expect(tidied.length, 'TIDY emptied the buffer').toBeGreaterThan(0);
+      expect(tidied, 'TIDY reported a change it did not make').not.toBe(body);
 
       compiled(await apply(page), `${what} — TIDY produced:\n${tidied}`);
     });
@@ -186,10 +239,13 @@ test.describe('the shipped example arrives without anyone opening the editor', (
     await expect(page.locator('#shader-k0')).not.toHaveValue('0');
     await expect(page.locator('#k0v')).not.toHaveText('0.00');
 
-    // And the shader really is the custom one: open the editor and read it.
+    // And the shader really is the custom one. NOT `/uK0/`: the shipped default
+    // body reads a knob too since 89de1ba, so that pattern no longer tells the
+    // example apart from the text the editor opens with. `float freq` is in the
+    // knob body and nowhere else.
     await revealControl(page, '#btn-open-editor');
     await page.locator('#btn-open-editor').click();
-    await expect(page.locator('#se-code')).toHaveValue(/uK0/);
+    await expect(page.locator('#se-code')).toHaveValue(/float freq\s*=/);
     compiled(await apply(page), 'the factory example, re-applied');
   });
 
@@ -239,7 +295,13 @@ test.describe('the oracle can fail', () => {
     const bad = await apply(page);
     expect(bad.colour).toBe(RED);
 
-    await expect(page.locator('canvas')).toBeVisible();
+    // The assertion that means something: the editor is still usable and still
+    // compiles afterwards. A failed probe that had torn down the live program —
+    // or the context — would not get here. (The earlier version of this test
+    // stopped at "the canvas is visible", which is true of a dead canvas too.)
+    await page.locator('#se-code').fill('y = cos(r*4. + T)*a;');
+    compiled(await apply(page), 'a good body after a failed one');
+
     await page.locator('#se-close').click();
     await expect(page.locator('#shader-editor-overlay')).not.toHaveClass(/open/);
   });

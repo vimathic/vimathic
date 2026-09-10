@@ -114,6 +114,30 @@ const isWord = ch => ch !== undefined && /[A-Za-z0-9_]/.test(ch);
  * operand actually beside the number.
  */
 export function protectedRanges(src) {
+  return analyse(src).ranges;
+}
+
+/**
+ * The ranges, and the comment- and directive-blanked view of the same string.
+ *
+ * Both come out of ONE pass, and that is a repair rather than tidiness. The
+ * first version of scan() re-derived which ranges were comments by testing
+ * their text with `/^\s*(?:\/\/|\/\*|#)/` — but a STATEMENT range runs from the
+ * previous `;` to the next one, so a declaration with a comment on the line
+ * above it starts with `//` and matched too. The whole statement, declaration
+ * included, was then blanked out of the name view, and every name the body
+ * declared went unseen the moment anyone wrote a comment above it:
+ *
+ *     // how many ripples          →  TIDY emits `rings = rings + 2.0;`
+ *     int rings = 3;                  which is int + float, and does not compile
+ *     rings = rings + 2;
+ *
+ * Delete the comment and the same body was handled correctly, which is the
+ * signature of a classifier guessing at something it could simply have been
+ * told. Here nothing is guessed: `bare` is built by the same loop that finds
+ * the comments, so it blanks exactly them and exactly the directives.
+ */
+function analyse(src) {
   const out = [];
   const push = (a, b) => { if (b > a) out.push([a, b]); };
 
@@ -134,10 +158,15 @@ export function protectedRanges(src) {
     i++;
   }
   // Preprocessor lines, on the comment-blanked text so a `#` inside a comment
-  // does not start one. The whole line goes, directive and all.
+  // does not start one. The whole directive goes — and a directive is not
+  // necessarily one physical line: a trailing backslash continues it, and the
+  // continuation carries the macro's body. Left at one line, `#define SIZE \`
+  // followed by `  4` had the 4 floated to 4.0 on the next line, so every
+  // `uBands[SIZE]` and every loop bound spelled with the macro stopped
+  // compiling — and the error pointed at a line the operator never edited.
   {
     const blanked = code.join('');
-    const re = /^[ \t]*#[^\n]*/gm;
+    const re = /^[ \t]*#(?:\\\r?\n|[^\n])*/gm;
     for (const m of blanked.matchAll(re)) {
       push(m.index, m.index + m[0].length);
       for (let k = m.index; k < m.index + m[0].length; k++) code[k] = ' ';
@@ -172,28 +201,49 @@ export function protectedRanges(src) {
       from = k + 1;
     }
   }
-  return out;
+  return { ranges: out, bare };
 }
 
+/** The ranges plus the name view — see analyse(). */
+const scan = src => analyse(src);
+
 /**
- * The comment- and directive-blanked view of a body, plus the ranges no rewrite
- * may enter. Both passes below need the same two things and computing them once
- * keeps them from disagreeing.
+ * The names one declaration statement introduces, from the position just after
+ * its type keyword.
+ *
+ * Written as a walk rather than a regex because the regex it replaces —
+ * `([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)` — only continued across a comma when
+ * the previous declarator had NO initialiser. So in
+ *
+ *     float base = 0.2, time = T * 0.5;
+ *
+ * it captured `base` and stopped, `time` was not registered as a name the body
+ * owns, and applyAliases rewrote it to the scaffold's `T` — declaration and all,
+ * producing `float base = 0.2, T = T * 0.5;` against a `T` the template already
+ * declares. Exactly the defect declaredNames() exists to prevent, one comma
+ * further along.
+ *
+ * Commas are split at depth 0 only, so `vec3 a = mix(x, y, 0.5), b;` is two
+ * declarators and not four.
  */
-function scan(src) {
-  const ranges = protectedRanges(src);
-  // Rebuild the blanked view the same way protectedRanges did, so a name found
-  // here is a name that is really in the code and not in a comment.
-  let bare = src;
-  for (const [a, b] of ranges) {
-    // Only comments and directives are blanked for NAME searches; a protected
-    // statement still declares real names, and `int n = 3;` is exactly the
-    // declaration the caller is looking for.
-    if (/^\s*(?:\/\/|\/\*|#)/.test(src.slice(a, b))) {
-      bare = bare.slice(0, a) + ' '.repeat(b - a) + bare.slice(b);
-    }
+function declaratorNames(bare, from) {
+  const names = [];
+  let depth = 0;
+  let i = from;
+  let start = from;
+  const take = (a, b) => {
+    const m = /^\s*([A-Za-z_]\w*)/.exec(bare.slice(a, b));
+    if (m) names.push(m[1]);
+  };
+  for (; i < bare.length; i++) {
+    const ch = bare[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    else if (depth === 0 && ch === ',') { take(start, i); start = i + 1; }
+    else if (depth === 0 && ch === ';') break;
   }
-  return { ranges, bare };
+  take(start, i);
+  return names;
 }
 
 /**
@@ -211,10 +261,10 @@ function scan(src) {
 function declaredNames(bare) {
   const TYPE = '(?:float|int|bool|void|vec[234]|ivec[234]|bvec[234]|mat[234]|sampler2D|samplerCube)';
   const QUAL = '(?:const|uniform|varying|attribute|lowp|mediump|highp)';
-  const re = new RegExp(`\\b(?:${QUAL}\\s+)*${TYPE}\\s+([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)*)`, 'g');
+  const re = new RegExp(`\\b(?:${QUAL}\\s+)*${TYPE}\\s+(?=[A-Za-z_])`, 'g');
   const names = new Set();
   for (const m of bare.matchAll(re)) {
-    for (const n of m[1].split(',')) names.add(n.trim());
+    for (const n of declaratorNames(bare, m.index + m[0].length)) names.add(n);
   }
   return names;
 }
@@ -229,11 +279,11 @@ function declaredNames(bare) {
  */
 function intNames(bare, ranges) {
   const forRanges = ranges.filter(([a]) => /^\s*for\b/.test(bare.slice(a, a + 8)));
-  const re = /\b(?:const\s+)?(?:lowp\s+|mediump\s+|highp\s+)?(?:int|ivec[234])\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)/g;
+  const re = /\b(?:const\s+)?(?:lowp\s+|mediump\s+|highp\s+)?(?:int|ivec[234])\s+(?=[A-Za-z_])/g;
   const names = new Set();
   for (const m of bare.matchAll(re)) {
     if (forRanges.some(([a, b]) => m.index >= a && m.index < b)) continue;
-    for (const n of m[1].split(',')) names.add(n.trim());
+    for (const n of declaratorNames(bare, m.index + m[0].length)) names.add(n);
   }
   return names;
 }
@@ -324,7 +374,20 @@ export function expandCarets(src) {
 
     const left = termBefore(text, at);
     const right = termAfter(text, at);
-    if (!left || !right) {
+    // FIX(r6): a term may not reach into a protected range. Only the caret's own
+    // position was checked, and the term finders consult no ranges at all, so an
+    // operand was free to be a word inside a comment:
+    //
+    //     y = sin(r*8. + T) // the ripple
+    //       ^2 * a;
+    //
+    // The left walk skipped the newline as ordinary whitespace, took `ripple`,
+    // and — once the operands were trimmed — spliced `pow(` INSIDE the comment,
+    // where it swallowed the rest of the statement including its semicolon. The
+    // caret is parked instead, so the operator keeps exactly what they wrote.
+    const ranges = protectedRanges(text);
+    const reaches = t => t && inRanges(ranges, t.start, t.end);
+    if (!left || !right || reaches(left) || reaches(right)) {
       // Nothing sensible on one side. Blank this caret so the loop moves on,
       // then restore it — the source keeps whatever the operator wrote.
       text = `${text.slice(0, at)}${PARKED}${text.slice(at + 1)}`;
@@ -384,9 +447,12 @@ function isNonNegative(s) {
   return false;
 }
 
-function termBefore(src, at) {
-  let k = at - 1;
-  while (k >= 0 && /\s/.test(src[k])) k--;
+/**
+ * One link of a postfix chain, walked right to left from `k`: a parenthesised
+ * group with the function name in front of it, or an identifier / number.
+ * Returns where that link starts, or null when there is nothing walkable.
+ */
+function linkBefore(src, k) {
   if (k < 0) return null;
   if (src[k] === ')') {
     let depth = 0;
@@ -397,11 +463,34 @@ function termBefore(src, at) {
     if (k < 0) return null;
     let s = k;                                   // take a function name with it
     while (s > 0 && isWord(src[s - 1])) s--;
-    return { start: s, end: at };
+    return s;
   }
   if (!isWord(src[k])) return null;
   let s = k;
-  while (s > 0 && (isWord(src[s - 1]) || (src[s - 1] === '.' && isWord(src[s - 2])))) s--;
+  while (s > 0 && isWord(src[s - 1])) s--;
+  return s;
+}
+
+function termBefore(src, at) {
+  let k = at - 1;
+  while (k >= 0 && /\s/.test(src[k])) k--;
+  if (k < 0) return null;
+  let s = linkBefore(src, k);
+  if (s === null) return null;
+  // FIX(r6): keep walking back through `.` links, whatever is on the far side of
+  // the dot. The old walk stepped over a `.` only when a WORD character sat on
+  // both sides, so a member of a call result stopped at the member and the
+  // rewrite was spliced after the dot: `normalize(pos).x^2` came out as
+  // `normalize(pos).pow(abs(x), 2.0)`, which is not GLSL. `pos.x^2` was correct
+  // and `vec2(r,r).x^2` was not — the failure depended on whether a `)` happened
+  // to precede the dot, which is not a distinction the operator can see.
+  while (s > 0 && src[s - 1] === '.') {
+    let j = s - 2;
+    while (j >= 0 && /\s/.test(src[j])) j--;
+    const prev = linkBefore(src, j);
+    if (prev === null) break;
+    s = prev;
+  }
   // FIX(r6): a leading-dot float. The walk above steps over a `.` only when a
   // word character sits on BOTH sides of it — that is the member-access rule,
   // `pos.x`. In `.5^2` there is nothing to the left of the dot, so the term came
@@ -443,13 +532,25 @@ function termAfter(src, at) {
   // GLSL. Same rule as the left side, mirrored: the dot is part of the number
   // when what precedes it is all digits and no identifier character follows.
   if (src[k] === '.' && /^\d+$/.test(src.slice(numStart, k)) && !isWord(src[k + 1])) k++;
-  if (src[k] === '(') {                          // a call: take its arguments
-    let depth = 0;
-    for (; k < src.length; k++) {
-      if (src[k] === '(') depth++;
-      else if (src[k] === ')') { depth--; if (!depth) { k++; break; } }
+  // A call, and then whatever hangs off it. FIX(r6): the member chain AFTER a
+  // call was not consumed, so `x^normalize(pos).y` became `pow(x, normalize(pos)).y`
+  // — the mirror image of the left-hand defect above, and just as invalid.
+  for (;;) {
+    if (src[k] === '(') {
+      let depth = 0;
+      for (; k < src.length; k++) {
+        if (src[k] === '(') depth++;
+        else if (src[k] === ')') { depth--; if (!depth) { k++; break; } }
+      }
+      if (depth) return null;
+      continue;
     }
-    if (depth) return null;
+    if (src[k] === '.' && isWord(src[k + 1])) {
+      k++;
+      while (k < src.length && isWord(src[k])) k++;
+      continue;
+    }
+    break;
   }
   return { start, end: k };
 }

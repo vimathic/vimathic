@@ -1921,8 +1921,20 @@ export class ShaderEditor {
       // roughly 192 of the ~230 SHADER MODE entries hold uMathMode != 0, and
       // the app boots into one of them. A warning that fires on a correct
       // action is how a status line stops being read.
-      const cpuMode = this._render?.U?.uMathMode?.value !== 0;
-      const wasted  = cpuMode && this._tab === 'vert' && bodyAssignsY(vertBody);
+      //
+      // FIX(r6, second pass): gating on the visible tab ALONE was too much. APPLY
+      // assembles and installs BOTH programs on every press, so a displacement
+      // the operator wrote on the vertex tab goes live — and is discarded — when
+      // they press APPLY from the fragment tab too. Suppressing the warning
+      // there swapped a false alarm for a silence, which is the worse of the two.
+      //
+      // What made the false alarm noise is that the vertex buffer holds
+      // SE_DEFAULT_VERT until somebody edits it, and the shipped default assigns
+      // y. So the question is not which tab is on screen; it is whether there is
+      // a displacement the OPERATOR wrote. An untouched default is not one.
+      const cpuMode  = this._render?.U?.uMathMode?.value !== 0;
+      const authored = this._tab === 'vert' || vertBody !== SE_DEFAULT_VERT;
+      const wasted   = cpuMode && authored && bodyAssignsY(vertBody);
       const message = wasted
         ? '⚠ Compiled — a CPU formula is active, so y is discarded. Pick a numbered GPU shader (1–38) in SHADER MODE.'
         : '✔ Compiled & applied';
@@ -2014,8 +2026,13 @@ export class ShaderEditor {
       renderer.compile(tScene, tCam);
       rt = new THREE.WebGLRenderTarget(1, 1);
       prevRT = renderer.getRenderTarget();
-      renderer.setRenderTarget(rt);
+      // Armed BEFORE the call, not after it. A throw from inside setRenderTarget
+      // can still leave the renderer pointed at the new target, and with the flag
+      // set afterwards the finally would skip the restore and then dispose the
+      // target the renderer was holding — the worse half of the bug this whole
+      // block exists to fix, reintroduced one line further down.
       boundToProbe = true;
+      renderer.setRenderTarget(rt);
       renderer.render(tScene, tCam);
     } catch (e) {
       captured = captured || e?.message || String(e);

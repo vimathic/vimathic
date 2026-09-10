@@ -1245,10 +1245,22 @@ export const PresetMixin = {
    *    them — where the vertex template discards the body's `y` and the preset
    *    would load to no visible change. That is the trap the APPLY warning
    *    exists for, and a shipped example must not walk into it.
-   * 3. It is a PARTIAL state, deliberately. No camera, no shape, no material,
-   *    no audio settings: _applyStateFields applies a field only if it is
-   *    present, so this changes the shader, the mode and the four knobs and
-   *    leaves everything the operator has set up alone.
+   * 3. It carries every field that would otherwise be DEFAULTED, and omits only
+   *    the ones that are genuinely skipped when absent. That distinction is not
+   *    cosmetic and the first version of this got it wrong: `material` and
+   *    `particleStyle` are read as `s.material ?? 'matte'` and
+   *    `s.particleStyle ?? 'squares'` (_applyStateFields), so leaving them out
+   *    does not mean "leave the operator's finish alone" — it means "silently
+   *    set it to Matte and squares". `deformMode` is worse: with a numeric
+   *    gpuSelVal and no deform field, no branch writes the mode, and the note
+   *    above that code says what follows — mathViz._mode stays stuck at 'volume'
+   *    while the panel and the engine disagree.
+   *
+   *    So the row states them. What it still omits is the set that really is
+   *    skipped when missing: camera, camScript, shape, vizMode, and every
+   *    PARAM_FIELDS entry except the four knobs. Clicking it changes the shader,
+   *    the GPU mode, the four knobs, the finish and the deform mode; it does not
+   *    move the camera, change the body or touch the audio settings.
    *
    * The GLSL is not written here. It is read out of SE_PRESETS by id, so the
    * bodies exist once — in src/shaders.js, where the tidy guard already reads
@@ -1278,6 +1290,16 @@ export const PresetMixin = {
         // is that it is not a formula, so uMathMode is 0 and `y` survives.
         gpuSelVal: '1',
         gpuMode: 1,
+        // Stated rather than defaulted — see rule 3. Matte and squares are what
+        // an absent field resolves to anyway; writing them down is what makes
+        // the row's effect something a test can read and a reader can predict.
+        material: 'matte',
+        particleStyle: 'squares',
+        // The body this shader displaces is a plain surface. Without this the
+        // deform block writes no mode at all and mathViz can be left in
+        // 'volume' under a GPU shader that carries none.
+        deformMode: 'surface',
+        volumeKey: null,
         shader: { hasCustom: true, vert: vert.code, frag: frag.code },
         // Off-centre so the first move of any of them is visibly a move, and
         // k3 left at 0 because neither body reads it — a knob that does

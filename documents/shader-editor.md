@@ -31,7 +31,7 @@ It appears on the **vertex** tab only. Custom fragment colour applies in either 
 Open **ADVANCED** in the control panel, expand **SHADER EDITOR**, and click **✎ EDIT GLSL SHADER**. The modal has:
 
 - **Tabs** — switch between vertex and fragment code
-- **Presets strip** — eight starters covering both tab types
+- **Presets strip** — ten starters covering both tab types
 - **Editor textarea** — your code goes here
 - **TIDY** — fix the three things GLSL is fussy about, without compiling
 - **APPLY** — compile and use; errors appear in red below
@@ -104,7 +104,9 @@ A custom body is not a trapdoor out of the rest of the app. While one is live:
 | Colour scheme (`Q` / `E`, the dropdown) | Applies. Use `paletteAt(x)` and it **crossfades** over 600 ms exactly as the built-in shader does; `getColor(uCM, x)` gives the same colour without the fade | Applies |
 | SURF lighting — moving sun, diffuse, rim, specular | **Applies.** It is the same lighting block the built-in program runs, not a copy of it | Applies |
 | Surface material, Bloom, Spectrum Rings, shape, the four knobs | Apply | Apply |
-| **SHADER MODE 1–38** | Applies | **Does not.** Your body *is* the displacement, so all 38 numbered entries draw the same thing until you reset. This is the one real boundary, and the editor says so above the code box |
+| **SHADER MODE 1–38** | **Does not** — see below | **Does not.** Your body *is* the displacement, so all 38 numbered entries draw the same thing until you reset. This is the one real boundary, and the editor says so above the code box |
+
+APPLY installs **both** programs, whichever tab you pressed it on — the vertex body sitting in the other buffer goes live with your colour. So the SHADER MODE row above is not really a per-tab fact: from your first APPLY until RESET, the numbered entries stop driving the shape. If you only wanted a custom colour, RESET puts the built-in displacement back and keeps the palette dropdown meaningful again.
 
 Two of those rows were broken until round 6 and said nothing about it: a palette change under a custom fragment body waited out the fade and then cut, and applying *any* fragment body — the shipped default included — silently deleted SURF's lighting. If you have a shader saved from before, it still compiles and still means the same thing; swap `getColor(uCM, t)` for `paletteAt(t)` when you want the fade.
 
@@ -164,7 +166,7 @@ The scaffold defines:
 You also have **all 54 palette functions** available by name (`tealOrange`, `lava`, `cyberpunkGold`, `coalPlum`, `burgundyBlack`, etc.) plus a dispatcher:
 
 ```glsl
-c = getColor(uCM, t);   // matches the palette dropdown
+c = paletteAt(t);   // matches the palette dropdown, and fades when it changes
 ```
 
 That's the default — picking a palette from the dropdown Just Works without you editing anything. You can call any palette by name explicitly to override:
@@ -173,7 +175,7 @@ That's the default — picking a palette from the dropdown Just Works without yo
 c = lava(t) * (0.7 + uBass * 0.5);
 ```
 
-## Eight starter presets
+## Ten starter presets
 
 | Preset | Tab | What it does |
 |---|---|---|
@@ -185,6 +187,8 @@ c = lava(t) * (0.7 + uBass * 0.5);
 | 🎆 Ramanujan | vert | The classic Ramanujan radial sum |
 | 🌈 Neon | frag | RGB rainbow cycling with audio shift |
 | 🔆 Lava | frag | Bass-pumped lava palette |
+| 🎛 Knobs | vert | Ripples whose frequency, depth and twist sit on `uK0`, `uK1` and `uK2` — the one to reach for when you want to *play* a shader rather than write one |
+| 🎛 Knob Tint | frag | Palette drift, contrast and audio lift on the same three knobs |
 
 Click a preset to load it. It overwrites the editor's current contents; if you had unsaved changes, copy them somewhere first.
 

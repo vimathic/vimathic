@@ -306,9 +306,15 @@ export const PARAMS = {
 
   // ── Shader knobs — four numbers a custom shader can read ────────────────
   //
-  // Nothing in the app reads these. They exist only to reach `uK0…uK3` in the
-  // shader editor's scaffolds, and their whole purpose is that a hand-written
-  // shader stops being frozen.
+  // No built-in program reads these. They exist to reach `uK0…uK3` in the shader
+  // editor's scaffolds, and their whole purpose is that a hand-written shader
+  // stops being frozen.
+  //
+  // FIX(r6): this used to say "Nothing in the app reads these", and it was true
+  // when it was written — which was the problem. Both shipped default bodies now
+  // read one, two gallery presets are built around them, and the factory preset
+  // seeded on a first visit carries a shader that plays on them. A capability
+  // with no demonstration is indistinguishable from one that does not work.
   //
   // Before them, every number in a custom shader was baked into its text.
   // Changing one meant reopening a modal that blacks out the screen and, because

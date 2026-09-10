@@ -136,6 +136,44 @@ describe('and the integers that must stay integers are left alone', () => {
     assert.equal(tidy('  #define K 8'), '  #define K 8');
   });
 
+  test('a comment above a declaration does not hide the declaration', () => {
+    // Found by an adversarial review of the fix itself. scan() re-derived which
+    // protected ranges were comments by testing their TEXT — and a statement
+    // range runs from the previous `;`, so a declaration with a comment on the
+    // line above started with `//` and matched. The whole statement was blanked
+    // out of the name view, every protection below went blind, and TIDY handed
+    // back `int + float`. Delete the comment and the same body was handled
+    // correctly, which is what a guessing classifier looks like from outside.
+    assert.equal(tidy('// how many ripples\nint rings = 3;\nrings = rings + 2;'),
+                 '// how many ripples\nint rings = 3;\nrings = rings + 2;');
+    assert.equal(tidy('/* ripples */\nint n = 3;\nn = n + 2;'),
+                 '/* ripples */\nint n = 3;\nn = n + 2;');
+    assert.equal(tidy('#define K 4\nint n = 3;\nn = n + 2;'),
+                 '#define K 4\nint n = 3;\nn = n + 2;');
+    assert.equal(tidy('y = 0.0;\n// counter\nint n = 3;\nn = n + 2;'),
+                 'y = 0.0;\n// counter\nint n = 3;\nn = n + 2;');
+    // The same blanking also blinded declaredNames, and that half was SILENT:
+    // the declaration survived and only the USE was rebound to the scaffold.
+    assert.equal(tidy('// step count\nint time = 3;\ny = float(time)*0.1;'),
+                 '// step count\nint time = 3;\ny = float(time)*0.1;');
+  });
+
+  test('a declarator list with initialisers registers every name in it', () => {
+    // The comma-continuation in the old regex only matched an UNINITIALISED
+    // list, so the second declarator here was not registered as a name the body
+    // owns and TIDY rewrote it — declaration and all — onto the scaffold's T.
+    assert.equal(tidy('float base = 0.2, time = T * 0.5;\ny = sin(r * 8. + time) * base;'),
+                 'float base = 0.2, time = T * 0.5;\ny = sin(r * 8. + time) * base;');
+    assert.equal(tidy('int a = 1, n = 2;\nn = n + 2;'), 'int a = 1, n = 2;\nn = n + 2;');
+    // …and a comma INSIDE an initialiser is not a declarator boundary.
+    assert.equal(tidy('vec3 p = vec3(1.0, 2.0, 3.0), q = p;\ny = q.x;'),
+                 'vec3 p = vec3(1.0, 2.0, 3.0), q = p;\ny = q.x;');
+  });
+
+  test('a preprocessor directive continued with a backslash', () => {
+    assert.equal(tidy('#define SIZE \\\n  4\ny = r * 2;'), '#define SIZE \\\n  4\ny = r * 2.0;');
+  });
+
   test('a for-counter does not protect the whole loop body', () => {
     // The counter is declared inside a header that is already protected as a
     // range; registering it as an int name too would protect `y += 1;` here,
@@ -217,6 +255,31 @@ describe('^ becomes pow, and only where that is unambiguous', () => {
       assert.doesNotMatch(out, /pow\(/, `guessed at an ambiguous caret in: ${src} -> ${out}`);
       assert.doesNotMatch(out, /\u0000/, 'the internal sentinel leaked into the source');
     }
+  });
+
+  test('an operand may not reach into a comment', () => {
+    // The term finders consult no protected ranges, so the left walk skipped a
+    // newline as ordinary whitespace and took a word out of a `//` comment.
+    // Once the operands were trimmed, `pow(` was spliced INSIDE the comment and
+    // swallowed the rest of the statement — the semicolon with it.
+    const src = 'y = sin(r*8. + T) // the ripple\n  ^2 * a;';
+    const out = tidy(src);
+    assert.doesNotMatch(out, /pow\(/, 'an operand was taken from inside a comment');
+    assert.ok(out.includes('// the ripple\n'), 'the comment lost its newline and ate the code after it');
+    assert.ok(out.trimEnd().endsWith(';'), 'the statement lost its semicolon');
+  });
+
+  test('a member of a call result keeps the call', () => {
+    // The member walk stepped over a `.` only when a word sat on BOTH sides, so
+    // the rewrite was spliced after the dot: `.pow(abs(x), 2.0)` is not GLSL.
+    // Which side of the dot mattered depended on whether a `)` preceded it —
+    // `pos.x^2` was right and `vec2(r,r).x^2` was not.
+    assert.equal(tidy('y = normalize(pos).x^2;'), 'y = pow(abs(normalize(pos).x), 2.0);');
+    assert.equal(tidy('y = vec2(r,r).x^2;'), 'y = pow(abs(vec2(r,r).x), 2.0);');
+    // The mirror image on the right-hand side.
+    assert.equal(tidy('y = x^normalize(pos).y;'), 'y = pow(x, normalize(pos).y);');
+    // The plain member form still reads the same way it always did.
+    assert.equal(tidy('y = pos.x^2;'), 'y = pow(abs(pos.x), 2.0);');
   });
 
   test('and where there is nothing else to tidy, the line comes back byte for byte', () => {

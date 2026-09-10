@@ -96,6 +96,24 @@ describe('the APPLY warning fires where it is actionable and nowhere else', () =
     assert.match(seen[0].message, /CPU formula is active/);
   });
 
+  test('fragment tab, but the operator HAS written a displacement — they are still warned', () => {
+    // The correction to the first version of this gate. Suppressing the warning
+    // on the fragment tab traded a false alarm for a silence: APPLY assembles
+    // and installs BOTH programs every time, so a displacement sitting in the
+    // vertex buffer goes live and is discarded whichever tab is on screen. What
+    // made the alarm noise was the UNTOUCHED default, not the tab.
+    render = makeRender({ mathMode: 1 });
+    se = new ShaderEditor(render);
+    const seen = results(se);
+    se._vert = 'y = sin(r * 8.0 + T) * 1.5;';     // authored on the vertex tab earlier
+    se._tab = 'frag';
+    document.getElementById('se-code').value = 'c = vec3(1.0, 0.0, 0.0);';
+
+    assert.equal(se.compileAndApply(), true);
+    assert.equal(seen[0].level, 'warn',
+      'a displacement the operator wrote was installed and discarded in silence');
+  });
+
   test('fragment tab, same CPU formula — nothing is said about geometry', () => {
     // The defect this test exists for: `wasted` read the VERTEX body whichever
     // tab was on screen, and the vertex buffer holds SE_DEFAULT_VERT, which

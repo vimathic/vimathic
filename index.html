@@ -1599,7 +1599,7 @@
         <b style="color:#aaa">Spectrum (vertex only):</b> <span>bandAtRadius(r)</span> · <span>bandAtU(0–1)</span> · <span>uBands[24]</span> · <span>uBandR</span> body radius — Spectrum Rings already adds one band term, set it to 0 to avoid doubling<br>
         <b style="color:#aaa">Knobs:</b> <span>uK0</span> · <span>uK1</span> · <span>uK2</span> · <span>uK3</span> 0–1 — sliders under SHADER EDITOR in the panel, and MIDI-mappable; put one where you would type a constant<br>
         <b style="color:#aaa">Colour (fragment):</b> <span>paletteAt(x)</span> — the chosen scheme, crossfading over 600 ms when you change it; <span>getColor(uCM, x)</span> is the same colour without the fade. SURF lighting now runs over your <span>c</span> automatically<br>
-        <b style="color:#aaa">What a custom VERTEX body does not answer:</b> <span>SHADER MODE</span> 1–38 — your body replaces that displacement, so all 38 numbered entries draw the same thing while it is live. Everything else — shape, material, palette, Spectrum Rings, the knobs — still applies
+        <b style="color:#aaa">What APPLY takes over:</b> <span>SHADER MODE</span> 1–38 — APPLY installs BOTH programs whichever tab you pressed it on, and your vertex body replaces that displacement, so all 38 numbered entries then draw the same thing. RESET gives them back. Everything else — shape, material, palette, Spectrum Rings, the knobs — still applies
       </div>
       <div id="se-tabs">
         <div class="se-tab active" data-tab="vert">VERTEX (displacement)</div>
