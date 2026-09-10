@@ -11,6 +11,9 @@ import { PARAMS, applyParam } from '../params.js';
 import { clampFov } from '../camera.js';
 import { selectShape } from '../shapes.js';
 import { normalizeVizMode, DEFAULT_VIZ_MODE } from '../viz-mode.js';
+// The editor's example gallery — read by _seedFactoryPresets so the factory
+// preset's GLSL has one home and not two.
+import { SE_PRESETS } from '../shaders.js';
 
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
@@ -1212,6 +1215,77 @@ export const PresetMixin = {
 
   _loadPresetList() {
     try { return JSON.parse(localStorage.getItem('vimathic_presets') || '[]'); } catch (_) { return []; }
+  },
+
+  /**
+   * Put ONE preset in the list on a browser that has never had one.
+   *
+   * FIX(r6): why this exists at all. 2493a98 gave a hand-written shader four
+   * knobs — sliders, MIDI CCs, preset capture, the lot — and that is the whole
+   * difference between a shader you write and a shader you play. It then
+   * shipped no demonstration: not a gallery entry, not a default body, not a
+   * preset. The preset list seeds from '[]', so a new user's first sight of
+   * VIMATHIC is "No saved presets", and every shipped example of a custom
+   * shader lives three clicks deep inside a modal most operators never open.
+   *
+   * A capability nobody can find is not distinguishable from one that does not
+   * work, and this repository has no telemetry by design — so "nobody uses the
+   * shader editor" was never a measurement, it was the absence of a door. This
+   * is the door, and it costs one row.
+   *
+   * ── The three rules it obeys ──────────────────────────────────────────────
+   *
+   * 1. Once, ever. The gate is `getItem(...) === null` — the key having never
+   *    been written — and NOT an empty list. A user who deletes it has said
+   *    what they think of it; `[]` is a decision and must not be overwritten on
+   *    the next reload. That distinction is the whole reason this reads the raw
+   *    key instead of calling _loadPresetList().
+   * 2. It carries a NUMBERED GPU mode. Without one the app sits in a CPU
+   *    formula — 192 of the ~230 SHADER MODE entries do, and boot is one of
+   *    them — where the vertex template discards the body's `y` and the preset
+   *    would load to no visible change. That is the trap the APPLY warning
+   *    exists for, and a shipped example must not walk into it.
+   * 3. It is a PARTIAL state, deliberately. No camera, no shape, no material,
+   *    no audio settings: _applyStateFields applies a field only if it is
+   *    present, so this changes the shader, the mode and the four knobs and
+   *    leaves everything the operator has set up alone.
+   *
+   * The GLSL is not written here. It is read out of SE_PRESETS by id, so the
+   * bodies exist once — in src/shaders.js, where the tidy guard already reads
+   * every one of them.
+   *
+   * @returns {boolean} true when a preset was written
+   */
+  _seedFactoryPresets() {
+    let raw = null;
+    try { raw = localStorage.getItem('vimathic_presets'); } catch (_) { return false; }
+    if (raw !== null) return false;
+
+    const vert = SE_PRESETS.find(p => p.id === 'knobs-vert');
+    const frag = SE_PRESETS.find(p => p.id === 'knobs-frag');
+    // No silent half-seed: if the gallery entries were renamed away, ship
+    // nothing rather than a preset carrying an empty body that fails to
+    // compile on the operator's first click.
+    if (!vert || !frag) return false;
+
+    return this._writePresetList([{
+      name: '🎛 Knobs (example)',
+      savedAt: 0,          // not Date.now(): this was authored, not captured
+      factory: true,
+      state: {
+        _version: CURRENT_PRESET_VERSION,
+        // "2. Damped Radial Rings" — any numbered entry would do; what matters
+        // is that it is not a formula, so uMathMode is 0 and `y` survives.
+        gpuSelVal: '1',
+        gpuMode: 1,
+        shader: { hasCustom: true, vert: vert.code, frag: frag.code },
+        // Off-centre so the first move of any of them is visibly a move, and
+        // k3 left at 0 because neither body reads it — a knob that does
+        // nothing is better left where it started than parked somewhere that
+        // implies it does.
+        k0: 0.35, k1: 0.5, k2: 0.15, k3: 0,
+      },
+    }]);
   },
 
   _renderPresets() {

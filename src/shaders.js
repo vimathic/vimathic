@@ -1598,7 +1598,9 @@ void main(){float t=clamp((vH+.8)*.6,.03,.97);
 // ── Shader editor default code snippets ───────────────────────────────────────
 const SE_DEFAULT_VERT = `// b bass  t treble  m mid  bt beat  T time  wi waveInt  a amp
 // pos.x pos.z = coords   r = radius   ang = angle
-y = sin(r * 8.0 * wi + T) * (0.2 + b * 0.8) * a
+// uK0..uK3 = four free knobs: ADVANCED > SHADER KNOBS, and MIDI-mappable.
+// Put one where you would have typed a constant and it becomes playable.
+y = sin(r * 8.0 * wi * (1.0 + uK0 * 2.0) + T) * (0.2 + b * 0.8) * a
   + turb(pos.xz * (2.0 + t) * wi) * b * 0.3
   + bt * 0.5;`;
 
@@ -1632,9 +1634,21 @@ const SE_DEFAULT_FRAG = `// t = palette ramp 0.03..0.97 — the DISPLACEMENT at 
 // uTime. Note t is that ramp, not treble as in the vertex tab.
 // getColor(uCM, t) dispatches to one of 54 palettes. You can also call
 // any palette by name directly, e.g.  c = lava(t)  or  c = cyberpunkGold(t);
-c = getColor(uCM, t);`;
+// uK0..uK3 are here too — the same four knobs the vertex tab gets. At rest
+// they are 0, so the line below is the plain palette until you move one.
+c = getColor(uCM, t) * (1.0 + uK1 * 1.5);`;
 
-const SE_PRESETS = [
+/**
+ * The editor's example gallery.
+ *
+ * Exported since round 6 so the factory preset in src/ui/presets.js can carry
+ * the two knob examples WITHOUT a second copy of their GLSL: the bodies live
+ * here, once, where tests/glsl-tidy.test.js already reads every one of them and
+ * refuses a preset TIDY would want to rewrite. The two entries the seed needs
+ * carry a stable `id` for that reason — matching on the display name would tie
+ * a persisted preset to a string with an emoji in it.
+ */
+export const SE_PRESETS = [
   { name:'🌊 Ocean',    tab:'vert', code:`y = sin(r*8.*wi - T*2.) * exp(-r*.4) * (0.3+b*.9)*a\n  + sin(pos.x*6.*wi)*cos(pos.z*4.*wi)*.15*a;` },
   { name:'⚡ Lightning', tab:'vert', code:`y = sin(pos.x*20.*wi*(0.5+t)+T*5.) * (0.1+b*.6)*a\n  + sin(pos.z*18.*wi+T*3.)*(0.1+t*.5)*a + bt*0.8;` },
   { name:'🌀 Vortex',   tab:'vert', code:`float spiral=ang*3.+r*5.-T*2.;\ny = sin(spiral)*(0.2+b*.8)*a*exp(-r*.25) + cos(spiral*2.)*(0.1+t*.4)*a*.5;` },
@@ -1643,6 +1657,17 @@ const SE_PRESETS = [
   { name:'🎆 Ramanujan',tab:'vert', code:`float s=0.;\nfor(int n=-6;n<=6;n++){float fn=float(n); s+=cos(ang*fn)*exp(-r*.25*fn*fn*(0.5+t));}\ny = tanh(s*.7)*(0.3+b*.7)*a;` },
   { name:'🌈 Neon',     tab:'frag', code:`float h=t*6.28+uTime*.5;\nc=vec3(abs(sin(h+uBass*2.)),abs(sin(h+2.094+t)),abs(sin(h+4.189+uMid))) *(0.6+uBeat*0.4);` },
   { name:'🔆 Lava',     tab:'frag', code:`c=lava(t)*(0.7+uBass*0.5+uBeat*0.3);` },
+  // FIX(r6): the two the gallery was missing. 2493a98 added uK0..uK3 — four
+  // scalars on sliders and on MIDI CCs, the one thing that makes a hand-written
+  // shader playable rather than only writable — and then shipped no example of
+  // them at all: not in these presets, not in either default body, so
+  // src/params.js could truthfully say "Nothing in the app reads these". A
+  // capability with no demonstration is indistinguishable from one that does
+  // not work. Every knob is used at a scale chosen so the look at rest (all
+  // knobs 0) is still worth looking at, because that is what a first click
+  // shows.
+  { id:'knobs-vert', name:'🎛 Knobs',    tab:'vert', code:`// K1 frequency   K2 depth   K3 twist   — ADVANCED > SHADER KNOBS, or a MIDI CC\nfloat freq = 3.0 + uK0 * 21.0;\nfloat twist = ang * uK2 * 6.0;\ny = sin(r * freq * wi - T * 2.0 + twist) * exp(-r * 0.35)\n  * (0.25 + uK1 * 0.75) * (0.4 + b * 0.9) * a;` },
+  { id:'knobs-frag', name:'🎛 Knob Tint',tab:'frag', code:`// K1 hue drift   K2 contrast   K3 audio lift\nfloat u = fract(t + uK0 + uTime * 0.05);\nvec3 base = getColor(uCM, u);\nc = mix(base, base * base * 2.0, uK1) * (1.0 + uK2 * (uBass + uTreble));` },
 ];
 
 /**

@@ -142,6 +142,55 @@ test.describe('nothing TIDY emits is rejected by the driver', () => {
   }
 });
 
+test.describe('the shipped example arrives without anyone opening the editor', () => {
+
+  // The reach half of the same problem. Everything above happens inside a modal
+  // three clicks deep; this is the one path by which an operator who will never
+  // write GLSL meets a custom shader at all. It is also the only end-to-end
+  // check that the seed is actually wired into boot — controls.js calls it
+  // optional-chained, because bindControls runs against partial stubs in the
+  // unit tests, and an optional call that resolves to nothing fails silently.
+  test('a fresh profile finds it in the preset list, and loading it goes live', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('canvas')).toBeVisible();
+    await revealControl(page, '#preset-list');
+
+    const row = page.locator('#preset-list .preset-load-btn', { hasText: 'Knobs' });
+    await expect(row, 'a browser that has never been here shows no example preset').toHaveCount(1);
+
+    await row.click();
+    // A numbered GPU shader, not a formula — otherwise the vertex body is
+    // discarded and the example loads to no visible change.
+    await expect(page.locator('#gpu-sel')).toHaveValue(/^\d+$/);
+    // The knobs the bodies were written around arrive with it.
+    await expect(page.locator('#shader-k0')).not.toHaveValue('0');
+    await expect(page.locator('#k0v')).not.toHaveText('0.00');
+
+    // And the shader really is the custom one: open the editor and read it.
+    await revealControl(page, '#btn-open-editor');
+    await page.locator('#btn-open-editor').click();
+    await expect(page.locator('#se-code')).toHaveValue(/uK0/);
+    compiled(await apply(page), 'the factory example, re-applied');
+  });
+
+  test('and deleting it means deleted — it does not come back on the next load', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('canvas')).toBeVisible();
+    await revealControl(page, '#preset-list');
+    await expect(page.locator('#preset-list .preset-load-btn', { hasText: 'Knobs' })).toHaveCount(1);
+
+    // Delete through storage rather than through the ✕ button and its confirm:
+    // what is under test is the SEED's gate, not the delete dialog. An empty
+    // list is the state the gate has to read as a decision.
+    await page.evaluate(() => localStorage.setItem('vimathic_presets', '[]'));
+    await page.reload();
+    await expect(page.locator('canvas')).toBeVisible();
+    await revealControl(page, '#preset-list');
+    await expect(page.locator('#preset-list .preset-load-btn', { hasText: 'Knobs' }),
+      'the example was seeded again over a deletion').toHaveCount(0);
+  });
+});
+
 test.describe('the oracle can fail', () => {
 
   // Without this, every assertion above would also pass on a page where APPLY

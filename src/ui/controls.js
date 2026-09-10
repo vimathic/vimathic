@@ -1217,6 +1217,15 @@ export function bindControls(ui) {
       if (e.key === 'Enter') { document.getElementById('btn-preset-save').click(); }
     });
   }
+  // One factory preset on a browser that has never had any — the only shipped
+  // demonstration that a custom shader is a look you can play rather than an
+  // experiment. Gated on the key never having been written, so deleting it
+  // means deleted. See _seedFactoryPresets for the three rules it follows.
+  // Optional-chained for the same reason the rest of this file is: bindControls
+  // runs against partial UI stubs in the unit tests, which carry _renderPresets
+  // and not the whole PresetMixin. The wiring itself is pinned end-to-end in
+  // tests/e2e/shader-oracle.spec.js, on a profile that has never been here.
+  ui._seedFactoryPresets?.();
   ui._renderPresets();
 
   // ── Model import ──────────────────────────────────────────────────────────

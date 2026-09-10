@@ -91,6 +91,10 @@ They run 0–1 with a default of 0, which is what a MIDI CC maps onto without a 
 
 To put one on a controller: **ADVANCED → MIDI**, pick *Shader Knob 1*, then move the knob.
 
+**Where to see them working.** Two entries in the editor's preset gallery are written around them — **🎛 Knobs** on the vertex tab (K1 frequency, K2 depth, K3 twist) and **🎛 Knob Tint** on the fragment tab (K1 hue drift, K2 contrast, K3 audio lift). Click one, press APPLY, then move a slider in **ADVANCED → SHADER KNOBS** and watch the shape change without the editor being touched again. Both shipped default bodies read a knob too, at a scale that is a no-op while the knob is at 0 — so the look you already know is the look you still get.
+
+There is also one preset in the panel's own list, **🎛 Knobs (example)**, on a browser that has never saved one. It carries that shader, a numbered GPU mode (so the displacement is not discarded) and the knob positions it was written for — the whole thing on one click, without opening this editor at all. Delete it and it stays deleted.
+
 ### The 24-band spectrum
 
 The vertex scaffold also hands you the analyser's full 24-band spectrum — the same data Spectrum Rings is drawn from. `uBass`, `uMid` and `uTreble` are three numbers for the whole mix; this is twenty-four, and you can put each one somewhere different on the body.
