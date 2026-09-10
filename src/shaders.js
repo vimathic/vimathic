@@ -1715,13 +1715,33 @@ export class ShaderEditor {
     this._buildPresets();
   }
 
+  /**
+   * Take ownership of the status line.
+   *
+   * The success path arms a timer that blanks #se-error after two seconds (ten
+   * for the warning). Anything that wants to WRITE that line next has to cancel
+   * the timer first, or the previous run's tidy-up erases a message that arrived
+   * after it.
+   *
+   * FIX(r6): compileAndApply did this inline and TIDY did not do it at all, so
+   * pressing APPLY and then ✎ TIDY within two seconds — which is the ordinary
+   * rhythm of using both buttons — left the tidy report on screen for whatever
+   * remained of APPLY's countdown and then blanked it. The operator saw a report
+   * of what was rewritten in their own buffer vanish for no reason they could
+   * see. Extracted rather than duplicated so the next writer of that line
+   * inherits the rule instead of rediscovering it.
+   */
+  claimStatus() {
+    clearTimeout(this._okTimer);
+    this._okTimer = null;
+  }
+
   compileAndApply() {
     const errEl = document.getElementById('se-error');
     errEl.textContent = '';
     // Whatever this run reports owns the status line from here on — see the
     // timer armed on success below.
-    clearTimeout(this._okTimer);
-    this._okTimer = null;
+    this.claimStatus();
     const vertBody = this._tab === 'vert' ? document.getElementById('se-code').value : this._vert;
     const fragBody = this._tab === 'frag' ? document.getElementById('se-code').value : this._frag;
     if (this._tab === 'vert') this._vert = vertBody;
@@ -1808,8 +1828,19 @@ export class ShaderEditor {
       // Only when the body actually writes `y`: a fragment-only edit is
       // unaffected — custom colour applies in every mode — and warning there
       // would be noise on a correct action.
+      //
+      // FIX(r6): and only on the tab where it is actionable. The paragraph
+      // above says a fragment-only edit is unaffected; the code did not agree
+      // with it. `wasted` read the VERTEX body whichever tab was on screen, and
+      // the vertex body assigns y by default — SE_DEFAULT_VERT does, and so do
+      // all six shipped vertex snippets — so every APPLY made from the FRAGMENT
+      // tab in CPU mode printed a ten-second amber warning about geometry the
+      // operator had not touched. That is the ordinary case, not a corner:
+      // roughly 192 of the ~230 SHADER MODE entries hold uMathMode != 0, and
+      // the app boots into one of them. A warning that fires on a correct
+      // action is how a status line stops being read.
       const cpuMode = this._render?.U?.uMathMode?.value !== 0;
-      const wasted  = cpuMode && bodyAssignsY(vertBody);
+      const wasted  = cpuMode && this._tab === 'vert' && bodyAssignsY(vertBody);
       const message = wasted
         ? '⚠ Compiled — a CPU formula is active, so y is discarded. Pick a numbered GPU shader (1–38) in SHADER MODE.'
         : '✔ Compiled & applied';
@@ -1884,21 +1915,34 @@ export class ShaderEditor {
       };
     };
 
+    // FIX(r6): declared out here so the finally can undo them. Both used to sit
+    // inside the try, with only the debug hook restored on the way out — so a
+    // throw from render() left the renderer bound to this 1x1 target and leaked
+    // it. Every frame after that goes into a one-pixel buffer: the canvas stops
+    // updating and nothing says why, with no recovery short of a reload. The
+    // paths that reach this method with the overlay CLOSED are the ones that
+    // make it serious — a preset click, a clip step — which is to say, mid-set.
+    let rt = null;
+    let prevRT = null;
+    let boundToProbe = false;
     try {
       // compile() builds the program; the link check three defers to first use
       // is what triggers the hook, so force one render to a throwaway target.
       // Rendering the real scene here would fight the animation loop.
       renderer.compile(tScene, tCam);
-      const rt = new THREE.WebGLRenderTarget(1, 1);
-      const prevRT = renderer.getRenderTarget();
+      rt = new THREE.WebGLRenderTarget(1, 1);
+      prevRT = renderer.getRenderTarget();
       renderer.setRenderTarget(rt);
+      boundToProbe = true;
       renderer.render(tScene, tCam);
-      renderer.setRenderTarget(prevRT);
-      rt.dispose();
     } catch (e) {
       captured = captured || e?.message || String(e);
     } finally {
       renderer.debug.onShaderError = prevHook;
+      // Order matters: hand the renderer back its target before disposing the
+      // one it is pointed at.
+      if (boundToProbe) renderer.setRenderTarget(prevRT);
+      rt?.dispose();
     }
 
     // FIX: say whether it worked. Every report this method makes goes to

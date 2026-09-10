@@ -22,7 +22,9 @@ How to tell which mode you're in: open the **SHADER MODE** dropdown in the panel
 
 To use the Shader Editor: pick a **numbered** entry from the dropdown, then open **SHADER EDITOR** and APPLY your code.
 
-If you APPLY custom vertex code while a CPU formula is active, you'll see "✔ Compiled & applied" in green — that means your GLSL is valid, but the displacement won't show on the canvas until you switch to a numbered GPU shader. (Custom fragment color applies immediately in either mode.)
+If you APPLY custom vertex code while a CPU formula is active, the status line turns **amber**, not green: "⚠ Compiled — a CPU formula is active, so y is discarded." Your GLSL is valid; the displacement will not show on the canvas until you pick a numbered GPU shader (1–38) in SHADER MODE. The warning stays up for ten seconds rather than two, because it is a sentence to act on rather than a tick to glance at.
+
+It appears on the **vertex** tab only. Custom fragment colour applies in either mode, so an APPLY made while you are colouring says nothing about geometry you did not touch.
 
 ## Opening it
 

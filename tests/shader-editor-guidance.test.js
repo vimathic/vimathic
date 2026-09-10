@@ -125,8 +125,17 @@ describe('APPLY says when a valid shader will do nothing', () => {
     assert.match(src, /uMathMode\?\.value\s*!==\s*0/,
       'compileAndApply no longer checks whether the displacement will be discarded');
     assert.match(src, /bodyAssignsY\(vertBody\)/,
-      'the warning is no longer gated on the body actually writing y, so a fragment-only ' +
-      'edit will be nagged about the vertex half');
+      'the warning is no longer gated on the body actually writing y');
+    // FIX(r6): this assertion is the one that was missing, and its absence is
+    // why the paragraph above shipped describing behaviour the code did not
+    // have. `bodyAssignsY(vertBody)` alone is true whichever tab is on screen,
+    // because the vertex buffer holds SE_DEFAULT_VERT and that assigns y — so
+    // every APPLY made while colouring got the geometry warning. The BEHAVIOUR
+    // is pinned in tests/shader-editor-status.test.js; this stays as the
+    // source-level tripwire beside its own paragraph.
+    assert.match(src, /this\._tab === 'vert' && bodyAssignsY\(vertBody\)/,
+      'the warning is no longer gated on the visible tab, so a fragment-only edit ' +
+      'will be nagged about the vertex half');
   });
 
   test('the message names the mode and the way out of it', () => {

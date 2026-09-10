@@ -920,6 +920,12 @@ function bindShaderEditor(ui) {
   // and there is no second source of truth to reconcile. It is a separate
   // button from APPLY so the edit can be read before it runs.
   document.getElementById('se-btn-tidy')?.addEventListener('click', () => {
+    // FIX(r6): take the status line before writing to it. APPLY arms a timer
+    // that blanks #se-error two seconds later (ten after the warning), and TIDY
+    // never cancelled it — so the ordinary rhythm of pressing APPLY, reading the
+    // result and reaching for ✎ TIDY had the tidy report appear and then vanish
+    // on the previous run's countdown, with nothing to explain it.
+    se.claimStatus?.();
     const { text, changed, changes } = tidyGlsl(seCode.value, se._tab);
     if (!changed) {
       se.cb.onCompileResult({ ok: true, level: 'ok', message: '✎ Nothing to tidy', line: null });
