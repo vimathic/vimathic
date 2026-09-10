@@ -37,17 +37,19 @@ Open **ADVANCED** in the control panel, expand **SHADER EDITOR**, and click **�
 
 ## TIDY — write it as maths, press one button
 
-GLSL is stricter than the notation you think in, and three of its rules cause most of the red text a newcomer sees. **✎ TIDY** rewrites your code in the box to satisfy them. It does not compile anything and it does not save anything — you read the result, then press APPLY yourself.
+GLSL is stricter than the notation you think in, and a few of its rules cause most of the red text a newcomer sees. **✎ TIDY** rewrites your code in the box to satisfy them. It does not compile anything and it does not save anything — you read the result, then press APPLY yourself.
 
 | You write | TIDY makes it | Why |
 |---|---|---|
 | `r * 8` | `r * 8.0` | GLSL has no automatic int→float, so `r * 8` is a type error — the single most common one |
-| `r^2` | `pow(r, 2.0)` | `^` is bitwise XOR in GLSL and does not accept floats at all |
+| `r^2` | `pow(abs(r), 2.0)` | `^` is bitwise XOR in GLSL and does not accept floats at all |
 | `bass`, `time`, `spectrum(r)` | `b`, `T`, `bandAtRadius(r)` | The scaffold's own names, which are short because they are typed constantly |
 
-The name table is different per tab, and deliberately so: in the **vertex** body `t` is *treble* and time is `T`, while in the **fragment** body `t` is the palette ramp, so there the audio names expand to `uBass`, `uMid`, `uTreble` and `uTime` instead. `spectrum` is vertex-only, like the band functions it stands for.
+The name table is different per tab, and deliberately so: in the **vertex** body `t` is *treble* and time is `T`, while in the **fragment** body `t` is the palette ramp, so there the audio names expand to `uBass`, `uMid`, `uTreble` and `uTime` instead. `spectrum` is vertex-only, like the band functions it stands for. A name you declare yourself is never renamed — write `float time = T * 2.0;` and it stays `time`, table or no table.
 
-It is careful about numbers that must stay whole. Array indices (`uBands[3]`), `for` loop counters, and any statement that mentions `int` are left alone, as is anything already a float (`8.0`, `.5`, `1e-3`) and anything inside a comment.
+**Why the `abs()`.** GLSL leaves `pow(x, y)` *undefined* when `x` is negative; on many drivers that is a NaN, and a NaN in the geometry or the colour is a black rectangle on screen. `sin(r)^2` is the commonest thing anyone writes here and `sin` is negative half the time, so the guard goes on. It appears only for an **even** whole exponent, where `|x|²` and `x²` are the same number — an odd or fractional power is expanded bare, because there `abs()` would change your answer rather than protect it. The status line names the guard when it adds one.
+
+It is careful about numbers that must stay whole. Array indices (`uBands[3]`), `for` loop counters, `ivec2(1, 2)`, `#define` lines, any statement that mentions `int`, and an `int` variable used further down (`n = n + 2;`) are all left alone — as is anything already a float (`8.0`, `.5`, `8.`, `1e-3`) and anything inside a comment.
 
 Where it is not sure, it does nothing. `a ^ b` with something complicated on either side is left as you wrote it rather than guessed at — a rewrite that compiles and means something else is worse than one that never happened. Ctrl+Z takes a tidy back.
 

@@ -110,6 +110,40 @@ describe('and the integers that must stay integers are left alone', () => {
       'the int statement was protected but its neighbour was not tidied');
   });
 
+  test('an int variable used on a line that names no type', () => {
+    // The statement rule reads the segment it is in, and `n = n + 2;` mentions
+    // no type at all — so the 2 was floated and the addition stopped compiling.
+    // Checked per literal now, against the operand actually beside it.
+    assert.equal(tidy('int n = 3;\nn = n + 2;'), 'int n = 3;\nn = n + 2;');
+    assert.equal(tidy('int n = 3;\nn = 2 + n;'), 'int n = 3;\nn = 2 + n;');
+    assert.equal(tidy('int n = 3;\nn = 2;'), 'int n = 3;\nn = 2;');
+    // …and the same body's genuinely-float arithmetic is still tidied. This is
+    // the pair that rules out protecting the whole statement instead.
+    assert.equal(tidy('int n = 3;\ny = float(n) * 2;'), 'int n = 3;\ny = float(n) * 2.0;');
+  });
+
+  test('an integer vector constructor', () => {
+    // `ivec2` does not contain the word `int`, so the statement rule never saw
+    // it and `ivec2(1, 2)` became `ivec2(1.0, 2.0)` — a hard type error.
+    assert.equal(tidy('ivec2 q = ivec2(1, 2);'), 'ivec2 q = ivec2(1, 2);');
+    assert.equal(tidy('y = float(ivec3(1, 2, 3).x);'), 'y = float(ivec3(1, 2, 3).x);');
+  });
+
+  test('a preprocessor directive', () => {
+    // Not a statement, so the `;` split never reached it: `#define N 4` became
+    // `#define N 4.0`, and every array size and loop bound spelled with N broke.
+    assert.equal(tidy('#define N 4\ny = r * 2;'), '#define N 4\ny = r * 2.0;');
+    assert.equal(tidy('  #define K 8'), '  #define K 8');
+  });
+
+  test('a for-counter does not protect the whole loop body', () => {
+    // The counter is declared inside a header that is already protected as a
+    // range; registering it as an int name too would protect `y += 1;` here,
+    // which is a float and has to be floated.
+    assert.equal(tidy('for (int i = 0; i < 5; i++) { y += float(i) * 2; }'),
+                 'for (int i = 0; i < 5; i++) { y += float(i) * 2.0; }');
+  });
+
   test('anything inside a comment', () => {
     assert.equal(tidy('// y = 8 is the usual shape\ny = r * 4;'),
                  '// y = 8 is the usual shape\ny = r * 4.0;');
@@ -125,10 +159,44 @@ describe('and the integers that must stay integers are left alone', () => {
 describe('^ becomes pow, and only where that is unambiguous', () => {
 
   test('the shapes people actually write', () => {
-    assert.equal(tidy('y = r^2;'), 'y = pow(r, 2.0);');
-    assert.equal(tidy('y = (r + 1.0)^2;'), 'y = pow((r + 1.0), 2.0);');
-    assert.equal(tidy('y = sin(r)^2 + cos(r)^2;'), 'y = pow(sin(r), 2.0) + pow(cos(r), 2.0);');
-    assert.equal(tidy('y = pos.x^2;'), 'y = pow(pos.x, 2.0);');
+    // INVERTED in round 6. These four assertions used to pin the UNGUARDED
+    // output — `pow(sin(r), 2.0)` — and pinning it is what let it ship. GLSL
+    // leaves pow(x, y) undefined for x < 0; on ANGLE/D3D11 that is a NaN, and
+    // sin is negative half the time, so TIDY's headline example generated the
+    // exact black-rectangle class that cost this branch four commits. The app's
+    // own GPU formula writes `pow(abs(sin(...)),2.)` — src/shaders.js — and TIDY
+    // now agrees with it. Even exponents only, where |x|^n IS x^n.
+    assert.equal(tidy('y = r^2;'), 'y = pow(abs(r), 2.0);');
+    assert.equal(tidy('y = (r + 1.0)^2;'), 'y = pow(abs((r + 1.0)), 2.0);');
+    assert.equal(tidy('y = sin(r)^2 + cos(r)^2;'),
+                 'y = pow(abs(sin(r)), 2.0) + pow(abs(cos(r)), 2.0);');
+    assert.equal(tidy('y = pos.x^2;'), 'y = pow(abs(pos.x), 2.0);');
+  });
+
+  test('the guard goes on only where it cannot change the answer', () => {
+    // Odd exponent: abs() would flip a sign, so the caret expands bare and the
+    // operator keeps what they wrote.
+    assert.equal(tidy('y = r^3;'), 'y = pow(r, 3.0);');
+    // Fractional exponent: a negative base has no real answer to preserve.
+    assert.equal(tidy('y = r^.5;'), 'y = pow(r, .5);');
+    // Already non-negative by construction — no point wrapping it twice.
+    assert.equal(tidy('y = abs(r)^2;'), 'y = pow(abs(r), 2.0);');
+    assert.equal(tidy('y = length(pos.xz)^2;'), 'y = pow(length(pos.xz), 2.0);');
+    assert.equal(tidy('y = 2^2;'), 'y = pow(2.0, 2.0);');
+    // …but a call that merely STARTS with abs( is not an abs() call.
+    assert.equal(tidy('y = (abs(r)*x)^2;'), 'y = pow(abs((abs(r)*x)), 2.0);');
+  });
+
+  test('a float literal keeps the dot that belongs to it', () => {
+    // Both of these shipped broken. The walk over a `.` only stepped across it
+    // when a word character sat on BOTH sides — the member-access rule — so a
+    // leading- or trailing-dot float lost its dot to the outside of the call.
+    // `.pow(5.0, 2.0)` and `pow(x, 2.0).` are not GLSL; neither compiles, and
+    // nothing in the suite saw it because nothing compiles what TIDY emits.
+    assert.equal(tidy('y = .5^2;'), 'y = pow(.5, 2.0);');
+    assert.equal(tidy('y = x^2.;'), 'y = pow(abs(x), 2.);');
+    assert.doesNotMatch(tidy('y = .5^2;'), /\.pow\(/, 'the leading dot was left outside the call');
+    assert.doesNotMatch(tidy('y = x^2.;'), /\)\./, 'the trailing dot was left outside the call');
   });
 
   test('it nests to the right, the way maths reads it', () => {
@@ -228,6 +296,23 @@ describe('names expand to what the scaffold actually declares', () => {
     assert.equal(tidy('y = pos.time;'), 'y = pos.time;');
   });
 
+  test('a name the body declares itself is never renamed', () => {
+    // This shipped as a redefinition. `float time = T * 2.0;` had its own
+    // declaration rewritten to the scaffold's local — `float T = T * 2.0;` —
+    // against a T the template already declares, so nothing compiled.
+    //
+    // Renaming only the USES and leaving the declaration alone would have been
+    // worse than a compile error: it compiles and silently reads the scaffold's
+    // time instead of the operator's variable. So the whole alias is dropped
+    // for a name the body owns, declaration and uses together.
+    assert.equal(tidy('float time = T*2.0;\ny = sin(time);'),
+                 'float time = T*2.0;\ny = sin(time);');
+    assert.equal(tidy('float bass = 0.5; y = bass;'), 'float bass = 0.5; y = bass;');
+    assert.equal(tidy('vec2 mid = pos.xz; y = mid.x;'), 'vec2 mid = pos.xz; y = mid.x;');
+    // A body that does NOT declare the name still gets the alias.
+    assert.equal(tidy('y = bass;'), 'y = b;');
+  });
+
   test('a longer word that merely contains an alias is untouched', () => {
     assert.equal(tidy('y = bassSens;'), 'y = bassSens;');
     assert.equal(tidy('float timer = T; y = timer;'), 'float timer = T; y = timer;');
@@ -240,7 +325,8 @@ describe('the pass as a whole', () => {
     // Aliases before carets, so `spectrum(r)^2` has become a call by the time
     // the caret looks left; carets before floats, so the `2` they introduce is
     // still an integer when the float pass arrives.
-    assert.equal(tidy('y = spectrum(r)^2 * bass;'), 'y = pow(bandAtRadius(r), 2.0) * b;');
+    // INVERTED in round 6 with the three assertions above: the base is guarded.
+    assert.equal(tidy('y = spectrum(r)^2 * bass;'), 'y = pow(abs(bandAtRadius(r)), 2.0) * b;');
   });
 
   test('a body that needs nothing is reported as unchanged', () => {
@@ -281,10 +367,15 @@ describe('the pass as a whole', () => {
 
   test('the summary counts what it did', () => {
     const r = tidyGlsl('y = bass * 2 + r^2;');
-    assert.deepEqual(r.changes.map(c => c.kind).sort(), ['floats', 'names', 'pow']);
+    // 'guard' joined the list in round 6. It is reported on its own line rather
+    // than folded into 'pow' because it is the only edit here that ADDS text:
+    // the operator should read that abs() went in, not discover it in their
+    // own buffer.
+    assert.deepEqual(r.changes.map(c => c.kind).sort(), ['floats', 'guard', 'names', 'pow']);
     const line = describeTidy(r.changes);
     assert.match(line, /Tidied/);
     assert.match(line, /pow/);
+    assert.match(line, /abs\(\) guard/, 'the added abs() is not named in the status line');
   });
 
   test('the sub-passes are exported so each can be checked on its own', () => {
@@ -334,7 +425,8 @@ describe('it is wired to a button that does not compile', () => {
   test('the document describes it', () => {
     const doc = read('documents/shader-editor.md');
     assert.match(doc, /## TIDY/, 'shader-editor.md does not document the button');
-    assert.match(doc, /pow\(r, 2\.0\)/, 'the doc does not show what ^ becomes');
+    assert.match(doc, /pow\(abs\(r\), 2\.0\)/, 'the doc does not show what ^ becomes');
+    assert.ok(doc.includes('even'), 'the doc does not say when the abs() guard applies');
     assert.ok(doc.includes('`beat` is not in the name table'),
       'the doc does not say why beat is excluded');
   });
