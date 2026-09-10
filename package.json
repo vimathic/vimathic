@@ -24,7 +24,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node scripts/run-tests.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "bench:formulas": "node scripts/bench-cpu-formulas.mjs"
   },
   "dependencies": {
     "gif.js": "^0.2.0",
