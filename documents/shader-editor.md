@@ -95,6 +95,19 @@ To put one on a controller: **ADVANCED → MIDI**, pick *Shader Knob 1*, then mo
 
 There is also one preset in the panel's own list, **🎛 Knobs (example)**, on a browser that has never saved one. It carries that shader, a numbered GPU mode (so the displacement is not discarded) and the knob positions it was written for — the whole thing on one click, without opening this editor at all. Delete it and it stays deleted.
 
+### What a custom shader keeps, and the one thing it replaces
+
+A custom body is not a trapdoor out of the rest of the app. While one is live:
+
+| Control | Under a custom **fragment** body | Under a custom **vertex** body |
+|---|---|---|
+| Colour scheme (`Q` / `E`, the dropdown) | Applies. Use `paletteAt(x)` and it **crossfades** over 600 ms exactly as the built-in shader does; `getColor(uCM, x)` gives the same colour without the fade | Applies |
+| SURF lighting — moving sun, diffuse, rim, specular | **Applies.** It is the same lighting block the built-in program runs, not a copy of it | Applies |
+| Surface material, Bloom, Spectrum Rings, shape, the four knobs | Apply | Apply |
+| **SHADER MODE 1–38** | Applies | **Does not.** Your body *is* the displacement, so all 38 numbered entries draw the same thing until you reset. This is the one real boundary, and the editor says so above the code box |
+
+Two of those rows were broken until round 6 and said nothing about it: a palette change under a custom fragment body waited out the fade and then cut, and applying *any* fragment body — the shipped default included — silently deleted SURF's lighting. If you have a shader saved from before, it still compiles and still means the same thing; swap `getColor(uCM, t)` for `paletteAt(t)` when you want the fade.
+
 ### The 24-band spectrum
 
 The vertex scaffold also hands you the analyser's full 24-band spectrum — the same data Spectrum Rings is drawn from. `uBass`, `uMid` and `uTreble` are three numbers for the whole mix; this is twenty-four, and you can put each one somewhere different on the body.

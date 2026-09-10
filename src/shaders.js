@@ -1225,85 +1225,28 @@ const _MATERIAL_BLOCK = `
     color += vec3(specM) * (1.0 - uRoughness) * uReflect * 0.3 * uGlare;
   }`;
 
-export const FS = `
-uniform int   uCM, uCMNext;
-uniform float uCMBlend;
-// SURF lighting (gated by uLighting): time + audio bands drive light direction
-// and audio-reactive specular / rim. Skipped entirely in wireframe and points
-// modes by setting uLighting=0 in setVizModeGPU().
+// ── The SURF lighting model, shared by both fragment programs ────────────────
 //
-// NOTE: dFdx/dFdy in main() need no #extension directive and no 'extensions'
-// flag on the ShaderMaterial. three r169 is WebGL2-only, so the shader always
-// compiles as GLSL ES 3.00 where the derivatives are core built-ins — and the
-// directive would be illegal there anyway (it must precede any non-preprocessor
-// token, while three.js prepends its own preamble to user source).
-// Don't add back 'extensions: { derivatives: true }' either — r169 honours only
-// clipCullDistance and multiDraw, and silently drops anything else.
-uniform int   uLighting;
-uniform float uTime, uBass, uTreble;
-// ── Surface material (PBR-style env reflections) ─────────────────────────
-// uMaterial: 0 = Matte (reflections off, original look). >0 enables the
-// reflection path. Shared with SE_FS_TEMPLATE via _MATERIAL_UNIFORMS.
-${_MATERIAL_UNIFORMS}
-// ── Particle style (PTS mode) ────────────────────────────────────────────
-// 0 = square sprite (the original), 1 = round dot, 2 = soft smoke puff.
-// Shared with SE_FS_TEMPLATE via _POINT_UNIFORMS.
-${_POINT_UNIFORMS}
-varying float vH;
-varying float vBandU;
-varying vec3  vWorldPos;
-varying vec3  vViewDir;
-
-${_COLOR_FUNS}
-${_STUDIO_ENV}
-
-// ── Main ─────────────────────────────────────────────────────────────────────
-void main(){
-  float t = clamp((vH+.8)*.6,.03,.97);
-  // ── The spectrum as a colour map ──────────────────────────────────────────
-  // Until this, the bands reached the palette only through vH: they moved the
-  // surface, the surface is the ramp's parameter, so a loud band changed the
-  // COLOUR of its zone but said nothing about WHICH band it was. Two zones
-  // listening to a kick and to a hi-hat, equally loud, were the same colour.
-  //
-  // vBandU is that identity, and shifting t by it makes the layout readable as
-  // a colour map: the low end sits at one place on the ramp, the top at
-  // another, and the picture says where in the spectrum you are looking.
-  //
-  // ── Why this is a STATIC offset, and not driven by loudness ──────────────
-  // Because the loudness version is the flicker this app damps everywhere else.
-  // A band's level can move 0.24 of its range in one 60 Hz frame (BAND_TAU is
-  // 60 ms), the layer reaches the ramp, and coherent brightness modulation at
-  // hi-hat rate is the same class of risk that keeps uBeat pinned to 0 in the
-  // vertex program and the starfield fade damped. vBandU does not move with the
-  // MUSIC at all: the character map is frozen at a reference time and the GPU
-  // coordinate is computed with the audio pinned at 0.5, so nothing the track
-  // does changes this term.
-  //
-  // It is not literally constant, and the earlier version of this note said it
-  // was. During a GPU mode crossfade bandTermOfMode blends the two modes'
-  // coordinates and hands the blended one back, so the tint travels across the
-  // palette while the fade runs. That is a one-way transition of under a
-  // second, not a periodic modulation, and it is the same movement the surface
-  // itself is making — but "adds no temporal modulation whatsoever" was false
-  // and an external review said so. What is true, and is what the
-  // photosensitivity argument needs, is that nothing here is driven by an
-  // ONSET or by a band level.
-  //
-  // Bounded and re-clamped into the SAME [.03, .97] window, so every pixel is
-  // still a colour the chosen palette declares. That is what keeps the NIGHT
-  // contract (max channel 0.55, Y 0.28 at every stop) true without restating
-  // it: nothing here can leave the ramp, only move along it.
-  //
-  // -1 is the "no layer" value written by the vertex program, and the step()
-  // is what keeps depth 0 bit-identical rather than nearly so.
-  t = clamp(t + step(0., vBandU) * .30 * (vBandU - .5), .03, .97);
-  vec3 c    = getColor(uCM,    t);
-  vec3 cNxt = getColor(uCMNext, t);
-  // uCMBlend 0→1 crossfades between the two color schemes
-  vec3 color = mix(c, cNxt, uCMBlend);
-
-  if (uLighting == 1) {
+// FIX(r6): extracted, and the direction matters. SE_FS_TEMPLATE never declared
+// uLighting at all, so applying ANY custom fragment body — the shipped default
+// snippet included — silently deleted the moving sun, the half-Lambert diffuse,
+// the fresnel rim and the specular from Surface mode. The operator did not turn
+// that off and nothing said it had happened.
+//
+// The obvious repair is to copy the block into the editor template. That would
+// have made a NINTH hand-mirrored region across this pair, and the eight that
+// already exist are not theoretical: `ramu` at the top of this file and its copy
+// in SE_VS_TEMPLATE have silently diverged under a comment claiming they are
+// word for word. So it is shared instead of copied, which leaves one fewer
+// region to keep in step rather than one more.
+//
+// Expects in scope: color (read AND written), vWorldPos, vViewDir, uLighting,
+// uTime, uTreble, uBass, uGlare. Both programs declare all eight.
+//
+// The built-in program is unchanged to the byte by this extraction — pinned in
+// tests/shader-light-block.test.js, which reassembles it from the pieces and
+// compares against the shipped text.
+const _LIGHT_BLOCK = `  if (uLighting == 1) {
     // Reconstruct geometric normal from screen-space derivatives of the
     // post-displacement world position. Works equally well for the 38 GPU
     // formulas (computed in VS) and the CPU heightfields (already baked into
@@ -1390,7 +1333,87 @@ void main(){
     color = color * (ambient + diff * 0.85)
           + color * rim
           + vec3(spec) * uGlare;
-  }
+  }`;
+
+export const FS = `
+uniform int   uCM, uCMNext;
+uniform float uCMBlend;
+// SURF lighting (gated by uLighting): time + audio bands drive light direction
+// and audio-reactive specular / rim. Skipped entirely in wireframe and points
+// modes by setting uLighting=0 in setVizModeGPU().
+//
+// NOTE: dFdx/dFdy in main() need no #extension directive and no 'extensions'
+// flag on the ShaderMaterial. three r169 is WebGL2-only, so the shader always
+// compiles as GLSL ES 3.00 where the derivatives are core built-ins — and the
+// directive would be illegal there anyway (it must precede any non-preprocessor
+// token, while three.js prepends its own preamble to user source).
+// Don't add back 'extensions: { derivatives: true }' either — r169 honours only
+// clipCullDistance and multiDraw, and silently drops anything else.
+uniform int   uLighting;
+uniform float uTime, uBass, uTreble;
+// ── Surface material (PBR-style env reflections) ─────────────────────────
+// uMaterial: 0 = Matte (reflections off, original look). >0 enables the
+// reflection path. Shared with SE_FS_TEMPLATE via _MATERIAL_UNIFORMS.
+${_MATERIAL_UNIFORMS}
+// ── Particle style (PTS mode) ────────────────────────────────────────────
+// 0 = square sprite (the original), 1 = round dot, 2 = soft smoke puff.
+// Shared with SE_FS_TEMPLATE via _POINT_UNIFORMS.
+${_POINT_UNIFORMS}
+varying float vH;
+varying float vBandU;
+varying vec3  vWorldPos;
+varying vec3  vViewDir;
+
+${_COLOR_FUNS}
+${_STUDIO_ENV}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+void main(){
+  float t = clamp((vH+.8)*.6,.03,.97);
+  // ── The spectrum as a colour map ──────────────────────────────────────────
+  // Until this, the bands reached the palette only through vH: they moved the
+  // surface, the surface is the ramp's parameter, so a loud band changed the
+  // COLOUR of its zone but said nothing about WHICH band it was. Two zones
+  // listening to a kick and to a hi-hat, equally loud, were the same colour.
+  //
+  // vBandU is that identity, and shifting t by it makes the layout readable as
+  // a colour map: the low end sits at one place on the ramp, the top at
+  // another, and the picture says where in the spectrum you are looking.
+  //
+  // ── Why this is a STATIC offset, and not driven by loudness ──────────────
+  // Because the loudness version is the flicker this app damps everywhere else.
+  // A band's level can move 0.24 of its range in one 60 Hz frame (BAND_TAU is
+  // 60 ms), the layer reaches the ramp, and coherent brightness modulation at
+  // hi-hat rate is the same class of risk that keeps uBeat pinned to 0 in the
+  // vertex program and the starfield fade damped. vBandU does not move with the
+  // MUSIC at all: the character map is frozen at a reference time and the GPU
+  // coordinate is computed with the audio pinned at 0.5, so nothing the track
+  // does changes this term.
+  //
+  // It is not literally constant, and the earlier version of this note said it
+  // was. During a GPU mode crossfade bandTermOfMode blends the two modes'
+  // coordinates and hands the blended one back, so the tint travels across the
+  // palette while the fade runs. That is a one-way transition of under a
+  // second, not a periodic modulation, and it is the same movement the surface
+  // itself is making — but "adds no temporal modulation whatsoever" was false
+  // and an external review said so. What is true, and is what the
+  // photosensitivity argument needs, is that nothing here is driven by an
+  // ONSET or by a band level.
+  //
+  // Bounded and re-clamped into the SAME [.03, .97] window, so every pixel is
+  // still a colour the chosen palette declares. That is what keeps the NIGHT
+  // contract (max channel 0.55, Y 0.28 at every stop) true without restating
+  // it: nothing here can leave the ramp, only move along it.
+  //
+  // -1 is the "no layer" value written by the vertex program, and the step()
+  // is what keeps depth 0 bit-identical rather than nearly so.
+  t = clamp(t + step(0., vBandU) * .30 * (vBandU - .5), .03, .97);
+  vec3 c    = getColor(uCM,    t);
+  vec3 cNxt = getColor(uCMNext, t);
+  // uCMBlend 0→1 crossfades between the two color schemes
+  vec3 color = mix(c, cNxt, uCMBlend);
+
+${_LIGHT_BLOCK}
 
   // ── Surface material: studio-environment reflections ────────────────────
   // Shared with SE_FS_TEMPLATE via _MATERIAL_BLOCK. Gated by uMaterial>0 so
@@ -1408,9 +1431,11 @@ void main(){
   gl_FragColor = vec4(color, _pAlpha);
 }`;
 
+
 // ── ShaderEditor ──────────────────────────────────────────────────────────────
 
-const SE_VS_TEMPLATE = body => `uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
+// Exported alongside SE_FS_TEMPLATE — see the note there.
+export const SE_VS_TEMPLATE = body => `uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
 // Four scalars the app never reads and this body may. They are what makes a
 // hand-written shader playable rather than frozen: put uK0 where you would have
 // typed a constant, and it is on a slider and a MIDI CC instead of in the text.
@@ -1563,9 +1588,20 @@ void main(){vec3 pos=position;
 // then output. Advanced users can additionally call studioEnv(),
 // reflect(), and read uMetalness/uReflect/etc directly inside their body —
 // the function, uniforms, and vWorldPos/vViewDir varyings are all in scope.
-const SE_FS_TEMPLATE = body => `uniform int uCM,uCMNext;uniform float uCMBlend;
+// Exported since round 6 for one reason: until then nothing outside this file
+// could ASSEMBLE the editor's programs, so every guard written about them was a
+// regex over the template's source text. tests/shader-light-block.test.js reads
+// the finished program instead.
+export const SE_FS_TEMPLATE = body => `uniform int uCM,uCMNext;uniform float uCMBlend;
 // The same four knobs the vertex scaffold gets — see the note there.
 uniform float uK0,uK1,uK2,uK3;
+// FIX(r6): declared here for the first time. Without it _LIGHT_BLOCK cannot be
+// included, and without that block a custom fragment body — the shipped default
+// snippet included — silently deleted SURF's moving sun, its half-Lambert
+// diffuse, its fresnel rim and its specular. Nothing in the UI said so, and the
+// operator could not put it back by hand either: the uniform was not in scope
+// to be read.
+uniform int uLighting;
 uniform float uTime,uBass,uMid,uTreble,uBeat;
 ${_MATERIAL_UNIFORMS}
 ${_POINT_UNIFORMS}
@@ -1579,6 +1615,20 @@ varying vec3  vWorldPos;
 varying vec3  vViewDir;
 ${_COLOR_FUNS}
 ${_STUDIO_ENV}
+// FIX(r6): the palette CHANGE, not just the palette.
+//
+// uCM, uCMNext and uCMBlend have been declared in this scaffold since it was
+// written, and nothing ever mixed them. The built-in program does — it reads
+// both schemes and crossfades over 600 ms — so under any custom fragment body a
+// colour change waited out the whole fade showing nothing and then cut. Colour
+// is the gesture an operator makes most often; a cut is not what the rest of the
+// app does with it.
+//
+// Offered as a function rather than done TO the body, because the body owns its
+// own colour: getColor(uCM, x) still means exactly what it always did, so every
+// shader already saved in a preset keeps working unchanged. Write paletteAt(x)
+// where you would have written getColor(uCM, x) and the change fades instead.
+vec3 paletteAt(float x){return mix(getColor(uCM,x),getColor(uCMNext,x),uCMBlend);}
 // uMid and uBeat are declared even though the default snippet uses neither:
 // the Neon and Lava presets read them, and without the uniforms those two
 // failed to compile at all. Audio is NOT aliased to short locals here the way
@@ -1590,6 +1640,11 @@ void main(){float t=clamp((vH+.8)*.6,.03,.97);
   vec3 c=vec3(0.0);
   ${body}
   vec3 color = c;
+// The SAME block the built-in program runs, not a copy of it — see the note on
+// _LIGHT_BLOCK in shaders.js. It reads and writes color, so it lands here for
+// the same reason it does there: after the body has chosen the colour and
+// before the material puts a finish on it.
+${_LIGHT_BLOCK}
   ${_MATERIAL_BLOCK}
   ${_POINT_MASK}
   ${_FINITE_GUARD}
@@ -1632,11 +1687,13 @@ const SE_DEFAULT_FRAG = `// t = palette ramp 0.03..0.97 — the DISPLACEMENT at 
 // point's Spectrum Rings band.   uCM = scheme index 0..53
 // Audio comes in as uniforms here, not short locals: uBass uMid uTreble uBeat
 // uTime. Note t is that ramp, not treble as in the vertex tab.
-// getColor(uCM, t) dispatches to one of 54 palettes. You can also call
-// any palette by name directly, e.g.  c = lava(t)  or  c = cyberpunkGold(t);
+// paletteAt(t) is getColor(uCM, t) that also CROSSFADES when you change
+// scheme — the same 600 ms fade the built-in shader does. getColor(uCM, t)
+// still works and still cuts. You can also call any palette by name
+// directly, e.g.  c = lava(t)  or  c = cyberpunkGold(t);
 // uK0..uK3 are here too — the same four knobs the vertex tab gets. At rest
 // they are 0, so the line below is the plain palette until you move one.
-c = getColor(uCM, t) * (1.0 + uK1 * 1.5);`;
+c = paletteAt(t) * (1.0 + uK1 * 1.5);`;
 
 /**
  * The editor's example gallery.
@@ -1667,7 +1724,7 @@ export const SE_PRESETS = [
   // knobs 0) is still worth looking at, because that is what a first click
   // shows.
   { id:'knobs-vert', name:'🎛 Knobs',    tab:'vert', code:`// K1 frequency   K2 depth   K3 twist   — ADVANCED > SHADER KNOBS, or a MIDI CC\nfloat freq = 3.0 + uK0 * 21.0;\nfloat twist = ang * uK2 * 6.0;\ny = sin(r * freq * wi - T * 2.0 + twist) * exp(-r * 0.35)\n  * (0.25 + uK1 * 0.75) * (0.4 + b * 0.9) * a;` },
-  { id:'knobs-frag', name:'🎛 Knob Tint',tab:'frag', code:`// K1 hue drift   K2 contrast   K3 audio lift\nfloat u = fract(t + uK0 + uTime * 0.05);\nvec3 base = getColor(uCM, u);\nc = mix(base, base * base * 2.0, uK1) * (1.0 + uK2 * (uBass + uTreble));` },
+  { id:'knobs-frag', name:'🎛 Knob Tint',tab:'frag', code:`// K1 hue drift   K2 contrast   K3 audio lift\nfloat u = fract(t + uK0 + uTime * 0.05);\nvec3 base = paletteAt(u);\nc = mix(base, base * base * 2.0, uK1) * (1.0 + uK2 * (uBass + uTreble));` },
 ];
 
 /**

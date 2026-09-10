@@ -49,21 +49,39 @@ async function openEditor(page) {
 }
 
 /**
- * Press APPLY and read the verdict AT ONCE.
+ * Press APPLY and read the verdict the editor WROTE, not the one still on
+ * screen when the assertion happens to arrive.
  *
- * Read rather than awaited on purpose: the success message clears itself after
- * two seconds (ten after the amber warning), so an expect() that polls could
- * arrive at a blank line and call it a pass. A failure has no timer — it stays
- * until the next APPLY — so the direction of any race here is safe, and the
- * positive assertion on the tick is what makes the pass mean something.
+ * The first version of this read #se-error straight after the click, reasoning
+ * that a round-trip is far inside the two seconds before the success message
+ * clears itself. Under `fullyParallel` with several WebGL contexts on one
+ * machine that stopped being true — the whole-suite run failed here while the
+ * same test passed alone, which is the signature of a race and not of a bug in
+ * the product.
+ *
+ * So the status line is recorded as it changes and the first non-empty entry is
+ * the verdict. That is immune to the timer entirely, and it also removes the
+ * reason the old comment gave for not using a polling expect().
  */
 async function apply(page) {
+  await page.evaluate(() => {
+    const el = document.getElementById('se-error');
+    window.__seLog = [];
+    window.__seObs?.disconnect();
+    window.__seObs = new MutationObserver(() => {
+      window.__seLog.push({ text: el.textContent, colour: getComputedStyle(el).color });
+    });
+    window.__seObs.observe(el, { childList: true, characterData: true, subtree: true });
+  });
   await page.locator('#se-btn-apply').click();
   return page.evaluate(() => {
     const el = document.getElementById('se-error');
+    const said = (window.__seLog ?? []).find(e => e.text.trim());
     return {
-      text: el.textContent,
-      colour: getComputedStyle(el).color,
+      // The fallback covers the case where nothing mutated at all — which is a
+      // failure of this test's premise and shows up as an empty `text`.
+      text:   said?.text   ?? el.textContent,
+      colour: said?.colour ?? getComputedStyle(el).color,
       errLines: document.querySelectorAll('#se-line-nums .ln-err').length,
     };
   });
@@ -123,6 +141,8 @@ test.describe('nothing TIDY emits is rejected by the driver', () => {
     ['vert', 'a for loop with an int counter',     'float s = 0.;\nfor (int i = 0; i < 4; i++) { s += sin(r*float(i)*3. + T); }\ny = s*0.1*a;'],
     ['frag', 'the fragment names and a power',     'c = getColor(uCM, t) * (0.5 + bass) + vec3(treble^2 * 0.2);'],
     ['frag', 'a palette called by name',           'c = lava(t) * (0.7 + bass*0.5);'],
+    ['frag', 'the crossfading palette lookup',     'c = paletteAt(t) * (0.8 + bass*0.4);'],
+    ['frag', 'a body that reads the SURF light',   'c = paletteAt(fract(t + time*0.05)) * (1.0 + treble^2);'],
   ];
 
   for (const [tab, what, body] of CORPUS) {
