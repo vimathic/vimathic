@@ -1190,7 +1190,20 @@ const _FINITE_GUARD = `
   // components in 7,025,020 — about one pixel — and that one pixel became 2871 of the
   // 6944 texels in the smallest mip, which is the rectangle. Guarding the colour alone
   // left this door open.
-  if (!(_pAlpha >= 0.0 && _pAlpha <= 1.0)) _pAlpha = 1.0;`;
+  //
+  // FIX(r6): the same bound as the colour, 64.0, and NOT 1.0. Written as 1.0 this
+  // guard sat directly under the mask's own multiply by uPtGain — where uPtGain is
+  // RenderEngine.PTS_GLOW_GAIN = 5.74 for the smoke style — and every alpha the gain
+  // produced was outside [0,1] and therefore RESET to 1.0. Not capped: reset. So the
+  // whole range the gain exists to reach collapsed onto a single value, taking the
+  // sprite's falloff with it, and one draw stopped standing in for six. The note 100
+  // lines above this one says pushing alpha over 1 "is the whole reason one draw can
+  // stand in for six"; the two statements contradicted each other in the same file.
+  //
+  // The bound must stay ABOVE the largest alpha the mask can legitimately produce —
+  // pinned against PTS_GLOW_GAIN in tests/points-proxy-geometry.test.js, because the
+  // failure is invisible on screen unless you know what the smoke used to look like.
+  if (!(_pAlpha >= 0.0 && _pAlpha <= 64.0)) _pAlpha = 1.0;`;
 
 // Reflection composite. Modifies `color` in place. Reconstructs its own
 // normal from screen-space derivatives so it works regardless of how the
