@@ -1221,12 +1221,26 @@ export class MathVisualizer {
     }
 
     const { bass, mid, treble, beatInt, amp, waveInt } = this.audio;
+    // FIX(r6): `comp` was the one of the three carrying nothing of the
+    // operator's. amp and freq already pass Amplitude and Wave Intensity
+    // through; comp was `0.5 + mid*0.4` and nothing else, so the parameter that
+    // 218 destructures in math-collections.js read — iteration depth, feed/kill
+    // rates, simulation regime — never left 0.5..0.9 and no control could move
+    // it. formulaDetail is bipolar about 0.5, so at rest this line is the
+    // arithmetic it has always been, to the bit; the ±0.5 it can add is what
+    // opens the ends of the range. RenderEngine's constructor records why the
+    // LOW end matters as much as the high one.
+    const detail = this.render?.formulaDetail ?? 0.5;
     const audioParams = {
       amp:  amp   * (1 + bass   * 0.5),
       freq: waveInt * (1 + treble * 0.3),
-      comp: 0.5   + mid   * 0.4,
+      comp: Math.min(1, Math.max(0, 0.5 + mid * 0.4 + (detail - 0.5))),
     };
-    const t = time + beatInt * 0.3;
+    // The beat already slides this clock; formulaPhase is the same slide under a
+    // hand, additive so 0 is rest. Scaled by a full turn because every formula
+    // that reads `t` reads it as an angle or a wave argument, so one sweep of
+    // the knob is one cycle rather than an arbitrary distance.
+    const t = time + beatInt * 0.3 + (this.render?.formulaPhase ?? 0) * Math.PI * 2;
 
     // FIX(#4): stall watchdog. An unanswered post latches _workerBusy, and the
     // worker path is then never retried — later frames fall through to the sync

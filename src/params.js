@@ -335,6 +335,45 @@ export const PARAMS = {
   // migration: a preset written before these existed simply carries no value,
   // applyState skips a null, and no shader in such a preset can mention uK
   // anyway, because the uniforms did not exist when it was written.
+  // ── The two hands on a CPU formula ──────────────────────────────────────
+  //
+  // The knobs above are the GPU side's: four free scalars a hand-written shader
+  // may read, meaning assigned by whoever wrote the shader. These are the other
+  // engine's, and they are the opposite kind of control — a fixed meaning that
+  // 192 formulas already interpret, finally given a hand.
+  //
+  // Deliberately NOT uK0..uK3 reused. Those rest at 0 and carry an author's
+  // meaning; `detail` has to rest at 0.5 because it is bipolar, and giving one
+  // MIDI CC "shader frequency" on one mode and "formula detail" on the next is
+  // the kind of surprise a set does not survive. Two banks, one per engine,
+  // each inert where its engine is not drawing — which is the arrangement the
+  // app already had, unstated.
+  //
+  // Both are stored on RenderEngine (see its constructor) rather than on
+  // MathVisualizer, because `render` is what this registry's ctx carries.
+  detail: {
+    label: 'Formula Detail', slider: 'formulaDetail', display: 'fdv',
+    // Bipolar about the centre, and the centre is where it rests: at 0.5 the
+    // `comp` a formula receives is exactly `0.5 + mid*0.4`, the arithmetic that
+    // shipped. Below centre it coarsens — fewer iterations, a simpler regime —
+    // and that half is not a consolation prize. `npm run bench:formulas` puts
+    // Winding Number Field at 46 ms per tick at comp 0 against 188 ms at 0.9,
+    // against a 16.7 ms tick, so turning detail DOWN is how an operator buys
+    // back the update rate on the eleven formulas that cannot keep up. Turning
+    // it up spends it.
+    min: 0, max: 1, default: 0.5, format: v => v.toFixed(2),
+    get: ctx => ctx.render.formulaDetail,
+    set: (ctx, v) => { ctx.render.formulaDetail = v; }, midi: true },
+  phase: {
+    label: 'Formula Phase', slider: 'formulaPhase', display: 'fpv',
+    // Additive, so 0 is rest. One sweep is one full turn of the formula clock:
+    // the beat already nudges that clock by 0.3, and this is the same nudge
+    // held in a hand — slide a crest onto a downbeat instead of waiting for the
+    // track to put it there.
+    min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+    get: ctx => ctx.render.formulaPhase,
+    set: (ctx, v) => { ctx.render.formulaPhase = v; }, midi: true },
+
   k0: { label: 'Shader Knob 1', slider: 'shaderK0', display: 'k0v',
         min: 0, max: 1, default: 0, format: v => v.toFixed(2),
         get: ctx => ctx.render.U.uK0.value,

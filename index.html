@@ -1383,6 +1383,21 @@
       <input type="range" id="amplitude" min="0.2" max="1.5" step="0.01" value="0.70"></div>
     <div class="cg xp"><label>Wave Intensity <span id="wiv" class="vd">1.00</span></label>
       <input type="range" id="wave-int" min="0.3" max="3.5" step="0.05" value="1.0"></div>
+    <!-- Formula Detail / Formula Phase: the two hands on a CPU formula, and
+         they sit HERE for the same reason Spectrum Rings does — a control that
+         decides how the body answers is a core visual control, and 192 of the
+         ~230 entries in SHADER MODE are CPU formulas. Every formula already
+         receives {amp, freq, comp}; Amplitude and Wave Intensity are the first
+         two, and until r6 the third carried nothing of the operator's at all.
+         Detail rests at the centre, where the arithmetic is what it always was;
+         turning it DOWN is also how you buy back update rate on a heavy
+         formula (see PARAMS.detail and `npm run bench:formulas`). Both are
+         inert while a numbered GPU shader is drawing, which is the mirror of
+         the four shader knobs being inert under a formula. -->
+    <div class="cg xp"><label>Formula Detail <span id="fdv" class="vd">0.50</span></label>
+      <input type="range" id="formula-detail" min="0" max="1" step="0.01" value="0.5"></div>
+    <div class="cg xp"><label>Formula Phase <span id="fpv" class="vd">0.00</span></label>
+      <input type="range" id="formula-phase" min="0" max="1" step="0.01" value="0"></div>
     <!-- Spectrum Rings: the 24 Bark bands laid across the body — the low end
          where the formula is broad, the cymbals where it is finely corrugated.
          It sits HERE, next to the two sliders that shape the surface, rather

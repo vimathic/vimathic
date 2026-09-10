@@ -1738,6 +1738,39 @@ export class RenderEngine {
     // NIGHT mode. Owns one uniform in the shader, uGlare — see setNightly().
     this.nightly = false;
 
+    // ── The two hands on a CPU formula ──────────────────────────────────────
+    //
+    // These are NOT uniforms and reach no shader. They live here because this
+    // object is the one the PARAMS registry is handed (its ctx is
+    // {audio, render, camera}) and the one MathVisualizer already reads through
+    // — see its uses of this.render.U — so a panel slider can reach a formula
+    // without threading a fourth object through every call site.
+    //
+    // Why they exist at all: generateSurfaceFromFormula hands every one of the
+    // 192 formulas `{amp, freq, comp}`, and MathVisualizer builds those from
+    // audio alone — `amp * (1 + bass*0.5)`, `waveInt * (1 + treble*0.3)`,
+    // `0.5 + mid*0.4`. The first two carry the operator's Amplitude and Wave
+    // Intensity sliders. The third carries nothing of theirs, so `comp` — the
+    // parameter 218 destructures in math-collections.js read, and the one that
+    // sets iteration depth, feed/kill rates and simulation regime — never left
+    // 0.5..0.9 and no control could move it.
+    //
+    // formulaDetail is BIPOLAR about 0.5 for a measured reason. `npm run
+    // bench:formulas` puts Winding Number Field at 46 ms per tick at comp 0
+    // against 188 ms at comp 0.9, so the low end is not merely a different look
+    // — it is the operator's own control over how often the surface updates on
+    // the eleven formulas that cannot keep up with the tick. A knob that could
+    // only push upward would offer the cost and not the relief.
+    //
+    // 0.5 is therefore rest, and at rest the arithmetic is what it has always
+    // been, to the bit. That is also why these are not uK0..uK3: those rest at
+    // 0 and carry whatever meaning a shader author gave them.
+    this.formulaDetail = 0.5;
+    // Additive, so 0 is rest: it slides the formula clock against the track.
+    // The beat already nudges this line (`t = time + beatInt*0.3`); this is the
+    // same nudge under a hand.
+    this.formulaPhase = 0;
+
     // ── GPU mesh + uniforms ───────────────────────────────────────────────────
     const gpuGeo = new THREE.PlaneGeometry(CFG.planeSize, CFG.planeSize, CFG.planeSegs, CFG.planeSegs);
     gpuGeo.rotateX(-Math.PI/2);

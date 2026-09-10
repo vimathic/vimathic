@@ -200,6 +200,9 @@ function makeCtx() {
     render: {
       U: { uAmp: { value: 0 }, uWI: { value: 0 },
            uK0: { value: 0 }, uK1: { value: 0 }, uK2: { value: 0 }, uK3: { value: 0 }, },
+      // The formula knobs live on the engine object, not in a uniform.
+      formulaDetail: 0.5,
+      formulaPhase: 0,
       bloomPass: { strength: 0 },
       setColorSchemeAnimated: i => schemes.push(i),
     },
@@ -247,7 +250,12 @@ describe('each set() reaches every engine field the registry says it owns', () =
                     // itself, the way bloom keeps its in the composer pass, so
                     // this round-trip is what checks that get and set name the
                     // same uniform and not two of the four.
-                    k0: 0.25, k1: 0.5, k2: 0.75, k3: 1 };
+                    k0: 0.25, k1: 0.5, k2: 0.75, k3: 1,
+                    // The two formula knobs keep theirs on RenderEngine rather
+                    // than in a uniform — they reach no shader — so the same
+                    // round-trip checks that get and set name the same field
+                    // and not each other's.
+                    detail: 0.2, phase: 0.8 };
     for (const [id, p] of Object.entries(PARAMS)) {
       const ctx = makeCtx();
       assert.ok(id in probe, `PARAMS.${id} has no probe value — add one`);

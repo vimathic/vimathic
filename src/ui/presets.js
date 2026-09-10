@@ -25,8 +25,13 @@ import { SE_PRESETS } from '../shaders.js';
 // it. These default to 0 and always have, applyState skips a null, and no
 // preset written before this commit can contain a shader mentioning uK — the
 // uniforms did not exist to be mentioned.
+// FIX(r6): `detail` and `phase` join for the same reason the four knobs did —
+// where a hand left a formula IS part of the look. No migration: a preset
+// written before them carries neither, applyState skips a field that is not
+// present, and both rest at values that reproduce the arithmetic those presets
+// were captured under.
 const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx', 'bandDepth',
-                      'k0', 'k1', 'k2', 'k3'];
+                      'k0', 'k1', 'k2', 'k3', 'detail', 'phase'];
 
 // FIX(#18, r2): the non-param fields applyState() reads. With PARAM_FIELDS this
 // defines "looks like a preset" for migratePreset(), so keep it in step with

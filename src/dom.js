@@ -98,6 +98,12 @@ const REQUIRED = {
   k2v:               'k2v',
   k3v:               'k3v',
 
+  // ── Formula knobs — the other engine's two, see PARAMS.detail / .phase ───
+  formulaDetail:     'formula-detail',
+  formulaPhase:      'formula-phase',
+  fdv:               'fdv',
+  fpv:               'fpv',
+
   // ── Camera buttons ──────────────────────────────────────────────────────
   btnReset:          'btn-reset',
   btnResetAll:       'btn-reset-all',
