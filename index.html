@@ -207,6 +207,12 @@
     .cg{margin-bottom:8px}
     .cg label{display:block;margin-bottom:3px;font-size:9px;color:#889;letter-spacing:1px}
     .cg input[type=range]{width:100%;cursor:pointer;accent-color:var(--accent);height:3px}
+    /* The formula knobs, dimmed while the engine they speak to is not drawing.
+       Dimmed and not DISABLED on purpose: the value is part of a look, so it
+       has to stay settable before switching to the formula that will use it,
+       and it round-trips through presets either way. The note beside them is
+       what carries the reason — see #fk-note. */
+    #formula-knobs-wrap.fk-inert .cg{opacity:.42}
     .cg select{width:100%;background:#0a0a1a;color:#ddd;border:1px solid rgba(255,58,122,.35);
       border-radius:6px;padding:6px 7px;font-size:10px;cursor:pointer;font-family:monospace}
     .cg select option{background:#0a0a1a;color:#ddd}
@@ -1393,11 +1399,23 @@
          turning it DOWN is also how you buy back update rate on a heavy
          formula (see PARAMS.detail and `npm run bench:formulas`). Both are
          inert while a numbered GPU shader is drawing, which is the mirror of
-         the four shader knobs being inert under a formula. -->
-    <div class="cg xp"><label>Formula Detail <span id="fdv" class="vd">0.50</span></label>
-      <input type="range" id="formula-detail" min="0" max="1" step="0.01" value="0.5"></div>
-    <div class="cg xp"><label>Formula Phase <span id="fpv" class="vd">0.00</span></label>
-      <input type="range" id="formula-phase" min="0" max="1" step="0.01" value="0"></div>
+         the four shader knobs being inert under a formula.
+
+         FIX(r6): that last sentence used to live ONLY in this comment, where no
+         operator can read it. The panel showed two live sliders whose readouts
+         counted while nothing moved — the same silence the shader editor's
+         amber warning exists to break, one control row down. #fk-note says it
+         on screen now, and _syncFormulaKnobs decides when. -->
+    <div id="formula-knobs-wrap">
+      <div class="cg xp"><label>Formula Detail <span id="fdv" class="vd">0.50</span></label>
+        <input type="range" id="formula-detail" min="0" max="1" step="0.01" value="0.5"></div>
+      <div class="cg xp"><label>Formula Phase <span id="fpv" class="vd">0.00</span></label>
+        <input type="range" id="formula-phase" min="0" max="1" step="0.01" value="0"></div>
+      <div id="fk-note" class="xp" style="display:none;font-size:8px;color:#c96;margin:-2px 0 6px;letter-spacing:.5px">
+        NO EFFECT — a numbered GPU shader is drawing. These two reach CPU formulas only:
+        pick an <span style="color:#0fc">m:</span>… entry in SHADER MODE.
+      </div>
+    </div>
     <!-- Spectrum Rings: the 24 Bark bands laid across the body — the low end
          where the formula is broad, the cymbals where it is finely corrugated.
          It sits HERE, next to the two sliders that shape the surface, rather

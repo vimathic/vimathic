@@ -103,6 +103,12 @@ const REQUIRED = {
   formulaPhase:      'formula-phase',
   fdv:               'fdv',
   fpv:               'fpv',
+  // The pair's wrapper and the line that says when they are inert. Both are
+  // dereferenced by _syncFormulaKnobs in controls.js, so both belong in this
+  // contract — an id app code reads without being listed here is exactly what
+  // d2d2713 found and closed.
+  formulaKnobsWrap:  'formula-knobs-wrap',
+  fkNote:            'fk-note',
 
   // ── Camera buttons ──────────────────────────────────────────────────────
   btnReset:          'btn-reset',

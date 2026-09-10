@@ -289,6 +289,40 @@ export function bindControls(ui) {
     return !v || v.startsWith('m:');
   };
 
+  /**
+   * Dim Formula Detail / Formula Phase, and say why, when the engine they
+   * speak to is not the one drawing.
+   *
+   * FIX(r6): they were two live-looking sliders that moved nothing under a
+   * numbered GPU shader — readouts counting, presets storing, not a pixel
+   * changing. The boundary itself is correct and deliberate (two banks, one per
+   * engine); what was missing is that the app never said so anywhere an
+   * operator could read. This is the same repair commit 7fc26fd made one row
+   * down, where APPLY reported a clean compile and stayed silent about the
+   * scaffold discarding the body's `y`.
+   *
+   * The predicate is _cpuOwnsSurface and nothing more: VOLUME cannot be entered
+   * while a shader owns the surface — _setDeformMode refuses it out loud — so
+   * all three deform modes are live under an `m:` formula and inert under a
+   * numbered one.
+   *
+   * It takes the value rather than reading #gpu-sel because applyMathFormula
+   * writes that dropdown on the flat frame of a morph: reading it here would
+   * describe the PREVIOUS selection for the length of the transition, which is
+   * the window in which the operator is most likely to reach for the knob.
+   */
+  const _syncFormulaKnobs = (value = _gpuSel()?.value) => {
+    const v = value == null ? '' : String(value);
+    const live = !v || v.startsWith('m:');
+    document.getElementById('formula-knobs-wrap')?.classList.toggle('fk-inert', !live);
+    const note = document.getElementById('fk-note');
+    if (note) note.style.display = live ? 'none' : '';
+  };
+  // Boot: index.html ships the pair undimmed and #fk-note hidden, which is
+  // right for the shipped default (an `m:` formula) and wrong for a session
+  // restored onto a shader. Say it once here rather than trusting the markup.
+  _syncFormulaKnobs();
+
   const _deformBtns    = ['surface','volume','collapse'];
   const _volWrap       = document.getElementById('volume-formula-wrap');
   const _volSel        = document.getElementById('volume-formula-sel');
@@ -455,6 +489,9 @@ export function bindControls(ui) {
    */
   ui.applyFormulaValue = (value, onFlat) => {
     const val = String(value);
+    // Every road to a selection ends here — the dropdown, R and F, and
+    // applyState — so this one call keeps the pair honest on all of them.
+    _syncFormulaKnobs(val);
     if (val.startsWith('m:')) {
       const [, colId, key] = val.split(':');
       ui.applyMathFormula(colId, key, onFlat);

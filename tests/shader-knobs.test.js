@@ -246,8 +246,17 @@ describe('a user can find out they exist', () => {
 
   test('the panel says which names to type', () => {
     // The sliders are useless if the operator cannot guess what to write.
+    //
+    // Anchored on the group's own heading div rather than on the bare words
+    // "SHADER KNOBS": r6 added a note beside the formula knobs that mentioned
+    // this group by name, and being EARLIER in the document it captured
+    // indexOf — the slice then covered a different part of the panel and this
+    // test failed with "the panel group does not name the uniforms it drives",
+    // which was not true of the group and not what had changed.
     const html = read('index.html');
-    const section = html.slice(html.indexOf('SHADER KNOBS'), html.indexOf('SHADER KNOBS') + 900);
+    const at = html.search(/<div class="xp"[^>]*>\s*SHADER KNOBS/);
+    assert.ok(at >= 0, 'the SHADER KNOBS group heading is gone from the panel');
+    const section = html.slice(at, at + 900);
     assert.match(section, /uK0/, 'the panel group does not name the uniforms it drives');
   });
 });
