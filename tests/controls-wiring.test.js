@@ -278,7 +278,10 @@ function makeUi() {
       },
     },
     shaderEditor: { customVS: null, customFS: null },
-    modelLoader: { clear: () => calls.push(['ml.clear']) },
+    modelLoader: {
+      clear:  () => calls.push(['ml.clear']),
+      cancel: () => calls.push(['ml.cancel']),
+    },
     mathViz: {
       _mode: 'surface',
       setFormula: (c, k) => calls.push(['setFormula', `${c}:${k}`]),
@@ -679,7 +682,16 @@ describe('an imported model can be removed again', () => {
 
     fire('btn-clear-model', 'click');
 
-    assert.equal(ui.called('ml.clear').length, 1, 'the model itself has to go');
+    // cancel(), not clear(). FIX(r6): the button is the user saying "no model",
+    // and clear() alone does not touch the loader's _loadId — so an import still
+    // being decoded when the button was pressed came back a moment later, found
+    // itself un-superseded, and put the model the user had just removed back on
+    // the stage. cancel() bumps the id first. The bump cannot live inside
+    // clear(), because load() calls clear() itself three lines after taking its
+    // own id: every import would supersede itself and nothing would ever load.
+    assert.equal(ui.called('ml.cancel').length, 1, 'the model itself has to go, in flight or not');
+    assert.equal(ui.called('ml.clear').length, 0,
+      'clear() alone leaves an in-flight import free to arrive after the user cancelled it');
     assert.equal(byId('model-info').textContent, '');
     assert.equal(byId('model-file').value, '',
       're-picking the same file fires no change event unless the input is cleared');

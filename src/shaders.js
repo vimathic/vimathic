@@ -2263,7 +2263,30 @@ export class ModelLoader {
   }
 
   /**
+   * The USER asking for no model: cancel anything in flight, then clear.
+   *
+   * FIX(r6): clear() alone was not enough and could not be made enough. It
+   * tears the current model down but does not touch _loadId, so an import still
+   * being decoded when ✕ CLEAR MODEL was pressed came back a moment later,
+   * found itself un-superseded, assigned _model and added its group to the
+   * scene. The user watched the model they had just removed reappear.
+   *
+   * The bump belongs HERE and not inside clear(), and that distinction is the
+   * whole reason this method exists: load() calls clear() itself, three lines
+   * after taking its own id, so a bump in clear() would make every import
+   * supersede itself and no model would ever load. The same trap is recorded in
+   * AudioEngine — the id is bumped in stopAudio(), never in _stopSource().
+   */
+  cancel() {
+    this._loadId++;
+    this.clear();
+  }
+
+  /**
    * Remove the imported model and give the stage back to the engine.
+   *
+   * Pure teardown, and safe to call from load(). A caller acting on the user's
+   * behalf wants cancel() above.
    *
    * FIX: the release was missing, so this left an empty scene — the built-in
    * mesh was hidden by load() and nothing turned it back on. That is also why

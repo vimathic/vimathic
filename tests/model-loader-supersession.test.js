@@ -113,6 +113,42 @@ describe('two imports started inside one another', () => {
   });
 });
 
+describe('cancelling an import the user no longer wants', () => {
+
+  test('a load in flight when cancel() runs never reaches the stage', async () => {
+    // FIX(r6): ✕ CLEAR MODEL called clear(), which tears down the CURRENT model
+    // and says nothing about one still being decoded. That import came back a
+    // moment later, found itself un-superseded, assigned _model and added its
+    // group — so the model the user had just removed reappeared on its own.
+    const inFlight = load('slow.obj', 1);
+    ml.cancel();
+    await inFlight;
+
+    assert.equal(scene.children.length, 0,
+      'the cancelled import put itself on stage after the user removed it');
+    assert.equal(ml._model, null, '_model was assigned by a load that had been cancelled');
+    assert.deepEqual(ml._meshes, []);
+  });
+
+  test('CONTROL — without the cancel, that same load does arrive', async () => {
+    // Without this the test above passes on a loader that never loads anything.
+    await load('slow.obj', 1);
+    assert.equal(scene.children.length, 1, 'the harness cannot load a model at all');
+  });
+
+  test('the bump is in cancel() and NOT in clear(), or nothing would ever load', () => {
+    // load() calls clear() itself, three lines after taking its own id. A bump
+    // inside clear() therefore makes every import supersede itself — the same
+    // trap AudioEngine records: the id is bumped in stopAudio(), never in
+    // _stopSource(). Read as behaviour: clear() must leave the id alone.
+    const before = ml._loadId;
+    ml.clear();
+    assert.equal(ml._loadId, before, 'clear() bumps the load id, so no import can ever finish');
+    ml.cancel();
+    assert.notEqual(ml._loadId, before, 'cancel() does not supersede anything');
+  });
+});
+
 describe('a single import is unaffected', () => {
 
   test('one load puts one group on stage and records its meshes', async () => {

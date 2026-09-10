@@ -106,7 +106,13 @@ const canCap = spawnSync('systemd-run',
 // and `node --test 'tests/*.test.js'` would look for a file with a star in it.
 const files = [];
 for (const a of nodeArgs) {
-  if (!a.includes('*')) { files.push(a); continue; }
+  // FIX(r6): a FLAG is never a path, however many stars are in it. This globbed
+  // any argument containing `*`, so `npm test -- --test-name-pattern="tidy.*caret"`
+  // — a regexp, and the ordinary way to run one test — was expanded as a file
+  // pattern, matched nothing, and exited 1 with "matched no files", accusing the
+  // suite of being broken. Verified: without the `*` the same filter runs 98
+  // tests and passes. CI is unaffected, which is why nothing caught it.
+  if (a.startsWith('-') || !a.includes('*')) { files.push(a); continue; }
   const { globSync } = await import('node:fs');
   const hit = globSync(a).sort();
   // A glob that matches nothing is a broken suite specification, and it has to

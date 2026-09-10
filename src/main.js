@@ -475,7 +475,9 @@ window.addEventListener('resize', () => render.onResize());
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 window.addEventListener('beforeunload', () => {
   audio.dispose();
-  ml.clear();
+  // cancel(), not clear(): nothing should arrive after this point, and an
+  // import in flight is the one thing that still could.
+  ml.cancel();
   output.stopAll();
   secondScreen.close();
   // Abort active recordings to release MediaRecorder streams + worker(s)

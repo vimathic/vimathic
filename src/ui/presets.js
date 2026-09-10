@@ -1158,11 +1158,20 @@ export const PresetMixin = {
     }
     document.getElementById('_vsc_code').textContent = code;
     overlay.style.pointerEvents = 'auto';
+    // FIX(r6): opacity and pointer-events hide a dialog from the eye and from
+    // the mouse, and from nothing else. Closed this way its two buttons — DROP
+    // THE SCRIPT and KEEP CODE — stayed in the tab order for the rest of the
+    // session, invisible, and Tab still walked into a decision the operator had
+    // already made. `inert` is what takes an element out of the tab order and
+    // out of the accessibility tree without touching its transition, so the
+    // fade below still runs.
+    overlay.inert = false;
     requestAnimationFrame(() => { overlay.style.opacity = '1'; });
 
     const close = () => {
       overlay.style.opacity = '0';
       overlay.style.pointerEvents = 'none';
+      overlay.inert = true;
     };
     document.getElementById('_vsc_drop').onclick = () => { close(); onDecide(false); };
     document.getElementById('_vsc_keep').onclick = () => { close(); onDecide(true);  };

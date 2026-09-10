@@ -854,7 +854,16 @@ export class AudioEngine {
       // rejects with an EncodingError whose message names no file, so the
       // filename is added here — with several tracks queued, "one of them is
       // broken" is not actionable.
-      this.cb.onLoadError(
+      //
+      // FIX(r6): and not for a load the user did not ask for. `silent` marks the
+      // bundled intro track, fetched on the first gesture — the same flag that
+      // suppresses the loading bar three lines below and on the success path.
+      // The catch checked superseded() and not silent, so a failed intro fetch
+      // (offline, a blocked origin, a bad deploy) raised a red banner naming a
+      // file the operator had never chosen and could do nothing about. Reported
+      // to the console either way; a silent load fails silently, which is what
+      // the flag has meant everywhere else since it was added.
+      if (!silent) this.cb.onLoadError(
         /encoding/i.test(e?.name || '')
           ? 'could not be decoded — the file may be corrupt or not really audio'
           : (e?.message || 'could not be loaded'),

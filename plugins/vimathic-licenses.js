@@ -61,6 +61,22 @@ export const BUNDLED_DEPS = ['three', 'gif.js'];
 
 const MIT_MARK = 'Permission is hereby granted';
 
+/**
+ * The sentinel that says THIS plugin has already appended its block.
+ *
+ * FIX(r6): the "already inlined?" probe below used MIT_MARK, which is a phrase
+ * out of somebody else's licence and can reach the built index.html by half a
+ * dozen routes that have nothing to do with this plugin — three's own source
+ * carries MIT headers, and any dependency whose licence text survives
+ * minification carries the same sentence. When it did, the probe concluded the
+ * notices were already there and wrote nothing, so a build shipped with the
+ * attribution silently missing. That is the one failure mode this plugin exists
+ * to prevent, produced by the plugin itself.
+ *
+ * A marker of our own can only be there because we put it there.
+ */
+const NOTICE_MARK = 'vimathic:third-party-licences';
+
 /** Files a package might keep its licence in, in the order worth trying. */
 const LICENSE_FILES = ['LICENSE', 'LICENSE.txt', 'LICENSE.md', 'license', 'license.md', 'LICENCE'];
 
@@ -167,8 +183,8 @@ export function vimathicLicenses(opts = {}) {
           throw new Error('[vimathic-licenses] a notice contains "-->" and cannot be inlined as an HTML comment');
         }
         const html = fs.readFileSync(indexPath, 'utf8');
-        if (!html.includes(MIT_MARK)) {
-          fs.writeFileSync(indexPath, `${html}\n<!--\n${text}\n-->\n`, 'utf8');
+        if (!html.includes(NOTICE_MARK)) {
+          fs.writeFileSync(indexPath, `${html}\n<!-- ${NOTICE_MARK}\n${text}\n-->\n`, 'utf8');
         }
       }
 

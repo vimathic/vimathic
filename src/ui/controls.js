@@ -1244,7 +1244,11 @@ export function bindControls(ui) {
   // back to the model would be dead as well.
   const bcm = document.getElementById('btn-clear-model');
   bcm.addEventListener('click', () => {
-    ml.clear();
+    // cancel(), not clear(): the button is the user saying "no model", and an
+    // import still in flight has to hear that too. clear() alone left it
+    // un-superseded, so it finished a moment later and put the model the user
+    // had just removed back on the stage.
+    ml.cancel();
     document.getElementById('model-info').textContent = '';
     mfi.value = '';
     bcm.style.display = 'none';
