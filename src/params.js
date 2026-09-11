@@ -304,11 +304,25 @@ export const PARAMS = {
     midi: true,
   },
 
-  // ── Shader knobs — four numbers a custom shader can read ────────────────
+  // ── Shader knobs — four numbers the GPU side plays on ───────────────────
   //
-  // No built-in program reads these. They exist to reach `uK0…uK3` in the shader
-  // editor's scaffolds, and their whole purpose is that a hand-written shader
-  // stops being frozen.
+  // They reach `uK0…uK3` in the shader editor's scaffolds, where the meaning is
+  // whatever the author gave them — that is the point of the bank, and it is
+  // what makes a hand-written shader playable instead of frozen.
+  //
+  // FIX(r6): and they now reach the BUILT-IN program too, which they did not
+  // before. Declared in the editor's two templates and nowhere else, all four
+  // were dead on the ~38 numbered SHADER MODE entries — the list the app opens
+  // on. Measured: 1.1x and 1.4x the frame-to-frame noise floor on "1. Bass
+  // Reactive Waves" against 4.3x under a gallery body that reads one. Under a
+  // numbered mode they carry a fixed meaning instead — 1 scale, 2 depth,
+  // 3 phase, 4 palette — applied at the call to computeMode and at the ramp in
+  // FS, each identity at rest. See the notes on VS and FS in shaders.js.
+  //
+  // So one knob has two meanings, which is the surprise PARAMS.detail below
+  // refuses to allow BETWEEN the banks. Inside this one it is deliberate and
+  // stated in the panel: a custom body is the operator's own program, and a
+  // program that could not reassign its own uniforms would not be one.
   //
   // FIX(r6): this used to say "Nothing in the app reads these", and it was true
   // when it was written — which was the problem. Both shipped default bodies now

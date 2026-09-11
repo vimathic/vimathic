@@ -91,6 +91,8 @@ They run 0–1 with a default of 0, which is what a MIDI CC maps onto without a 
 
 To put one on a controller: **ADVANCED → MIDI**, pick *Shader Knob 1*, then move the knob.
 
+**They also play the built-in modes.** With one of the numbered entries in SHADER MODE selected there is no custom body to give them a meaning, so they carry a fixed one: **1** scales the field (up to three times finer), **2** deepens it (up to 2.5×), **3** slides its clock (one sweep is one full turn, the same contract *Formula Phase* carries on the CPU side) and **4** moves the palette along its ramp. All four rest at 0 and every one of them is *identity* there, so a look you tuned before they did this comes back exactly as it was. Apply a custom body and the meanings go back to being yours — a program that could not reassign its own uniforms would not be one.
+
 **Where to see them working.** Two entries in the editor's preset gallery are written around them — **🎛 Knobs** on the vertex tab (K1 frequency, K2 depth, K3 twist) and **🎛 Knob Tint** on the fragment tab (K1 hue drift, K2 contrast, K3 audio lift). Click one, press APPLY, then move a slider in **ADVANCED → SHADER KNOBS** and watch the shape change without the editor being touched again. Both shipped default bodies read a knob too, at a scale that is a no-op while the knob is at 0 — so the look you already know is the look you still get.
 
 There is also one preset in the panel's own list, **🎛 Knobs (example)**, on a browser that has never saved one. It carries that shader, a numbered GPU mode (so the displacement is not discarded) and the knob positions it was written for — the whole thing on one click, without opening this editor at all. Delete it and it stays deleted.

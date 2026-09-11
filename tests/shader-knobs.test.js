@@ -30,6 +30,27 @@ const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const IDS = ['k0', 'k1', 'k2', 'k3'];
 
+/**
+ * GLSL with its comments removed.
+ *
+ * Every assertion below that asks "does this program READ a knob" has to, or it
+ * reads the prose about the knobs instead and passes on a program that dropped
+ * them. The templates carry more commentary than code.
+ */
+const code = src => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+/**
+ * Evaluate a GLSL arithmetic expression lifted out of the shipped source.
+ *
+ * This is the difference between checking that a line is SPELLED a certain way
+ * and checking what it COMPUTES: the expression is taken from the program the
+ * app ships and evaluated, so a rewrite that keeps the behaviour passes and a
+ * typo in a coefficient does not. Only the four knob expressions go through
+ * here, and all four are plain float arithmetic that JS evaluates identically.
+ */
+const glslValue = (expr, vars) =>
+  Function(...Object.keys(vars), `return (${expr});`)(...Object.values(vars));
+
 let PARAMS, MIDI_PARAMS, REQUIRED_IDS, VS, FS, resetParamsToDefault;
 before(async () => {
   ({ PARAMS, MIDI_PARAMS, resetParamsToDefault } = await import('../src/params.js'));
@@ -191,7 +212,7 @@ describe('they behave like every other parameter', () => {
   });
 });
 
-describe('they are visible to a custom shader and to nothing else', () => {
+describe('which programs can see them, and what each one does with them', () => {
 
   const src = read('src/shaders.js');
   const between = (from, to) => src.slice(src.indexOf(from), to ? src.indexOf(to) : undefined);
@@ -205,13 +226,72 @@ describe('they are visible to a custom shader and to nothing else', () => {
     }
   });
 
-  test('the built-in programs do not', () => {
-    // A uniform nothing reads is a uniform that drifts. The built-ins have no
-    // use for these, and declaring them there would invite one.
-    for (const [name, prog] of [['VS', VS], ['FS', FS]]) {
-      assert.doesNotMatch(prog, /uK0/,
-        `the built-in ${name} declares uK0, which nothing in it reads`);
+  test('and the built-in programs declare exactly what they read', () => {
+    // REVERSED in r6. This test used to assert that the built-ins mention no
+    // knob at all, for the reason "a uniform nothing reads is a uniform that
+    // drifts" — which was right about drift and wrong about who has no use for
+    // them. On the ~38 numbered SHADER MODE entries, the list the app opens on,
+    // all four sliders moved, counted and did nothing: measured at 1.1x and
+    // 1.4x the frame-to-frame noise floor against 4.3x under a gallery body
+    // that reads one. The guard is now the same rule from the other side —
+    // declared here if and only if read here.
+    assert.match(VS, /uniform float uK0,uK1,uK2,uK3;/,
+      'the built-in vertex program no longer declares the knobs it reads');
+    for (const u of ['uK0', 'uK1', 'uK2']) {
+      assert.ok(new RegExp(`${u}\\s*\\*`).test(code(VS)),
+        `the built-in vertex program declares ${u} and never reads it`);
     }
+    assert.match(FS, /uniform float uK3;/,
+      'the built-in fragment program no longer declares the knob it reads');
+    assert.doesNotMatch(code(FS), /uK[012]/,
+      'the fragment program touches a knob that belongs to the vertex side');
+  });
+
+  test('on a numbered mode each knob is identity at rest, and reaches its stated range', () => {
+    // The expressions are lifted out of the shipped GLSL and evaluated, not
+    // matched as text. At rest every one of them has to return its identity
+    // element, because a preset saved before r6 carries no knob value at all
+    // and RESET ALL puts them back to 0 — if any of these were merely "a
+    // sensible default" instead of identity, every look in the app would have
+    // quietly changed the day they landed.
+    const vs = code(VS), fs_ = code(FS);
+
+    const scale = vs.match(/pos\.xz \* \(([^)]+)\)/)?.[1];
+    assert.ok(scale, 'knob 1 no longer scales the coordinate handed to computeMode');
+    assert.equal(glslValue(scale, { uK0: 0 }), 1, 'knob 1 does not rest at 1x');
+    assert.equal(glslValue(scale, { uK0: 1 }), 3, 'knob 1 no longer reaches 3x at the top');
+
+    const depth = vs.match(/mix\(y, yNxt, uModeBlend\) \* \(([^)]+)\)/)?.[1];
+    assert.ok(depth, 'knob 2 no longer scales the mode field');
+    assert.equal(glslValue(depth, { uK1: 0 }), 1, 'knob 2 does not rest at 1x');
+    assert.equal(glslValue(depth, { uK1: 1 }), 2.5, 'knob 2 no longer reaches 2.5x at the top');
+
+    const phase = vs.match(/float kT\s*=\s*([^;]+);/)?.[1];
+    assert.ok(phase, 'knob 3 no longer offsets the clock handed to computeMode');
+    assert.equal(glslValue(phase, { T: 7, uK2: 0 }), 7, 'knob 3 does not rest at no offset');
+    assert.ok(Math.abs(glslValue(phase, { T: 0, uK2: 1 }) - Math.PI * 2) < 1e-6,
+      'one sweep of knob 3 is no longer one full turn — the contract Formula Phase carries');
+
+    const palette = fs_.match(/t = clamp\(t \+ (uK3[^,]+),/)?.[1];
+    assert.ok(palette, 'knob 4 no longer moves the palette ramp');
+    assert.equal(glslValue(`0.5 + ${palette}`, { uK3: 0 }), 0.5, 'knob 4 does not rest at no shift');
+    assert.ok(glslValue(palette, { uK3: 1 }) <= 0.94,
+      'knob 4 can push further than the ramp window, which is what the NIGHT contract is written on');
+  });
+
+  test('the band-character taps are deliberately left unscaled', () => {
+    // They measure how corrugated a mode is, with fixed audio and their own
+    // clock, so the spectrum can be laid across the radius. Scaling them with
+    // knob 1 would re-rank the band map under the operator's hand while they
+    // were reaching for something else — so the knob goes into the DISPLACEMENT
+    // calls and not into these. Pinned because the two look alike.
+    const vs = code(VS);
+    assert.match(vs, /computeMode\(mode, xz \+ dir \* \(sgn \* h\)/,
+      'the band-character taps now read a knobbed coordinate');
+    assert.match(vs, /computeMode\(uMode,\s+kxz, b, t, m, bt, a, wi, kT\)/,
+      'the displacement call no longer takes the knobbed coordinate and clock');
+    assert.match(vs, /computeMode\(uModeNext, kxz, b, t, m, bt, a, wi, kT\)/,
+      'the crossfade half was left on the unknobbed arguments, so the knobs jump at a mode change');
   });
 
   test('nothing writes them per frame', () => {

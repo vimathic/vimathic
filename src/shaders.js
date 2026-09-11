@@ -76,6 +76,24 @@ float bandAtRadius(float r){
 // GLSL functions with int arguments are supported in GLSL ES 1.00+.
 export const VS = `
 uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
+// FIX(r6): the four knobs reach the built-in program now, not only the shader
+// editor's scaffolds. They were declared in SE_VS_TEMPLATE and SE_FS_TEMPLATE
+// and nowhere else, so on the ~38 numbered SHADER MODE entries — the list the
+// app opens on and most sessions never leave — all four sliders moved, counted
+// and did nothing. Measured before this: knob 1 at 1.1x the frame-to-frame
+// noise floor and knob 2 at 1.4x on "1. Bass Reactive Waves", against 4.3x for
+// knob 2 under a gallery body that reads it.
+//
+// All three vertex-side meanings are applied AT THE CALL to computeMode, not
+// inside it: the 38-branch ladder is what a shader compiler pays for, and the
+// Windows toolchain charged 28.7 s for eighteen inline copies of it (see the
+// note above the band taps). Scale goes into the xz argument, phase into the T
+// argument, depth multiplies the result — no new branch, no new call site.
+//
+// Each rests at IDENTITY, not merely at "a sensible value": 1.0 + 0*k is 1.0
+// and T + 0*2pi is T, so a preset saved before the knobs existed and a look
+// tuned yesterday come back bit for bit.
+uniform float uK0,uK1,uK2,uK3;
 uniform int   uMode,uMathMode,uModeNext;
 uniform float uMorphProgress,uModeBlend;
 // ── The colour channel ────────────────────────────────────────────────────────
@@ -582,8 +600,20 @@ void main(){
 
   if(uMathMode==0){
     // GPU mode: compute both current and next, blend between them
-    float y    = computeMode(uMode,    pos.xz, b, t, m, bt, a, wi, T);
-    float yNxt = computeMode(uModeNext, pos.xz, b, t, m, bt, a, wi, T);
+    // Knob 1 (uK0) — SCALE. One sweep takes the field from its shipped size to
+    // three times finer. It multiplies the coordinate rather than any mode's
+    // own frequency constant, so it means the same thing on all 38 of them.
+    // Deliberately NOT applied to the band-character taps above: those measure
+    // how corrugated a mode is, with fixed audio and their own clock, to lay the
+    // spectrum out across the radius. Scaling them would make the band map jump
+    // under the operator's hand while they were reaching for something else.
+    vec2  kxz = pos.xz * (1.0 + uK0 * 2.0);
+    // Knob 3 (uK2) — PHASE. One sweep is one full turn, the same contract
+    // Formula Phase carries on the CPU side, so the two engines answer a knob
+    // the same way. Additive, so 0 is rest.
+    float kT  = T + uK2 * 6.2831853;
+    float y    = computeMode(uMode,    kxz, b, t, m, bt, a, wi, kT);
+    float yNxt = computeMode(uModeNext, kxz, b, t, m, bt, a, wi, kT);
     // FIX(r10 §1.5): ADD the field to the shape's own y, do not replace it.
     // Assignment made pos.y a pure function of pos.xz, so every vertex sharing
     // an (x,z) column landed on one point and the shape stopped existing.
@@ -644,7 +674,11 @@ void main(){
     // tests/helpers/glsl.js resolves a local to its DEFINITION, and a local that
     // is defined once and then amended cannot be resolved at all — the guard
     // would stop being able to say what this program draws.
-    float fBase = mix(y, yNxt, uModeBlend);
+    // Knob 2 (uK1) — DEPTH, up to 2.5x the shipped displacement. It multiplies
+    // the MODE field only: the band layer is added a few lines below and owns
+    // its own depth slider, and folding the two together would give one look two
+    // controls that fight.
+    float fBase = mix(y, yNxt, uModeBlend) * (1.0 + uK1 * 1.5);
     // Everything the layer costs now sits INSIDE the depth test, so a scene with
     // the slider at zero pays nothing at all. With the layout by radius the
     // gesture stays the plain push it always was: the radius says nothing about
@@ -1351,6 +1385,10 @@ const _LIGHT_BLOCK = `  if (uLighting == 1) {
 export const FS = `
 uniform int   uCM, uCMNext;
 uniform float uCMBlend;
+// Only uK3 of the four: the other three act on geometry and are declared in the
+// vertex program. An unused uniform would compile and cost nothing, but it would
+// also say this program reads something it does not.
+uniform float uK3;
 // SURF lighting (gated by uLighting): time + audio bands drive light direction
 // and audio-reactive specular / rim. Skipped entirely in wireframe and points
 // modes by setting uLighting=0 in setVizModeGPU().
@@ -1421,6 +1459,15 @@ void main(){
   // -1 is the "no layer" value written by the vertex program, and the step()
   // is what keeps depth 0 bit-identical rather than nearly so.
   t = clamp(t + step(0., vBandU) * .30 * (vBandU - .5), .03, .97);
+  // Knob 4 (uK3) — PALETTE, in the same bounded and re-clamped form as the band
+  // shift directly above, and for the same reason: every pixel has to stay a
+  // colour the chosen palette declares, or the NIGHT contract stops being true
+  // without anything saying so. A fract() wrap would have been the livelier
+  // knob and is what the gallery's own frag example does — it cannot be used
+  // here, because it leaves the [.03,.97] window that contract is written on.
+  // Exactly identity at rest: t is already inside the window, so clamp(t + 0)
+  // returns t bit for bit. Half the window is the whole sweep.
+  t = clamp(t + uK3 * .47, .03, .97);
   vec3 c    = getColor(uCM,    t);
   vec3 cNxt = getColor(uCMNext, t);
   // uCMBlend 0→1 crossfades between the two color schemes
