@@ -64,6 +64,22 @@ function runScript(script, cwd) {
   return { code: r.status, output: `${r.stdout}${r.stderr}` };
 }
 
+// These tests execute the workflow's own `run:` block, which is bash. A machine
+// without bash on PATH — a plain Windows clone, where Git for Windows keeps its
+// bash in a directory it does not add to PATH — cannot run them, and should say
+// so instead of failing.
+//
+// It used to fail, and it failed dishonestly. spawnSync of a missing binary
+// returns status `null` and leaves stdout/stderr `undefined`, so the first
+// assertion, `notEqual(r.code, 0)`, PASSED — a spawn that never happened is
+// indistinguishable here from a check that correctly rejected a broken dist/.
+// Only the second assertion noticed, and what it reported was
+// `'undefinedundefined' does not match /second-screen\.html/`, which names
+// neither bash nor the platform. Eleven tests, each with the same riddle.
+const BASH_MISSING = spawnSync('bash', ['-c', 'exit 0']).error
+  ? 'needs bash on PATH (this suite runs the CI workflow\'s own shell script)'
+  : false;
+
 // ── A dist/ to point it at ───────────────────────────────────────────────────
 
 // What a healthy build leaves in dist/. The worker filename is content-hashed,
@@ -75,6 +91,10 @@ const FULL_DIST = [
   'favicon.ico', 'favicon-16.png', 'favicon-32.png', 'favicon-48.png',
   'apple-touch-icon.png', 'android-chrome-192.png', 'android-chrome-512.png',
   'site.webmanifest', 'sitemap.xml', 'robots.txt', 'llms.txt',
+  // The MIT notices for the libraries the single file inlines. Emitted by
+  // plugins/vimathic-licenses.js; index.html carries them as a trailing comment
+  // too, because it is the copy that gets shared on its own.
+  'THIRD-PARTY-LICENSES.txt',
   'docs/index.html', 'docs/roadmap.html',
 ];
 
@@ -117,29 +137,32 @@ describe('the required build check asks for the files a deploy needs', () => {
     ['llms.txt',           'the LLM summary is gone',              /llms\.txt/],
     ['docs/index.html',    'the whole docs site is gone',          /docs\/index\.html/],
     ['support-hero.webp',  'the Roadmap hero is broken',           /support-hero\.webp/],
+    ['THIRD-PARTY-LICENSES.txt',
+                           'the shipped build carries no MIT notice for the code it inlines',
+                                                                   /THIRD-PARTY-LICENSES\.txt/],
   ];
 
   for (const [file, consequence, named] of MUST_BE_THERE) {
-    test(`a dist/ without ${file} fails the check — otherwise ${consequence}`, () => {
+    test(`a dist/ without ${file} fails the check — otherwise ${consequence}`, { skip: BASH_MISSING }, () => {
       const r = runScript(script(), distWith(without(file)));
       assert.notEqual(r.code, 0, r.output);
       assert.match(r.output, named, 'the failure has to name what is missing');
     });
   }
 
-  test('a dist/ whose index.html points at a worker chunk that was not emitted fails', () => {
+  test('a dist/ whose index.html points at a worker chunk that was not emitted fails', { skip: BASH_MISSING }, () => {
     const dir = distWith(without(WORKER));
     fs.writeFileSync(path.join(dir, 'dist', 'math-worker-OTHERHASH.js'), 'x');
     const r = runScript(script(), dir);
     assert.notEqual(r.code, 0, r.output);
   });
 
-  test('control — a complete dist/ passes', () => {
+  test('control — a complete dist/ passes', { skip: BASH_MISSING }, () => {
     const r = runScript(script(), distWith(FULL_DIST));
     assert.equal(r.code, 0, r.output);
   });
 
-  test('control — a leaked chunk in dist/ root still fails', () => {
+  test('control — a leaked chunk in dist/ root still fails', { skip: BASH_MISSING }, () => {
     const r = runScript(script(), distWith([...FULL_DIST, 'leaked-chunk.js']));
     assert.notEqual(r.code, 0, r.output);
     assert.match(r.output, /leaked-chunk\.js/);

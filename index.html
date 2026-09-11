@@ -2,7 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <!-- FIX: dropped `user-scalable=no`. It was doing none of the job it looked
+       like it was doing, and all of the damage.
+
+       What it did NOT protect: the canvas. OrbitControls sets
+       `touchAction = 'none'` on renderer.domElement when it connects
+       (three/examples/jsm/controls/OrbitControls.js:204), so a pinch on the
+       visualisation is the camera's and has never reached the browser's zoom.
+
+       What it DID cost: the panel and the documentation modal — the small text
+       a reader might actually want to enlarge. WCAG 1.4.4 asks for 200%.
+
+       And it only ever cost that on Android. Safari has ignored
+       `user-scalable=no` since iOS 10, so every iPad and iPhone has behaved
+       this way for eight years; this brings Android into line with them rather
+       than changing anything for the largest touch class the app has.
+       second-screen.html never carried the token either, so the two documents
+       agree now.
+
+       `width=device-width` stays, which is what keeps Chrome from restoring the
+       300 ms tap delay and double-tap-to-zoom. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VIMATHIC™ — Mathematical VJ Studio</title>
   <meta name="description" content="VIMATHIC — Mathematical VJ Studio. 192 CPU formulas, 38 GPU shaders, MIDI, presets, clip player. Version 1.0 (Beta).">
 
@@ -21,8 +41,22 @@
   <meta property="og:image:alt"    content="VIMATHIC mathematical visualizer — fractal wireframe reacting to audio">
   <meta name="twitter:image"       content="https://vimathic.com/og-image.png">
   <meta name="twitter:card"       content="summary_large_image">
+  <!-- FIX(r5): card and image were set, title and description were not, so X
+       fell back to the Open Graph pair and the copy written for a 280-character
+       context never appeared. They are shorter than the OG text on purpose. -->
+  <meta name="twitter:title"       content="VIMATHIC — Mathematical VJ Studio">
+  <meta name="twitter:description" content="Turn your music into reactive geometry. 192 formulas, 38 GPU shaders, in the browser.">
   <link rel="canonical" href="https://vimathic.com/">
   <meta name="robots" content="index,follow">
+
+  <!-- FIX(r5): public/site.webmanifest has been deployed since 1.0 and nothing
+       ever pointed at it, so no browser read it and no install prompt was
+       offered for a fullscreen tool people run for a whole set. theme_color is
+       declared in there too, but a browser only reads the manifest after it is
+       linked, and the address bar is painted before that — so the colour is
+       stated here as well, matching the manifest's value. -->
+  <link rel="manifest" href="./site.webmanifest">
+  <meta name="theme-color" content="#0a0d12">
   <style>
 
     :root{
@@ -35,6 +69,12 @@
     /* (font variables --mono and --display defined in earlier :root block) */
     *{box-sizing:border-box}
     body{margin:0;overflow:hidden;font-family:var(--mono);background:var(--bg)}
+
+    /* Read by assistive technology and by crawlers, never painted. Clipped
+       rather than display:none, which would take it out of the accessibility
+       tree along with the layout. */
+    .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;
+      overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
 
 
 
@@ -109,6 +149,14 @@
        the play button and animates while a track is being decoded. */
     #track-loading{height:2px;width:100%;margin-top:4px;background:rgba(255,58,122,.10);
       border-radius:1px;overflow:hidden;opacity:0;transition:opacity .2s;pointer-events:none}
+    /* A failed load, said where the user is already looking. Sized and coloured
+       to be read rather than glanced past: 11px against the panel's 8-9px, and
+       a contrast ratio above 4.5:1 on --panel, which the dim label colours in
+       this panel do not reach. */
+    #track-error{margin-top:6px;font-size:11px;line-height:1.45;color:#ff9db8;
+      background:rgba(255,58,122,.10);border-left:2px solid var(--accent);
+      padding:6px 8px;border-radius:2px;word-break:break-word}
+    #track-error b{color:#fff;font-weight:600}
     #track-loading.active{opacity:1}
     #track-loading-fill{height:100%;width:0%;
       background:linear-gradient(90deg,var(--accent),var(--accent2));
@@ -159,6 +207,12 @@
     .cg{margin-bottom:8px}
     .cg label{display:block;margin-bottom:3px;font-size:9px;color:#889;letter-spacing:1px}
     .cg input[type=range]{width:100%;cursor:pointer;accent-color:var(--accent);height:3px}
+    /* The formula knobs, dimmed while the engine they speak to is not drawing.
+       Dimmed and not DISABLED on purpose: the value is part of a look, so it
+       has to stay settable before switching to the formula that will use it,
+       and it round-trips through presets either way. The note beside them is
+       what carries the reason — see #fk-note. */
+    #formula-knobs-wrap.fk-inert .cg{opacity:.42}
     .cg select{width:100%;background:#0a0a1a;color:#ddd;border:1px solid rgba(255,58,122,.35);
       border-radius:6px;padding:6px 7px;font-size:10px;cursor:pointer;font-family:monospace}
     .cg select option{background:#0a0a1a;color:#ddd}
@@ -535,6 +589,10 @@
     .se-btn-apply{background:rgba(0,255,170,.1);border-color:var(--green);color:var(--green)}
     .se-btn-apply:hover{background:rgba(0,255,170,.2);transform:scale(var(--btn-scale-hover))}
     .se-btn-reset{background:rgba(255,58,122,.08);border-color:rgba(255,58,122,.4);color:var(--accent)}
+    /* TIDY is neither the destructive one nor the one that runs: amber, the
+       same colour the status line uses for "valid but not what you meant". */
+    .se-btn-tidy{background:rgba(255,187,68,.08);border-color:rgba(255,187,68,.4);color:#fb4}
+    .se-btn-tidy:hover{background:rgba(255,187,68,.18);transform:scale(var(--btn-scale-hover))}
     #se-preset-wrap{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
     .se-preset{background:rgba(0,255,255,.06);border:1px solid rgba(0,255,255,.2);border-radius:5px;
       padding:3px 9px;font-size:8px;color:var(--accent2);cursor:pointer;font-family:monospace;
@@ -852,6 +910,12 @@
   </style>
 </head>
 <body>
+<!-- FIX(r5): the document had no h1 — headings began at h3, so the outline a
+     screen reader announces and the one a crawler reads both started mid-air.
+     The visible "VIMATHIC" is a panel header, sized and placed for the control
+     column, and promoting it would have been a heading that names a panel
+     rather than the page. This one names the page and is read, not seen. -->
+<h1 class="sr-only">VIMATHIC — Mathematical VJ Studio</h1>
 <div class="beat-ring" id="beat-ring"></div>
 <div id="hotkey-hint">
   SPACE play/pause · ← → tracks<br>
@@ -880,6 +944,11 @@
       <button class="tbtn" id="next-btn">⏭</button>
     </div>
     <div id="track-loading"><div id="track-loading-fill"></div></div>
+    <!-- FIX(r5): a load that fails now says so here, directly under the
+         transport the user is looking at. role=status so a screen reader
+         announces it without stealing focus. Empty and hidden until there is
+         something to say. -->
+    <div id="track-error" role="status" aria-live="polite" hidden></div>
     <div class="sec">▸ PLAYLIST</div>
     <div class="pl-wrap">
       <div class="pl-head">
@@ -1320,6 +1389,33 @@
       <input type="range" id="amplitude" min="0.2" max="1.5" step="0.01" value="0.70"></div>
     <div class="cg xp"><label>Wave Intensity <span id="wiv" class="vd">1.00</span></label>
       <input type="range" id="wave-int" min="0.3" max="3.5" step="0.05" value="1.0"></div>
+    <!-- Formula Detail / Formula Phase: the two hands on a CPU formula, and
+         they sit HERE for the same reason Spectrum Rings does — a control that
+         decides how the body answers is a core visual control, and 192 of the
+         ~230 entries in SHADER MODE are CPU formulas. Every formula already
+         receives {amp, freq, comp}; Amplitude and Wave Intensity are the first
+         two, and until r6 the third carried nothing of the operator's at all.
+         Detail rests at the centre, where the arithmetic is what it always was;
+         turning it DOWN is also how you buy back update rate on a heavy
+         formula (see PARAMS.detail and `npm run bench:formulas`). Both are
+         inert while a numbered GPU shader is drawing, which is the mirror of
+         the four shader knobs being inert under a formula.
+
+         FIX(r6): that last sentence used to live ONLY in this comment, where no
+         operator can read it. The panel showed two live sliders whose readouts
+         counted while nothing moved — the same silence the shader editor's
+         amber warning exists to break, one control row down. #fk-note says it
+         on screen now, and _syncFormulaKnobs decides when. -->
+    <div id="formula-knobs-wrap">
+      <div class="cg xp"><label>Formula Detail <span id="fdv" class="vd">0.50</span></label>
+        <input type="range" id="formula-detail" min="0" max="1" step="0.01" value="0.5"></div>
+      <div class="cg xp"><label>Formula Phase <span id="fpv" class="vd">0.00</span></label>
+        <input type="range" id="formula-phase" min="0" max="1" step="0.01" value="0"></div>
+      <div id="fk-note" class="xp" style="display:none;font-size:8px;color:#c96;margin:-2px 0 6px;letter-spacing:.5px">
+        NO EFFECT — a numbered GPU shader is drawing. These two reach CPU formulas only:
+        pick an <span style="color:#0fc">m:</span>… entry in SHADER MODE.
+      </div>
+    </div>
     <!-- Spectrum Rings: the 24 Bark bands laid across the body — the low end
          where the formula is broad, the cymbals where it is finely corrugated.
          It sits HERE, next to the two sliders that shape the surface, rather
@@ -1459,6 +1555,30 @@
       <details class="adv-sub">
         <summary>SHADER EDITOR</summary>
         <button id="btn-open-editor" class="xp">✎ EDIT GLSL SHADER</button>
+        <!-- Four numbers a custom shader can read and nothing else touches.
+             They exist because a hand-written shader was otherwise frozen: every
+             number in it is baked in, and changing one means reopening a modal
+             that blacks out the screen and disarms every hotkey, editing text,
+             and taking a hard recompile — which is a cut, not a fade. That is
+             not something anyone does mid-set.
+             With these, the shader is written once with uK0..uK3 in it and then
+             PLAYED: they are MIDI-mappable like any other param, so they reach a
+             controller, and they carry in presets. The sliders are here so the
+             feature also works for someone without hardware. -->
+        <div class="xp" style="font-size:8px;color:#556;margin:6px 0 2px;letter-spacing:.5px">
+          SHADER KNOBS — read as <span style="color:#0fc">uK0…uK3</span> in your code.<br>
+          On a numbered SHADER MODE they carry a fixed meaning instead:
+          <span style="color:#0fc">1</span> scale · <span style="color:#0fc">2</span> depth ·
+          <span style="color:#0fc">3</span> phase · <span style="color:#0fc">4</span> palette
+        </div>
+        <div class="cg xp"><label>Shader Knob 1 <span id="k0v" class="vd">0.00</span></label>
+          <input type="range" id="shader-k0" min="0" max="1" step="0.01" value="0"></div>
+        <div class="cg xp"><label>Shader Knob 2 <span id="k1v" class="vd">0.00</span></label>
+          <input type="range" id="shader-k1" min="0" max="1" step="0.01" value="0"></div>
+        <div class="cg xp"><label>Shader Knob 3 <span id="k2v" class="vd">0.00</span></label>
+          <input type="range" id="shader-k2" min="0" max="1" step="0.01" value="0"></div>
+        <div class="cg xp"><label>Shader Knob 4 <span id="k3v" class="vd">0.00</span></label>
+          <input type="range" id="shader-k3" min="0" max="1" step="0.01" value="0"></div>
       </details>
 
       <details class="adv-sub">
@@ -1505,13 +1625,17 @@
 </div>
 
 <!-- Shader Editor Overlay -->
-<div id="shader-editor-overlay">
+<div id="shader-editor-overlay" role="dialog" aria-modal="true" aria-labelledby="se-title">
   <div id="shader-editor-box">
-    <div id="se-header"><h3>✎ GLSL SHADER EDITOR</h3><button id="se-close">✕</button></div>
+    <div id="se-header"><h3 id="se-title">✎ GLSL SHADER EDITOR</h3><button id="se-close">✕</button></div>
     <div id="se-body">
       <div id="se-ref">
         <b style="color:#aaa">Uniforms:</b> <span>uTime</span> · <span>uBass</span> 0–1.2 · <span>uMid</span> 0–1 · <span>uTreble</span> 0–1.2 · <span>uBeat</span> 0–1 · <span>uAmp</span> · <span>uWI</span><br>
-        <b style="color:#aaa">Vertex:</b> <span>position</span> vec3 · <span>r</span>=length(xz) · <span>ang</span>=atan(z,x) · write into <span>y</span>
+        <b style="color:#aaa">Vertex:</b> <span>position</span> vec3 · <span>r</span>=length(xz) · <span>ang</span>=atan(z,x) · write into <span>y</span><br>
+        <b style="color:#aaa">Spectrum (vertex only):</b> <span>bandAtRadius(r)</span> · <span>bandAtU(0–1)</span> · <span>uBands[24]</span> · <span>uBandR</span> body radius — Spectrum Rings already adds one band term, set it to 0 to avoid doubling<br>
+        <b style="color:#aaa">Knobs:</b> <span>uK0</span> · <span>uK1</span> · <span>uK2</span> · <span>uK3</span> 0–1 — sliders under SHADER EDITOR in the panel, and MIDI-mappable; put one where you would type a constant<br>
+        <b style="color:#aaa">Colour (fragment):</b> <span>paletteAt(x)</span> — the chosen scheme, crossfading over 600 ms when you change it; <span>getColor(uCM, x)</span> is the same colour without the fade. SURF lighting now runs over your <span>c</span> automatically<br>
+        <b style="color:#aaa">What APPLY takes over:</b> <span>SHADER MODE</span> 1–38 — APPLY installs BOTH programs whichever tab you pressed it on, and your vertex body replaces that displacement, so all 38 numbered entries then draw the same thing. RESET gives them back. Everything else — shape, material, palette, Spectrum Rings, the knobs — still applies
       </div>
       <div id="se-tabs">
         <div class="se-tab active" data-tab="vert">VERTEX (displacement)</div>
@@ -1524,6 +1648,10 @@
       <div id="se-preset-wrap"></div>
       <div id="se-footer">
         <div id="se-error"></div>
+        <!-- TIDY rewrites what is in the box; it does not compile. Separate
+             from APPLY on purpose: the operator sees the edit before it runs,
+             and the text that compiles stays the text they are looking at. -->
+        <button class="se-btn se-btn-tidy" id="se-btn-tidy" title="Add missing decimal points, expand ^ to pow(), and use the scaffold's names">✎ TIDY</button>
         <button class="se-btn se-btn-reset" id="se-btn-reset">↺ RESET</button>
         <button class="se-btn se-btn-apply" id="se-btn-apply">▶ APPLY  Ctrl+S</button>
       </div>
@@ -1532,9 +1660,9 @@
 </div>
 
 <!-- Camera Programmer Overlay -->
-<div id="cam-editor-overlay">
+<div id="cam-editor-overlay" role="dialog" aria-modal="true" aria-labelledby="ce-title">
   <div id="cam-editor-box">
-    <div id="ce-header"><h3>🎬 CAMERA PROGRAMMER</h3><button id="ce-close">✕</button></div>
+    <div id="ce-header"><h3 id="ce-title">🎬 CAMERA PROGRAMMER</h3><button id="ce-close">✕</button></div>
     <div id="ce-body">
       <div id="ce-ref">
         <b>Read:</b> <span>time bass mid treble beat bpm R</span> &nbsp;
@@ -1588,10 +1716,10 @@
 </div>
 
 <!-- Audio Source Modal -->
-<div id="audio-src-overlay">
+<div id="audio-src-overlay" role="dialog" aria-modal="true" aria-labelledby="as-title">
   <div id="audio-src-box">
     <div id="as-header">
-      <h3>🎙 AUDIO SOURCE</h3>
+      <h3 id="as-title">🎙 AUDIO SOURCE</h3>
       <button id="as-close">✕</button>
     </div>
 
@@ -1672,10 +1800,10 @@
 </div>
 
 <!-- Output Modal -->
-<div id="output-overlay">
+<div id="output-overlay" role="dialog" aria-modal="true" aria-labelledby="out-title">
   <div id="output-box">
     <div id="out-header">
-      <h3>📤 VIDEO OUTPUT</h3>
+      <h3 id="out-title">📤 VIDEO OUTPUT</h3>
       <button id="out-close">✕</button>
     </div>
 

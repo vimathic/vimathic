@@ -219,6 +219,14 @@ export class AudioEngine {
     // Defaults are no-ops so the engine can run headless during tests.
     this.cb = {
       onLoading:         (v, pct, msg) => {},
+      // FIX(r5): a load that failed, in words for the person who chose the
+      // file. Same shape as the onError channel outputs.js and recorder.js
+      // already use. Before this, a file the browser could not decode was
+      // accepted into the playlist, said nothing on screen, left the clock
+      // showing the previous track's length and put the transport back to
+      // PLAY — the console was the only place the truth appeared, and mid-set
+      // nobody is reading the console.
+      onLoadError:       (msg, name)   => {},
       onPlaylistChange:  ()            => {},
       onPlayState:       (playing)     => {},
       onSeek:            (pct, cur)    => {},
@@ -729,6 +737,19 @@ export class AudioEngine {
 
   _stopSource() {
     this._cancelCrossfade();
+    // FIX: tearing the source down is a supersession, and the counter did not
+    // move for it. `sourceId++` appeared in exactly two places — _startSource
+    // and crossfadeToTrack — and neither is a teardown, so an auto-advance
+    // already in flight went on satisfying its own guard 200 ms later. A track
+    // ends, the operator presses STOP inside that window (the natural moment to
+    // press it), and the next track starts anyway; do it while starting a mic
+    // capture instead and the capture is torn down and the file played over it.
+    //
+    // After _cancelCrossfade, not before: _checkCrossfadeCleanup compares
+    // _xfadeId against this counter, and bumping first would change what that
+    // comparison means on the way through. By here isCrossfading is false, so
+    // that check returns at its first line either way.
+    this.sourceId++;
     if (this.audioSrc) {
       try { this.audioSrc.onended = null; this.audioSrc.stop(); this.audioSrc.disconnect(); } catch (_) {}
       this.audioSrc = null;
@@ -740,6 +761,20 @@ export class AudioEngine {
   // mic/display wired while isPlaying is false pushed update() into the idle-LFO
   // branch and drove the visuals off a stream that was still audible.
   stopAudio() {
+    // FIX: STOP supersedes a load that is still in flight, and nothing said so.
+    // loadPlay's generation checks were complete against a NEWER LOAD and
+    // against a capture (_stopFilePlayback bumps the same token), but STOP
+    // bumped nothing — so pressing it inside the decode window left the load
+    // to finish, call _startSource() and set isPlaying back to true. The room
+    // goes quiet, the button repaints to ▶ PLAY, and a second later the track
+    // the operator just stopped starts itself with the button flipping back to
+    // ⏸ STOP. crossfadeToTrack has the same window and now reads the same
+    // token. clearPlaylist() gets it too, by calling through here — that is the
+    // case where the track that starts itself is no longer in the playlist.
+    //
+    // Not in _stopSource(): loadPlay takes its id and THEN calls _stopSource,
+    // so bumping there would make every load supersede itself immediately.
+    ++this.loadId;
     if (this.liveMode) this.stopLiveCapture();
     this.isPlaying = false;
     this._stopSource();
@@ -815,6 +850,25 @@ export class AudioEngine {
       // reporting it would stop a track that is playing perfectly well.
       if (superseded()) return;
       console.error('Track load error:', e);
+      // FIX(r5): and tell the user, not only the console. decodeAudioData
+      // rejects with an EncodingError whose message names no file, so the
+      // filename is added here — with several tracks queued, "one of them is
+      // broken" is not actionable.
+      //
+      // FIX(r6): and not for a load the user did not ask for. `silent` marks the
+      // bundled intro track, fetched on the first gesture — the same flag that
+      // suppresses the loading bar three lines below and on the success path.
+      // The catch checked superseded() and not silent, so a failed intro fetch
+      // (offline, a blocked origin, a bad deploy) raised a red banner naming a
+      // file the operator had never chosen and could do nothing about. Reported
+      // to the console either way; a silent load fails silently, which is what
+      // the flag has meant everywhere else since it was added.
+      if (!silent) this.cb.onLoadError(
+        /encoding/i.test(e?.name || '')
+          ? 'could not be decoded — the file may be corrupt or not really audio'
+          : (e?.message || 'could not be loaded'),
+        file?.name || '',
+      );
       // FIX(#7, r3): same invariant — a failed load must not flip the visuals
       // to idle while a live capture is still feeding the analyser. Nothing
       // here touches the capture, so isPlaying follows whether one is wired.
@@ -876,17 +930,66 @@ export class AudioEngine {
     }
   }
 
+  // FIX: this is the third place the supersession idiom belongs and the last to
+  // get it. AudioEngine.loadPlay implements it in full — a monotonic loadId, a
+  // superseded() helper that also settles ownership of the loading bar, and a
+  // re-check after every await — and MathVisualizer._generation is the same
+  // discipline on the worker channel. This method had no token at all: it
+  // awaited the read and the decode, then built a source, connected it and
+  // called start() with no check of any kind.
+  //
+  // Press NEXT, then STOP inside the decode window: the room goes quiet, the
+  // button repaints to ▶ PLAY, and then the decode lands and the cancelled
+  // track begins playing on its own with the button flipping back to ⏸ STOP.
+  // The same window with CLEAR PLAYLIST plays a track that is no longer in the
+  // playlist; with a mic capture started in it, the file plays over the live
+  // capture while liveMode still reads 'mic' — the failure FIX(r4) was written
+  // to prevent, and it was fixed for loadPlay only.
+  //
+  // The two statements that would have thrown on a torn-down engine were each
+  // swallowed by a bare `catch (_) {}`, which is why none of this ever reached
+  // a console. Those are gone: the state a crossfade needs is now checked, and
+  // when it is missing this hands off to loadPlay for a hard cut — the same
+  // precondition _crossfadeOrLoad tests before choosing this path at all.
   async crossfadeToTrack(newFile, offset = 0) {
     // GainNode is in every modern browser, but be defensive — the fallback
     // is a clean hard-cut load rather than a silent failure.
     if (typeof GainNode === 'undefined') { this.loadPlay(newFile, offset); return; }
+
+    const loadId = ++this.loadId;
+    const superseded = () => {
+      if (loadId === this.loadId) return false;
+      // Same ownership rule as loadPlay: take the bar down only if it is still
+      // ours. A newer load raises its own and clears it when it lands.
+      if (this._loadingOwner === loadId) {
+        this._loadingOwner = 0;
+        this.cb.onLoading(false);
+      }
+      return true;
+    };
+
     try {
       await this.ensureCtx();
+      if (superseded()) return;
+      this._loadingOwner = loadId;
       this.cb.onLoading(true, 0, 'LOADING TRACK…');
       const buf = await this._readFile(newFile);
+      if (superseded()) return;             // STOP, a newer track, or a capture
       this.cb.onLoading(true, 0.7, 'DECODING AUDIO…');
       const newBuffer = await this.audioCtx.decodeAudioData(buf);
+      if (superseded()) return;             // …or while we decoded
       this.cb.onLoading(true, 1.0, 'READY');
+
+      // Nothing superseded us, so the engine should still hold everything a
+      // crossfade fades BETWEEN. If it does not, there is no outgoing track to
+      // fade out and this is a hard cut by definition — say so by taking that
+      // path, rather than building a fade against null and discarding the
+      // TypeError. loadPlay stamps its own id, which retires this one.
+      if (!this.audioSrc || !this.audioBuffer || !this.audioCtx || this.audioCtx.state === 'closed') {
+        if (this._loadingOwner === loadId) this._loadingOwner = 0;
+        this.loadPlay(newFile, offset);
+        return;
+      }
 
       this.isCrossfading = true;
       this._fadeStartTime = this.audioCtx.currentTime;
@@ -895,8 +998,24 @@ export class AudioEngine {
       this._fadeOutGain = this.audioCtx.createGain();
       this._fadeOutGain.gain.setValueAtTime(1.0, this._fadeStartTime);
       this._fadeOldSrc = this.audioSrc;
-      try { this.audioSrc.disconnect(); } catch (_) {}
-      try { this._fadeOldSrc.connect(this._fadeOutGain); this._fadeOutGain.connect(this.analyser); } catch (_) {}
+      // One try around the whole rewiring, and it does something. As two bare
+      // `catch (_) {}` these were the reason a crossfade against a torn-down
+      // engine left no trace anywhere: the disconnect threw on null, the
+      // connect threw on null, both were discarded, and the method carried on
+      // to start() a source into a graph it had failed to build. If the
+      // outgoing track cannot be rerouted there is nothing to fade out, so
+      // fall back to the hard cut rather than continue half-wired.
+      try {
+        this.audioSrc.disconnect();
+        this._fadeOldSrc.connect(this._fadeOutGain);
+        this._fadeOutGain.connect(this.analyser);
+      } catch (e) {
+        console.warn('Crossfade could not reroute the outgoing track — hard cut instead:', e);
+        this._cancelCrossfade();
+        if (this._loadingOwner === loadId) this._loadingOwner = 0;
+        this.loadPlay(newFile, offset);
+        return;
+      }
       this.audioSrc = null;
 
       // Build the incoming source behind a fade-in gain stage.
@@ -938,10 +1057,22 @@ export class AudioEngine {
       // Notify track-name consumers (overlay banner, clip player).
       const name = this.playlist[this.trackIdx]?.name ?? (this.curFile?.name?.replace(/\.[^.]+$/, '') ?? '');
       this.cb.onTrackChange(name);
-      setTimeout(() => this.cb.onLoading(false), 200);
+      // Same ownership rule as loadPlay on the way out: this clear lands 200 ms
+      // late, and a load started inside that gap has already raised its own bar.
+      setTimeout(() => {
+        if (this._loadingOwner !== loadId) return;
+        this._loadingOwner = 0;
+        this.cb.onLoading(false);
+      }, 200);
     } catch (e) {
+      // A superseded crossfade failing says nothing about whatever replaced it,
+      // and falling back to loadPlay here would be the original bug wearing a
+      // different hat: STOP inside the decode window, the read rejects because
+      // the engine is gone, and the "fallback" starts the cancelled track.
+      if (superseded()) return;
       console.error('Crossfade error, falling back:', e);
       this._cancelCrossfade();
+      if (this._loadingOwner === loadId) this._loadingOwner = 0;
       this.loadPlay(newFile, offset);
     }
   }
@@ -1021,11 +1152,25 @@ export class AudioEngine {
 
     if (declined()) return;
 
+    // FIX: the comment that stood here ended "...so this works regardless of
+    // where index.html is hosted (vimathic.com, localhost, file://, etc.)", and
+    // file:// is the one case it got wrong. fetch() refuses the file scheme
+    // outright — Chrome rejects with a TypeError before any request leaves —
+    // so on the deploy README advertises in as many words ("open in any modern
+    // browser, no server needed") the intro track has never once loaded. It
+    // failed into the catch below, which warns to the console and nothing else,
+    // under a comment asserting the opposite. Named here rather than left to
+    // fail, so the reason is in the log instead of a scheme error.
+    if (globalThis.location?.protocol === 'file:') {
+      console.warn('[audio] intro track skipped: fetch() cannot read the file: scheme. ' +
+                   'Serve the folder over http to get it.');
+      return;
+    }
+
     try {
-      // The bundled intro track is emitted to dist/vimathic-intro.mp3 by
-      // Vite (from public/). Using a relative URL means this works
-      // regardless of where index.html is hosted (vimathic.com, localhost,
-      // file://, etc.).
+      // The bundled intro track is emitted to dist/vimathic-intro.mp3 by Vite
+      // (from public/). The relative URL is what makes it work under a sub-path
+      // deploy as well as at the apex — see the file:// case handled above.
       const response = await fetch('./vimathic-intro.mp3');
       if (!response.ok) return;
       const blob = await response.blob();

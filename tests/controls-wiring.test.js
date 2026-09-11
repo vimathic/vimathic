@@ -222,7 +222,10 @@ function makeUi() {
       // is headed. A stub without them would send that guard down its
       // `?? a.colorIdx` fallback, i.e. back to the very question the fix
       // stopped asking, and the tests below would pass on the old code.
-      U: { uAmp: { value: 0.7 }, uWI: { value: 1 },
+      U: { // PARAMS.k0..k3 store their value IN the uniform, as bloom does in the
+      // composer pass. A ctx stub that omits them throws on capture and reset.
+      uAmp: { value: 0.7 }, uWI: { value: 1 },
+         uK0: { value: 0 }, uK1: { value: 0 }, uK2: { value: 0 }, uK3: { value: 0 },
            uCM: { value: 16 }, uCMNext: { value: 16 }, uCMBlend: { value: 0 } },
       bloomPass: { strength: 0.6, radius: 0.4, threshold: 0.85 },
       setShapeAnimated: s => calls.push(['setShapeAnimated', s]),
@@ -275,7 +278,10 @@ function makeUi() {
       },
     },
     shaderEditor: { customVS: null, customFS: null },
-    modelLoader: { clear: () => calls.push(['ml.clear']) },
+    modelLoader: {
+      clear:  () => calls.push(['ml.clear']),
+      cancel: () => calls.push(['ml.cancel']),
+    },
     mathViz: {
       _mode: 'surface',
       setFormula: (c, k) => calls.push(['setFormula', `${c}:${k}`]),
@@ -676,7 +682,16 @@ describe('an imported model can be removed again', () => {
 
     fire('btn-clear-model', 'click');
 
-    assert.equal(ui.called('ml.clear').length, 1, 'the model itself has to go');
+    // cancel(), not clear(). FIX(r6): the button is the user saying "no model",
+    // and clear() alone does not touch the loader's _loadId — so an import still
+    // being decoded when the button was pressed came back a moment later, found
+    // itself un-superseded, and put the model the user had just removed back on
+    // the stage. cancel() bumps the id first. The bump cannot live inside
+    // clear(), because load() calls clear() itself three lines after taking its
+    // own id: every import would supersede itself and nothing would ever load.
+    assert.equal(ui.called('ml.cancel').length, 1, 'the model itself has to go, in flight or not');
+    assert.equal(ui.called('ml.clear').length, 0,
+      'clear() alone leaves an in-flight import free to arrive after the user cancelled it');
     assert.equal(byId('model-info').textContent, '');
     assert.equal(byId('model-file').value, '',
       're-picking the same file fires no change event unless the input is cleared');

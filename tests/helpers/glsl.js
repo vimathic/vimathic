@@ -830,7 +830,7 @@ const VH_PATS = compiled(VH_FORMS);
  * list that one case. Here the name is irrelevant: the expression is resolved to
  * its definition first and then has to be one of two things.
  */
-export function displacementKind(tree, symbols, interpName, allowBand = true) {
+export function displacementKind(tree, symbols, interpName, allowBand = true, allowKnob = true) {
   if (reads(tree, 'pos', 'y')) return null;              // that is a height, not a displacement
   if (tree.k === 'id' && symbols.get(tree.v) === 'interp') {
     // `interp` means only "a ${…} ran between this name's definition and here",
@@ -852,11 +852,25 @@ export function displacementKind(tree, symbols, interpName, allowBand = true) {
   const isMode = (n, uniform) =>
     n.k === 'call' && n.n === 'computeMode' && n.args.length >= 2 &&
     n.args[0].k === 'id' && n.args[0].v === uniform &&
-    n.args[1].k === 'field' && n.args[1].f === 'xz' && n.args[1].o.k === 'id' && n.args[1].o.v === 'pos';
+    isKnobbedPosXZ(n.args[1]);
   if (tree.k === 'call' && tree.n === 'mix' && tree.args.length === 3 &&
       isMode(tree.args[0], 'uMode') && isMode(tree.args[1], 'uModeNext') &&
       tree.args[2].k === 'id' && tree.args[2].v === 'uModeBlend') {
     return 'the blend of computeMode(uMode, pos.xz, …) and computeMode(uModeNext, pos.xz, …)';
+  }
+  // A displacement SCALED BY THE DEPTH KNOB is still a displacement — r6 gave
+  // uK1 a meaning on the built-in modes, where all four knobs used to move
+  // nothing. Checked rather than waved through, for the same reason as the band
+  // addition below: the other operand has to be a factor that is EXACTLY 1 when
+  // the knob rests, so this rule cannot certify a program that quietly scaled
+  // the field by anything else. `allowKnob` false into the recursion keeps it to
+  // one such factor, so `field * k * k` does not certify.
+  if (allowKnob && tree.k === 'bin' && tree.op === '*') {
+    for (const [a, b] of [[tree.l, tree.r], [tree.r, tree.l]]) {
+      if (!isKnobFactor(b, 'uK1')) continue;
+      const base = displacementKind(a, symbols, interpName, allowBand, false);
+      if (base) return `${base}, scaled by the depth knob`;
+    }
   }
   // A displacement PLUS the band layer is still a displacement, and the
   // addition is checked rather than waved through: the left operand has to be a
@@ -1024,6 +1038,34 @@ const isModeTexture = (n) =>
 
 const isPosXZ = (n) =>
   !!(n && n.k === 'field' && n.f === 'xz' && n.o.k === 'id' && n.o.v === 'pos');
+
+/**
+ * `1.0 + uKn * <literal>` — a knob factor, in any operand order.
+ *
+ * The point of the shape is the 1.0: r6 put the four shader knobs on the
+ * built-in modes, and every one of them had to be IDENTITY at rest, because
+ * they rest at 0 and a preset written before them carries no value at all. A
+ * factor of this shape is exactly 1 when the knob is 0 — not approximately —
+ * so a look tuned before the knobs existed comes back bit for bit. Anything
+ * else in this position is refused, which is what keeps "scaled by the depth
+ * knob" from becoming "scaled by whatever someone put there".
+ */
+function isKnobFactor(n, knob) {
+  if (!(n && n.k === 'bin' && n.op === '+')) return false;
+  const [one, term] = n.l.k === 'num' ? [n.l, n.r] : [n.r, n.l];
+  if (one.k !== 'num' || Number(one.v) !== 1) return false;
+  if (!(term && term.k === 'bin' && term.op === '*')) return false;
+  const [k, c] = term.l.k === 'id' ? [term.l, term.r] : [term.r, term.l];
+  return k.k === 'id' && k.v === knob && c.k === 'num';
+}
+
+/** `pos.xz`, or `pos.xz` scaled by the uK0 knob — the coordinate computeMode is read at. */
+const isKnobbedPosXZ = (n) => {
+  if (isPosXZ(n)) return true;
+  if (!(n && n.k === 'bin' && n.op === '*')) return false;
+  return (isPosXZ(n.l) && isKnobFactor(n.r, 'uK0')) ||
+         (isPosXZ(n.r) && isKnobFactor(n.l, 'uK0'));
+};
 
 /** `length(pos.xz) / max(uBandR, …)` */
 const isRadiusOverR = (n) =>

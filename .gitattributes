@@ -1,0 +1,25 @@
+# Line endings are normalised to LF in the working tree on every platform.
+#
+# Without this file, Git for Windows' default (core.autocrlf=true) hands a
+# contributor a CRLF working tree, and four tests fail on a clean clone:
+#
+#   tests/math-validation.test.js        "the sections describe 0 formulas, not 192"
+#   tests/shape-fallback-and-hf-once.test.js   "Cannot read properties of null"
+#
+# Both parse repository text with regexes anchored on \n. The same failure has
+# been met and patched once before, inside a single reader — see FIX(#39, r4) in
+# plugins/vimathic-docs.js, which had to grow `\r?` in its frontmatter match.
+# Patching each reader in turn treats the symptom; the checkout is the cause, so
+# it is fixed here once for every reader that exists or gets written later.
+* text=auto eol=lf
+
+# Binary files must never be inspected for line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.mp3   binary
+*.woff  binary
+*.woff2 binary

@@ -117,7 +117,12 @@ npm install
 npm run dev        # http://localhost:3000
 ```
 
-Required: **Node.js 22+**.
+Required: **Node.js 22.18 or newer** — `package.json` declares it and `.npmrc`
+sets `engine-strict`, so `npm install` refuses below it rather than letting you
+find out later. The floor is not cosmetic: `npm test` delegates to
+`scripts/run-tests.mjs`, whose ESM entry-point check does not exist before
+22.18, and below it the runner used to print nothing and exit 0 — a whole suite
+reporting success without running.
 
 Tests:
 

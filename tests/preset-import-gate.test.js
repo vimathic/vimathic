@@ -96,7 +96,7 @@ function makeUi() {
     vizMode: 'surface', currentShape: 'sphere',
     currentMaterial: 'matte', currentParticleStyle: 'squares',
     grid: { visible: true }, uMathMode: 0,
-    U: { uMode: { value: 0 } },
+    U: { uMode: { value: 0 }, uK0: { value: 0 }, uK1: { value: 0 }, uK2: { value: 0 }, uK3: { value: 0 }, },
     gpuMat: { vertexShader: 'BUILTIN_VS', fragmentShader: 'BUILTIN_FS' },
     camera: { position: { x: 0, y: 0, z: 7 }, fov: 60 },
     orbit: { target: { x: 0, y: 0, z: 0 } },

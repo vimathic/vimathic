@@ -22,11 +22,35 @@ import { MathVisualizer } from './math-visualizer.js';
 import { getAllFormulasList } from './math-collections.js';
 import { FormulaPicker, isMathValue } from './formula-picker.js';
 import { SHAPE_NAMES } from './shapes.js';
-import { DOM } from './dom.js';
-import { isAboutModalOpen } from './ui/about-modal.js';
+import { DOM, elementOwnsKey } from './dom.js';
+import { isAnyOverlayOpen } from './ui/overlay-focus.js';
 
 // ── App config ──────────────────────────────────────────────────────────────
-const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
+//
+// FIX: the UA test alone classified every iPad as a desktop. Since iPadOS 13,
+// Safari defaults to Request Desktop Website and reports
+//
+//   Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) … Safari/605.1.15
+//
+// which carries none of the five tokens below, and every iPad but the mini is
+// 768 px or wider in portrait — so the width fallback did not catch it either.
+// This one boolean decides planeSegs (160 vs 80), the render frame skip, the
+// uniform throttle, MSAA, the device-pixel-ratio cap (iPads are DPR 2, so the
+// backing store came out 2.25× the intended area), the perf tier, the math
+// worker's throttle, roughly twenty geometry LOD choices, every transition
+// duration and two GPU-budget refusals. The largest touch class the app has
+// was taking the desktop path through all of it — the exact state the comment
+// at the frame-skip declaration was written to prevent.
+//
+// navigator.maxTouchPoints is the stable signal: iPadOS reports 5 whatever the
+// UA says, and a real Mac reports 0 — macOS ships no touchscreen. Gated on the
+// Macintosh UA so a Windows laptop with a touch panel, which is a desktop by
+// every budget here, is not swept in with it.
+//
+// Kept on one line: tests/clock-rate.test.js and tests/device-class.test.js
+// both lift this declaration out of the file by regexp and execute it against
+// their own navigator/window, so the app is judged by the code it ships.
+const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (/Macintosh/i.test(navigator.userAgent) && (navigator.maxTouchPoints || 0) > 1) || window.innerWidth < 768;
 // FIX(#29): dropped beatCooldown / beatThreshold. They duplicated
 // AudioEngine.BEAT_COOLDOWN / BEAT_FLOOR (audio.js — the second was called
 // BEAT_THRESHOLD until round 11 turned it into a floor) but CFG is only ever
@@ -152,6 +176,27 @@ mathViz.setFormula('differentialEqs', 'pendulumNonLinear');
 // them. bootPersist also installs the debounced save loop and the
 // beforeunload flush, so from this point on the state survives reloads.
 ui.bootPersist();
+
+// ── The file:// deploy costs two things, and said nothing about either ──────
+//
+// README advertises `dist/index.html ← open in any modern browser, no server
+// needed` and "Share it as a file attachment. Open from USB. Works offline."
+// Two of those words are doing more work than the code can support:
+//
+//   • The math worker cannot be built at all. A page opened over file:// has
+//     origin `null`, and a module Worker cannot be constructed from one, so
+//     every deform runs on the main thread for the whole session.
+//   • The bundled intro track cannot be fetched. fetch() refuses the file
+//     scheme, so the playlist starts empty.
+//
+// Both degrade rather than break — the app runs, slower and quieter — and both
+// used to report only to the console, each under a comment claiming file://
+// was supported. One line on screen, once, naming what is missing and what to
+// do about it. Not an error: this deploy is a documented, working one, and the
+// operator chose it. It is only that they were owed the trade-off.
+if (globalThis.location?.protocol === 'file:') {
+  ui._showToast('Opened as a file: no math worker, no intro track. Serve the folder over http for full speed.');
+}
 
 // ── Hotkeys ───────────────────────────────────────────────────────────────────
 // ── Non-repeating randomization pools ────────────────────────────────────────
@@ -285,12 +330,30 @@ function _cycleShape() {
 }
 
 window.addEventListener('keydown', e => {
-  if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
-  // The About dialog is modal for the pointer and was not for the keyboard, so
-  // space toggled playback and D changed the shape behind a reader's back — on
-  // first run, where the modal opens itself. Escape still reaches its own
-  // listener in controls.js, which is what closes this.
-  if (isAboutModalOpen()) return;
+  // Was ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName),
+  // which let Space through on a focused <button> or <summary> — where the
+  // preventDefault below then cancelled the element's own activation and
+  // toggled playback instead. See elementOwnsKey in dom.js for the measurement.
+  if (elementOwnsKey(document.activeElement, e.key)) return;
+  // A dialog is modal for the pointer and was not for the keyboard, so space
+  // toggled playback and D changed the shape behind a reader's back — on first
+  // run, where About opens itself. Escape still reaches its own listener in
+  // controls.js, which is what closes this.
+  //
+  // FIX(r6): EVERY dialog, not just About. This read isAboutModalOpen(), so the
+  // other four — the shader editor, the camera programmer, the audio source
+  // picker, the output dialog — left D, F, R, T and Space live. The shader
+  // editor is the worst of them: overlay-focus parks focus on the overlay
+  // container, dom.js does not treat a bare DIV as owning a key, and the overlay
+  // blacks the canvas out at 82% — so the scene was being randomised behind a
+  // screen the operator could not see.
+  if (isAnyOverlayOpen()) return;
+  // FIX(r6): a modified key belongs to the browser or the OS, never to a hotkey
+  // here. Without this, Ctrl+R ran the `r` case — randomise everything — and the
+  // autosave wrote that state before the reload it was asking for, so a reload
+  // came back to a scene the operator never chose. Ctrl+D, Ctrl+F and Cmd+Space
+  // are the same shape. Not a regression of this branch: upstream has it too.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   // Ignore auto-repeat keydown. Hotkeys here are single-action triggers
   // (D = next shape, F = random formula, R = randomise all, space = play/
   // pause), not held-state inputs. Without this filter, holding D would
@@ -412,7 +475,9 @@ window.addEventListener('resize', () => render.onResize());
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 window.addEventListener('beforeunload', () => {
   audio.dispose();
-  ml.clear();
+  // cancel(), not clear(): nothing should arrive after this point, and an
+  // import in flight is the one thing that still could.
+  ml.cancel();
   output.stopAll();
   secondScreen.close();
   // Abort active recordings to release MediaRecorder streams + worker(s)

@@ -6,10 +6,11 @@
 //
 // Called once from UIController.bindAll().
 
-import { DOM } from '../dom.js';
+import { DOM, elementOwnsKey } from '../dom.js';
 import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam,
          NIGHT_SCHEME_FIRST, NIGHT_SCHEMES, ALL_SCHEMES, DRAG_FLOOR } from '../params.js';
-import { bindAboutModal, closeAbout, isAboutModalOpen } from './about-modal.js';
+import { bindAboutModal, closeAbout } from './about-modal.js';
+import { bindOverlayFocus, isAnyOverlayOpen } from './overlay-focus.js';
 import { AutoCycler } from './auto-cycle.js';
 
 export function bindControls(ui) {
@@ -288,6 +289,40 @@ export function bindControls(ui) {
     return !v || v.startsWith('m:');
   };
 
+  /**
+   * Dim Formula Detail / Formula Phase, and say why, when the engine they
+   * speak to is not the one drawing.
+   *
+   * FIX(r6): they were two live-looking sliders that moved nothing under a
+   * numbered GPU shader — readouts counting, presets storing, not a pixel
+   * changing. The boundary itself is correct and deliberate (two banks, one per
+   * engine); what was missing is that the app never said so anywhere an
+   * operator could read. This is the same repair commit 7fc26fd made one row
+   * down, where APPLY reported a clean compile and stayed silent about the
+   * scaffold discarding the body's `y`.
+   *
+   * The predicate is _cpuOwnsSurface and nothing more: VOLUME cannot be entered
+   * while a shader owns the surface — _setDeformMode refuses it out loud — so
+   * all three deform modes are live under an `m:` formula and inert under a
+   * numbered one.
+   *
+   * It takes the value rather than reading #gpu-sel because applyMathFormula
+   * writes that dropdown on the flat frame of a morph: reading it here would
+   * describe the PREVIOUS selection for the length of the transition, which is
+   * the window in which the operator is most likely to reach for the knob.
+   */
+  const _syncFormulaKnobs = (value = _gpuSel()?.value) => {
+    const v = value == null ? '' : String(value);
+    const live = !v || v.startsWith('m:');
+    document.getElementById('formula-knobs-wrap')?.classList.toggle('fk-inert', !live);
+    const note = document.getElementById('fk-note');
+    if (note) note.style.display = live ? 'none' : '';
+  };
+  // Boot: index.html ships the pair undimmed and #fk-note hidden, which is
+  // right for the shipped default (an `m:` formula) and wrong for a session
+  // restored onto a shader. Say it once here rather than trusting the markup.
+  _syncFormulaKnobs();
+
   const _deformBtns    = ['surface','volume','collapse'];
   const _volWrap       = document.getElementById('volume-formula-wrap');
   const _volSel        = document.getElementById('volume-formula-sel');
@@ -454,6 +489,9 @@ export function bindControls(ui) {
    */
   ui.applyFormulaValue = (value, onFlat) => {
     const val = String(value);
+    // Every road to a selection ends here — the dropdown, R and F, and
+    // applyState — so this one call keeps the pair honest on all of them.
+    _syncFormulaKnobs(val);
     if (val.startsWith('m:')) {
       const [, colId, key] = val.split(':');
       ui.applyMathFormula(colId, key, onFlat);
@@ -1022,14 +1060,23 @@ export function bindControls(ui) {
   let _dragKey = null;
 
   document.addEventListener('keydown', e => {
-    if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
-    // FIX: and not through the About dialog. It is aria-modal and modal for the
+    // The twin of main.js's stand-down, and it drifted the same way. Every key
+    // in _fsParams is a letter, so no focused control is losing an activation
+    // here today — but the two listeners spelled the same rule twice, and this
+    // is the copy that would be missed when someone adds Space or Enter to the
+    // drag map. One rule, one place: elementOwnsKey in dom.js.
+    if (elementOwnsKey(document.activeElement, e.key)) return;
+    // FIX: and not through a dialog. One is aria-modal and modal for the
     // pointer, but nothing told the keyboard — so a key pressed while reading
     // the docs armed a hold-and-drag on a parameter behind the overlay. A
-    // brand-new profile is in exactly that state, since the modal auto-opens on
+    // brand-new profile is in exactly that state, since About auto-opens on
     // first run. Escape is a separate listener and deliberately not guarded,
-    // or the modal could not be closed by key.
-    if (isAboutModalOpen()) return;
+    // or the dialog could not be closed by key.
+    //
+    // FIX(r6): all five overlays, not only About — the same widening as the
+    // sibling listener in main.js, and for the same reason. This is the copy the
+    // note above predicted would be missed.
+    if (isAnyOverlayOpen()) return;
     const key = e.key.toLowerCase();
     if (_fsParams[key]) { _dragKey = key; e.preventDefault(); }
   });
@@ -1188,7 +1235,7 @@ export function bindControls(ui) {
   }
 
   // ── Import/Export & Preset save ───────────────────────────────────────────
-  document.getElementById('btn-export').addEventListener('click', () => ui.exportSettings());
+  DOM.btnExport.addEventListener('click', () => ui.exportSettings());
   document.getElementById('btn-import').addEventListener('click', () => document.getElementById('state-file').click());
   document.getElementById('state-file').addEventListener('change', e => {
     if (e.target.files[0]) { ui.importSettings(e.target.files[0]); e.target.value = ''; }
@@ -1211,6 +1258,15 @@ export function bindControls(ui) {
       if (e.key === 'Enter') { document.getElementById('btn-preset-save').click(); }
     });
   }
+  // One factory preset on a browser that has never had any — the only shipped
+  // demonstration that a custom shader is a look you can play rather than an
+  // experiment. Gated on the key never having been written, so deleting it
+  // means deleted. See _seedFactoryPresets for the three rules it follows.
+  // Optional-chained for the same reason the rest of this file is: bindControls
+  // runs against partial UI stubs in the unit tests, which carry _renderPresets
+  // and not the whole PresetMixin. The wiring itself is pinned end-to-end in
+  // tests/e2e/shader-oracle.spec.js, on a profile that has never been here.
+  ui._seedFactoryPresets?.();
   ui._renderPresets();
 
   // ── Model import ──────────────────────────────────────────────────────────
@@ -1225,7 +1281,11 @@ export function bindControls(ui) {
   // back to the model would be dead as well.
   const bcm = document.getElementById('btn-clear-model');
   bcm.addEventListener('click', () => {
-    ml.clear();
+    // cancel(), not clear(): the button is the user saying "no model", and an
+    // import still in flight has to hear that too. clear() alone left it
+    // un-superseded, so it finished a moment later and put the model the user
+    // had just removed back on the stage.
+    ml.cancel();
     document.getElementById('model-info').textContent = '';
     mfi.value = '';
     bcm.style.display = 'none';
@@ -1250,6 +1310,12 @@ export function bindControls(ui) {
     // arrives.
     if (_fsActive) _exitFS();
   });
+
+  // ── Keyboard containment for every dialog ────────────────────────────────
+  // The Escape loop above closes them; this holds the focus while they are up.
+  // Bound once for all five — see the note in overlay-focus.js on why it
+  // watches the `.open` class instead of being called at each open site.
+  bindOverlayFocus();
 
   // ── About / documentation modal ──────────────────────────────────────────
   // Self-contained: own button, own overlay, own Escape entry above.

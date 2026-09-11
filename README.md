@@ -40,6 +40,12 @@ Drop in a track — 192 mathematical formulas come to life on screen, driven by 
 ```
 dist/index.html   ← open in any modern browser, no server needed
 ```
+Two things a browser will not give a page opened straight off disk, both of
+which degrade rather than break, and both of which the app now says once on
+screen: the math worker cannot be constructed from a `file://` origin, so
+deforms run on the main thread, and the bundled intro track cannot be fetched,
+so the playlist starts empty. Serving the folder over http — `npx serve dist`,
+or any static server — gets both back.
 
 **Option C — dev mode:**
 ```bash
@@ -190,7 +196,9 @@ are engine capability with no control wired to them yet.
 
 ### Single-File Deploy
 The entire application builds to one `dist/index.html` (plus a companion Web Worker, the second-screen popup, and an SEO docs site) — no server, no CDN, no external requests.
-Share it as a file attachment. Open from USB. Works offline.
+Share it as a file attachment. Open from USB. Works offline. Opened straight off
+disk it runs without the math worker and without the intro track — see Option B
+above — so a static server is worth it for a performance.
 
 ---
 

@@ -85,7 +85,11 @@ test.describe('Particle style', () => {
     // Change the look, then load the preset back.
     await sel.selectOption('dots');
     await expect(sel).toHaveValue('dots');
-    await page.locator('#preset-list .preset-load-btn').first().click();
+    // By NAME, not by position. A browser that has never saved a preset now
+    // receives one factory example (see PresetMixin._seedFactoryPresets), so
+    // "the first row" is no longer "the one this test just saved" — and it was
+    // never a safe way to say it.
+    await page.locator('#preset-list .preset-load-btn', { hasText: 'smoke-test' }).click();
     await expect(sel).toHaveValue('smoke');
 
     // RESET ALL returns to WIRE with the startup style remembered, so coming

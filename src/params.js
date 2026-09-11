@@ -32,6 +32,27 @@
 //                 not [min..Infinity] — and (b) the default upper bound
 //                 when a tool needs a "sensible default range".
 //
+// DECISION (08.09.2026): the unbounded values stay unbounded. An audit raised
+// the missing ceiling on amp and waveInt as a loose end from the black-squares
+// work, and the owner's answer was to leave it. Recorded here rather than
+// re-litigated, because the case for a cap looks obvious and is wrong:
+//
+//   • The consequence that made it urgent is already closed. Unbounded
+//     displacement produced degenerate quads, and those produced the black
+//     rectangles — but shaders.js now sanitises the displaced position before
+//     gl_Position and clamps the dot product that fed pow() a negative base.
+//     Measured after those two: 0 artefacts in 10,283 frames across seven
+//     conditions. A large number now costs a wrecked picture and frame rate,
+//     which is visible and reversible, not a corrupted frame.
+//
+//   • A cap at extendedMax would have been actively wrong. Amplitude 11 —
+//     against a designed maximum of 1.5 — is one of the conditions the
+//     black-squares report was reproduced under, so the over-drive range well
+//     past extendedMax is a used part of the instrument, not an accident.
+//
+// So: this is a VJ tool, the operator is allowed to over-drive it, and the
+// thing that made over-driving dangerous has been fixed at the other end.
+//
 // ── Slider-grow rationale ────────────────────────────────────────────────
 // HTML5 <input type="range"> silently clamps any .value above `max`.
 // Without slider-grow, a hotkey-driven value of 2.85 on a max=2.5 slider
@@ -213,7 +234,20 @@ export const PARAMS = {
     extendedMax: 2.0,
     format: v => v.toFixed(2),
     get: ctx => ctx.render.bloomPass.strength,
-    set: (ctx, v) => { ctx.render.bloomPass.strength = v; },
+    // FIX(r6): strength 0 also switches the pass OFF. Two reasons, and the
+    // first is a correctness one: UnrealBloomPass's composite multiplies the
+    // blurred mips by the strength, and 0 * Inf is NaN — so at exactly 0 a
+    // non-finite texel that the blur had already spread across a mip tile
+    // stops being an invisible overflow and becomes a solid BLACK rectangle.
+    // The slider's min is 0 and its 0.05 step lands on it exactly. The shader
+    // guard in shaders.js removes the non-finite input; this makes the symptom
+    // unreachable even if a future shader reintroduces one.
+    // The second reason is free performance: at strength 0 the pass is a
+    // visual no-op that still costs 12 full-screen passes every frame.
+    set: (ctx, v) => {
+      ctx.render.bloomPass.strength = v;
+      ctx.render.bloomPass.enabled  = v > 0;
+    },
     midi: true,
   },
 
@@ -269,6 +303,107 @@ export const PARAMS = {
     },
     midi: true,
   },
+
+  // ── Shader knobs — four numbers the GPU side plays on ───────────────────
+  //
+  // They reach `uK0…uK3` in the shader editor's scaffolds, where the meaning is
+  // whatever the author gave them — that is the point of the bank, and it is
+  // what makes a hand-written shader playable instead of frozen.
+  //
+  // FIX(r6): and they now reach the BUILT-IN program too, which they did not
+  // before. Declared in the editor's two templates and nowhere else, all four
+  // were dead on the ~38 numbered SHADER MODE entries — the list the app opens
+  // on. Measured: 1.1x and 1.4x the frame-to-frame noise floor on "1. Bass
+  // Reactive Waves" against 4.3x under a gallery body that reads one. Under a
+  // numbered mode they carry a fixed meaning instead — 1 scale, 2 depth,
+  // 3 phase, 4 palette — applied at the call to computeMode and at the ramp in
+  // FS, each identity at rest. See the notes on VS and FS in shaders.js.
+  //
+  // So one knob has two meanings, which is the surprise PARAMS.detail below
+  // refuses to allow BETWEEN the banks. Inside this one it is deliberate and
+  // stated in the panel: a custom body is the operator's own program, and a
+  // program that could not reassign its own uniforms would not be one.
+  //
+  // FIX(r6): this used to say "Nothing in the app reads these", and it was true
+  // when it was written — which was the problem. Both shipped default bodies now
+  // read one, two gallery presets are built around them, and the factory preset
+  // seeded on a first visit carries a shader that plays on them. A capability
+  // with no demonstration is indistinguishable from one that does not work.
+  //
+  // Before them, every number in a custom shader was baked into its text.
+  // Changing one meant reopening a modal that blacks out the screen and, because
+  // focus sits in a TEXTAREA, disarms every global hotkey — then editing, then a
+  // recompile, which builds a probe scene and a render target and swaps the
+  // program with needsUpdate. That is a CUT. Every other live change in this app
+  // is a tween: a GPU mode crossfades over 1200 ms, a palette over 600, a shape
+  // through a morph. So the one authoring surface the product calls its most
+  // powerful was also the only one that could not be played.
+  //
+  // 0..1 with a default of 0 on purpose: it is the range a MIDI CC maps onto
+  // without a curve, and the author scales it in the shader, where they can see
+  // what they are scaling. Default 0 means a shader that reads uK0 starts from
+  // the knob at rest rather than from a number nobody chose.
+  //
+  // They are in PARAM_FIELDS, so they travel in presets and in the autosave
+  // beside the shader that reads them — a knob position IS part of the look. No
+  // migration: a preset written before these existed simply carries no value,
+  // applyState skips a null, and no shader in such a preset can mention uK
+  // anyway, because the uniforms did not exist when it was written.
+  // ── The two hands on a CPU formula ──────────────────────────────────────
+  //
+  // The knobs above are the GPU side's: four free scalars a hand-written shader
+  // may read, meaning assigned by whoever wrote the shader. These are the other
+  // engine's, and they are the opposite kind of control — a fixed meaning that
+  // 192 formulas already interpret, finally given a hand.
+  //
+  // Deliberately NOT uK0..uK3 reused. Those rest at 0 and carry an author's
+  // meaning; `detail` has to rest at 0.5 because it is bipolar, and giving one
+  // MIDI CC "shader frequency" on one mode and "formula detail" on the next is
+  // the kind of surprise a set does not survive. Two banks, one per engine,
+  // each inert where its engine is not drawing — which is the arrangement the
+  // app already had, unstated.
+  //
+  // Both are stored on RenderEngine (see its constructor) rather than on
+  // MathVisualizer, because `render` is what this registry's ctx carries.
+  detail: {
+    label: 'Formula Detail', slider: 'formulaDetail', display: 'fdv',
+    // Bipolar about the centre, and the centre is where it rests: at 0.5 the
+    // `comp` a formula receives is exactly `0.5 + mid*0.4`, the arithmetic that
+    // shipped. Below centre it coarsens — fewer iterations, a simpler regime —
+    // and that half is not a consolation prize. `npm run bench:formulas` puts
+    // Winding Number Field at 46 ms per tick at comp 0 against 188 ms at 0.9,
+    // against a 16.7 ms tick, so turning detail DOWN is how an operator buys
+    // back the update rate on the eleven formulas that cannot keep up. Turning
+    // it up spends it.
+    min: 0, max: 1, default: 0.5, format: v => v.toFixed(2),
+    get: ctx => ctx.render.formulaDetail,
+    set: (ctx, v) => { ctx.render.formulaDetail = v; }, midi: true },
+  phase: {
+    label: 'Formula Phase', slider: 'formulaPhase', display: 'fpv',
+    // Additive, so 0 is rest. One sweep is one full turn of the formula clock:
+    // the beat already nudges that clock by 0.3, and this is the same nudge
+    // held in a hand — slide a crest onto a downbeat instead of waiting for the
+    // track to put it there.
+    min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+    get: ctx => ctx.render.formulaPhase,
+    set: (ctx, v) => { ctx.render.formulaPhase = v; }, midi: true },
+
+  k0: { label: 'Shader Knob 1', slider: 'shaderK0', display: 'k0v',
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        get: ctx => ctx.render.U.uK0.value,
+        set: (ctx, v) => { ctx.render.U.uK0.value = v; }, midi: true },
+  k1: { label: 'Shader Knob 2', slider: 'shaderK1', display: 'k1v',
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        get: ctx => ctx.render.U.uK1.value,
+        set: (ctx, v) => { ctx.render.U.uK1.value = v; }, midi: true },
+  k2: { label: 'Shader Knob 3', slider: 'shaderK2', display: 'k2v',
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        get: ctx => ctx.render.U.uK2.value,
+        set: (ctx, v) => { ctx.render.U.uK2.value = v; }, midi: true },
+  k3: { label: 'Shader Knob 4', slider: 'shaderK3', display: 'k3v',
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        get: ctx => ctx.render.U.uK3.value,
+        set: (ctx, v) => { ctx.render.U.uK3.value = v; }, midi: true },
 };
 
 // ── DOM-write coalescing ───────────────────────────────────────────────────

@@ -263,6 +263,28 @@ describe('the shader carries the gain', () => {
       'outside the gate it would run for triangles, where gl_PointCoord is undefined');
   });
 
+  test('and the guard below it lets the gain through', () => {
+    // The test this file was missing, and the reason it was worth having: the
+    // one above asserts the multiply EXISTS, which stayed true while the finite
+    // guard seven lines further down undid it. `_pAlpha` was bounded to [0,1]
+    // and anything outside was RESET to 1.0 — so every alpha PTS_GLOW_GAIN
+    // produced (up to 5.74) collapsed onto 1.0, the sprite's falloff flattened
+    // with it, and the shipped smoke look rendered up to 5.74x dimmer than
+    // designed. Nothing on screen says so unless you knew the old look.
+    //
+    // Read as NUMBERS and compared, not matched as a spelling: the invariant is
+    // that the ceiling stands above the largest alpha the mask can make, so
+    // raising PTS_GLOW_GAIN past it turns this red instead of dimming the app.
+    const guard = src.match(/if \(!\(_pAlpha >= 0\.0 && _pAlpha <= ([\d.]+)\)\)/);
+    assert.ok(guard, 'the alpha finite-guard is no longer in the shape this test reads');
+    const ceiling = Number(guard[1]);
+    assert.ok(ceiling >= RenderEngine.PTS_GLOW_GAIN,
+      `the finite guard caps _pAlpha at ${ceiling}, below PTS_GLOW_GAIN ` +
+      `(${RenderEngine.PTS_GLOW_GAIN}) — the gain is thrown away before it reaches the blend`);
+    // CONTROL: the bound is a real one and not an accident of a huge number.
+    assert.ok(ceiling <= 65504, 'the ceiling is above what a HalfFloat target can hold');
+  });
+
   test('a program that uses it declares it', () => {
     // Keyed on the USE, not on a mention: VS names uPtStyle in a comment and
     // has no mask at all, and an earlier draft of this test failed on that.

@@ -34,6 +34,8 @@
 // the second path — the ceiling is a local safety net, never a requirement, and
 // this script must not be the reason a hosted run fails.
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 /**
  * The set this runner runs with no arguments.
@@ -47,7 +49,36 @@ import { spawnSync } from 'node:child_process';
 export const TEST_GLOB = 'tests/*.test.js';
 
 // Importing this file must not run the suite — the guard above imports it.
-if (import.meta.main) await main();
+//
+// FIX: this was `if (import.meta.main)`, and that property landed in node 24.2
+// and was backported to 22.18. Below either, it is `undefined` — main() never
+// ran, nothing was spawned, and `npm test` printed nothing and exited 0.
+// Measured on this clone: node 22.11 → 0 characters of output, exit 0, 0.2 s;
+// node 24.20 → 1462 tests, 50 s. CONTRIBUTING.md named the floor as "22+" and
+// makes `npm test && npm run test:e2e && npm run build` the pre-push check, so
+// a contributor on an ordinary 22 LTS pin watched that chain pass in a fifth of
+// a second and believed ninety test files were green. CI was green by luck:
+// ci.yml pinned '22' and setup-node resolves that to the newest 22.x present on
+// the runner — on a day that resolution was below 22.18 the required check
+// passed without executing a single assertion. The irony was local: twenty
+// lines below, this file refuses to let a glob that matches nothing fall
+// through silently, with a comment saying a quietly-different green run is
+// precisely the failure mode to prevent.
+//
+// The comparison below means the same thing on every version node has shipped.
+// argv[1] goes through realpath because node resolves the entry point that way,
+// so a clone reached through a symlink still matches. Under `node --test`,
+// argv[1] is a test file rather than this one, which is what keeps the import at
+// tests/build-pipeline-guards.test.js:197 from starting a second suite.
+const entry = process.argv[1];
+let isEntryPoint = false;
+if (entry) {
+  let href;
+  try { href = pathToFileURL(realpathSync(entry)).href; }
+  catch { href = pathToFileURL(entry).href; }   // deleted or unreadable: compare unresolved
+  isEntryPoint = href === import.meta.url;
+}
+if (isEntryPoint) await main();
 
 async function main() {
 const MEM_MAX = process.env.VIMATHIC_TEST_MEM || '2500M';
@@ -75,7 +106,13 @@ const canCap = spawnSync('systemd-run',
 // and `node --test 'tests/*.test.js'` would look for a file with a star in it.
 const files = [];
 for (const a of nodeArgs) {
-  if (!a.includes('*')) { files.push(a); continue; }
+  // FIX(r6): a FLAG is never a path, however many stars are in it. This globbed
+  // any argument containing `*`, so `npm test -- --test-name-pattern="tidy.*caret"`
+  // — a regexp, and the ordinary way to run one test — was expanded as a file
+  // pattern, matched nothing, and exited 1 with "matched no files", accusing the
+  // suite of being broken. Verified: without the `*` the same filter runs 98
+  // tests and passes. CI is unaffected, which is why nothing caught it.
+  if (a.startsWith('-') || !a.includes('*')) { files.push(a); continue; }
   const { globSync } = await import('node:fs');
   const hit = globSync(a).sort();
   // A glob that matches nothing is a broken suite specification, and it has to

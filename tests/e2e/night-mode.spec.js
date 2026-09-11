@@ -46,8 +46,8 @@ test.describe('NIGHT', () => {
     await expect(page.locator('#night-btn')).toHaveClass(/active/);
     await expect(page.locator('body')).toHaveClass(/nightly/);
     // The mode is about what the app picks unattended, but switching it on
-    // over a bright palette would leave it looking broken — stars gone, grid
-    // dimmed, picture still glaring — so the switch-on moves the palette once.
+    // over a bright palette would leave it looking broken — grid dimmed,
+    // picture still glaring — so the switch-on moves the palette once.
     await expect(page.locator('#color-sel')).toHaveValue(FIRST_NIGHT);
   });
 

@@ -76,6 +76,24 @@ float bandAtRadius(float r){
 // GLSL functions with int arguments are supported in GLSL ES 1.00+.
 export const VS = `
 uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
+// FIX(r6): the four knobs reach the built-in program now, not only the shader
+// editor's scaffolds. They were declared in SE_VS_TEMPLATE and SE_FS_TEMPLATE
+// and nowhere else, so on the ~38 numbered SHADER MODE entries — the list the
+// app opens on and most sessions never leave — all four sliders moved, counted
+// and did nothing. Measured before this: knob 1 at 1.1x the frame-to-frame
+// noise floor and knob 2 at 1.4x on "1. Bass Reactive Waves", against 4.3x for
+// knob 2 under a gallery body that reads it.
+//
+// All three vertex-side meanings are applied AT THE CALL to computeMode, not
+// inside it: the 38-branch ladder is what a shader compiler pays for, and the
+// Windows toolchain charged 28.7 s for eighteen inline copies of it (see the
+// note above the band taps). Scale goes into the xz argument, phase into the T
+// argument, depth multiplies the result — no new branch, no new call site.
+//
+// Each rests at IDENTITY, not merely at "a sensible value": 1.0 + 0*k is 1.0
+// and T + 0*2pi is T, so a preset saved before the knobs existed and a look
+// tuned yesterday come back bit for bit.
+uniform float uK0,uK1,uK2,uK3;
 uniform int   uMode,uMathMode,uModeNext;
 uniform float uMorphProgress,uModeBlend;
 // ── The colour channel ────────────────────────────────────────────────────────
@@ -582,8 +600,20 @@ void main(){
 
   if(uMathMode==0){
     // GPU mode: compute both current and next, blend between them
-    float y    = computeMode(uMode,    pos.xz, b, t, m, bt, a, wi, T);
-    float yNxt = computeMode(uModeNext, pos.xz, b, t, m, bt, a, wi, T);
+    // Knob 1 (uK0) — SCALE. One sweep takes the field from its shipped size to
+    // three times finer. It multiplies the coordinate rather than any mode's
+    // own frequency constant, so it means the same thing on all 38 of them.
+    // Deliberately NOT applied to the band-character taps above: those measure
+    // how corrugated a mode is, with fixed audio and their own clock, to lay the
+    // spectrum out across the radius. Scaling them would make the band map jump
+    // under the operator's hand while they were reaching for something else.
+    vec2  kxz = pos.xz * (1.0 + uK0 * 2.0);
+    // Knob 3 (uK2) — PHASE. One sweep is one full turn, the same contract
+    // Formula Phase carries on the CPU side, so the two engines answer a knob
+    // the same way. Additive, so 0 is rest.
+    float kT  = T + uK2 * 6.2831853;
+    float y    = computeMode(uMode,    kxz, b, t, m, bt, a, wi, kT);
+    float yNxt = computeMode(uModeNext, kxz, b, t, m, bt, a, wi, kT);
     // FIX(r10 §1.5): ADD the field to the shape's own y, do not replace it.
     // Assignment made pos.y a pure function of pos.xz, so every vertex sharing
     // an (x,z) column landed on one point and the shape stopped existing.
@@ -644,7 +674,11 @@ void main(){
     // tests/helpers/glsl.js resolves a local to its DEFINITION, and a local that
     // is defined once and then amended cannot be resolved at all — the guard
     // would stop being able to say what this program draws.
-    float fBase = mix(y, yNxt, uModeBlend);
+    // Knob 2 (uK1) — DEPTH, up to 2.5x the shipped displacement. It multiplies
+    // the MODE field only: the band layer is added a few lines below and owns
+    // its own depth slider, and folding the two together would give one look two
+    // controls that fight.
+    float fBase = mix(y, yNxt, uModeBlend) * (1.0 + uK1 * 1.5);
     // Everything the layer costs now sits INSIDE the depth test, so a scene with
     // the slider at zero pays nothing at all. With the layout by radius the
     // gesture stays the plain push it always was: the radius says nothing about
@@ -770,11 +804,35 @@ void main(){
   // in WIRE, under an imported model, and at depth zero.
   if (ptB != 0.) pos += normal * (ptSpray(position) * ptB * 0.8);
   gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
+  // FIX(r6): sanitise the displaced position before anything downstream reads it.
+  //
+  // The displacement above is steered by uAmp and uWI, and neither has a ceiling —
+  // click-to-type grows the slider past extendedMax, and the owner runs 11 against a
+  // designed 1.5. Several of the 38 GPU formulas reach that through pow/exp/division,
+  // so pos can arrive here non-finite. gl_Position then has undefined clip
+  // coordinates, and ANGLE/D3D11 rasterises such a triangle as a LARGE SCREEN-ALIGNED
+  // QUAD. That is the black rectangle — and it is filled only in SURF, which is why
+  // the same frame shows nothing in WIRE (thin lines) or PTS (a few points). Measured:
+  // with the fragment guards alone the rectangles still appeared at a fixed
+  // x=333,len=1085 on five scanlines across three separate frames.
+  //
+  // Bit-identity is preserved for a healthy vertex, which this file's contract
+  // requires (see the note on -0.0 above): the NaN test does not touch pos, and the
+  // clamp only runs for a vertex already outside a range no scene legitimately uses.
+  // Written to a NEW name rather than back into pos on purpose: tests/gpu-shape-y.js
+  // reads the tail of this program and simulates every write to pos in JS, to prove
+  // the displacement does not collapse a shape. An extra assignment to pos is a write
+  // that guard cannot model, and it fails closed. Leaving pos alone keeps that stencil
+  // reading exactly what it read before.
+  vec3 _safePos = !(dot(pos, pos) >= 0.0)
+    ? position
+    : (any(greaterThan(abs(pos), vec3(1.0e4))) ? clamp(pos, vec3(-1.0e4), vec3(1.0e4)) : pos);
+
   // Compute world-space position AFTER all displacement so derived normals are correct
-  vec4 _wp = modelMatrix * vec4(pos, 1.0);
+  vec4 _wp = modelMatrix * vec4(_safePos, 1.0);
   vWorldPos = _wp.xyz;
   vViewDir  = cameraPosition - _wp.xyz;
-  gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(_safePos,1.);
 }`;
 
 // ── Fragment shader — 54 color schemes (0-53) ─────────────────────────────────
@@ -1136,18 +1194,73 @@ vec3 studioEnv(vec3 dir){
   return base;
 }`;
 
+// FIX(r6): the last line of defence before the composer. Nothing non-finite may
+// leave a fragment shader in this app, because UnrealBloomPass will carry it
+// down five half-float mips and hand back a screen-scale black rectangle — one
+// NaN pixel becomes a ~670-device-pixel square. The guards at the three
+// normalize() sites remove the causes we know about; this removes the class,
+// including from user shaders typed into the editor, which share this epilogue.
+//
+// Written as a comparison rather than an isnan() call on purpose: NaN fails
+// every comparison, so `!(x >= lo && x <= hi)` is true for NaN AND for ±Inf,
+// and it needs no extension. clamp() alone would not do it — clamp(NaN, ..) is
+// implementation-defined, and on ANGLE/D3D11 it is not reliably the low bound.
+//
+// The ceiling is far above anything the palette and the glare can produce
+// (colour is ~0..2 in normal use), so a healthy frame is bit-for-bit unchanged;
+// it exists only to stop an overflow reaching a HalfFloat target, whose own
+// ceiling is 65504 and which the bloom composite multiplies by 3*strength².
+const _FINITE_GUARD = `
+  if (!(color.r >= 0.0 && color.r <= 64.0) ||
+      !(color.g >= 0.0 && color.g <= 64.0) ||
+      !(color.b >= 0.0 && color.b <= 64.0)) {
+    color = clamp(color, 0.0, 64.0);
+    if (!(dot(color, color) >= 0.0)) color = vec3(0.0);
+  }
+  // The alpha needs the same treatment and for a sharper reason: it is the operand
+  // of the blend, so one NaN alpha poisons the DESTINATION texel even when the colour
+  // beside it is perfectly finite. Measured on the guarded build: a full scan of the
+  // scene target at the moment a bloom mip went bad found exactly 3 non-finite
+  // components in 7,025,020 — about one pixel — and that one pixel became 2871 of the
+  // 6944 texels in the smallest mip, which is the rectangle. Guarding the colour alone
+  // left this door open.
+  //
+  // FIX(r6): the same bound as the colour, 64.0, and NOT 1.0. Written as 1.0 this
+  // guard sat directly under the mask's own multiply by uPtGain — where uPtGain is
+  // RenderEngine.PTS_GLOW_GAIN = 5.74 for the smoke style — and every alpha the gain
+  // produced was outside [0,1] and therefore RESET to 1.0. Not capped: reset. So the
+  // whole range the gain exists to reach collapsed onto a single value, taking the
+  // sprite's falloff with it, and one draw stopped standing in for six. The note 100
+  // lines above this one says pushing alpha over 1 "is the whole reason one draw can
+  // stand in for six"; the two statements contradicted each other in the same file.
+  //
+  // The bound must stay ABOVE the largest alpha the mask can legitimately produce —
+  // pinned against PTS_GLOW_GAIN in tests/points-proxy-geometry.test.js, because the
+  // failure is invisible on screen unless you know what the smoke used to look like.
+  if (!(_pAlpha >= 0.0 && _pAlpha <= 64.0)) _pAlpha = 1.0;`;
+
 // Reflection composite. Modifies `color` in place. Reconstructs its own
 // normal from screen-space derivatives so it works regardless of how the
 // vertex was displaced (GPU mode, CPU formula, volume, or user shader).
 const _MATERIAL_BLOCK = `
   if (uMaterial > 0) {
-    vec3 Nm = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+    // FIX(r6): the same unguarded derivative normal as the lighting block —
+    // see the note there. This copy is reachable from every non-Matte Surface
+    // Material, and the Surface Material control is itself SURF-only, so it
+    // doubles the number of NaN sites in exactly the mode that was reported.
+    vec3 nmRaw  = cross(dFdx(vWorldPos), dFdy(vWorldPos));
+    float nmLen = length(nmRaw);
     vec3 Vm = normalize(vViewDir);
+    vec3 Nm = nmLen > 1e-9 ? nmRaw / nmLen : Vm;
     if (dot(Nm, Vm) < 0.0) Nm = -Nm;
     vec3 Rm  = reflect(-Vm, Nm);
     vec3 env = studioEnv(Rm);
     env = mix(env, env * 0.4 + vec3(0.04), uRoughness * 0.7);
-    float fresM = pow(1.0 - max(dot(Nm, Vm), 0.0), uFresnelP);
+    // FIX(r6): same defect as the rim term in the lighting block — see the long note
+    // there. Inert while Surface Material is Matte (uMaterial is 0 and this block does
+    // not run), and live for every other finish, with the same Nm = Vm fallback four
+    // lines up making dot(Nm, Vm) >= 1 by construction.
+    float fresM = pow(1.0 - clamp(dot(Nm, Vm), 0.0, 1.0), uFresnelP);
     vec3 metalTint  = mix(vec3(1.0), color, uMetalness);
     vec3 reflection = env * metalTint;
     float reflMix = clamp(uReflect * (uMetalness * 0.6 + fresM * 0.7 + 0.15), 0.0, 1.0);
@@ -1159,9 +1272,123 @@ const _MATERIAL_BLOCK = `
     color += vec3(specM) * (1.0 - uRoughness) * uReflect * 0.3 * uGlare;
   }`;
 
+// ── The SURF lighting model, shared by both fragment programs ────────────────
+//
+// FIX(r6): extracted, and the direction matters. SE_FS_TEMPLATE never declared
+// uLighting at all, so applying ANY custom fragment body — the shipped default
+// snippet included — silently deleted the moving sun, the half-Lambert diffuse,
+// the fresnel rim and the specular from Surface mode. The operator did not turn
+// that off and nothing said it had happened.
+//
+// The obvious repair is to copy the block into the editor template. That would
+// have made a NINTH hand-mirrored region across this pair, and the eight that
+// already exist are not theoretical: `ramu` at the top of this file and its copy
+// in SE_VS_TEMPLATE have silently diverged under a comment claiming they are
+// word for word. So it is shared instead of copied, which leaves one fewer
+// region to keep in step rather than one more.
+//
+// Expects in scope: color (read AND written), vWorldPos, vViewDir, uLighting,
+// uTime, uTreble, uBass, uGlare. Both programs declare all eight.
+//
+// The built-in program is unchanged to the byte by this extraction — pinned in
+// tests/shader-light-block.test.js, which reassembles it from the pieces and
+// compares against the shipped text.
+const _LIGHT_BLOCK = `  if (uLighting == 1) {
+    // Reconstruct geometric normal from screen-space derivatives of the
+    // post-displacement world position. Works equally well for the 38 GPU
+    // formulas (computed in VS) and the CPU heightfields (already baked into
+    // position.y before VS runs). Per-pixel, so it's smoother than per-vertex
+    // normals on dense grids and crisply faceted on sparse ones — both fit
+    // the VJ aesthetic.
+    // FIX(r6): cross() of the two screen-space derivatives is the ZERO vector
+    // wherever the fragment quad is degenerate — a zero-area triangle, a facet
+    // seen exactly edge-on, two coincident vertices. normalize(vec3(0)) is
+    // 0/0 = NaN, and from there it poisons diff, spec and fres, so the whole
+    // fragment leaves this shader non-finite.
+    //
+    // On its own that is one bad pixel and nobody would ever see it. What makes
+    // it a bug report is the next pass. UnrealBloomPass downsamples the frame
+    // through five half-float mips, the smallest a 32nd of the screen, and the
+    // separable blur spreads that one texel across a whole mip tile; upsampled
+    // and composited it arrives as a LARGE, HARD-EDGED, AXIS-ALIGNED BLACK
+    // SQUARE. That is why the artefact shows up only when Bloom is raised — at
+    // strength 0 the pass adds nothing and the NaN stays a single invisible
+    // pixel. It flickers because the degenerate quads come and go with the
+    // animation, and it lingers on a slow machine because one bad frame is on
+    // screen for ~90 ms at 11 fps. And it is SURF-only for the plainest of
+    // reasons: this block is (uLighting == 1), which no other viz mode sets.
+    //
+    // The fallback normal faces the camera, so a degenerate fragment shades
+    // neutrally instead of punching a hole.
+    vec3 dPdx  = dFdx(vWorldPos);
+    vec3 dPdy  = dFdy(vWorldPos);
+    vec3 nRaw  = cross(dPdx, dPdy);
+    float nLen = length(nRaw);
+    vec3 V = normalize(vViewDir);
+    vec3 N = nLen > 1e-9 ? nRaw / nLen : V;
+
+    // Slowly orbiting "sun" — period ~18s at speed 0.35.
+    // Held above the horizon (y=0.75) so the surface is mostly lit, not mostly black.
+    float ls = 0.35;
+    vec3  L  = normalize(vec3(sin(uTime * ls), 0.75, cos(uTime * ls)));
+
+    // Half-Lambert wrap diffuse — softer falloff than raw Lambert, no harsh
+    // self-shadow line. Standard for stylised rendering.
+    float NdotL = dot(N, L);
+    float diff  = NdotL * 0.5 + 0.5;
+
+    // Blinn-Phong specular. Treble drives the punch — fast transients = sharp glints.
+    // FIX(r6): L + V is the zero vector at the one screen point where the view
+    // direction is exactly opposite the orbiting sun. Same 0/0 as above, same
+    // consequence once bloom gets hold of it.
+    vec3  HV   = L + V;
+    vec3  H    = dot(HV, HV) > 1e-18 ? normalize(HV) : N;
+    float spec = pow(max(dot(N, H), 0.0), 28.0) * (0.35 + uTreble * 0.65);
+
+    // Fresnel rim glow. Strong at grazing angles; tinted in the surface's own
+    // colour so it reinforces the palette instead of fighting it. Bass swells
+    // make the rim breathe with the kick.
+    // FIX(r6): clamp the dot to 1.0, not just to 0.0. max() alone guards the wrong end.
+    //
+    // N and V are both unit vectors to within a couple of ULP — V through the hardware
+    // normalize at the top of this block, N through the hand-rolled nRaw/nLen — so
+    // dot(N, V) is routinely 1.00000012 rather than 1.0 when the surface faces the eye.
+    // 1.0 - 1.00000012 is -1.19e-7 exactly, and pow() of a negative base is undefined
+    // in GLSL: ANGLE lowers it to exp2(2.5 * log2(x)), and log2 of a negative is NaN.
+    //
+    // That NaN flows into rim and then into all three colour channels while _pAlpha
+    // stays 1.0 — which is exactly the "3 non-finite components out of 7,025,020"
+    // measured in the scene target on a bad frame, and exactly why the artefact is
+    // BLACK: an overflow would arrive as +Inf and read white.
+    //
+    // The degenerate-quad fallback added earlier in this block, N = V, makes it worse
+    // rather than better: on that branch dot(N, V) IS dot(V, V) = |V|^2, which is >= 1
+    // by construction. The guard moved the NaN from normalize() down into pow().
+    float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.5);
+    float rim  = fres * (0.55 + uBass * 0.55);
+
+    // Compose: ambient floor (so backlit areas keep their hue) + diffuse
+    // multiply + coloured rim + white specular sparkle.
+    //
+    // The sparkle is the one term here that is NOT the palette's colour, and on
+    // the shipped tree it is the brightest thing in the frame on a matte body:
+    // p99 luma 0.828 against a mirror's 0.467, 3.59 % of the frame above 0.7.
+    // uGlare is what that complaint about white turns into — see the
+    // note on studioEnv. The diffuse, the ambient floor and the coloured rim are
+    // untouched, so the body keeps its brightness and loses the glint.
+    float ambient = 0.30;
+    color = color * (ambient + diff * 0.85)
+          + color * rim
+          + vec3(spec) * uGlare;
+  }`;
+
 export const FS = `
 uniform int   uCM, uCMNext;
 uniform float uCMBlend;
+// Only uK3 of the four: the other three act on geometry and are declared in the
+// vertex program. An unused uniform would compile and cost nothing, but it would
+// also say this program reads something it does not.
+uniform float uK3;
 // SURF lighting (gated by uLighting): time + audio bands drive light direction
 // and audio-reactive specular / rim. Skipped entirely in wireframe and points
 // modes by setting uLighting=0 in setVizModeGPU().
@@ -1232,55 +1459,21 @@ void main(){
   // -1 is the "no layer" value written by the vertex program, and the step()
   // is what keeps depth 0 bit-identical rather than nearly so.
   t = clamp(t + step(0., vBandU) * .30 * (vBandU - .5), .03, .97);
+  // Knob 4 (uK3) — PALETTE, in the same bounded and re-clamped form as the band
+  // shift directly above, and for the same reason: every pixel has to stay a
+  // colour the chosen palette declares, or the NIGHT contract stops being true
+  // without anything saying so. A fract() wrap would have been the livelier
+  // knob and is what the gallery's own frag example does — it cannot be used
+  // here, because it leaves the [.03,.97] window that contract is written on.
+  // Exactly identity at rest: t is already inside the window, so clamp(t + 0)
+  // returns t bit for bit. Half the window is the whole sweep.
+  t = clamp(t + uK3 * .47, .03, .97);
   vec3 c    = getColor(uCM,    t);
   vec3 cNxt = getColor(uCMNext, t);
   // uCMBlend 0→1 crossfades between the two color schemes
   vec3 color = mix(c, cNxt, uCMBlend);
 
-  if (uLighting == 1) {
-    // Reconstruct geometric normal from screen-space derivatives of the
-    // post-displacement world position. Works equally well for the 38 GPU
-    // formulas (computed in VS) and the CPU heightfields (already baked into
-    // position.y before VS runs). Per-pixel, so it's smoother than per-vertex
-    // normals on dense grids and crisply faceted on sparse ones — both fit
-    // the VJ aesthetic.
-    vec3 N = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
-    vec3 V = normalize(vViewDir);
-
-    // Slowly orbiting "sun" — period ~18s at speed 0.35.
-    // Held above the horizon (y=0.75) so the surface is mostly lit, not mostly black.
-    float ls = 0.35;
-    vec3  L  = normalize(vec3(sin(uTime * ls), 0.75, cos(uTime * ls)));
-
-    // Half-Lambert wrap diffuse — softer falloff than raw Lambert, no harsh
-    // self-shadow line. Standard for stylised rendering.
-    float NdotL = dot(N, L);
-    float diff  = NdotL * 0.5 + 0.5;
-
-    // Blinn-Phong specular. Treble drives the punch — fast transients = sharp glints.
-    vec3  H    = normalize(L + V);
-    float spec = pow(max(dot(N, H), 0.0), 28.0) * (0.35 + uTreble * 0.65);
-
-    // Fresnel rim glow. Strong at grazing angles; tinted in the surface's own
-    // colour so it reinforces the palette instead of fighting it. Bass swells
-    // make the rim breathe with the kick.
-    float fres = pow(1.0 - max(dot(N, V), 0.0), 2.5);
-    float rim  = fres * (0.55 + uBass * 0.55);
-
-    // Compose: ambient floor (so backlit areas keep their hue) + diffuse
-    // multiply + coloured rim + white specular sparkle.
-    //
-    // The sparkle is the one term here that is NOT the palette's colour, and on
-    // the shipped tree it is the brightest thing in the frame on a matte body:
-    // p99 luma 0.828 against a mirror's 0.467, 3.59 % of the frame above 0.7.
-    // uGlare is what that complaint about white turns into — see the
-    // note on studioEnv. The diffuse, the ambient floor and the coloured rim are
-    // untouched, so the body keeps its brightness and loses the glint.
-    float ambient = 0.30;
-    color = color * (ambient + diff * 0.85)
-          + color * rim
-          + vec3(spec) * uGlare;
-  }
+${_LIGHT_BLOCK}
 
   // ── Surface material: studio-environment reflections ────────────────────
   // Shared with SE_FS_TEMPLATE via _MATERIAL_BLOCK. Gated by uMaterial>0 so
@@ -1294,12 +1487,21 @@ void main(){
   // so the surface and wireframe paths are bit-for-bit what they were.
   ${_POINT_MASK}
 
+  ${_FINITE_GUARD}
   gl_FragColor = vec4(color, _pAlpha);
 }`;
 
+
 // ── ShaderEditor ──────────────────────────────────────────────────────────────
 
-const SE_VS_TEMPLATE = body => `uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
+// Exported alongside SE_FS_TEMPLATE — see the note there.
+export const SE_VS_TEMPLATE = body => `uniform float uTime,uBass,uMid,uTreble,uAmp,uBeat,uWI,uPointSize;
+// Four scalars the app never reads and this body may. They are what makes a
+// hand-written shader playable rather than frozen: put uK0 where you would have
+// typed a constant, and it is on a slider and a MIDI CC instead of in the text.
+// See PARAMS.k0 in params.js. Declared in the fragment scaffold too, so a
+// colour body can be played the same way.
+uniform float uK0,uK1,uK2,uK3;
 uniform int uMode,uMathMode,uModeNext;
 uniform float uMorphProgress,uModeBlend;
 // uVHField / aBaseY — see the long note in VS. The editor's fragment template
@@ -1423,10 +1625,15 @@ void main(){vec3 pos=position;
   float ptB = uPtBand * bandHere * uMorphProgress;
   if (ptB != 0.) pos += normal * (ptSpray(position) * ptB * 0.8);
   gl_PointSize = uPointSize * (1. + 1.5 * abs(ptB));
-  vec4 _wp = modelMatrix * vec4(pos, 1.0);
+  // FIX(r6): same sanitiser as the built-in vertex shader, and it matters more here —
+  // this body is user code from the shader editor, which can divide by anything.
+  vec3 _safePos = !(dot(pos, pos) >= 0.0)
+    ? position
+    : (any(greaterThan(abs(pos), vec3(1.0e4))) ? clamp(pos, vec3(-1.0e4), vec3(1.0e4)) : pos);
+  vec4 _wp = modelMatrix * vec4(_safePos, 1.0);
   vWorldPos = _wp.xyz;
   vViewDir  = cameraPosition - _wp.xyz;
-  gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.);}`;
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(_safePos,1.);}`;
 
 // FIX(#28): counts below track COLOR_SCHEME_COUNT — see the FS header note.
 // Template wrapping user frag body — _COLOR_FUNS provides all 54 color
@@ -1441,7 +1648,20 @@ void main(){vec3 pos=position;
 // then output. Advanced users can additionally call studioEnv(),
 // reflect(), and read uMetalness/uReflect/etc directly inside their body —
 // the function, uniforms, and vWorldPos/vViewDir varyings are all in scope.
-const SE_FS_TEMPLATE = body => `uniform int uCM,uCMNext;uniform float uCMBlend;
+// Exported since round 6 for one reason: until then nothing outside this file
+// could ASSEMBLE the editor's programs, so every guard written about them was a
+// regex over the template's source text. tests/shader-light-block.test.js reads
+// the finished program instead.
+export const SE_FS_TEMPLATE = body => `uniform int uCM,uCMNext;uniform float uCMBlend;
+// The same four knobs the vertex scaffold gets — see the note there.
+uniform float uK0,uK1,uK2,uK3;
+// FIX(r6): declared here for the first time. Without it _LIGHT_BLOCK cannot be
+// included, and without that block a custom fragment body — the shipped default
+// snippet included — silently deleted SURF's moving sun, its half-Lambert
+// diffuse, its fresnel rim and its specular. Nothing in the UI said so, and the
+// operator could not put it back by hand either: the uniform was not in scope
+// to be read.
+uniform int uLighting;
 uniform float uTime,uBass,uMid,uTreble,uBeat;
 ${_MATERIAL_UNIFORMS}
 ${_POINT_UNIFORMS}
@@ -1455,6 +1675,20 @@ varying vec3  vWorldPos;
 varying vec3  vViewDir;
 ${_COLOR_FUNS}
 ${_STUDIO_ENV}
+// FIX(r6): the palette CHANGE, not just the palette.
+//
+// uCM, uCMNext and uCMBlend have been declared in this scaffold since it was
+// written, and nothing ever mixed them. The built-in program does — it reads
+// both schemes and crossfades over 600 ms — so under any custom fragment body a
+// colour change waited out the whole fade showing nothing and then cut. Colour
+// is the gesture an operator makes most often; a cut is not what the rest of the
+// app does with it.
+//
+// Offered as a function rather than done TO the body, because the body owns its
+// own colour: getColor(uCM, x) still means exactly what it always did, so every
+// shader already saved in a preset keeps working unchanged. Write paletteAt(x)
+// where you would have written getColor(uCM, x) and the change fades instead.
+vec3 paletteAt(float x){return mix(getColor(uCM,x),getColor(uCMNext,x),uCMBlend);}
 // uMid and uBeat are declared even though the default snippet uses neither:
 // the Neon and Lava presets read them, and without the uniforms those two
 // failed to compile at all. Audio is NOT aliased to short locals here the way
@@ -1466,14 +1700,22 @@ void main(){float t=clamp((vH+.8)*.6,.03,.97);
   vec3 c=vec3(0.0);
   ${body}
   vec3 color = c;
+// The SAME block the built-in program runs, not a copy of it — see the note on
+// _LIGHT_BLOCK in shaders.js. It reads and writes color, so it lands here for
+// the same reason it does there: after the body has chosen the colour and
+// before the material puts a finish on it.
+${_LIGHT_BLOCK}
   ${_MATERIAL_BLOCK}
   ${_POINT_MASK}
+  ${_FINITE_GUARD}
   gl_FragColor=vec4(color,_pAlpha);}`;
 
 // ── Shader editor default code snippets ───────────────────────────────────────
 const SE_DEFAULT_VERT = `// b bass  t treble  m mid  bt beat  T time  wi waveInt  a amp
 // pos.x pos.z = coords   r = radius   ang = angle
-y = sin(r * 8.0 * wi + T) * (0.2 + b * 0.8) * a
+// uK0..uK3 = four free knobs: ADVANCED > SHADER KNOBS, and MIDI-mappable.
+// Put one where you would have typed a constant and it becomes playable.
+y = sin(r * 8.0 * wi * (1.0 + uK0 * 2.0) + T) * (0.2 + b * 0.8) * a
   + turb(pos.xz * (2.0 + t) * wi) * b * 0.3
   + bt * 0.5;`;
 
@@ -1505,11 +1747,25 @@ const SE_DEFAULT_FRAG = `// t = palette ramp 0.03..0.97 — the DISPLACEMENT at 
 // point's Spectrum Rings band.   uCM = scheme index 0..53
 // Audio comes in as uniforms here, not short locals: uBass uMid uTreble uBeat
 // uTime. Note t is that ramp, not treble as in the vertex tab.
-// getColor(uCM, t) dispatches to one of 54 palettes. You can also call
-// any palette by name directly, e.g.  c = lava(t)  or  c = cyberpunkGold(t);
-c = getColor(uCM, t);`;
+// paletteAt(t) is getColor(uCM, t) that also CROSSFADES when you change
+// scheme — the same 600 ms fade the built-in shader does. getColor(uCM, t)
+// still works and still cuts. You can also call any palette by name
+// directly, e.g.  c = lava(t)  or  c = cyberpunkGold(t);
+// uK0..uK3 are here too — the same four knobs the vertex tab gets. At rest
+// they are 0, so the line below is the plain palette until you move one.
+c = paletteAt(t) * (1.0 + uK1 * 1.5);`;
 
-const SE_PRESETS = [
+/**
+ * The editor's example gallery.
+ *
+ * Exported since round 6 so the factory preset in src/ui/presets.js can carry
+ * the two knob examples WITHOUT a second copy of their GLSL: the bodies live
+ * here, once, where tests/glsl-tidy.test.js already reads every one of them and
+ * refuses a preset TIDY would want to rewrite. The two entries the seed needs
+ * carry a stable `id` for that reason — matching on the display name would tie
+ * a persisted preset to a string with an emoji in it.
+ */
+export const SE_PRESETS = [
   { name:'🌊 Ocean',    tab:'vert', code:`y = sin(r*8.*wi - T*2.) * exp(-r*.4) * (0.3+b*.9)*a\n  + sin(pos.x*6.*wi)*cos(pos.z*4.*wi)*.15*a;` },
   { name:'⚡ Lightning', tab:'vert', code:`y = sin(pos.x*20.*wi*(0.5+t)+T*5.) * (0.1+b*.6)*a\n  + sin(pos.z*18.*wi+T*3.)*(0.1+t*.5)*a + bt*0.8;` },
   { name:'🌀 Vortex',   tab:'vert', code:`float spiral=ang*3.+r*5.-T*2.;\ny = sin(spiral)*(0.2+b*.8)*a*exp(-r*.25) + cos(spiral*2.)*(0.1+t*.4)*a*.5;` },
@@ -1518,7 +1774,44 @@ const SE_PRESETS = [
   { name:'🎆 Ramanujan',tab:'vert', code:`float s=0.;\nfor(int n=-6;n<=6;n++){float fn=float(n); s+=cos(ang*fn)*exp(-r*.25*fn*fn*(0.5+t));}\ny = tanh(s*.7)*(0.3+b*.7)*a;` },
   { name:'🌈 Neon',     tab:'frag', code:`float h=t*6.28+uTime*.5;\nc=vec3(abs(sin(h+uBass*2.)),abs(sin(h+2.094+t)),abs(sin(h+4.189+uMid))) *(0.6+uBeat*0.4);` },
   { name:'🔆 Lava',     tab:'frag', code:`c=lava(t)*(0.7+uBass*0.5+uBeat*0.3);` },
+  // FIX(r6): the two the gallery was missing. 2493a98 added uK0..uK3 — four
+  // scalars on sliders and on MIDI CCs, the one thing that makes a hand-written
+  // shader playable rather than only writable — and then shipped no example of
+  // them at all: not in these presets, not in either default body, so
+  // src/params.js could truthfully say "Nothing in the app reads these". A
+  // capability with no demonstration is indistinguishable from one that does
+  // not work. Every knob is used at a scale chosen so the look at rest (all
+  // knobs 0) is still worth looking at, because that is what a first click
+  // shows.
+  { id:'knobs-vert', name:'🎛 Knobs',    tab:'vert', code:`// K1 frequency   K2 depth   K3 twist   — ADVANCED > SHADER KNOBS, or a MIDI CC\nfloat freq = 3.0 + uK0 * 21.0;\nfloat twist = ang * uK2 * 6.0;\ny = sin(r * freq * wi - T * 2.0 + twist) * exp(-r * 0.35)\n  * (0.25 + uK1 * 0.75) * (0.4 + b * 0.9) * a;` },
+  { id:'knobs-frag', name:'🎛 Knob Tint',tab:'frag', code:`// K1 hue drift   K2 contrast   K3 audio lift\nfloat u = fract(t + uK0 + uTime * 0.05);\nvec3 base = paletteAt(u);\nc = mix(base, base * base * 2.0, uK1) * (1.0 + uK2 * (uBass + uTreble));` },
 ];
+
+/**
+ * Does this vertex body write the scaffold's `y`?
+ *
+ * Used to decide whether a successful compile is also a VISIBLE one: the
+ * template discards `y` whenever a CPU formula is active, so a body that writes
+ * it is about to do nothing and the operator should be told at APPLY.
+ *
+ * `pos.y` is deliberately excluded, and that is what the `[^\w.]` is for: a
+ * write straight to `pos` survives in both modes (the tail of the template
+ * scales it by uMorphProgress either way), so such a body is unaffected by the
+ * discard and must not be warned about. `y ==` is a comparison and `y2 =` is a
+ * different variable; both are excluded. Comments are stripped first so `y = …`
+ * inside an explanation does not count.
+ *
+ * A heuristic on text, arranged so its failure mode is a MISSED warning rather
+ * than a false one: a body that reaches `y` through a spelling this does not
+ * recognise simply gets the old behaviour back, which is what shipped for the
+ * whole of 1.0.
+ */
+export function bodyAssignsY(body) {
+  const code = String(body ?? '')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ');
+  return /(^|[^\w.])y\s*(=[^=]|[-+*/]=)/.test(code);
+}
 
 export class ShaderEditor {
   /** @param {import('./render.js').RenderEngine} render */
@@ -1540,7 +1833,14 @@ export class ShaderEditor {
 
     // ── Callbacks — UI wires these in bindAll() ───────────────────────
     this.cb = {
-      /** { ok:bool, message:string, line:number|null } */
+      /**
+       * { ok:bool, level:'ok'|'warn'|'error', message:string, line:number|null }
+       *
+       * `level` was added for the one outcome the boolean cannot describe: a
+       * compile that succeeded and still will not show. `ok` is kept and still
+       * means "the GLSL is valid", so a consumer that only reads it behaves as
+       * before; a warn arrives with ok:true because it did compile.
+       */
       onCompileResult: (_r) => {},
       /** Called when open() is invoked — UI populates presets + textarea */
       onOpen:          (_tab, _code, _presets) => {},
@@ -1557,13 +1857,33 @@ export class ShaderEditor {
     this._buildPresets();
   }
 
+  /**
+   * Take ownership of the status line.
+   *
+   * The success path arms a timer that blanks #se-error after two seconds (ten
+   * for the warning). Anything that wants to WRITE that line next has to cancel
+   * the timer first, or the previous run's tidy-up erases a message that arrived
+   * after it.
+   *
+   * FIX(r6): compileAndApply did this inline and TIDY did not do it at all, so
+   * pressing APPLY and then ✎ TIDY within two seconds — which is the ordinary
+   * rhythm of using both buttons — left the tidy report on screen for whatever
+   * remained of APPLY's countdown and then blanked it. The operator saw a report
+   * of what was rewritten in their own buffer vanish for no reason they could
+   * see. Extracted rather than duplicated so the next writer of that line
+   * inherits the rule instead of rediscovering it.
+   */
+  claimStatus() {
+    clearTimeout(this._okTimer);
+    this._okTimer = null;
+  }
+
   compileAndApply() {
     const errEl = document.getElementById('se-error');
     errEl.textContent = '';
     // Whatever this run reports owns the status line from here on — see the
     // timer armed on success below.
-    clearTimeout(this._okTimer);
-    this._okTimer = null;
+    this.claimStatus();
     const vertBody = this._tab === 'vert' ? document.getElementById('se-code').value : this._vert;
     const fragBody = this._tab === 'frag' ? document.getElementById('se-code').value : this._frag;
     if (this._tab === 'vert') this._vert = vertBody;
@@ -1631,20 +1951,75 @@ export class ShaderEditor {
       // One call reaches gpuMat, the live POINTS proxy, and any proxy built
       // later — see RenderEngine.applyShaderSource().
       this._render.applyShaderSource(fullVS, fullFS);
-      errEl.style.color = 'var(--green)';
-      errEl.textContent = '✔ Compiled & applied';
-      this.cb.onCompileResult({ ok: true, message: '✔ Compiled & applied', line: null });
+
+      // FIX: "compiled" and "will be visible" are different facts, and only one
+      // of them was ever reported. The template discards the body's `y` whenever
+      // a CPU formula is active — src/shaders.js, the `else` branch of the
+      // `if(uMathMode==0)` line, which writes `pos.y=pos.y*uMorphProgress` and
+      // never reads `y`. So an operator who writes a displacement, presses
+      // APPLY and gets a green "✔ Compiled & applied" sees nothing change, and
+      // the only reasonable conclusion is that their code is wrong. It is not.
+      //
+      // The app BOOTS into that state (main.js activates a CPU formula on the
+      // first frame) and roughly 192 of the ~230 entries in SHADER MODE keep it
+      // there, so this is the ordinary first experience of the editor rather
+      // than an edge case. documents/shader-editor.md has described the trap in
+      // prose since round 4; describing it is not the same as saying it at the
+      // moment it happens, to the person it is happening to.
+      //
+      // Only when the body actually writes `y`: a fragment-only edit is
+      // unaffected — custom colour applies in every mode — and warning there
+      // would be noise on a correct action.
+      //
+      // FIX(r6): and only on the tab where it is actionable. The paragraph
+      // above says a fragment-only edit is unaffected; the code did not agree
+      // with it. `wasted` read the VERTEX body whichever tab was on screen, and
+      // the vertex body assigns y by default — SE_DEFAULT_VERT does, and so do
+      // all six shipped vertex snippets — so every APPLY made from the FRAGMENT
+      // tab in CPU mode printed a ten-second amber warning about geometry the
+      // operator had not touched. That is the ordinary case, not a corner:
+      // roughly 192 of the ~230 SHADER MODE entries hold uMathMode != 0, and
+      // the app boots into one of them. A warning that fires on a correct
+      // action is how a status line stops being read.
+      //
+      // FIX(r6, second pass): gating on the visible tab ALONE was too much. APPLY
+      // assembles and installs BOTH programs on every press, so a displacement
+      // the operator wrote on the vertex tab goes live — and is discarded — when
+      // they press APPLY from the fragment tab too. Suppressing the warning
+      // there swapped a false alarm for a silence, which is the worse of the two.
+      //
+      // What made the false alarm noise is that the vertex buffer holds
+      // SE_DEFAULT_VERT until somebody edits it, and the shipped default assigns
+      // y. So the question is not which tab is on screen; it is whether there is
+      // a displacement the OPERATOR wrote. An untouched default is not one.
+      const cpuMode  = this._render?.U?.uMathMode?.value !== 0;
+      const authored = this._tab === 'vert' || vertBody !== SE_DEFAULT_VERT;
+      const wasted   = cpuMode && authored && bodyAssignsY(vertBody);
+      const message = wasted
+        ? '⚠ Compiled — a CPU formula is active, so y is discarded. Pick a numbered GPU shader (1–38) in SHADER MODE.'
+        : '✔ Compiled & applied';
+
+      // Amber, not the success green and not the failure red: the shader is
+      // installed and valid, and the thing that is wrong is the app's mode.
+      errEl.style.color = wasted ? '#fb4' : 'var(--green)';
+      errEl.textContent = message;
+      this.cb.onCompileResult({ ok: true, level: wasted ? 'warn' : 'ok', message, line: null });
       // FIX: keep the handle. This tidy-up used to outlive whatever came next,
       // so a failure reported within two seconds — pressing APPLY twice while
       // fixing a typo is the ordinary way to get there — had its red message
       // and its line number blanked by the previous run's timer, leaving an
       // editor that said nothing about a shader that had not compiled. The
       // camera programmer's status line had the same defect.
+      //
+      // The warning gets longer than the tick. Two seconds is right for "✔" —
+      // it is a confirmation of something the operator just watched happen —
+      // and wrong for a sentence they have to read and act on, in a status line
+      // at 9px that they were not expecting to say anything.
       this._okTimer = setTimeout(() => {
         this._okTimer = null;
         errEl.textContent = '';
-        this.cb.onCompileResult({ ok: true, message: '', line: null });
-      }, 2000);
+        this.cb.onCompileResult({ ok: true, level: 'ok', message: '', line: null });
+      }, wasted ? 10000 : 2000);
     };
 
     const onFailure = (err) => {
@@ -1662,7 +2037,9 @@ export class ShaderEditor {
       const errorLine = sameTab
         ? this._parseErrorLine(errorMsg, src, onVert ? vertBody : fragBody)
         : null;
-      const friendly  = this._friendlyError(errorMsg);
+      // The line goes IN, so the sentence and the gutter mark cannot disagree:
+      // one number, resolved once, or no number anywhere.
+      const friendly  = this._friendlyError(errorMsg, errorLine);
       errEl.style.color = '#f66';
       errEl.textContent = friendly;
       this.cb.onCompileResult({ ok: false, message: friendly, line: errorLine });
@@ -1694,25 +2071,53 @@ export class ShaderEditor {
       };
     };
 
+    // FIX(r6): declared out here so the finally can undo them. Both used to sit
+    // inside the try, with only the debug hook restored on the way out — so a
+    // throw from render() left the renderer bound to this 1x1 target and leaked
+    // it. Every frame after that goes into a one-pixel buffer: the canvas stops
+    // updating and nothing says why, with no recovery short of a reload. The
+    // paths that reach this method with the overlay CLOSED are the ones that
+    // make it serious — a preset click, a clip step — which is to say, mid-set.
+    let rt = null;
+    let prevRT = null;
+    let boundToProbe = false;
     try {
       // compile() builds the program; the link check three defers to first use
       // is what triggers the hook, so force one render to a throwaway target.
       // Rendering the real scene here would fight the animation loop.
       renderer.compile(tScene, tCam);
-      const rt = new THREE.WebGLRenderTarget(1, 1);
-      const prevRT = renderer.getRenderTarget();
+      rt = new THREE.WebGLRenderTarget(1, 1);
+      prevRT = renderer.getRenderTarget();
+      // Armed BEFORE the call, not after it. A throw from inside setRenderTarget
+      // can still leave the renderer pointed at the new target, and with the flag
+      // set afterwards the finally would skip the restore and then dispose the
+      // target the renderer was holding — the worse half of the bug this whole
+      // block exists to fix, reintroduced one line further down.
+      boundToProbe = true;
       renderer.setRenderTarget(rt);
       renderer.render(tScene, tCam);
-      renderer.setRenderTarget(prevRT);
-      rt.dispose();
     } catch (e) {
       captured = captured || e?.message || String(e);
     } finally {
       renderer.debug.onShaderError = prevHook;
+      // Order matters: hand the renderer back its target before disposing the
+      // one it is pointed at.
+      if (boundToProbe) renderer.setRenderTarget(prevRT);
+      rt?.dispose();
     }
 
-    if (captured) onFailure(new Error(captured));
-    else onSuccess();
+    // FIX: say whether it worked. Every report this method makes goes to
+    // #se-error and to onCompileResult — both of which live inside the shader
+    // editor overlay, and the overlay is CLOSED on every path that matters.
+    // Applying a preset whose shader does not compile wrote the driver's
+    // message into a hidden div, left the previous program bound, and returned
+    // nothing at all — so applyState went on to report "✔ State loaded" while
+    // the screen showed the old shader and the editor buffer had already been
+    // overwritten with the source that failed, destroying the operator's draft.
+    // The boolean is what lets the caller put that on screen instead.
+    if (captured) { onFailure(new Error(captured)); return false; }
+    onSuccess();
+    return true;
   }
 
   /**
@@ -1743,12 +2148,35 @@ export class ShaderEditor {
     return relLine >= 1 && relLine <= userBody.split('\n').length ? relLine : null;
   }
 
-  /** Trim noisy WebGL driver boilerplate for cleaner display */
-  _friendlyError(msg) {
-    // Extract just the first ERROR: line — driver prefixes vary wildly
+  /**
+   * Trim noisy WebGL driver boilerplate for cleaner display, and say WHICH line.
+   *
+   * FIX(r6): this printed no line number at all. The pattern it replaced with
+   * "Line " matched the digits as well as the punctuation around them, so it
+   * consumed the number it meant to present: the driver's
+   * "ERROR: 0:14: 'sin' : wrong operand types" reached the operator as
+   * "Line 'sin' : wrong operand types" — a dangling word with no number. documents/shader-editor.md has promised `Line 8: …` since it was
+   * written, and no test covered the one line that had to produce it. With the
+   * gutter mark this is one of only two line signals in the product.
+   *
+   * The number is NOT the driver's. `0:14` counts through the assembled
+   * program, three.js's own preamble included — a line the operator cannot find
+   * in a buffer they can see, and printing it would be confidently wrong rather
+   * than merely silent. What goes on screen is the body-relative line
+   * _parseErrorLine resolved, which is the same line the gutter paints: the two
+   * signals agree by construction, or neither appears.
+   *
+   * @param {string} msg           the driver's InfoLog
+   * @param {number|null} [line]   body-relative line, or null when it could not
+   *                               be resolved (an error in the template, or a
+   *                               failure in the stage the operator is not on)
+   */
+  _friendlyError(msg, line = null) {
+    // Just the first ERROR: line — driver prefixes vary wildly.
     const m = msg.match(/ERROR:.*$/m);
-    if (m) return m[0].replace(/ERROR:\s*\d+:\d+:\s*/, 'Line ');
-    return msg.split('\n')[0].substring(0, 120);
+    if (!m) return msg.split('\n')[0].substring(0, 120);
+    const text = m[0].replace(/^ERROR:\s*\d+:\d+:\s*/, '').trim();
+    return line === null ? text : `Line ${line}: ${text}`;
   }
 
   /**
@@ -1803,15 +2231,46 @@ export class ShaderEditor {
 }
 
 // ── ModelLoader ───────────────────────────────────────────────────────────────
+/**
+ * Release the GPU resources of a group that never reached the scene.
+ *
+ * An abandoned import is the one case where the meshes are not in _meshes, so
+ * clear() cannot reach them — traversal is the only handle on them. Their
+ * materials are still the loader's own here (OBJLoader / GLTFLoader), because
+ * _applyShader has not run: this is called before it, deliberately.
+ */
+function disposeGroup(group) {
+  if (!group?.traverse) return;
+  group.traverse(child => {
+    if (!(child instanceof THREE.Mesh)) return;
+    child.geometry?.dispose?.();
+    (Array.isArray(child.material) ? child.material : [child.material])
+      .forEach(m => m?.dispose?.());
+  });
+}
+
 export class ModelLoader {
   /** @param {import('./render.js').RenderEngine} render */
   constructor(render) {
     this._render = render;
     this._model  = null;
     this._meshes = [];
+    // FIX: the third instance of the supersession idiom AudioEngine.loadPlay
+    // and MathVisualizer._generation already implement. Without it, two
+    // overlapping imports both reached the mutation at the end of load() and
+    // the FIRST one to resolve was stranded: it assigned _model and added its
+    // group to the scene, the second overwrote _model and added its own, and
+    // nothing held a reference to the first group any more. Pressing
+    // ✕ CLEAR MODEL then removed group B while disposing BOTH groups'
+    // geometry and material — so group A stayed on stage, drawn forever from
+    // buffers three re-uploads on the next frame, unreachable, until a reload.
+    this._loadId = 0;
   }
 
   async load(file, onLoading, getCustomShaders) {
+    const loadId = ++this._loadId;
+    const superseded = () => loadId !== this._loadId;
+
     onLoading(true, 0, 'LOADING MODEL…');
     this.clear();
     const r = this._render;
@@ -1828,10 +2287,23 @@ export class ModelLoader {
         group = gltf.scene;
       } else { throw new Error('Unsupported: .' + ext); }
 
+      // A newer import owns the stage. This group was parsed but never added to
+      // the scene, so it is ours alone to dispose — and it must be disposed
+      // here, or the abandoned load leaks exactly what it was meant to stop
+      // leaking. Nothing else is touched: the newer load owns _model, the
+      // meshes, the info line and the loading bar.
+      if (superseded()) { disposeGroup(group); return; }
+
       onLoading(true, 0.95, 'APPLYING SHADER…');
       this._centerAndScale(group);
       const { vs, fs } = getCustomShaders();
-      this._applyShader(group, vs || VS, fs || FS);
+      // _applyShader RETURNS the meshes now instead of pushing into shared
+      // state. Pushing is what turned the stranded group into a disposal bug:
+      // clear() takes an early return while _model is still null — which is
+      // every moment of a load — so the array was never emptied and one CLEAR
+      // MODEL disposed two imports' worth of geometry, including the one it
+      // was leaving on screen.
+      this._meshes = this._applyShader(group, vs || VS, fs || FS);
       this._model = group;
       r.scene.add(group);
       // FIX: the engine takes the stage over, instead of this method reaching
@@ -1842,18 +2314,51 @@ export class ModelLoader {
       document.getElementById('btn-clear-model').style.display = '';
       onLoading(true, 1, 'DONE');
     } catch (e) {
+      // A superseded load failing says nothing about the one that replaced it;
+      // reporting it would overwrite a newer import's info line with an error
+      // about a file the operator has already moved on from.
+      if (superseded()) return;
       console.error('Model load error:', e);
       document.getElementById('model-info').textContent = '⚠ ' + e.message;
       // Nothing took the stage, so give it back — clear() above may have
       // removed a model that was working perfectly well before this attempt.
       r.setExternalModel(null);
+    } finally {
+      // In `finally` because three paths now leave this method — success, the
+      // error report, and the two supersession returns — and the blob URL is
+      // this load's own either way. A `return` inside try still runs it.
+      URL.revokeObjectURL(url);
+      // The bar belongs to whoever is still loading. Ours to take down only if
+      // no newer import has raised it since.
+      setTimeout(() => { if (!superseded()) onLoading(false); }, 300);
     }
-    URL.revokeObjectURL(url);
-    setTimeout(() => onLoading(false), 300);
+  }
+
+  /**
+   * The USER asking for no model: cancel anything in flight, then clear.
+   *
+   * FIX(r6): clear() alone was not enough and could not be made enough. It
+   * tears the current model down but does not touch _loadId, so an import still
+   * being decoded when ✕ CLEAR MODEL was pressed came back a moment later,
+   * found itself un-superseded, assigned _model and added its group to the
+   * scene. The user watched the model they had just removed reappear.
+   *
+   * The bump belongs HERE and not inside clear(), and that distinction is the
+   * whole reason this method exists: load() calls clear() itself, three lines
+   * after taking its own id, so a bump in clear() would make every import
+   * supersede itself and no model would ever load. The same trap is recorded in
+   * AudioEngine — the id is bumped in stopAudio(), never in _stopSource().
+   */
+  cancel() {
+    this._loadId++;
+    this.clear();
   }
 
   /**
    * Remove the imported model and give the stage back to the engine.
+   *
+   * Pure teardown, and safe to call from load(). A caller acting on the user's
+   * behalf wants cancel() above.
    *
    * FIX: the release was missing, so this left an empty scene — the built-in
    * mesh was hidden by load() and nothing turned it back on. That is also why
@@ -1861,13 +2366,22 @@ export class ModelLoader {
    * removed the model and shown nothing at all.
    */
   clear() {
-    if (!this._model) return;
-    this._render.scene.remove(this._model);
-    this._meshes.forEach(m => {
+    // Both fields are taken and reset BEFORE the early return. They are written
+    // together at the end of load(), so a populated _meshes with a null _model
+    // should be impossible — but the old order made the early return skip
+    // `this._meshes = []` entirely, and that is precisely what let one import's
+    // meshes survive into the next one's array and be disposed underneath it.
+    // Resetting first costs nothing and removes the shape of that bug.
+    const model  = this._model;
+    const meshes = this._meshes;
+    this._model  = null;
+    this._meshes = [];
+    if (!model) return;
+    this._render.scene.remove(model);
+    meshes.forEach(m => {
       m.geometry.dispose();
       (Array.isArray(m.material) ? m.material : [m.material]).forEach(mt => mt.dispose());
     });
-    this._model = null; this._meshes = [];
     this._render.setExternalModel(null);
   }
 
@@ -1881,7 +2395,18 @@ export class ModelLoader {
     group.position.y = 0;
   }
 
+  /**
+   * Swap every mesh in the group onto the app's shader material.
+   *
+   * Returns the meshes rather than pushing them into this._meshes. It used to
+   * push, and since clear()'s early return left that array intact for the whole
+   * of a load, two overlapping imports accumulated into one list — so CLEAR
+   * MODEL removed the second group while disposing both groups' geometry and
+   * material, and the first stayed on stage drawn from disposed buffers. The
+   * caller now owns the assignment, one list per load.
+   */
   _applyShader(group, vs, fs) {
+    const meshes = [];
     group.traverse(child => {
       if (!(child instanceof THREE.Mesh)) return;
       (Array.isArray(child.material) ? child.material : [child.material]).forEach(m => m.dispose());
@@ -1903,7 +2428,8 @@ export class ModelLoader {
       mat.defaultAttributeValues.aBodyK = [0];
       mat.defaultAttributeValues.aBandU = [-1];
       child.material = mat;
-      this._meshes.push(child);
+      meshes.push(child);
     });
+    return meshes;
   }
 }

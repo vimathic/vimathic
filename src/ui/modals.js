@@ -28,6 +28,7 @@
 
 import { MIDI_PARAMS } from '../utils.js';
 import { downloadBlob } from '../recorder.js';
+import { tidyGlsl, describeTidy } from '../glsl-tidy.js';
 
 export function bindModals(ui) {
   bindOutputModal(ui);
@@ -862,9 +863,19 @@ function bindShaderEditor(ui) {
   // the failing line and scroll it into view; on success we clear any
   // existing highlight. The −4 offset on scroll keeps a few lines of
   // context visible above the error.
-  se.cb.onCompileResult = ({ ok, message, line }) => {
-    if (ok) {
-      seError.style.color = 'var(--green)';
+  //
+  // FIX: paint by `level`, not by `ok`. A compile can succeed and still be
+  // invisible — a CPU formula is active, so the template discards the body's
+  // `y` — and shaders.js reports that as ok:true with level:'warn'. Painting it
+  // green would put the one message the operator has to read in the colour that
+  // means "nothing to see here". `level` is optional, so a caller that sets only
+  // `ok` keeps the old two-colour behaviour.
+  se.cb.onCompileResult = ({ ok, level, message, line }) => {
+    const kind = level ?? (ok ? 'ok' : 'error');
+    if (kind !== 'error') {
+      // Amber for a warning: the shader is installed and valid, and what is
+      // wrong is the mode the app is in.
+      seError.style.color = kind === 'warn' ? '#fb4' : 'var(--green)';
       _clearErrLine();
     } else {
       seError.style.color = '#f66';
@@ -901,6 +912,42 @@ function bindShaderEditor(ui) {
   });
   document.getElementById('se-btn-apply').addEventListener('click', () => se.compileAndApply());
   document.getElementById('se-btn-reset').addEventListener('click', () => se.reset());
+
+  // ── TIDY — rewrite what is in the box, and do not compile it ─────────
+  // The result is written back into #se-code, which is the whole point: the
+  // buffer the operator is reading stays the buffer that compiles, so
+  // _parseErrorLine still finds it verbatim, presets still store one thing,
+  // and there is no second source of truth to reconcile. It is a separate
+  // button from APPLY so the edit can be read before it runs.
+  document.getElementById('se-btn-tidy')?.addEventListener('click', () => {
+    // FIX(r6): take the status line before writing to it. APPLY arms a timer
+    // that blanks #se-error two seconds later (ten after the warning), and TIDY
+    // never cancelled it — so the ordinary rhythm of pressing APPLY, reading the
+    // result and reaching for ✎ TIDY had the tidy report appear and then vanish
+    // on the previous run's countdown, with nothing to explain it.
+    se.claimStatus?.();
+    const { text, changed, changes } = tidyGlsl(seCode.value, se._tab);
+    if (!changed) {
+      se.cb.onCompileResult({ ok: true, level: 'ok', message: '✎ Nothing to tidy', line: null });
+      return;
+    }
+    // Through the selection rather than by assigning .value, for two reasons
+    // that both bite: assigning wipes the textarea's native undo stack, so a
+    // tidy the operator dislikes cannot be taken back with Ctrl+Z; and it
+    // fires no `input` event, so the delegated autosave listener on this
+    // overlay never sees the change. execCommand is deprecated and is still
+    // the only way to edit a textarea as if a person had typed it.
+    seCode.focus();
+    seCode.setSelectionRange(0, seCode.value.length);
+    let replaced = false;
+    try { replaced = document.execCommand('insertText', false, text); } catch (_) { /* below */ }
+    if (!replaced || seCode.value !== text) {
+      seCode.value = text;
+      seCode.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    _syncLineNums();
+    se.cb.onCompileResult({ ok: true, level: 'ok', message: describeTidy(changes), line: null });
+  });
   document.querySelectorAll('#shader-editor-box .se-tab').forEach(tab =>
     tab.addEventListener('click', () => se.switchTab(tab.dataset.tab)));
 

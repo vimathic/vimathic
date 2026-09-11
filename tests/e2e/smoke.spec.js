@@ -354,3 +354,50 @@ test.describe('Intro track', () => {
     await expect.poll(() => intro.length, { timeout: 10_000 }).toBeGreaterThan(0);
   });
 });
+
+// ── 9. The formula knobs say when they are inert ──
+//
+// Formula Detail and Formula Phase reach CPU formulas only; under a numbered
+// GPU shader the vertex program owns the surface and the pair does nothing.
+// That boundary is deliberate — two banks, one per engine — but until r6 it
+// was stated only in an HTML comment, so the panel showed two live sliders
+// whose readouts counted while nothing on screen moved.
+//
+// A unit test cannot carry this: _syncFormulaKnobs is a closure inside
+// bindControls and the thing under test is what the operator SEES after a
+// selection travels through applyMathFormula's morph.
+test.describe('Formula knobs', () => {
+  test('the pair dims and says why under a GPU shader, and comes back under a formula', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('canvas')).toBeVisible();
+    await revealControl(page, '#formula-detail');
+
+    const wrap = page.locator('#formula-knobs-wrap');
+    const note = page.locator('#fk-note');
+
+    // Boot is differentialEqs/pendulumNonLinear — a CPU formula, so the pair is
+    // live and silent. This half is also the control: without it, a note that
+    // never showed at all would pass the half below.
+    await expect(note).toBeHidden();
+    await expect(wrap).not.toHaveClass(/fk-inert/);
+
+    // #gpu-sel cannot be driven with selectOption: makeDropdown() in index.html
+    // hides the native select behind a searchable widget (`sel.style.display =
+    // 'none'`), so Playwright waits 90 s for an element that will never be
+    // visible. These two lines are the ones the widget itself runs when an
+    // option is picked, verbatim — same value, same bubbling change event, same
+    // listener at the other end.
+    const pick = v => page.$eval('#gpu-sel', (sel, value) => {
+      sel.value = value;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }, v);
+
+    await pick('0');                                           // 1. Bass Reactive Waves
+    await expect(note).toBeVisible();
+    await expect(wrap).toHaveClass(/fk-inert/);
+
+    await pick('m:differentialEqs:pendulumNonLinear');
+    await expect(note).toBeHidden();
+    await expect(wrap).not.toHaveClass(/fk-inert/);
+  });
+});

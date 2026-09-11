@@ -911,10 +911,32 @@ describe('the ramp this file models is the ramp that ships', () => {
       // built-in and the shader editor coloured the same scene differently.
       // That is the defect this whole describe block was written about, and the
       // guard against it had it. Found by an external review.
-      assert.equal(f.after.length, 1,
+      // r6: the built-in program carries a SECOND rewrite, and one only — the
+      // palette knob. uK3 was declared in the editor's scaffolds and nowhere
+      // else, so on the numbered SHADER MODE entries all four knobs moved and
+      // did nothing; knob 4 is the colour one and this statement is where it
+      // acts. It is allowed here on the same terms as the tint and no looser:
+      // it re-clamps into the SAME window, so every clamped-area figure and the
+      // NIGHT contract still hold, and its allowlist below admits the knob and
+      // nothing that could carry a level. The editor's template does NOT have
+      // it, deliberately — a custom fragment body owns its own colour, and uK3
+      // goes back to meaning whatever its author gave it.
+      // Against the CANONICAL text the parser prints, not the source: it drops
+      // spaces and writes .47 as 0.47, so a source-shaped regexp matches nothing.
+      // Pinned to the SHIPPED window, the same two numbers the tint is checked
+      // against below — the whole reason this statement is allowed at all is
+      // that it cannot move a pixel outside the ramp.
+      const esc = n => String(n).replace('.', '\\.');
+      const KNOB_RE = new RegExp(
+        `^t\\s*=\\s*clamp\\(\\s*t\\s*\\+\\s*uK3\\s*\\*\\s*[\\d.]+\\s*,\\s*${esc(r.lo)}\\s*,\\s*${esc(r.hi)}\\s*\\)$`);
+      const extra = f.after.slice(1);
+      assert.ok(f.after.length >= 1 && extra.every(s => KNOB_RE.test(s)),
         `${f.program}: ${f.after.length} statements rewrite the palette parameter after the ` +
-        `ramp (${f.after.join(' | ') || 'none'}). Both fragment programs must carry exactly the ` +
-        'band tint — one of them dropping it means opening the shader editor recolours the scene');
+        `ramp (${f.after.join(' | ') || 'none'}). Both fragment programs must carry the band ` +
+        'tint — one of them dropping it means opening the shader editor recolours the scene — ' +
+        'and the only thing that may follow it is the palette knob');
+      assert.ok(extra.length <= 1,
+        `${f.program}: the palette knob is written ${extra.length} times`);
       const s = f.after[0];
       assert.match(s, /vBandU/,
         `${f.program}: "${s};" rewrites the palette parameter with something other than the ` +

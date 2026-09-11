@@ -11,11 +11,27 @@ import { PARAMS, applyParam } from '../params.js';
 import { clampFov } from '../camera.js';
 import { selectShape } from '../shapes.js';
 import { normalizeVizMode, DEFAULT_VIZ_MODE } from '../viz-mode.js';
+// The editor's example gallery — read by _seedFactoryPresets so the factory
+// preset's GLSL has one home and not two.
+import { SE_PRESETS } from '../shaders.js';
 
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
 // preset JSON until we've thought about migration.
-const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx', 'bandDepth'];
+// The four shader knobs are here because a knob position IS part of a look:
+// a preset carries the shader that reads uK0, so it has to carry where uK0 was.
+// No migration step, and that is the deliberate difference from bandDepth's:
+// bandDepth needed one because its DEFAULT changed under presets that predated
+// it. These default to 0 and always have, applyState skips a null, and no
+// preset written before this commit can contain a shader mentioning uK — the
+// uniforms did not exist to be mentioned.
+// FIX(r6): `detail` and `phase` join for the same reason the four knobs did —
+// where a hand left a formula IS part of the look. No migration: a preset
+// written before them carries neither, applyState skips a field that is not
+// present, and both rest at values that reproduce the arithmetic those presets
+// were captured under.
+const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colorIdx', 'bandDepth',
+                      'k0', 'k1', 'k2', 'k3', 'detail', 'phase'];
 
 // FIX(#18, r2): the non-param fields applyState() reads. With PARAM_FIELDS this
 // defines "looks like a preset" for migratePreset(), so keep it in step with
@@ -695,12 +711,21 @@ export const PresetMixin = {
       cam.cpSelectedKf = null;
       cam.buildTimeline();
       if (cs.active && code) {
+        // FIX: loadScript reports a parse failure into the camera programmer's
+        // status line, and that overlay is closed on every path that gets here.
+        // The script silently did not arm while the apply reported success, so
+        // the camera just sat where the tween left it with nothing saying why.
+        const arm = () => {
+          if (cam.loadScript(code) === false) {
+            this._showToast('⚠ Preset camera script did not parse — not running', true);
+          }
+        };
         if (s.camera) {
           // Camera tween in flight — defer script activation to onDone.
-          postTweenCameraActions.push(() => cam.loadScript(code));
+          postTweenCameraActions.push(arm);
         } else {
           // No camera tween — start script immediately.
-          cam.loadScript(code);
+          arm();
         }
       }
     }
@@ -732,7 +757,17 @@ export const PresetMixin = {
         se._frag = s.shader.frag;
         // Re-apply the custom shader via the compileAndApply path.
         if (DOM.seCode) DOM.seCode.value = se._tab === 'vert' ? se._vert : se._frag;
-        se.compileAndApply();
+        // FIX: compileAndApply writes the driver's message into #se-error —
+        // inside the shader editor overlay, which is closed on every path that
+        // reaches this line. A preset carrying a shader that does not compile
+        // therefore left the previous program bound, reported "✔ State loaded",
+        // and — because the two lines above have already run — overwrote the
+        // editor buffer with the source that failed, destroying whatever draft
+        // the operator had there. The toast is the channel they can actually
+        // see. `=== false` and not `!ok`: only an explicit failure warns.
+        if (se.compileAndApply() === false) {
+          this._showToast('⚠ Preset shader did not compile — previous shader still live', true);
+        }
       }
     } else if (s.shader && (se?.customVS || se?.customFS)) {
       // A snapshot that carries a shader record with hasCustom:false describes
@@ -870,6 +905,28 @@ export const PresetMixin = {
       panel.addEventListener('change', schedule, { capture: true });
       panel.addEventListener('click',  schedule, { capture: true });
     }
+    // FIX: both editor overlays are SIBLINGS of .controls-panel in index.html
+    // (#shader-editor-overlay and #cam-editor-overlay sit at the top level, the
+    // panel is elsewhere), so no event inside either one reached the delegated
+    // listeners above in any phase. Write a shader, press APPLY, close the
+    // editor, change nothing else: nothing was ever scheduled. The 1 s
+    // fingerprint below did not cover them either, which left beforeunload as
+    // the only writer — and that does not run on a GPU-process crash, an OOM
+    // during a WebM take, or a background-tab discard. The snapshot still on
+    // disk then said hasCustom:false and the next boot reverted to the built-in
+    // shader as if the work had never happened.
+    //
+    // The draft text counts, not just an APPLY: captureState stores se._vert /
+    // se._frag whenever no custom program is live, so what is in the buffer IS
+    // the state worth saving. schedule() is debounced, so a keystroke here
+    // costs no more than a slider drag does.
+    for (const sel of ['#shader-editor-overlay', '#cam-editor-overlay']) {
+      const overlay = document.querySelector(sel);
+      if (!overlay) continue;
+      overlay.addEventListener('input',  schedule, { capture: true });
+      overlay.addEventListener('change', schedule, { capture: true });
+      overlay.addEventListener('click',  schedule, { capture: true });
+    }
     // Hotkeys + MIDI + drag-orbit fire outside the panel — catch them via
     // a periodic low-cost tick, comparing a fingerprint to decide whether to
     // schedule a real save.
@@ -880,12 +937,19 @@ export const PresetMixin = {
     // slider, a MIDI CC on anything but colour, a shape change from R — none of
     // them moved it, and none of them scheduled a save. They were only ever
     // written if something else happened to schedule one within the same
-    // session. It covers what the snapshot covers now; the camera stays rounded
-    // to 2 dp so that orbit jitter alone does not keep the timer armed.
+    // session. The camera stays rounded to 2 dp so that orbit jitter alone does
+    // not keep the timer armed.
+    //
+    // FIX: that round's closing claim — "It covers what the snapshot covers
+    // now" — was not true when it was written, and the two fields it missed
+    // were the shader source and the camera script: the only two a user spends
+    // real time on. It is true now, and tests/autosave-coverage.test.js checks
+    // it against captureState's own output rather than against this sentence.
     let _lastFp = '';
     const fingerprint = () => {
       try {
         const a = this.audio, r = this.render, mv = this.mathViz;
+        const se = this.shaderEditor, cam = this.camera;
         const cp = r.camera.position, ct = r.orbit?.target;
         const ctx = { audio: a, render: r, camera: this.camera };
         // Per field, not per fingerprint: one getter reading something that is
@@ -906,6 +970,24 @@ export const PresetMixin = {
           safe(() => DOM.gpuSel?.value), safe(() => r.grid?.visible),
           safe(() => cp.x.toFixed(2)), safe(() => cp.y.toFixed(2)), safe(() => cp.z.toFixed(2)),
           safe(() => ct ? `${ct.x.toFixed(2)},${ct.y.toFixed(2)},${ct.z.toFixed(2)}` : ''),
+          // FIX: the comment below claims "It covers what the snapshot covers
+          // now", and the two most expensive fields in that snapshot were the
+          // two it did not read. The shader source and the camera script are
+          // the things a user spends an hour on; every other field here can be
+          // rebuilt from a slider in seconds. Read exactly what captureState
+          // writes, so the claim is true rather than aspirational:
+          //   shader    → hasCustom, and the bodies that pair with it
+          //   camScript → active, code, params, keyframes
+          // The strings are compared whole rather than hashed. At 1 Hz over a
+          // few KB that is not worth a hash function nobody would trust to be
+          // collision-free on exactly the edit that matters.
+          safe(() => (se?.customVS ? 1 : 0)),
+          safe(() => se?._appliedVert ?? se?._vert),
+          safe(() => se?._appliedFrag ?? se?._frag),
+          safe(() => cam?.cpActive),
+          safe(() => cam?.cpSource ?? DOM.ceCode?.value),
+          safe(() => JSON.stringify(cam?.cpParams ?? {})),
+          safe(() => (cam?.cpKeyframes ?? []).map(k => `${k.t} ${k.code}`).join('')),
           ...params,
         ].join('|');
       } catch (_) { return ''; }
@@ -1081,11 +1163,20 @@ export const PresetMixin = {
     }
     document.getElementById('_vsc_code').textContent = code;
     overlay.style.pointerEvents = 'auto';
+    // FIX(r6): opacity and pointer-events hide a dialog from the eye and from
+    // the mouse, and from nothing else. Closed this way its two buttons — DROP
+    // THE SCRIPT and KEEP CODE — stayed in the tab order for the rest of the
+    // session, invisible, and Tab still walked into a decision the operator had
+    // already made. `inert` is what takes an element out of the tab order and
+    // out of the accessibility tree without touching its transition, so the
+    // fade below still runs.
+    overlay.inert = false;
     requestAnimationFrame(() => { overlay.style.opacity = '1'; });
 
     const close = () => {
       overlay.style.opacity = '0';
       overlay.style.pointerEvents = 'none';
+      overlay.inert = true;
     };
     document.getElementById('_vsc_drop').onclick = () => { close(); onDecide(false); };
     document.getElementById('_vsc_keep').onclick = () => { close(); onDecide(true);  };
@@ -1138,6 +1229,99 @@ export const PresetMixin = {
 
   _loadPresetList() {
     try { return JSON.parse(localStorage.getItem('vimathic_presets') || '[]'); } catch (_) { return []; }
+  },
+
+  /**
+   * Put ONE preset in the list on a browser that has never had one.
+   *
+   * FIX(r6): why this exists at all. 2493a98 gave a hand-written shader four
+   * knobs — sliders, MIDI CCs, preset capture, the lot — and that is the whole
+   * difference between a shader you write and a shader you play. It then
+   * shipped no demonstration: not a gallery entry, not a default body, not a
+   * preset. The preset list seeds from '[]', so a new user's first sight of
+   * VIMATHIC is "No saved presets", and every shipped example of a custom
+   * shader lives three clicks deep inside a modal most operators never open.
+   *
+   * A capability nobody can find is not distinguishable from one that does not
+   * work, and this repository has no telemetry by design — so "nobody uses the
+   * shader editor" was never a measurement, it was the absence of a door. This
+   * is the door, and it costs one row.
+   *
+   * ── The three rules it obeys ──────────────────────────────────────────────
+   *
+   * 1. Once, ever. The gate is `getItem(...) === null` — the key having never
+   *    been written — and NOT an empty list. A user who deletes it has said
+   *    what they think of it; `[]` is a decision and must not be overwritten on
+   *    the next reload. That distinction is the whole reason this reads the raw
+   *    key instead of calling _loadPresetList().
+   * 2. It carries a NUMBERED GPU mode. Without one the app sits in a CPU
+   *    formula — 192 of the ~230 SHADER MODE entries do, and boot is one of
+   *    them — where the vertex template discards the body's `y` and the preset
+   *    would load to no visible change. That is the trap the APPLY warning
+   *    exists for, and a shipped example must not walk into it.
+   * 3. It carries every field that would otherwise be DEFAULTED, and omits only
+   *    the ones that are genuinely skipped when absent. That distinction is not
+   *    cosmetic and the first version of this got it wrong: `material` and
+   *    `particleStyle` are read as `s.material ?? 'matte'` and
+   *    `s.particleStyle ?? 'squares'` (_applyStateFields), so leaving them out
+   *    does not mean "leave the operator's finish alone" — it means "silently
+   *    set it to Matte and squares". `deformMode` is worse: with a numeric
+   *    gpuSelVal and no deform field, no branch writes the mode, and the note
+   *    above that code says what follows — mathViz._mode stays stuck at 'volume'
+   *    while the panel and the engine disagree.
+   *
+   *    So the row states them. What it still omits is the set that really is
+   *    skipped when missing: camera, camScript, shape, vizMode, and every
+   *    PARAM_FIELDS entry except the four knobs. Clicking it changes the shader,
+   *    the GPU mode, the four knobs, the finish and the deform mode; it does not
+   *    move the camera, change the body or touch the audio settings.
+   *
+   * The GLSL is not written here. It is read out of SE_PRESETS by id, so the
+   * bodies exist once — in src/shaders.js, where the tidy guard already reads
+   * every one of them.
+   *
+   * @returns {boolean} true when a preset was written
+   */
+  _seedFactoryPresets() {
+    let raw = null;
+    try { raw = localStorage.getItem('vimathic_presets'); } catch (_) { return false; }
+    if (raw !== null) return false;
+
+    const vert = SE_PRESETS.find(p => p.id === 'knobs-vert');
+    const frag = SE_PRESETS.find(p => p.id === 'knobs-frag');
+    // No silent half-seed: if the gallery entries were renamed away, ship
+    // nothing rather than a preset carrying an empty body that fails to
+    // compile on the operator's first click.
+    if (!vert || !frag) return false;
+
+    return this._writePresetList([{
+      name: '🎛 Knobs (example)',
+      savedAt: 0,          // not Date.now(): this was authored, not captured
+      factory: true,
+      state: {
+        _version: CURRENT_PRESET_VERSION,
+        // "2. Damped Radial Rings" — any numbered entry would do; what matters
+        // is that it is not a formula, so uMathMode is 0 and `y` survives.
+        gpuSelVal: '1',
+        gpuMode: 1,
+        // Stated rather than defaulted — see rule 3. Matte and squares are what
+        // an absent field resolves to anyway; writing them down is what makes
+        // the row's effect something a test can read and a reader can predict.
+        material: 'matte',
+        particleStyle: 'squares',
+        // The body this shader displaces is a plain surface. Without this the
+        // deform block writes no mode at all and mathViz can be left in
+        // 'volume' under a GPU shader that carries none.
+        deformMode: 'surface',
+        volumeKey: null,
+        shader: { hasCustom: true, vert: vert.code, frag: frag.code },
+        // Off-centre so the first move of any of them is visibly a move, and
+        // k3 left at 0 because neither body reads it — a knob that does
+        // nothing is better left where it started than parked somewhere that
+        // implies it does.
+        k0: 0.35, k1: 0.5, k2: 0.15, k3: 0,
+      },
+    }]);
   },
 
   _renderPresets() {

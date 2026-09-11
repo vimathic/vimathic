@@ -33,7 +33,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # FIX: was '22', which setup-node resolves to the newest 22.x on the
+          # runner. scripts/run-tests.mjs used an entry-point check that does
+          # not exist below 22.18, and below it the runner spawned nothing and
+          # exited 0 — so on any day that resolution landed lower, this required
+          # check was green without executing an assertion. Pin the floor that
+          # package.json's engines field declares.
+          node-version: '22.18'
           cache: 'npm'
 
       - name: Install dependencies
@@ -115,7 +121,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.18'
           cache: 'npm'
 
       - name: Install dependencies
@@ -165,7 +171,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.18'
           cache: 'npm'
 
       - name: Install dependencies
@@ -189,6 +195,11 @@ jobs:
         #   dist/vimathic-intro.mp3   ← bundled intro track (S. Melentyev)
         #   dist/support-hero.png     ← support page hero image (PNG fallback)
         #   dist/support-hero.webp    ← support page hero image (WebP, modern browsers)
+        #   dist/THIRD-PARTY-LICENSES.txt ← MIT notices for the libraries the
+        #                               single file inlines. index.html carries
+        #                               them too, as a trailing comment, because
+        #                               it is shared on its own; this is the
+        #                               readable copy. See plugins/vimathic-licenses.js.
         #   dist/sitemap.xml          ← SEO sitemap
         #   dist/robots.txt           ← AI crawler opt-in
         #   dist/llms.txt             ← LLM discoverability format
@@ -218,7 +229,7 @@ jobs:
           ls -la dist/
           echo ""
           echo "=== Whitelist verification ==="
-          ALLOWED='^(index\.html|second-screen\.html|math-worker-[A-Za-z0-9_-]+\.js|vimathic-intro\.mp3|support-hero\.png|support-hero\.webp|og-image\.png|favicon\.ico|favicon-(16|32|48)\.png|apple-touch-icon\.png|android-chrome-(192|512)\.png|site\.webmanifest|sitemap\.xml|robots\.txt|llms\.txt|docs)$'
+          ALLOWED='^(index\.html|second-screen\.html|math-worker-[A-Za-z0-9_-]+\.js|vimathic-intro\.mp3|support-hero\.png|support-hero\.webp|og-image\.png|favicon\.ico|favicon-(16|32|48)\.png|apple-touch-icon\.png|android-chrome-(192|512)\.png|site\.webmanifest|sitemap\.xml|robots\.txt|llms\.txt|THIRD-PARTY-LICENSES\.txt|docs)$'
           UNEXPECTED=$(find dist -maxdepth 1 -mindepth 1 -printf '%f\n' | grep -Ev "$ALLOWED" || true)
           if [ -n "$UNEXPECTED" ]; then
             echo "❌ Unexpected files in dist/:"
@@ -234,7 +245,8 @@ jobs:
           MISSING=""
           for f in index.html second-screen.html vimathic-intro.mp3 \
                    support-hero.png support-hero.webp \
-                   sitemap.xml robots.txt llms.txt docs/index.html; do
+                   sitemap.xml robots.txt llms.txt THIRD-PARTY-LICENSES.txt \
+                   docs/index.html; do
             [ -f "dist/$f" ] || MISSING="$MISSING $f"
           done
           # The worker chunk is content-hashed, so it is matched by shape — and

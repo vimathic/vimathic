@@ -38,6 +38,12 @@ const REQUIRED = {
   seekTot:           'seek-tot',
   trackLoading:      'track-loading',
   trackLoadingFill:  'track-loading-fill',
+  // Added by the r5 commit that gave undecodable audio a visible channel, and
+  // left outside this map. Both readers guard with `if (!el) return`, so
+  // nothing throws — which is the problem: delete the element and the only
+  // on-screen report of a file that will not decode goes away in silence, boot
+  // still succeeds and no test says anything.
+  trackError:        'track-error',
   trackOverlay:      'track-overlay',
   trackOverlayName:  'track-overlay-name',
   showTrackName:     'show-track-name',
@@ -82,6 +88,28 @@ const REQUIRED = {
   bloom:             'bloom',
   blmv:              'blmv',
 
+  // ── Shader knobs — the four free scalars a custom shader can read ───────
+  shaderK0:          'shader-k0',
+  shaderK1:          'shader-k1',
+  shaderK2:          'shader-k2',
+  shaderK3:          'shader-k3',
+  k0v:               'k0v',
+  k1v:               'k1v',
+  k2v:               'k2v',
+  k3v:               'k3v',
+
+  // ── Formula knobs — the other engine's two, see PARAMS.detail / .phase ───
+  formulaDetail:     'formula-detail',
+  formulaPhase:      'formula-phase',
+  fdv:               'fdv',
+  fpv:               'fpv',
+  // The pair's wrapper and the line that says when they are inert. Both are
+  // dereferenced by _syncFormulaKnobs in controls.js, so both belong in this
+  // contract — an id app code reads without being listed here is exactly what
+  // d2d2713 found and closed.
+  formulaKnobsWrap:  'formula-knobs-wrap',
+  fkNote:            'fk-note',
+
   // ── Camera buttons ──────────────────────────────────────────────────────
   btnReset:          'btn-reset',
   btnResetAll:       'btn-reset-all',
@@ -101,6 +129,16 @@ const REQUIRED = {
   gpuMem:            'gpu-mem',
 
   // ── Presets / state import-export ───────────────────────────────────────
+  // btnExport was the only id in index.html that app code dereferenced without
+  // being in this map — counted across src/, 80 raw lookups over 47 ids, and
+  // this was the one. Its sibling btn-import was here from the start, which is
+  // how the gap survived a reading: the pair looks complete. controls.js did
+  // `getElementById('btn-export').addEventListener(...)` with no `?.`, well
+  // inside bindControls, so losing the id would throw there and take every
+  // binding after that line with it — the panel would come up looking normal
+  // and half of it would be inert, with one console error to explain it.
+  // In this map, a missing id is a named error at boot instead.
+  btnExport:         'btn-export',
   btnImport:         'btn-import',
   stateFile:         'state-file',
   presetName:        'preset-name',
@@ -247,6 +285,61 @@ function resolveGroup(map, required) {
     );
   }
   return out;
+}
+
+/**
+ * Does the focused element already mean something by this key?
+ *
+ * Both global keydown listeners — main.js's hotkeys and controls.js's
+ * hold-and-drag — have to stand down when the keyboard belongs to whatever has
+ * focus. They each carried their own copy of the rule, spelled
+ * `['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)`, and
+ * that list is short by every element that is activated by a KEY rather than
+ * typed into.
+ *
+ * A focused <button> reports BUTTON and a focused <summary> reports SUMMARY.
+ * Neither was excluded, so `e.preventDefault()` in the hotkey handler cancelled
+ * the browser's own activation. Measured in Chrome: tab to ☾ NIGHT, press Space
+ * — the class on the button is unchanged, NIGHT did not toggle, and the
+ * transport has flipped from ▶ PLAY to ⏸ STOP. The keypress was not dead, which
+ * is how it was first filed; it did something else instead. index.html carries
+ * 63 buttons and 7 <summary> elements, one of which is ADVANCED — the half of
+ * the panel holding audio sensitivity, presets, model import, both editors,
+ * video output and MIDI, unopenable from the keyboard.
+ *
+ * The rule is per KEY, not per element, and that is deliberate. Standing down
+ * for every keystroke while a button has focus would be simpler and wrong for
+ * this app: clicking any button with the mouse leaves it focused, and D, F, R
+ * and T are performance hotkeys that must keep working after a click. A button
+ * consumes Space and Enter and nothing else, so that is exactly what it gets.
+ *
+ * @param {Element|null} el  usually document.activeElement
+ * @param {string} key       KeyboardEvent.key
+ * @returns {boolean} true when the listener must not act on this key
+ */
+export function elementOwnsKey(el, key) {
+  if (!el) return false;
+  // A contenteditable host reports its own tag — DIV, SPAN, anything — so the
+  // tag check below cannot see it. Nothing in index.html is contenteditable
+  // today; a rendered document or a future inline editor would be.
+  if (el.isContentEditable) return true;
+
+  const tag = el.tagName;
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return true;
+
+  // 'Spacebar' is IE/old-Edge's spelling and costs one comparison to accept.
+  const k = String(key ?? '').toLowerCase();
+  const isActivation = k === ' ' || k === 'spacebar' || k === 'enter';
+
+  // <summary> is activated by both, like a button. A disabled button is
+  // activated by neither, and is not focusable in the first place.
+  if (tag === 'BUTTON' || tag === 'SUMMARY') return isActivation && !el.disabled;
+
+  // A link follows on Enter only — Space scrolls the page there, which no
+  // listener here is trying to preserve. Without href it is not a link at all.
+  if (tag === 'A') return k === 'enter' && !!el.hasAttribute?.('href');
+
+  return false;
 }
 
 // Node guard: tests may import REQUIRED_IDS / OPTIONAL_IDS to drive smoke

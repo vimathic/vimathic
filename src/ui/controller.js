@@ -1,3 +1,4 @@
+import { DOM } from '../dom.js';
 import { ClipPlayer } from './clip-player.js';
 import { PresetMixin } from './presets.js';
 import { bindModals }  from './modals.js';
@@ -50,6 +51,7 @@ export class UIController {
     // that fires before bindAll() completes.
     Object.assign(this.audio.cb, {
       onLoading:        (v,pct,msg) => this.setLoading(v,pct,msg),
+      onLoadError:      (msg,name)  => this.showTrackError(msg, name),
       onPlaylistChange: ()          => this.renderPL(),
       onPlayState:      (p)         => this._updatePlayBtn(p),
       onSeek:           (pct,cur)   => this._updateSeekFill(pct,cur),
@@ -81,6 +83,9 @@ export class UIController {
       if (fill) fill.style.width = '0%';
       return;
     }
+    // A new load starting answers the last failure — drop it rather than let a
+    // stale warning sit over a track that is loading fine.
+    if (pct === 0) this.clearTrackError();
     el.classList.add('active');
     if (pct > 0) {
       el.classList.remove('indeterminate');
@@ -89,6 +94,41 @@ export class UIController {
       el.classList.add('indeterminate');
       if (fill) fill.style.width = '30%';  // slide animation moves this 30% strip
     }
+  }
+
+  // ── Failed load ───────────────────────────────────────────────────────────
+  // FIX(r5): a file the browser cannot decode used to fail in complete silence
+  // on screen — accepted into the playlist, console.error, and a transport that
+  // simply went back to PLAY while the clock still showed the previous track's
+  // length. The audit fed it a text file renamed .wav and nothing on the page
+  // changed. This is the one place that says otherwise.
+  //
+  // The filename goes in through textContent, never innerHTML: it comes from a
+  // file the user picked, and renderPL() had to be taught the same lesson (see
+  // the note there about `<img src=x onerror=…>.mp3`).
+  showTrackError(msg, name = '') {
+    const el = DOM.trackError;
+    if (!el) return;
+    clearTimeout(this._trackErrTimer);
+    el.textContent = '';
+    if (name) {
+      const b = document.createElement('b');
+      b.textContent = name;
+      el.append('⚠ ', b, ' ' + msg);
+    } else {
+      el.textContent = '⚠ ' + msg;
+    }
+    el.hidden = false;
+    // Long enough to read a filename and a reason, short enough that it is gone
+    // before the next cue. Cleared on any later load, successful or not.
+    this._trackErrTimer = setTimeout(() => { el.hidden = true; }, 9000);
+  }
+
+  clearTrackError() {
+    const el = DOM.trackError;
+    if (!el) return;
+    clearTimeout(this._trackErrTimer);
+    el.hidden = true;
   }
 
   // ── Playlist ──────────────────────────────────────────────────────────────
