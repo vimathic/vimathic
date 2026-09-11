@@ -99,32 +99,40 @@ const transparent = on => RenderEngine.prototype.setTransparentBackground.call(h
 const advance = ms => { for (let d = 0; d < ms; d += 16) { clock += 16; host.transitions.tick(); } };
 
 describe('NIGHT moves the furniture', () => {
-  test('the starfield goes, and comes back on the way out', () => {
+  test('the starfield stays — the night sky keeps its stars', () => {
+    // REVERSED in r6, and the measurement that put the old behaviour here is
+    // not in dispute: the starfield composites to bloom-luma 0.366 and clears
+    // the 0.15 bloom gate at every moment of a mode that exists to keep the
+    // picture dark. What the number could not decide is whether a night sky
+    // with no stars in it reads as the mode working or as the mode broken, and
+    // that is a question about the look. Both states are checked, and the way
+    // back too, so "always on" cannot be satisfied by a starfield that was
+    // never built.
+    assert.equal(host.stars.visible, true, 'precondition: the stars are up before the mode');
     setNightly(true);
     advance(600);
-    assert.equal(host.stars.visible, false, 'the brightest thing in the frame is still there');
+    assert.equal(host.stars.visible, true, 'NIGHT took the stars out of the sky again');
+    assert.equal(host.stars.material.opacity, STARS_OPACITY,
+      'NIGHT left the stars up but dimmed them — the mode no longer touches them at all');
     setNightly(false);
     advance(600);
     assert.equal(host.stars.visible, true);
     assert.equal(host.stars.material.opacity, STARS_OPACITY);
   });
 
-  test('the starfield fades rather than cuts', () => {
-    // `nightly` is part of the snapshot (presets.js), so a clip whose steps
-    // were saved with the mode on and off alternates it every few seconds —
-    // and 1200 white points arriving between one frame and the next is exactly
-    // the flashing this app damps elsewhere. The grid already fades across
-    // this toggle; the two halves of the mode should arrive together.
+  test('and nothing fades them, because nothing alternates them', () => {
+    // The 400 ms cross-fade existed for one reason: `nightly` travels in
+    // presets and in clip steps, so a clip alternating the mode cut 1200 white
+    // points in and out every few seconds. With NIGHT out of the picture the
+    // only writer left is setTransparentBackground, which is instant on
+    // purpose. A fade appearing here again would mean a second owner came back.
     setNightly(true);
-    advance(100);
-    assert.equal(host.stars.visible, true,
-      'gone within a frame of the click — that is a cut, not a fade');
-    assert.ok(host.stars.material.opacity > 0 && host.stars.material.opacity < STARS_OPACITY,
-      `mid-fade opacity is ${host.stars.material.opacity}, i.e. the fade is not running`);
-    advance(600);
-    assert.equal(host.stars.visible, false);
+    advance(16);
+    assert.equal(host.stars.visible, true, 'something is taking the stars down within a frame');
     assert.equal(host.stars.material.opacity, STARS_OPACITY,
-      'hidden stars must rest at full opacity, or the instant restore brings back nothing');
+      `opacity moved to ${host.stars.material.opacity} — something is fading the starfield`);
+    advance(600);
+    assert.equal(host.stars.material.opacity, STARS_OPACITY);
   });
 
   test('a shown grid is dimmed, not hidden — it is how the surface is read', () => {
@@ -290,14 +298,30 @@ describe('NIGHT moves the furniture', () => {
   });
 });
 
-describe('NIGHT and transparent background share the starfield', () => {
-  test('leaving transparent background does not undo NIGHT', () => {
+// r6: the two owners became one. NIGHT no longer touches the starfield, so
+// setTransparentBackground is the only writer and the tests that pinned the
+// shared expression are gone with it — named here rather than deleted quietly,
+// because one of them was a control:
+//
+//   • "leaving transparent background does not undo NIGHT" — it asserted the
+//     opposite of the contract now: the restore gives the stars back, full
+//     stop. Rewritten below rather than dropped.
+//   • "reinjected — the pre-NIGHT restore … undoes NIGHT" — a real mutation
+//     control, and a good one: it rebuilt setTransparentBackground from its own
+//     source with `_setStarsNow(true)` put back, to prove the assertion above
+//     could discriminate. That mutant IS the shipped code now, so the control
+//     has nothing left to reinject.
+//   • "the instant restore is not undone by a fade still running" — there is no
+//     fade to race any more; the slot, the duration and the cancel are gone.
+describe('the starfield has one owner now, and it is the output format', () => {
+  test('leaving transparent background gives the stars back, mode or no mode', () => {
     setNightly(true);
     transparent(true);
-    assert.equal(host.stars.visible, false);
+    assert.equal(host.stars.visible, false, 'alpha capture must not carry white points');
     transparent(false);
-    assert.equal(host.stars.visible, false,
-      'the starfield came back into NIGHT — the restore wrote true instead of asking the mode');
+    assert.equal(host.stars.visible, true,
+      'the restore asked the mode — it has no business asking anyone');
+    assert.equal(host.stars.material.opacity, STARS_OPACITY, 'given back at half strength');
   });
 
   test('control — without NIGHT the round trip still restores them', () => {
@@ -307,64 +331,20 @@ describe('NIGHT and transparent background share the starfield', () => {
     assert.equal(host.stars.visible, true);
   });
 
-  test('reinjected — the pre-NIGHT restore, rebuilt from the real method, undoes NIGHT', () => {
-    // The assertion above has to discriminate, not just pass, and this is the
-    // case that proves it can.
-    //
-    // FIX(night): it used to prove nothing. The "unfixed restore" was a
-    // two-line stand-in written here — `h.stars.visible = true` — and the
-    // assertion under it read back the value that line had just written. No
-    // edit to src/ could turn it red, so the alarm in its own message could
-    // never print: a control that cannot fail is the thing it was guarding
-    // against, one file over.
-    //
-    // So mutate the real source instead, the way tests/clock-rate.test.js
-    // does: take setTransparentBackground's own text, put the pre-NIGHT
-    // restore back into it, rebuild the method and run the same scenario
-    // through THAT. If the fix is ever rewritten, RESTORE_RE stops matching
-    // and the control below says so rather than going quietly green.
-    const src = RenderEngine.prototype.setTransparentBackground.toString();
-    const RESTORE_RE = /this\._setStarsNow\(!this\.nightly\);/;
-    assert.ok(RESTORE_RE.test(src),
-      'RESTORE_RE is stale — this control can no longer reinject the defect, fix the regexp');
-    const mutantSrc = src.replace(RESTORE_RE, 'this._setStarsNow(true);');
-    // Class bodies are strict; an object-literal method rebuilt through
-    // Function is not, so say so explicitly rather than run the copy under
-    // different rules than the original.
-    const unfixed = new Function('THREE', 'uiColor',
-      `'use strict'; return ({ ${mutantSrc} }).setTransparentBackground;`)(THREE, uiColor);
-
-    setNightly(true);
-    unfixed.call(host, true);
-    assert.equal(host.stars.visible, false, 'precondition: both owners agree they are hidden');
-    unfixed.call(host, false);
-    assert.equal(host.stars.visible, true,
-      'the defect no longer reproduces — the test above may have stopped discriminating');
-  });
-
-  test('the instant restore is not undone by a fade still running', () => {
-    // The output format writes both fields itself, so it owes an abandoned
-    // fade nothing — but it does have to take the slot away from it. A fade
-    // left in the slot goes on writing opacity one frame later, over the value
-    // just set, and the starfield dips to nothing before climbing back.
-    setNightly(true);  advance(600);      // stars hidden
-    setNightly(false);                    // ...and now fading back IN
-    advance(100);
-    transparent(true);                    // alpha output: hide, instantly
-    transparent(false);                   // ...and back, instantly (NIGHT is off)
-    assert.equal(host.stars.material.opacity, STARS_OPACITY, 'restored at full strength');
-    advance(16);
-    assert.equal(host.stars.material.opacity, STARS_OPACITY,
-      'a fade nobody stopped went on writing opacity over the instant restore');
-  });
-
-  test('switching NIGHT off under transparent background leaves them hidden', () => {
-    // The output format wins over the look: alpha capture must not gain 1200
-    // white points because someone toggled a mode.
+  test('no writer but this one — NIGHT cannot move them, in either direction', () => {
+    // The half that still has to hold: alpha capture must not gain 1200 white
+    // points because someone toggled a mode, and it must not lose them either.
+    // Both directions, and a frame allowed to pass after each, so a fade
+    // reintroduced by a later edit shows up here as movement.
     transparent(true);
-    setNightly(true);
-    setNightly(false);
-    assert.equal(host.stars.visible, false);
+    setNightly(true);  advance(600);
+    assert.equal(host.stars.visible, false, 'a mode put stars into an alpha capture');
+    setNightly(false); advance(600);
+    assert.equal(host.stars.visible, false, 'a mode put stars into an alpha capture');
+    transparent(false);
+    setNightly(true);  advance(600);
+    assert.equal(host.stars.visible, true, 'NIGHT is writing the starfield again');
+    assert.equal(host.stars.material.opacity, STARS_OPACITY);
   });
 });
 

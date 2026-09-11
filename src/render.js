@@ -1016,10 +1016,11 @@ export const GLARE       = 0.65;
 export const NIGHT_GLARE = 0.45;
 const GRID_FADE_MS = 400;
 // What a shown starfield rests at — the value it is built with. A constant
-// because two paths now put it back (a NIGHT fade and setTransparentBackground's
-// instant restore), and a literal in one of them is a literal that drifts.
+// because the build and setTransparentBackground's restore both write it, and a
+// literal in one of them is a literal that drifts. (Until r6 there was a third
+// path, a 400 ms fade for NIGHT; the mode no longer touches the stars, so the
+// fade and its duration went with it — see setNightly.)
 export const STARS_OPACITY = 0.35;
-const STARS_FADE_MS = 400;
 
 // Exported for tests/camera-tween-damping.test.js: the cancel path below is
 // half of a fix, and a hand-rolled stand-in would not pin it.
@@ -3353,83 +3354,54 @@ export class RenderEngine {
    * no palette number moves. Beside that, the furniture: the two things that
    * outshine the mathematics on a dark palette.
    *
-   * Measured, which is why these two and not others: the starfield composites
-   * to bloom-luma 0.366 and so clears the 0.15 bloom gate at all times, and a
-   * grid line at 0.088 is about 1.5× the body of the darkest NIGHT palette at
-   * rest (0.056). On the shipped bright palettes neither is noticeable.
+   * Measured, which is why the grid and not other furniture: a grid line at
+   * 0.088 is about 1.5× the body of the darkest NIGHT palette at rest (0.056).
+   * On the shipped bright palettes it is not noticeable.
    *
    * The grid is dimmed rather than hidden: it is how a viewer reads which way
    * the surface is bending, and G stays exactly as it was — the mode changes
    * what "on" looks like, not what the button does.
+   *
+   * ── The starfield used to go out here, and no longer does ────────────────
+   *
+   * It was hidden on the same measurement as the grid, and the number stands:
+   * the starfield composites to bloom-luma 0.366, so it clears the 0.15 bloom
+   * gate at every moment of the mode that exists to keep a picture dark. What
+   * the number could not decide is whether a night sky with no stars in it is
+   * the mode working or the mode broken, and that is a question about the look
+   * rather than about luma. The sky keeps its stars.
+   *
+   * So NIGHT no longer touches them at all: one owner is left, and it is
+   * setTransparentBackground, which hides them because an alpha capture must
+   * not carry white points — an output format, not a look. With the second
+   * owner gone the 400 ms cross-fade went with it: it existed because `nightly`
+   * travels in presets and in clip steps, so a clip alternating the mode cut
+   * 1200 white points in and out every few seconds. Nothing alternates them
+   * now.
    */
   setNightly(on) {
     this.nightly = !!on;
-    // Written directly rather than faded: it is a look, not a transition, and
-    // the two things that DO fade across this toggle (the grid and the stars)
-    // fade because they would otherwise blink. A highlight that eases down over
-    // 400 ms would just be a slower version of the same brightness.
+    // Written directly rather than faded: it is a look, not a transition. The
+    // grid still fades because it would otherwise blink; a highlight that eased
+    // down over 400 ms would just be a slower version of the same brightness.
     if (this.U?.uGlare) this.U.uGlare.value = this.nightly ? NIGHT_GLARE : GLARE;
     this.setGridLitOpacity(this.nightly ? NIGHT_GRID_OPACITY : GRID_OPACITY);
-    // Transparent background hides the stars for its own reason and must win:
-    // it is an output format, not a look. One expression, so the two cannot
-    // disagree about who put them back.
-    this._fadeStars(!this.transparentBg && !this.nightly);
   }
 
   /**
-   * Take the starfield where the two owners say it should be, over a fade.
+   * Put the starfield where it belongs right now.
    *
-   * FIX(night): this used to be a bare boolean, and a clip is where that
-   * shows. `nightly` is part of the snapshot (see presets.js), so a clip whose
-   * steps were saved with the mode on and off alternates it every few seconds
-   * — and 1200 white points cutting in and out is the kind of flashing this
-   * app deliberately damps elsewhere (the shader's onset offset is held at
-   * zero for the same reason). The grid already fades across this toggle, so
-   * this is also what makes the two halves of the mode arrive together.
+   * The only owner left, and the reason it is instant: setTransparentBackground
+   * is an output format, not a look, and a fade would leak white points into
+   * the first frames of an alpha capture.
    *
-   * The `visible` bookkeeping is the same shape as fadeGrid's, but NOT the
-   * same hazard, and the difference is worth stating because it looks like it
-   * should be. fadeGrid needed its handback published because setGridLitOpacity
-   * pre-empts it while establishing no `visible` of its own. Every pre-emption
-   * here is _setStarsNow, which writes both fields itself — so an abandoned
-   * fade owes nothing and is simply dropped.
-   */
-  _fadeStars(show) {
-    const s = this.stars;
-    if (!s) return;
-    // Only reset to nothing if there is nothing to see yet. Raising `visible`
-    // up front is what makes a fade-in visible at all (fadeGrid's rule), but
-    // doing it to a starfield that is already up would blink it off and fade
-    // it back in for a call that changed nothing.
-    if (show && !s.visible) { s.material.opacity = 0; s.visible = true; }
-    const from    = s.material.opacity;
-    const target  = show ? STARS_OPACITY : 0;
-    const claimed = s.visible;
-    this.transitions.start('stars-fade', STARS_FADE_MS, p => {
-      s.material.opacity = from + (target - from) * p;
-    }, () => {
-      if (s.visible === claimed) s.visible = show;
-      // Hidden stars rest at full opacity, for the reason the grid does: the
-      // restore branch of setTransparentBackground writes only `visible`, and
-      // a starfield left at 0 would come back invisible.
-      if (!show) s.material.opacity = STARS_OPACITY;
-    });
-  }
-
-  /**
-   * Put the starfield where it belongs right now, with no fade.
-   *
-   * setTransparentBackground's half of the ownership. It stays instant on
-   * purpose: it is an output format, not a look, and a fade would leak white
-   * points into the first frames of an alpha capture. So it displaces a NIGHT
-   * fade rather than racing it: take the slot away, then write both fields.
-   * The cancel is not tidiness — a fade nobody stopped goes on writing opacity
-   * one frame later, over the value set here.
+   * The cross-fade this used to race is gone with NIGHT's claim on the stars
+   * (see setNightly), so there is no longer a transition slot to take away
+   * first — one writer, both fields, nothing to cancel.
    */
   _setStarsNow(show) {
     const s = this.stars;
     if (!s) return;
-    this.transitions.cancel('stars-fade');
     s.visible = show;
     s.material.opacity = STARS_OPACITY;
   }
@@ -3484,9 +3456,9 @@ export class RenderEngine {
       // on→off round trip put a grid into the scene (and into captureStream,
       // the second screen and the recorder) that the user never switched on,
       // leaving the ⊞ GRID button reading the opposite of reality from then
-      // on. Stars need no such snapshot, but they are no longer ours alone
-      // either: NIGHT hides them too (setNightly), so the restore below asks
-      // the mode instead of writing `true`. Two writers, one expression.
+      // on. Stars need no such snapshot and, since NIGHT stopped hiding them,
+      // no question asked of anyone else either: this is their only owner, so
+      // the restore below simply gives them back.
       //
       // FIX(r2): only on the way IN. Enabling twice — the panel button and the
       // output modal drive the same call — used to re-snapshot the `false` we
@@ -3501,7 +3473,7 @@ export class RenderEngine {
       this.scene.background = uiColor(0x050515);
       this.scene.fog        = new THREE.FogExp2(uiColor(0x050515), 0.007);
       this.renderer.setClearColor(uiColor(0x050515), 1);
-      this._setStarsNow(!this.nightly);
+      this._setStarsNow(true);
       // FIX(r2): give the grid back only if nothing claimed it meanwhile. The
       // snapshot is right for a bare round trip and wrong the moment ⊞ GRID,
       // the G fade or a preset writes grid.visible in between — restoring then
