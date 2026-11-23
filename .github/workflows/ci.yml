@@ -13,10 +13,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Pinned to ubuntu-24.04: ubuntu-latest is 26.04 since 11.2026, and Playwright
+# 1.59 cannot install Chromium there.
 jobs:
   test:
     name: Math validation tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 10, not 5. The suite itself needs ~40 s locally and ran in 59 s here on
     # 03.09.2026 — and the very next run on the same commit range was killed at
     # 5m13s with nothing failed, because checkout + setup-node + `npm ci` had
@@ -61,7 +63,7 @@ jobs:
 
   e2e:
     name: Playwright e2e (shard ${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Three shards, one worker each — NOT three workers in one job. The
     # single-worker setting in playwright.config.js is there because a GPU-less
     # runner falls back to SwiftShader and parallel WebGL contexts starve each
@@ -141,7 +143,7 @@ jobs:
   # required check would go missing exactly when it matters.
   e2e-result:
     name: Playwright smoke tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     needs: e2e
     if: always()
@@ -154,7 +156,7 @@ jobs:
 
   build:
     name: Vite build (single-file)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs: test
 

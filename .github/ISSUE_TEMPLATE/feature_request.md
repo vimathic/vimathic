@@ -63,7 +63,7 @@ assignees: ''
 ## Why this fits VIMATHIC
 
 <!-- One paragraph. What about this request specifically benefits a -->
-<!-- mathematical VJ studio with a single-file deployment, as opposed to -->
+<!-- mathematical music visualizer with a single-file deployment, as opposed to -->
 <!-- a general-purpose visualiser? -->
 
 

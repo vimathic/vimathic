@@ -4,13 +4,14 @@
   <img alt="VIMATHIC" src="logo-dark.svg" height="80">
 </picture>
 
-# VIMATHIC™
+# VIMATHIC
 
-**Mathematical VJ Studio 1.0 (Beta)**
+**Mathematical Music Visualizer 1.0 (Beta)**
+*A playground where real mathematics moves to your music.*
 Drop in a track — 192 mathematical formulas come to life on screen, driven by your music in real time.
 
 ![CI](https://github.com/vimathic/vimathic/actions/workflows/ci.yml/badge.svg)
-![License](https://img.shields.io/badge/license-BUSL--1.1-blue)
+![License](https://img.shields.io/badge/license-MIT-blue)
 ![Version](https://img.shields.io/badge/version-1.0--beta-green)
 ![Single File](https://img.shields.io/badge/deploy-single%20HTML-blueviolet)
 > ⚠️ **Read first:** VIMATHIC produces rapid flashing visuals — photosensitive users should read the full disclaimer before using. [Disclaimer →](./DISCLAIMER.md)
@@ -68,7 +69,7 @@ npm run build    # → dist/index.html  (self-contained, no external deps)
 
 ## What It Is
 
-VIMATHIC is a **mathematical VJ studio** that turns your music into reactive geometry.
+VIMATHIC is a **mathematical music visualizer** that turns your music into reactive geometry.
 Not a player with presets, not a winamp visualizer clone: a generator that
 *computes* every frame from canonical mathematics and the spectral content
 of whatever you're listening to.
@@ -113,7 +114,7 @@ That's before:
 
 - 6 audio-reactive sliders in the panel (amplitude, wave intensity, Spectrum Rings, bass/treble sensitivity, bloom), plus two more parameters on the same registry with no slider of their own — colour scheme and auto-rotate speed
 - The MIDI mapping table (any CC → any parameter)
-- 6 post-processing passes in the engine covering 7 effects (Film Grain and Vignette share a pass), two of them reachable from the app — the bloom slider above and the afterglow the *smoke* particle style brings in PTS mode
+- 6 post-processing passes in the engine covering 7 effects (Film Grain and Vignette share a pass), two of them reachable from the app — the bloom slider above and the afterglow that the *smoke* particle style brings in PTS mode and the *Trails* wire style in WIRE mode
 - The **Camera Programmer** (arbitrary JavaScript camera scripts + keyframe timeline)
 - The **GLSL Shader Editor** (live-edit vertex and fragment shaders)
 - The audio itself — every track produces a different spectral fingerprint
@@ -165,7 +166,8 @@ Chromatic Aberration, and the combined Film Grain + Vignette); Bloom and the
 afterglow are three.js's own `UnrealBloomPass` and `AfterimagePass`, used
 unmodified. Two are reachable from the UI: Bloom's strength slider (the pass
 itself always runs) and the afterglow the *smoke* particle style switches on in
-PTS mode. The vignette runs for everyone; the rest
+PTS mode and the *Trails* wire style in WIRE mode. The vignette runs for
+everyone; the rest
 are engine capability with no control wired to them yet.
 
 ### Audio Engine
@@ -242,7 +244,7 @@ plugins/
 documents/             — Markdown documentation (loaded into About modal + indexed by Google)
   index.md  quick-start.md  hotkeys.md  midi.md  camera-programmer.md
   shader-editor.md  recording.md  presets.md  output.md  troubleshooting.md
-  roadmap.md  safety.md  science.md  license.md
+  support.md  safety.md  science.md  license.md
 ```
 
 **Stack:** Three.js (WebGL) · Web Audio API · Web MIDI API · Vite + vite-plugin-singlefile · micromark (build-time)
@@ -276,18 +278,15 @@ Where the author's role was strongest: deciding what the instrument should *be*,
 
 ## Support
 
-VIMATHIC 1.0 is free, ad-free, telemetry-free, and source-available — and becomes fully open-source (GPL v3) in 2030.
-For the roadmap of what comes next and ways to support development,
-see the [Roadmap](./documents/roadmap.md).
+VIMATHIC is free, ad-free, telemetry-free, and open-source under the MIT License.
+For ways to support development, see the [Support](./documents/support.md) page.
 
 ---
 
 ## Documentation
 
 **For users:** the in-app **About modal** (click the **i** icon next to FPS) and the live docs site at
-**[vimathic.com/docs/](https://vimathic.com/docs/)** — quick start, hotkeys, MIDI, shader editor, camera programmer, recording, presets, output, roadmap, troubleshooting.
-
-The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, the planned next step (mobile app), and how community support shapes what comes after.
+**[vimathic.com/docs/](https://vimathic.com/docs/)** — quick start, hotkeys, MIDI, shader editor, camera programmer, recording, presets, output, support, troubleshooting.
 
 **For developers / contributors:**
 
@@ -295,34 +294,26 @@ The [Roadmap](./documents/roadmap.md) lays out what VIMATHIC is today, the plann
 - [SCIENCE.md](./SCIENCE.md) — research behind the neuroscience and why it works
 - [DISCLAIMER.md](./DISCLAIMER.md) — photosensitivity warning, AI-assisted authorship, hardware notes
 - [SECURITY.md](./SECURITY.md) — vulnerability disclosure policy
-- [LICENSE.txt](./LICENSE.txt) — BUSL-1.1 → GPL v3 four years after each version's release (2030-05-18 for 1.0.0-beta); educational exception (Apache 2.0 or GPL v3 at recipient's option)
+- [LICENSE.txt](./LICENSE.txt) — MIT License
+- [NOTICE.md](./NOTICE.md) — what the MIT License does not cover: the bundled intro track and the name; third-party attributions
 
 ---
 
 ## License
 
-**[BUSL-1.1](./LICENSE.txt)** — source-available, non-competing use only.
+**[MIT](./LICENSE.txt)** — use, copy, modify, and distribute VIMATHIC's code for any purpose,
+commercial or not, as long as the copyright and permission notice go with it.
+The license covers the code; it grants no rights to the VIMATHIC name or logo.
 
-**Educational exception:** accredited schools, universities, and non-profit educational
-organizations may use VIMATHIC immediately under either **Apache 2.0** or **GPL v3** terms
-— recipient's choice, free of charge.
-
-**After the Change Date** — four years after a version's release, **2030-05-18** for 1.0.0-beta —
-the codebase converts to **GPL v3**, a copyleft open-source license.
-Any derivative work that gets distributed must remain open-source under GPL v3.
-No company can take this code and lock it behind a paywall.
-
-**Contributions:** by opening a pull request, contributors grant the project rights
-under BUSL-1.1 / GPL v3 and, separately, grant the maintainer rights to use the
-contribution in proprietary commercial derivatives. See
-[CONTRIBUTING.md](./CONTRIBUTING.md) for the full dual-grant terms.
+**Contributions:** by opening a pull request, you license your contribution under the
+MIT License, the same as the rest of the project. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 Uses Three.js, gif.js, micromark, micromark-extension-gfm-table, Vite, and vite-plugin-singlefile — all MIT.
-See [LICENSE.txt](./LICENSE.txt) for full third-party attributions.
+See [NOTICE.md](./NOTICE.md) for full third-party attributions.
 
 ### Bundled audio
 
-VIMATHIC ships with an intro track — *S. Melentyev — Vimathic* (`vimathic-intro.mp3`) — that plays on first load. It's © 2026 S. Melentyev, licensed for personal/non-commercial playback inside the app. Public live use, monetised streaming, sampling, and commercial use require separate permission. See [LICENSE.txt](./LICENSE.txt) for the full bundled-media clause. Click **Clear** in the playlist to skip it and load your own music.
+VIMATHIC ships with an intro track — *S. Melentyev — Vimathic* (`vimathic-intro.mp3`) — that plays on first load. The MIT License does not cover it: it's © 2026 S. Melentyev, licensed for personal/non-commercial playback inside the app. Public live use, monetised streaming, sampling, and commercial use require separate permission. See [NOTICE.md](./NOTICE.md) for the full bundled-media terms. Click **Clear** in the playlist to skip it and load your own music.
 
 ---
 
@@ -335,4 +326,4 @@ Security vulnerabilities or conduct reports: **vimathic.reports@proton.me**
 
 ---
 
-<sub>VIMATHIC™ · v1.0 (Beta) · Mathematical VJ Studio · Built with mathematics, music, and a browser</sub>
+<sub>VIMATHIC · v1.0 (Beta) · Mathematical Music Visualizer · Built with mathematics, music, and a browser</sub>

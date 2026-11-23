@@ -1014,12 +1014,167 @@ export const NIGHT_GRID_OPACITY = 0.04;
 // dark picture.
 export const GLARE       = 0.65;
 export const NIGHT_GLARE = 0.45;
+
+// ── What NIGHT does to the additive wire styles ─────────────────────────────
+// Neon and Hologram add their lines (and the hologram its body) on top of one
+// another, so where lines crowd — the silhouette, a fold, a patch seen edge-on —
+// they climb past the colour the palette declares, and NIGHT's palettes are
+// built to a ceiling (max channel 0.55). No blend-side cap is possible: an
+// additive sum is unbounded by construction. So NIGHT scales what they add, the
+// way it scales the lamps (NIGHT_GLARE) rather than the palette — owner's call,
+// 22.11.2026. The other wire styles only ever dim and need nothing.
+export const NIGHT_WIRE_GLOW = 0.5;
+
+/**
+ * The uWireGain a wire style draws with: the table's gain, scaled by
+ * NIGHT_WIRE_GLOW for an additive style while NIGHT is on. A function of its
+ * two inputs and nothing else, so setWireStyle and setNightly — the two
+ * writers — cannot compute it two ways.
+ * @param {{gain:number, glow:boolean}} style  a RenderEngine.WIRE_STYLES entry
+ * @param {boolean} nightly
+ */
+export function wireGainFor(style, nightly) {
+  return style.glow && nightly ? style.gain * NIGHT_WIRE_GLOW : style.gain;
+}
+
+/**
+ * The material that lays the bloom over the frame — UnrealBloomPass's own
+ * last step, with the alpha made honest.
+ *
+ * ── What was wrong ──────────────────────────────────────────────────────────
+ * three's pass blends its composite onto the frame with a copy shader under
+ * AdditiveBlending, i.e. (SRC_ALPHA, ONE) on colour AND alpha. Its blur writes
+ * alpha 1 everywhere, so the composite's alpha is not the light, it is a
+ * constant — strength × Σ(mip factors), about 2.3 at the shipped strength
+ * 0.55 — and that constant was added to the alpha of EVERY pixel. Over the
+ * opaque stage that is invisible (the alpha is 1 already). Over TRANSPARENT BG,
+ * which is how VIMATHIC goes into OBS over a camera, it made the whole frame
+ * opaque: measured, 100 % of pixels at alpha 1 at the shipped Bloom in every
+ * mode, against 20.5 % (the lines themselves) at Bloom 0. Transparency only
+ * worked below a strength of about 0.3.
+ *
+ * ── What this does ──────────────────────────────────────────────────────────
+ * The colour added is what the stock blend added — the composite's colour
+ * times its own alpha, the stock bloom's strength-squared feel included — only
+ * multiplied in the shader instead of in the blend unit. Measured on one frozen
+ * frame over the opaque stage, the two materials swapped on the live pass: at
+ * most one 8-bit level apart, on 0.016 % of the channel values (the stock
+ * material against itself: 0 apart, so the frame really was frozen). Only the
+ * alpha changes: it gains the light's own brightness, its largest channel,
+ * capped at 1. A glow over transparency therefore covers in proportion to how
+ * bright it is, and where there is no glow nothing is covered — on the same
+ * frame over TRANSPARENT BG, 20.8 % of pixels opaque (the body and its glow)
+ * against 100 %, and the corners at alpha 0. Blended (ONE, ONE) on both,
+ * because the factor is already folded into the colour.
+ *
+ * Exported for tests/bloom-alpha.test.js.
+ *
+ * @param {object} copyUniforms  the pass's own `copyUniforms` (tDiffuse, opacity)
+ * @param {string} vertexShader  the copy shader's vertex program
+ */
+export function makeBloomBlendMaterial(copyUniforms, vertexShader) {
+  return new THREE.ShaderMaterial({
+    uniforms: copyUniforms,
+    vertexShader,
+    fragmentShader: /* glsl */`
+      uniform float opacity;
+      uniform sampler2D tDiffuse;
+      varying vec2 vUv;
+      void main() {
+        vec4 texel = opacity * texture2D( tDiffuse, vUv );
+        // What the stock (SRC_ALPHA, ONE) blend added to the colour.
+        vec3 light = texel.rgb * texel.a;
+        gl_FragColor = vec4( light, clamp( max( light.r, max( light.g, light.b ) ), 0.0, 1.0 ) );
+      }`,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+    blendEquationAlpha: THREE.AddEquation, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+  });
+}
+
+/** About how many rows the 'rows' wire style keeps on a body — see gridEdgeIndex. */
+export const ROWS_TARGET = 64;
+
+/**
+ * The line index for the 'rows' and 'grid' wire styles: the triangle edges of
+ * a body that run along its grid, without the diagonals — or null when the
+ * body is not a grid.
+ *
+ * ── How a grid is recognised without uv ──────────────────────────────────
+ * The catalogue's own surface builders (Möbius, Klein, catenoid …) carry no uv,
+ * so the grid is read off the VERTEX ORDER instead, which every grid builder
+ * here shares with three's own (PlaneGeometry, SphereGeometry, the cylinder's
+ * torso, TorusGeometry): vertices are laid down row by row. Two vertices next
+ * to each other along a row are one apart; along a column, one row length (S)
+ * apart; a quad's diagonal, S − 1 or S + 1. So the edges whose index
+ * difference is 1 are the rows, those at S the columns, and S is simply the
+ * commonest difference above 1 — on a quad grid the columns outnumber the
+ * diagonals by one row's worth.
+ *
+ * A body that is not laid down that way (the polyhedra, which are not even
+ * indexed, the marching-cubes surfaces, the star) does not fall into those four
+ * classes, and the check below turns it away rather than drawing scraps: the
+ * rows and the columns must each be a real share of the edges, and the four
+ * classes together nearly all of them. The caller then keeps the full wire.
+ *
+ * @param {THREE.BufferGeometry} geo
+ * @param {'rows'|'grid'} kind
+ * @returns {Uint16Array|Uint32Array|null} pairs of vertex indices
+ */
+export function gridEdgeIndex(geo, kind) {
+  const index = geo?.index;
+  const n = geo?.attributes?.position?.count ?? 0;
+  if (!index || !n) return null;
+  const a = index.array;
+  const seen = new Set();
+  const edges = [];
+  const hist = new Map();
+  for (let t = 0; t + 2 < a.length; t += 3) {
+    for (let e = 0; e < 3; e++) {
+      const p = a[t + e], q = a[t + (e === 2 ? 0 : e + 1)];
+      if (p === q) continue;
+      const lo = p < q ? p : q, hi = p < q ? q : p;
+      const key = lo * n + hi;            // < 2^53 for any mesh this app builds
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push(lo, hi);
+      const d = hi - lo;
+      hist.set(d, (hist.get(d) ?? 0) + 1);
+    }
+  }
+  const total = edges.length / 2;
+  let S = 0, cS = 0;
+  for (const [d, c] of hist) if (d > 1 && c > cS) { cS = c; S = d; }
+  const c1 = hist.get(1) ?? 0;
+  const covered = c1 + cS + (hist.get(S - 1) ?? 0) + (hist.get(S + 1) ?? 0);
+  if (c1 < total * 0.15 || cS < total * 0.15 || covered < total * 0.9) return null;
+  // Rows are thinned to about ROWS_TARGET. At full density a 161-row plate
+  // seen from the default camera is a solid sheet; the ridgeline look is a few
+  // dozen lines, each readable on its own. Row r is the vertex index over S.
+  const step = kind === 'rows' ? Math.max(1, Math.round(n / S / ROWS_TARGET)) : 1;
+  const out = [];
+  for (let i = 0; i < edges.length; i += 2) {
+    const d = edges[i + 1] - edges[i];
+    if (d === 1 ? Math.floor(edges[i] / S) % step === 0 : (kind === 'grid' && d === S)) {
+      out.push(edges[i], edges[i + 1]);
+    }
+  }
+  return n > 65535 ? new Uint32Array(out) : new Uint16Array(out);
+}
 const GRID_FADE_MS = 400;
 // What a shown starfield rests at — the value it is built with. A constant
-// because the build and setTransparentBackground's restore both write it, and a
-// literal in one of them is a literal that drifts. (Until r6 there was a third
-// path, a 400 ms fade for NIGHT; the mode no longer touches the stars, so the
-// fade and its duration went with it — see setNightly.)
+// because the build and _syncStars() both write it, and a literal in one of
+// them is a literal that drifts. (Until r6 there was a third path, a 400 ms
+// fade for NIGHT; the mode no longer touches the stars, so the fade and its
+// duration went with it — see setNightly.)
+//
+// FIX(stars): this used to name setTransparentBackground's restore as the
+// second writer. The restore no longer writes the stars itself: since the
+// STARS button it hands over to _syncStars(), which is the one place that
+// decides both `visible` and this opacity.
 export const STARS_OPACITY = 0.35;
 
 // Exported for tests/camera-tween-damping.test.js: the cancel path below is
@@ -1572,6 +1727,88 @@ export class RenderEngine {
    */
   static PTS_GLOW_GAIN = 5.74;
 
+  // ── Wire styles (WIRE viz mode) ───────────────────────────────────────
+  // The WIRE counterpart of PARTICLE_STYLES. WIRE is the mesh drawn as
+  // GL_LINES, and a line is one pixel wide wherever this app runs — WebGL caps
+  // lineWidth at 1 on ANGLE (every browser on Windows) and on most desktop
+  // drivers — so a style cannot be "thicker". It is the other things a line
+  // can change:
+  //
+  //   fx    — uWireFx, what a fragment does along the line (_WIRE_BLOCK in
+  //           shaders.js): 0 nothing · 1 additive gain · 2 depth fade
+  //           · 3 scan ring · 4 contour · 5 lattice · 6 electric · 7 aurora.
+  //           1, 5 and 6 put their factor into the ALPHA, which only an
+  //           additive blend turns into light — so they belong to glow styles
+  //           and nowhere else (see "Where each factor goes" in shaders.js)
+  //   gain  — uWireGain, the multiplier the fx block puts on the line
+  //   glow  — additive blending without depth write, so crossing lines SUM
+  //   fill  — what is drawn UNDER the lines, from the same geometry:
+  //             'none'
+  //             'occlude' — depth only: a line behind the body is hidden, so
+  //                         the body reads as a solid
+  //             'holo'    — additive palette body, bright at the silhouette
+  //             'glass'   — a dark, solid palette body lit at the silhouette;
+  //                         it writes depth, so it hides what is behind it
+  //   trail — AfterimagePass damp, 0 = pass stays off (the pass smoke uses)
+  //   lines — WHICH lines are drawn:
+  //             'wire'    — every triangle edge: gpuMat with its wireframe flag
+  //             'rows'    — only the edges along one direction of the body's
+  //                         grid
+  //             'grid'    — both grid directions, without the diagonals
+  //                         (rows and grid draw through a LineSegments proxy
+  //                         over the mesh's buffers; a body that is not a grid
+  //                         keeps the full wire — see gridEdgeIndex)
+  //             'frag'    — lines drawn by the FRAGMENT program on the body,
+  //                         so they have a width: contours (fx 4) and the
+  //                         lattice (fx 5); gpuMat draws triangles for them
+  //
+  // Classic is the identity on every field: fx 0 runs nothing, gain 1, plain
+  // blending, nothing under the lines, no trail, every edge — the wire as it
+  // shipped, so a preset saved before wire styles existed comes back exactly
+  // as it was.
+  //
+  // The two additive gains sit well below 1, for two reasons that multiply.
+  // three's wireframe draws an edge once per triangle that owns it, so an inner
+  // edge is two coincident lines and additive blending sums them; and at the
+  // default zoom the dense bodies put more than one line in most pixels — the
+  // 161-segment plane reads as a solid sheet even in Classic. Tuned on real
+  // frames (torus, plane, the boot shape under Bloom 0.55): Neon at 0.6 burned
+  // the plane to a white slab, at 0.35 the body sits near the plain wire's
+  // brightness and the glow gathers where lines crowd — silhouette, folds, a
+  // patch seen edge-on. Hologram's lines are lower still because its body adds
+  // under them.
+  //
+  // trail 0.94 is longer than smoke's 0.93: the afterimage pass decays per
+  // FRAME and drops a texel below 0.1 outright, and a wake behind a one-pixel
+  // line needs the extra frames to read as a light trail rather than a blur.
+  //
+  // Keys must match the <option value> in index.html #wire-style-sel and the
+  // descriptions in ui/controls.js — the same contract as PARTICLE_STYLES.
+  //
+  // The last three are the owner's "show me, and we drop what does not work"
+  // (22.11.2026): rows is the ridgeline look — one direction of the grid with
+  // everything behind the body hidden; grid is the wire without its triangle
+  // diagonals; contour slices the body at equal heights, and on the plane that
+  // is a topographic map of the formula.
+  static WIRE_STYLES = {
+    classic:  { fx: 0, gain: 1.0,  glow: false, fill: 'none',    trail: 0,    lines: 'wire'    },
+    neon:     { fx: 1, gain: 0.35, glow: true,  fill: 'none',    trail: 0,    lines: 'wire'    },
+    hidden:   { fx: 0, gain: 1.0,  glow: false, fill: 'occlude', trail: 0,    lines: 'wire'    },
+    trails:   { fx: 0, gain: 1.0,  glow: false, fill: 'none',    trail: 0.94, lines: 'wire'    },
+    depth:    { fx: 2, gain: 1.0,  glow: false, fill: 'none',    trail: 0,    lines: 'wire'    },
+    scan:     { fx: 3, gain: 1.0,  glow: false, fill: 'none',    trail: 0,    lines: 'wire'    },
+    hologram: { fx: 1, gain: 0.25, glow: true,  fill: 'holo',    trail: 0,    lines: 'wire'    },
+    rows:     { fx: 0, gain: 1.0,  glow: false, fill: 'occlude', trail: 0,    lines: 'rows'    },
+    grid:     { fx: 0, gain: 1.0,  glow: false, fill: 'none',    trail: 0,    lines: 'grid'    },
+    contour:  { fx: 4, gain: 1.0,  glow: false, fill: 'occlude', trail: 0,    lines: 'frag'    },
+    // The second batch — the owner's "more, and more of a wow" (23.11.2026):
+    lattice:  { fx: 5, gain: 0.6,  glow: true,  fill: 'none',    trail: 0,    lines: 'frag'    },
+    electric: { fx: 6, gain: 0.35, glow: true,  fill: 'none',    trail: 0,    lines: 'wire'    },
+    aurora:   { fx: 7, gain: 1.0,  glow: false, fill: 'none',    trail: 0,    lines: 'wire'    },
+    paint:    { fx: 1, gain: 0.35, glow: true,  fill: 'none',    trail: 0.95, lines: 'wire'    },
+    glass:    { fx: 1, gain: 0.2,  glow: true,  fill: 'glass',   trail: 0,    lines: 'wire'    },
+  };
+
   // ── Composer pipeline order ───────────────────────────────────────────────
   // Property names of every pass, in the order the composer must execute them.
   // The composer renders passes in array order, so this list IS the picture:
@@ -1593,6 +1830,9 @@ export class RenderEngine {
     // PTS is often a place you pass through, and coming back to a look you
     // chose should not cost another trip to the dropdown.
     this.currentParticleStyle = 'squares';
+    // The same courtesy for WIRE: the style is remembered while another mode is
+    // on screen and comes back with WIRE (see setWireStyle).
+    this.currentWireStyle = 'classic';
 
     // ── Three.js core ─────────────────────────────────────────────────────────
     this.scene    = new THREE.Scene();
@@ -1638,6 +1878,12 @@ export class RenderEngine {
 
     // Bloom — on by default, so it is built here.
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.4, 0.15);
+    // The pass's last step, swapped for one that leaves the alpha honest — see
+    // makeBloomBlendMaterial. Same uniforms object, so the pass keeps feeding it
+    // its composite every frame without knowing.
+    const stockBlend = this.bloomPass.blendMaterial;
+    this.bloomPass.blendMaterial = makeBloomBlendMaterial(this.bloomPass.copyUniforms, stockBlend.vertexShader);
+    stockBlend.dispose();
     this.composer.addPass(this.bloomPass);
 
     // ── FX pipeline — the four optional passes are built on first enable ─────
@@ -1717,6 +1963,16 @@ export class RenderEngine {
     const sGeo = new THREE.BufferGeometry(); sGeo.setAttribute('position', new THREE.BufferAttribute(sp,3));
     this.stars = new THREE.Points(sGeo, new THREE.PointsMaterial({ color:0xffffff, size:.05, transparent:true, opacity:STARS_OPACITY }));
     this.scene.add(this.stars);
+    // The operator's wish from the STARS button — whether they want a starfield
+    // at all. Not the same thing as `stars.visible`: TRANSPARENT BG forces that
+    // off for an alpha capture whatever the wish is, so the two have to live in
+    // separate fields or leaving transparent mode cannot tell "hidden because
+    // of the output" from "hidden because the operator said so". _syncStars()
+    // combines this with transparentBg and is the only writer of
+    // stars.visible. Assigned here and in setStarsOn, nowhere else; nothing
+    // calls _syncStars() before the constructor has finished, so the
+    // transparentBg it also reads (set further down) is always defined by then.
+    this.starsOn = true;
 
     this.grid = new THREE.GridHelper(9, 28, uiColor(0x88aaff), uiColor(0x3355aa));
     this.grid.position.y = -1.3; this.grid.material.transparent = true;
@@ -1777,12 +2033,15 @@ export class RenderEngine {
     gpuGeo.rotateX(-Math.PI/2);
     this.U = { uTime:{value:0}, uBass:{value:0}, uMid:{value:0}, uTreble:{value:0},
                uAmp:{value:.7}, uBeat:{value:0}, uWI:{value:1}, uMode:{value:0}, uCM:{value:0}, uMathMode:{value:0},
-               // Four free scalars for the shader editor, and nothing else in
-               // the app. Declared in both editor scaffolds and in neither
-               // built-in program: the built-ins have no use for them, and a
-               // uniform nothing reads is a uniform that drifts. See PARAMS.k0
-               // in params.js for why they exist. Written only by applyParam,
-               // never per frame.
+               // Four free scalars for the shader editor, which the built-in
+               // programs read too. FIX(shader knobs): this said "declared in
+               // neither built-in program: the built-ins have no use for them";
+               // r6 reversed that. The built-in vertex program reads uK0..uK2
+               // (scale, depth, phase on a numbered mode) and the built-in
+               // fragment program reads uK3 (palette) — the rule
+               // tests/shader-knobs.test.js holds is "declared if and only if
+               // read". See PARAMS.k0 in params.js for why they exist. Written
+               // only by applyParam, never per frame.
                uK0:{value:0}, uK1:{value:0}, uK2:{value:0}, uK3:{value:0},
                // Shape morph: 1 = full displacement, 0 = flat (deflate/inflate)
                uMorphProgress:{ value: 1.0 },
@@ -1856,6 +2115,16 @@ export class RenderEngine {
                // no-op every mode but smoke keeps; see PTS_GLOW_GAIN for why the
                // smoke style needs a number above it at all.
                uPtGain:       { value: 1.0 },
+               // Wire style — 0 / 0 / 1.0 is the plain wire and the value every
+               // mode but WIRE keeps. uWireFx and uWireGain are raised only by
+               // setWireStyle while WIRE draws, and lowered on every mode call,
+               // like uPtStyle. uWirePass is non-zero for the length of ONE draw
+               // call — 1 for the hologram's body, 2 for the Glass style's — which
+               // the body mesh's render hooks raise and lower around it (see
+               // _syncWireFill). Between draws it is 0.
+               uWireFx:       { value: 0   },
+               uWirePass:     { value: 0   },
+               uWireGain:     { value: 1.0 },
              };
     this.gpuMat  = new THREE.ShaderMaterial({
       vertexShader: VS, fragmentShader: FS, uniforms: this.U,
@@ -1891,6 +2160,26 @@ export class RenderEngine {
     // lifetime of the engine, re-pointed at whatever the mesh currently carries,
     // because it owns no GPU buffer of its own and so must never be disposed.
     this._ptsGeo = null;
+    // What a wire style draws UNDER the lines (WIRE_STYLES `fill`): a second
+    // mesh over gpuMesh's very geometry, index and all, on stage only while
+    // WIRE shows a style that has one. Built on first use and then kept, with
+    // the occluder's material and the hologram's two render hooks — see
+    // _syncWireFill for why neither kind may compile a program of its own.
+    this.gpuWireFill = null;
+    this._wireOccluderMat = null;
+    this._holoBefore  = null;
+    this._holoAfter   = null;
+    this._glassBefore = null;
+    this._glassAfter  = null;
+    // The 'rows' / 'grid' lines: a LineSegments proxy over the mesh's buffers
+    // with an index of its own (gridEdgeIndex). Its geometry is one object for
+    // the engine's lifetime, re-pointed like the points proxy's and never
+    // disposed; the index is cached per body and kind, so coming back to a
+    // style walks the edges once per shape, not once per click.
+    this.gpuWireLines  = null;
+    this._wireLinesGeo = null;
+    this._wireLinesMat = null;
+    this._wireEdgeCache = new WeakMap();
 
     // The meshes of an imported model, while one is on the stage. Empty means
     // the procedural mesh is what draws. ModelLoader hands them over through
@@ -2372,7 +2661,14 @@ export class RenderEngine {
   applyShaderSource(vs = VS, fs = FS) {
     this.activeVS = vs;
     this.activeFS = fs;
-    for (const m of [this.gpuMat, this.gpuPtsProxy?.material, ...this.modelMeshes.map(x => x.material)]) {
+    // The hidden-line occluder and the rows / grid lines are in the list whether
+    // or not they are on stage: both are kept between visits (see _syncWireFill
+    // and _syncWireLines), and left holding the old program they would bring it
+    // back the next time their style is picked. The hologram's body needs no
+    // entry — it IS gpuMat.
+    for (const m of [this.gpuMat, this.gpuPtsProxy?.material,
+                     this._wireOccluderMat, this._wireLinesMat,
+                     ...this.modelMeshes.map(x => x.material)]) {
       if (!m) continue;
       m.vertexShader   = vs;
       m.fragmentShader = fs;
@@ -2480,6 +2776,9 @@ export class RenderEngine {
     // string fell into the "not points, not surface" gap: surface material
     // with lighting off, no proxy, no button lit, and nothing said why.
     mode = normalizeVizMode(mode);
+    // Read before it is overwritten: whether this call CHANGES the mode decides
+    // what becomes of the afterglow below.
+    const modeChanged = mode !== this.vizMode;
     this.vizMode = mode;
     // FIX(#3): the proxy only BORROWS gpuMesh.geometry, which setShape() owns and
     // disposes; disposing it here kills the live mesh's buffer on every mode
@@ -2493,8 +2792,24 @@ export class RenderEngine {
       this.gpuPtsProxy.material?.dispose();
       this.gpuPtsProxy = null;
     }
+    // The wire style's body (hidden-line occluder, hologram fill) leaves the
+    // stage on every mode call and comes back only through setWireStyle in the
+    // WIRE branch below. Removed, never disposed: it borrows gpuMesh.geometry
+    // exactly as the proxy does, and its materials are kept on purpose — see
+    // _syncWireFill.
+    if (this.gpuWireFill) this.scene.remove(this.gpuWireFill);
+    // And the rows / grid lines, by the same rule. gpuMesh, which they hide
+    // while they draw, is put back on the very next line.
+    if (this.gpuWireLines) this.scene.remove(this.gpuWireLines);
     this.gpuMesh.visible  = this.modelMeshes.length === 0;
     this.gpuMat.wireframe = false;
+    // gpuMat is the SURF material as well, so the blending a wire style puts on
+    // it (Neon, Hologram) comes off with the wireframe flag, on every mode call,
+    // and goes back on only in the WIRE branch. These three are the
+    // ShaderMaterial defaults, i.e. exactly what gpuMat was before wire styles.
+    this.gpuMat.blending    = THREE.NormalBlending;
+    this.gpuMat.transparent = false;
+    this.gpuMat.depthWrite  = true;
     this.U.uPointSize.value = 1.0;
     // Down first, up only in the points branch below — the same discipline
     // uPointSize and uPtStyle keep. Optional because the unit stands build a U
@@ -2503,14 +2818,32 @@ export class RenderEngine {
     // Same discipline, same reason: the gain belongs to the additive style, and
     // a value left standing would multiply a surface that never asked for it.
     if (this.U.uPtGain) this.U.uPtGain.value = 1.0;
+    // The wire style's fragment effect and gain: down here, up only from the
+    // WIRE branch (setWireStyle). Optional for the same reason as uPtBand.
+    if (this.U.uWireFx)   this.U.uWireFx.value   = 0;
+    if (this.U.uWireGain) this.U.uWireGain.value = 1.0;
     if (mode !== 'points') {
-      // Leaving PTS: the particle mask must not run over triangles, and the
-      // smoke style's afterglow belongs to the style, not to the session — a
-      // trail left armed would smear the surface the user just switched to.
-      // The chosen style itself is remembered in currentParticleStyle.
+      // Leaving PTS: the particle mask must not run over triangles. The chosen
+      // style itself is remembered in currentParticleStyle.
       this.U.uPtStyle.value = 0;
-      this.setAfterglow(false);
     }
+    // The afterglow pass belongs to the STYLE of the mode on screen — smoke in
+    // PTS, trails in WIRE — not to the session: a trail left armed would smear
+    // the picture the user just switched to. So it is switched off on every
+    // real change of mode and in SURF, which has no style; the style setter in
+    // the branch below switches it back on if its style trails, and that
+    // off→on is what clears the buffer (setAfterglow). Re-running the mode
+    // that is already on screen — a preset re-applying it, a clip step, a model
+    // leaving the stage — leaves it alone, so a live trail is not blanked and
+    // started over.
+    //
+    // FIX(review W-2): this first read `if (mode === 'surface')`, so PTS with
+    // smoke → WIRE with trails (or back) kept the pass running across the
+    // switch, never cleared it, and the point cloud's wake faded out over the
+    // wire for most of a second — the very ghost the clear-on-enable in
+    // setAfterglow exists to prevent. (And before wire styles it read "anything
+    // but PTS", which is the same rule for a world where only PTS trailed.)
+    if (mode === 'surface' || modeChanged) this.setAfterglow(false);
     // SURF lighting is only meaningful on filled surfaces. Wireframe has no
     // surface area for derivatives to sample; points are single-pixel quads
     // where dFdx/dFdy of vWorldPos is degenerate. Turn lighting off for both.
@@ -2533,6 +2866,11 @@ export class RenderEngine {
 
     if (mode === 'wireframe') {
       this.gpuMat.wireframe = true;
+      // Blending, the body under the lines, the fragment effect and the trail
+      // all come from the style rather than from literals here — and since
+      // everything above took them off, this is also what puts them back after
+      // a mode round-trip.
+      this.setWireStyle(this.currentWireStyle);
     } else if (mode === 'points') {
       this.gpuMesh.visible = false;
       const ptsMat = new THREE.ShaderMaterial({
@@ -2622,6 +2960,266 @@ export class RenderEngine {
     }
 
     this.setAfterglow(style.trail > 0, style.trail || 0.87);
+  }
+
+  // ── Wire style (WIRE viz mode) ────────────────────────────────────────────
+  /**
+   * Apply one of RenderEngine.WIRE_STYLES to the wireframe.
+   *
+   * The WIRE counterpart of setParticleStyle, with the same shape: the fields
+   * that make a look move together in one call, and outside WIRE the style is
+   * only remembered — the wire is not on screen, gpuMat is the SURF material
+   * (or hidden behind the points proxy), and the guard below refuses an
+   * imported model for the reason setParticleStyle gives.
+   *
+   * ── Why gpuMat gets no needsUpdate here ─────────────────────────────────
+   * Blending, transparency and depth write are draw state: three reads them off
+   * the material at every draw. needsUpdate would make it re-key the program,
+   * and the key carries "opaque" (transparent false + normal blending), so Neon
+   * would compile the full 38-mode program a second time under a new key — the
+   * most expensive thing this app asks of a Windows GPU driver (see the note
+   * above the band taps in shaders.js) — for a blend-state flip. The program's
+   * text is identical either way: OPAQUE is a define only three's own material
+   * chunks read.
+   *
+   * @param {string} name — key into RenderEngine.WIRE_STYLES
+   */
+  setWireStyle(name) {
+    const s = RenderEngine.WIRE_STYLES[name];
+    this.currentWireStyle = s ? name : 'classic';
+    const style = s ?? RenderEngine.WIRE_STYLES.classic;
+
+    if (this.vizMode !== 'wireframe' || this.modelMeshes.length) return;
+
+    if (this.U.uWireFx)   this.U.uWireFx.value   = style.fx;
+    if (this.U.uWireGain) this.U.uWireGain.value = wireGainFor(style, this.nightly);
+
+    const m = this.gpuMat;
+    const onBody = style.lines === 'frag';
+    // Contours and the lattice are drawn by the fragment program ON the body,
+    // so gpuMat draws triangles for them; every other style draws its edges.
+    m.wireframe = !onBody;
+    // Additive needs no depth write for the same reason the smoke particle
+    // does: a line that z-rejects the line behind it cannot add to it. Lines
+    // drawn on the body are antialiased in their alpha, so they are blended
+    // (normally, or additively for the lattice) and write no depth: under a
+    // contour the occluder already holds the body's depth — two writes of one
+    // surface would only fight — and the lattice is meant to be seen through.
+    m.transparent = style.glow || onBody;
+    m.blending    = style.glow ? THREE.AdditiveBlending : THREE.NormalBlending;
+    m.depthWrite  = !style.glow && !onBody;
+
+    this._syncWireFill(style.fill);
+    this._syncWireLines(style.lines);
+    // The trail is the style's while the style is live, exactly as smoke's is;
+    // setVizModeGPU and setParticleStyle are its other owners.
+    this.setAfterglow(style.trail > 0, style.trail || 0.87);
+  }
+
+  /**
+   * Put the 'rows' / 'grid' lines on stage in place of gpuMesh's wire, or take
+   * them off and give the wire back.
+   *
+   * The proxy is a THREE.LineSegments over the mesh's own attribute buffers —
+   * shared, not copied, for every reason _pointsGeometry gives — with an index
+   * of its own from gridEdgeIndex. Its material runs the live program with the
+   * same source, side and opacity as gpuMat, so it keys to gpuMat's program and
+   * compiles nothing (the object being a LineSegments does not enter the key).
+   * A body that is not a grid gets null from gridEdgeIndex, and then the style
+   * keeps the full wire rather than drawing scraps.
+   *
+   * @param {'wire'|'rows'|'grid'|'contour'} kind — WIRE_STYLES `lines`
+   */
+  _syncWireLines(kind) {
+    const src = this.gpuMesh.geometry;
+    const index = (kind === 'rows' || kind === 'grid') ? this._wireLineIndex(src, kind) : null;
+    if (!index) {
+      if (this.gpuWireLines) this.scene.remove(this.gpuWireLines);
+      // setWireStyle refuses a model, so the mesh is the one drawing here.
+      this.gpuMesh.visible = true;
+      return;
+    }
+    const g = this._wireLinesGeo ??= new THREE.BufferGeometry();
+    // Re-pointed onto whatever the mesh carries now, exactly as _pointsGeometry
+    // does: a stale attribute left behind would be read against new positions.
+    for (const name of Object.keys(g.attributes)) {
+      if (!src.attributes[name]) g.deleteAttribute(name);
+    }
+    for (const name of Object.keys(src.attributes)) g.setAttribute(name, src.attributes[name]);
+    g.setIndex(index);
+    g.boundingSphere = src.boundingSphere ?? null;
+    g.boundingBox    = src.boundingBox    ?? null;
+    const l = this.gpuWireLines ??= new THREE.LineSegments(g, this._wireLinesMaterial());
+    if (l.parent !== this.scene) this.scene.add(l);
+    this.gpuMesh.visible = false;
+  }
+
+  /**
+   * gridEdgeIndex for this body, as a BufferAttribute, computed once per body
+   * and kind. A WeakMap, so a body setShape has replaced takes its indices with
+   * it; null is cached too, so a non-grid body is not walked on every click.
+   */
+  _wireLineIndex(geo, kind) {
+    let entry = this._wireEdgeCache.get(geo);
+    if (!entry) this._wireEdgeCache.set(geo, entry = {});
+    if (!(kind in entry)) {
+      const arr = gridEdgeIndex(geo, kind);
+      entry[kind] = arr ? new THREE.BufferAttribute(arr, 1) : null;
+    }
+    return entry[kind];
+  }
+
+  /** The rows / grid lines' material — see _syncWireLines. Built once, kept. */
+  _wireLinesMaterial() {
+    if (this._wireLinesMat) return this._wireLinesMat;
+    const m = new THREE.ShaderMaterial({
+      vertexShader: this.activeVS, fragmentShader: this.activeFS,
+      uniforms: this.U,
+      side: THREE.DoubleSide,
+    });
+    // The same fallbacks as every other material on this program.
+    m.defaultAttributeValues.aBaseY = [0];
+    m.defaultAttributeValues.aField = [0];
+    m.defaultAttributeValues.aBand  = [0];
+    m.defaultAttributeValues.aBodyK = [0];
+    m.defaultAttributeValues.aBandU = [-1];
+    this._wireLinesMat = m;
+    return m;
+  }
+
+  /**
+   * Put the body a wire style draws under its lines on stage, or take it off.
+   *
+   * The body is a second mesh over gpuMesh's very geometry — same buffers, same
+   * index, so it lands on exactly the triangles whose edges the wire draws, under
+   * any GPU mode, CPU formula, deform mode or editor shader, with no copy to keep
+   * in step. It owns no buffer and so is never disposed (the points proxy's
+   * rule); setShape re-points it with the mesh. One mesh serves both kinds and
+   * is kept once built; only its material and its two render hooks change.
+   *
+   * ── Neither kind may compile a program ──────────────────────────────────
+   * The full program is the most expensive thing this app asks of a Windows
+   * driver, and a new cache key compiles all of it again. Measured on this
+   * build in Chrome on the integrated GPU: the first version gave the hologram
+   * a material of its own, additive, so "opaque" differed from gpuMat's key —
+   * and the first pick of Hologram froze the picture for 3.2 s while ANGLE
+   * compiled a second copy. So:
+   *
+   *   occlude — a material of its own (it must not paint, and colorWrite is
+   *             per material), with gpuMat's source, side and opacity, so it
+   *             keys to the program gpuMat already runs. See
+   *             _wireOccluderMaterial.
+   *   holo    — gpuMat ITSELF, drawn a second time as triangles. Under the
+   *             hologram style gpuMat is already additive without depth write,
+   *             which is the body's blend too; the two things that differ are
+   *             set around this one draw by the mesh's render hooks: wireframe
+   *             off, and uWirePass 1 (the body branch of _WIRE_BLOCK). Neither
+   *             enters the program key, and uniformsNeedUpdate makes three
+   *             upload the flipped value between two draws of one material.
+   *             Same material, same program: nothing to compile, ever, and an
+   *             editor shader reaches the body because it reaches gpuMat.
+   *   glass   — the occluder's material again, so the same program, with its
+   *             two differences set by render hooks around its one draw: it
+   *             writes colour, and uWirePass is 2 (the Glass body's branch of
+   *             _WIRE_BLOCK, a dark solid in the palette's colour). It keeps the
+   *             occluder's depth write and polygon offset, which is what lets it
+   *             hide the lines behind it while the lines on it stay in front.
+   *
+   * renderOrder −1 puts the body first in whichever list it lands in: the
+   * occluder must be in the depth buffer before the lines are tested against
+   * it, and the grid and the starfield, transparent and therefore drawn later
+   * anyway, are hidden behind the body too — which is what "reads as a solid"
+   * means. The hologram's draws are additive, so their order is cosmetic.
+   *
+   * @param {'none'|'occlude'|'holo'|'glass'} kind — WIRE_STYLES `fill`
+   */
+  _syncWireFill(kind) {
+    if (kind !== 'occlude' && kind !== 'holo' && kind !== 'glass') {
+      if (this.gpuWireFill) this.scene.remove(this.gpuWireFill);
+      return;
+    }
+    const f = this.gpuWireFill ??= new THREE.Mesh(this.gpuMesh.geometry, this.gpuMat);
+    f.renderOrder = -1;
+    f.geometry = this.gpuMesh.geometry;
+    if (kind === 'occlude') {
+      f.material = this._wireOccluderMaterial();
+      // Back to Object3D's own no-op hooks.
+      delete f.onBeforeRender;
+      delete f.onAfterRender;
+    } else if (kind === 'glass') {
+      // The occluder, painting for one draw: colour on and the body branch,
+      // then back to depth-only, so the hidden-line style that shares the
+      // material never sees either flip.
+      f.material = this._wireOccluderMaterial();
+      f.onBeforeRender = this._glassBefore ??= () => {
+        this._wireOccluderMat.colorWrite = true;
+        this.U.uWirePass.value = 2;
+        this._wireOccluderMat.uniformsNeedUpdate = true;
+      };
+      f.onAfterRender = this._glassAfter ??= () => {
+        this._wireOccluderMat.colorWrite = false;
+        this.U.uWirePass.value = 0;
+        this.gpuMat.uniformsNeedUpdate = true;
+      };
+    } else {
+      // The hologram body's hooks: three calls them right around the body's
+      // draw call and reads gpuMat's flags and uniforms in between, so for that
+      // one draw gpuMat is a triangle body on the body branch, and before and
+      // after it, the wire. Built once and kept, so a style flip allocates
+      // nothing.
+      f.material = this.gpuMat;
+      f.onBeforeRender = this._holoBefore ??= () => {
+        this.gpuMat.wireframe = false;
+        this.U.uWirePass.value = 1;
+        this.gpuMat.uniformsNeedUpdate = true;
+      };
+      f.onAfterRender = this._holoAfter ??= () => {
+        this.gpuMat.wireframe = true;
+        this.U.uWirePass.value = 0;
+        // And upload the 0 before the next draw of the same material — the
+        // lines themselves, usually the very next call, which three would
+        // otherwise skip as "same material, uniforms already current".
+        this.gpuMat.uniformsNeedUpdate = true;
+      };
+    }
+    if (f.parent !== this.scene) this.scene.add(f);
+  }
+
+  /**
+   * The hidden-line occluder's material, built on first request and kept.
+   *
+   * It runs the LIVE program (activeVS / activeFS) — the vertex half is what
+   * puts the body where the lines are, so it cannot be anything else — and
+   * applyShaderSource reaches it whether or not it is on stage. Its colour is
+   * never written, so it shares this.U as it is. Transparency, blending and side
+   * are what gpuMat's are under the hidden-line style (the ShaderMaterial
+   * defaults and DoubleSide), so the two key to the same program; colorWrite
+   * and polygonOffset are draw state and do not enter the key.
+   */
+  _wireOccluderMaterial() {
+    if (this._wireOccluderMat) return this._wireOccluderMat;
+    const m = new THREE.ShaderMaterial({
+      vertexShader: this.activeVS, fragmentShader: this.activeFS,
+      uniforms: this.U,
+      side: THREE.DoubleSide,
+    });
+    // The same fallbacks as gpuMat and the points proxy — the geometry always
+    // carries these, so this is the "cannot disagree" rule, not a live path.
+    m.defaultAttributeValues.aBaseY = [0];
+    m.defaultAttributeValues.aField = [0];
+    m.defaultAttributeValues.aBand  = [0];
+    m.defaultAttributeValues.aBodyK = [0];
+    m.defaultAttributeValues.aBandU = [-1];
+    // Depth only, pushed a hair behind the lines. An edge and the triangle it
+    // borders rasterise to the same depth, and without the offset the depth
+    // test would hand the triangle about half of every visible line's pixels.
+    // polygonOffset moves polygons only: the lines stay exactly where they are.
+    m.colorWrite          = false;
+    m.polygonOffset       = true;
+    m.polygonOffsetFactor = 1;
+    m.polygonOffsetUnits  = 1;
+    this._wireOccluderMat = m;
+    return m;
   }
 
   // ── Surface material (studio-env reflections) ─────────────────────────────
@@ -2791,6 +3389,16 @@ export class RenderEngine {
     // onto the new buffers, so the proxy follows the shape without ever holding
     // an index — and without a geometry per swap that could never be disposed.
     if (this.gpuPtsProxy) this.gpuPtsProxy.geometry = this._pointsGeometry(newGeo);
+    // The wire style's body draws gpuMesh's geometry itself, index and all, so
+    // following the shape is one assignment — on stage or not, so a body kept
+    // between visits never points at a geometry the rAF below disposes.
+    if (this.gpuWireFill) this.gpuWireFill.geometry = newGeo;
+    // The rows / grid lines need an index of their own for the new body — and
+    // the new body may not be a grid at all, or may be one where the old was
+    // not — so the sync decides, whenever such a style is live.
+    const wireLines = this.vizMode === 'wireframe' && !this.modelMeshes?.length
+      ? RenderEngine.WIRE_STYLES[this.currentWireStyle]?.lines : null;
+    if (wireLines === 'rows' || wireLines === 'grid') this._syncWireLines(wireLines);
     // Optional-chained because setShape is called by probes and tests against a
     // stub whose U carries only the uniforms that probe is about; a shape swap
     // must not depend on the band layer existing.
@@ -3371,13 +3979,20 @@ export class RenderEngine {
    * the mode working or the mode broken, and that is a question about the look
    * rather than about luma. The sky keeps its stars.
    *
-   * So NIGHT no longer touches them at all: one owner is left, and it is
-   * setTransparentBackground, which hides them because an alpha capture must
-   * not carry white points — an output format, not a look. With the second
-   * owner gone the 400 ms cross-fade went with it: it existed because `nightly`
-   * travels in presets and in clip steps, so a clip alternating the mode cut
-   * 1200 white points in and out every few seconds. Nothing alternates them
-   * now.
+   * So NIGHT no longer touches them at all. With NIGHT's claim gone the 400 ms
+   * cross-fade went with it: it existed because `nightly` travels in presets
+   * and in clip steps, so a clip alternating the mode cut 1200 white points in
+   * and out every few seconds.
+   *
+   * FIX(stars): this used to say "one owner is left, and it is
+   * setTransparentBackground". No longer true: the STARS button is a second
+   * input, and it is the operator's own switch for exactly the question NIGHT
+   * declined to answer. The two inputs are kept apart — `starsOn` (the wish)
+   * and `transparentBg` (the output format) — and _syncStars() is the one
+   * writer that combines them. STARS does travel in presets and clip steps, so
+   * a clip can now alternate the starfield on purpose; it cuts rather than
+   * fades, because the operator chose that per preset, and an alpha capture
+   * must never see a fade's first frames anyway.
    */
   setNightly(on) {
     this.nightly = !!on;
@@ -3386,31 +4001,61 @@ export class RenderEngine {
     // down over 400 ms would just be a slower version of the same brightness.
     if (this.U?.uGlare) this.U.uGlare.value = this.nightly ? NIGHT_GLARE : GLARE;
     this.setGridLitOpacity(this.nightly ? NIGHT_GRID_OPACITY : GRID_OPACITY);
+    // The additive wire styles' gain — NIGHT_WIRE_GLOW. Only while a style is
+    // live in WIRE: everywhere else uWireGain rests at 1 and setWireStyle reads
+    // `nightly` itself on the way back in.
+    if (this.vizMode === 'wireframe' && !this.modelMeshes?.length && this.U?.uWireGain) {
+      const style = RenderEngine.WIRE_STYLES[this.currentWireStyle] ?? RenderEngine.WIRE_STYLES.classic;
+      this.U.uWireGain.value = wireGainFor(style, this.nightly);
+    }
   }
 
   /**
-   * Put the starfield where it belongs right now.
+   * Put the starfield where it belongs right now: shown only if the operator
+   * wants it (STARS, `starsOn`) AND the output is not an alpha capture
+   * (TRANSPARENT BG, `transparentBg`).
    *
-   * The only owner left, and the reason it is instant: setTransparentBackground
-   * is an output format, not a look, and a fade would leak white points into
-   * the first frames of an alpha capture.
+   * FIX(stars): this replaces _setStarsNow(show), which took its answer from
+   * the caller. Its only caller was setTransparentBackground, and the restore
+   * branch passed `true` — correct while nobody else had an opinion about the
+   * stars, and wrong the moment the STARS button existed: leaving transparent
+   * mode would have put back a starfield the operator had switched off, with
+   * the button still reading OFF. Asking both inputs here, every time, makes
+   * that impossible to get wrong from either side: STARS pressed during
+   * TRANSPARENT BG only records the wish, and leaving transparent mode shows
+   * exactly what the wish says.
    *
-   * The cross-fade this used to race is gone with NIGHT's claim on the stars
-   * (see setNightly), so there is no longer a transition slot to take away
-   * first — one writer, both fields, nothing to cancel.
+   * The ONLY writer of stars.visible (tests/stars-toggle.test.js scans src/
+   * for a second one). Read strictly — no `?? true` on starsOn: an engine, or a
+   * test host, that never initialised the field should fail visibly rather
+   * than look right. Instant on purpose: a fade would leak white points into
+   * the first frames of an alpha capture, and the cross-fade NIGHT once needed
+   * is gone with NIGHT's claim on the stars (see setNightly), so there is no
+   * transition slot to take away first.
    */
-  _setStarsNow(show) {
+  _syncStars() {
     const s = this.stars;
     if (!s) return;
-    s.visible = show;
+    s.visible = this.starsOn && !this.transparentBg;
     s.material.opacity = STARS_OPACITY;
   }
 
   /**
-   * Punch the bloom up for a moment — the Y hotkey's flash. It answered to S
+   * The STARS button. Records the operator's wish and lets _syncStars() decide
+   * what that means right now — an alpha capture still wins over it.
+   * @param {boolean} on
+   */
+  setStarsOn(on) {
+    this.starsOn = !!on;
+    this._syncStars();
+  }
+
+  /**
+   * Punch the bloom up for a moment — the P hotkey's flash. It answered to S
    * until 01.09, when S became a hold-and-drag key for Spectrum Rings and lost
-   * its tap-action altogether (see controls.js _fsParams); main.js's 'y' case
-   * is the only caller.
+   * its tap-action altogether (see controls.js _fsParams), and to Y until
+   * 08.10.2026, when Y became Shader Knob 1's drag key the same way; main.js's
+   * 'p' case is the only caller.
    *
    * FIX: this lived in main.js's key handler, which captured the strength on
    * the first press and wrote it back 200 ms later without asking what the
@@ -3456,9 +4101,14 @@ export class RenderEngine {
       // on→off round trip put a grid into the scene (and into captureStream,
       // the second screen and the recorder) that the user never switched on,
       // leaving the ⊞ GRID button reading the opposite of reality from then
-      // on. Stars need no such snapshot and, since NIGHT stopped hiding them,
-      // no question asked of anyone else either: this is their only owner, so
-      // the restore below simply gives them back.
+      // on. Stars need no such snapshot: the operator's wish lives in its own
+      // field (`starsOn`, the STARS button), so there is nothing here to
+      // remember, and _syncStars() below reads it on the way out.
+      //
+      // FIX(stars): this used to say the restore "simply gives them back"
+      // because this method was their only owner. Since the STARS button it is
+      // not, and a restore that wrote `true` would undo a STARS-off on every
+      // trip through transparent mode.
       //
       // FIX(r2): only on the way IN. Enabling twice — the panel button and the
       // output modal drive the same call — used to re-snapshot the `false` we
@@ -3467,13 +4117,13 @@ export class RenderEngine {
       this.scene.background = null;
       this.scene.fog        = null;
       this.renderer.setClearColor(0x000000, 0);
-      this._setStarsNow(false);
+      this._syncStars();             // transparentBg is already true: hidden
       this.grid.visible  = false;
     } else {
       this.scene.background = uiColor(0x050515);
       this.scene.fog        = new THREE.FogExp2(uiColor(0x050515), 0.007);
       this.renderer.setClearColor(uiColor(0x050515), 1);
-      this._setStarsNow(true);
+      this._syncStars();             // back only if STARS still wants them
       // FIX(r2): give the grid back only if nothing claimed it meanwhile. The
       // snapshot is right for a bare round trip and wrong the moment ⊞ GRID,
       // the G fade or a preset writes grid.visible in between — restoring then

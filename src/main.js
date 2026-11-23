@@ -1,7 +1,7 @@
 /**
- * VIMATHIC — Mathematical VJ Studio
- * Copyright (c) 2026 S. Melentyev. All rights reserved.
- * Licensed under BUSL-1.1 — see LICENSE.txt
+ * VIMATHIC — Mathematical Music Visualizer
+ * Copyright (c) 2026 S. Melentyev
+ * Licensed under the MIT License — see LICENSE.txt
  * https://github.com/vimathic/vimathic
  */
 
@@ -359,7 +359,10 @@ window.addEventListener('keydown', e => {
   // pause), not held-state inputs. Without this filter, holding D would
   // cycle through 30+ shapes per second instead of one shape per tap.
   if (e.repeat) return;
-  switch (e.key.toLowerCase()) {
+  // `?? ''`: Chrome dispatches key events with no `key` when an autofill
+  // suggestion is accepted; elementOwnsKey above already copes, this did not
+  // (FIX(review K7)).
+  switch ((e.key ?? '').toLowerCase()) {
     case ' ':          e.preventDefault(); audio.togglePlay(); break;
     case 'arrowleft':  e.preventDefault(); audio.prevTrack();  break;
     case 'arrowright': e.preventDefault(); audio.nextTrack();  break;
@@ -442,17 +445,30 @@ window.addEventListener('keydown', e => {
     // here meant the key handler owned grid.material.opacity while everything
     // else owned grid.visible, and the two drifted apart — see fadeGrid().
     case 'g': render.fadeGrid(!render.grid.visible); break;
-    case 'h': DOM.hotkeyHint.classList.toggle('visible'); break;
+    // I ("info") — the hotkey hint overlay. FIX(knob keys): it answered to H
+    // until 08.10.2026, when H became Shader Knob 3's hold-and-drag key.
+    // FIX(review L2): the boot flash's timers are cancelled first, so the
+    // operator's toggle is the last word — the flash used to hide, 4 s after
+    // load, a hint this key had just shown (controls.js, ui.cancelHintFlash).
+    case 'i': ui.cancelHintFlash?.(); DOM.hotkeyHint.classList.toggle('visible'); break;
 
-    // Note: the letters L K J N B V C A X Z and S are all reserved for hold-
-    // and-drag parameter control (see controls.js _fsParams). They deliberately
-    // have no tap-action — the drag handler owns them. Adding a tap-action
-    // for any of them here would fight the drag arming via preventDefault.
+    // Note: every letter in controls.js _fsParams is reserved for hold-and-drag
+    // parameter control — L K X Z V C A and S for the audio and bloom, B N Y U
+    // H J for the formula slot. They deliberately have no tap-action — the drag
+    // handler owns them. Adding a tap-action for any of them here would fight
+    // the drag arming via preventDefault, and the tap would fire on every arm.
+    // tests/hotkey-map.test.js fails if a letter is both a case here and a key
+    // there.
     //
-    // S joined that list on 01.09 (it drives Spectrum Rings),
-    // which is why the glitch below answers to Y and not to S any more.
+    // S joined that list on 01.09 (it drives Spectrum Rings), which is why the
+    // glitch moved to Y. FIX(knob keys): this note listed "L K J N B V C A X Z
+    // and S". On 08.10.2026 the owner gave every knob in the formula slot a
+    // key: B, N and J changed params and Y, U and H joined — so the glitch
+    // moved again, to P below, and the hint to I above.
 
-    case 'y': {
+    // P ("punch") — the glitch punch. Was Y until 08.10.2026, and S before
+    // 01.09; the body is unchanged.
+    case 'p': {
       e.preventDefault();
       render.triggerGlitch(200);
       // The punch lives on the engine that owns bloom — see punchBloom. The

@@ -15,6 +15,15 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Added
 
+- **🔄 Top Flip** — a Camera Programmer preset: the camera looks straight down
+  at the centre and turns slowly about the axis; every 30 seconds it flips to
+  straight up from below, and back.
+- **STARS** — a button in the FPS row that switches the starfield off and on.
+  Saved in presets, clip steps and the autosave.
+- **Wire Style** — a row for WIRE mode with fifteen styles: Classic, Neon,
+  Hidden line, Trails, Depth fade, Scan, Hologram, Rows, Grid, Contours,
+  Lattice, Electric, Aurora, Light painting and Glass. Saved in presets, clip
+  steps and the autosave; RESET ALL returns to Classic.
 - **Twenty-four bands the body answers with.** The whole spectrum used to
   arrive as three numbers — bass, mid, treble — and every part of the surface
   answered all three the same way. A second 4096-point analyser now folds the
@@ -75,7 +84,7 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   burgundy-into-black and red-into-deep-blue.
   The **☾ NIGHT** button sits beside ⟳ AUTO and does only what a dark room needs:
   it narrows the unattended pickers — AUTO COLOUR and the R/Q bag — to those ten,
-  hides the starfield, and dims the grid. It writes no bloom setting; it writes
+  and dims the grid; the starfield stays. It writes no bloom setting; it writes
   exactly one shader uniform — `uGlare`, the multiplier on the lamps, turned
   down from 0.65 to 0.45 while the mode is on, since the glare work (#66) — and
   one palette number, but only when it has to: turned on over a bright scheme it
@@ -86,8 +95,7 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   the mode changes what
   the app picks for you, not what you can pick. `G` is untouched. Bloom keeps its
   shipped strength, radius and threshold, so the dark can still be lifted with
-  it. It rides in snapshots, because a look captured at 3 a.m. that comes back
-  with the starfield on is not the look that was captured.
+  it. It rides in snapshots.
 - **A guard for the palette catalogue.** Adding a palette touches six places and
   the recipe in the source named three; the three it left out are the ones that
   fail silently — a missing dispatcher branch renders the out-of-range default, a
@@ -158,6 +166,20 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Changed
 
+- **License: MIT** (was BUSL-1.1). The bundled intro track keeps its own
+  terms; they and the third-party attributions are in `NOTICE.md`.
+- **Support** replaces Roadmap in the About window, without the development
+  plan. `docs/roadmap.html` redirects to `docs/support.html`.
+- **Mathematical Music Visualizer** replaces "Mathematical VJ Studio" in the
+  titles, the documentation and both logos; the ™ after the name is gone.
+- **SHADER KNOBS** moved from ADVANCED → SHADER EDITOR to the FORMULA section,
+  where they replace Formula Detail / Phase while a numbered shader is drawing.
+- **Hold-and-drag keys for the formula slot:** `B` Formula Detail, `N` Formula
+  Phase, `Y` `U` `H` `J` Shader Knobs 1–4. The glitch punch moved to `P`, the
+  hint overlay to `I`. A drag key pressed with Ctrl, Alt or Cmd is left to the
+  browser.
+- **Hotkeys work right after a pick or a slider drag.** While a drag key is
+  held, the mouse wheel turns the knob instead of zooming.
 - **The grid, the glare, the S key, and three fields that stopped taking
   text.** The four-harmonic noise under the SHATTER gesture was `abs(sin·cos)`
   — separable and kinked, so its creases ran along X and Z of the undisplaced
@@ -173,7 +195,7 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   `studioEnv` note and in `tests/glare-lamps.test.js`, and they disagree —
   1.67× against 1.58×. One re-measurement retires the wrong one.) `S` now drives
   Spectrum Rings as a hold-and-drag parameter and the glitch punch it used to
-  fire lives on `Y`, because a letter cannot hold both. And 3D SHAPE, SHADER
+  fire lives on `Y`, because a letter cannot hold both (now on `P`). And 3D SHAPE, SHADER
   MODE and COLOR SCHEME are read-only dropdowns again — along with VOLUME
   FORMULA, which the same wrapper takes the moment VOLUME mode reveals it — the
   filter went with the typing, so a phone stops raising its keyboard over a list
@@ -240,6 +262,16 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Fixed
 
+- Live input — microphone, browser tab, system audio — is no longer played
+  back through the speakers.
+- TRANSPARENT BG stays transparent at the default Bloom.
+- CPU formulas no longer recompute the mesh normals outside PTS.
+- A CPU formula slower than a frame is no longer computed twice.
+- Drag keys: releasing one of two held keys hands the drag to the other; a key
+  released under AltGr, Option or Cmd no longer stays armed; `I` right after
+  load is no longer undone by the hint's boot flash.
+- A snapshot naming a formula or shader this build does not ship no longer
+  half-applies.
 - **The points cloud drew every vertex about six times.** The POINTS proxy was
   built over the mesh geometry along with its index, and `THREE.Points` honours
   an index — one built for triangles, which names each vertex once per triangle

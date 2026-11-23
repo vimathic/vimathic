@@ -224,9 +224,14 @@ describe('the notices reach the artifact', () => {
   });
 
   test('renderNotices names the project licence too, so the two are not confused', () => {
+    // VIMATHIC is MIT as well now, so the confusion to head off is a different
+    // one: notices that read as VIMATHIC's own, and an MIT grant that reads as
+    // covering the intro track, which NOTICE.md licenses separately.
     const text = renderNotices([{ dep: 'three', from: 'LICENSE', text: MIT('three.js authors') }]);
-    assert.match(text, /BUSL-1\.1/,
-      'the file lists MIT notices with nothing saying VIMATHIC itself is not MIT');
+    assert.match(text, /VIMATHIC itself is licensed under the MIT License \(see LICENSE\.txt\)/,
+      'the file lists third-party notices with nothing saying where VIMATHIC\'s own licence is');
+    assert.match(text, /intro track is not \(see NOTICE\.md\)/,
+      'the file says VIMATHIC is MIT without saying the bundled track is not');
   });
 });
 

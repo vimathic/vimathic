@@ -128,6 +128,25 @@ describe('migratePreset — always stamps the current version', () => {
     assert.notEqual(out, null, 'unversioned snapshot with real fields was rejected');
     assert.equal(out._version, CURRENT_PRESET_VERSION);
   });
+
+  test('a file carrying only the STARS wish is a preset, and the wish arrives as written', () => {
+    // starsOn is in STATE_FIELDS because applyState reads it; a field applyState
+    // reads but the content check does not know turns valid files away.
+    const out = migratePreset({ starsOn: false });
+    assert.notEqual(out, null, 'a STARS-only file was turned away — starsOn is missing from STATE_FIELDS');
+    assert.equal(out.starsOn, false);
+  });
+
+  test('control — no migration step invents a STARS opinion for an older file', () => {
+    // An optional field needs no version bump: applyState skips it when absent
+    // ("no opinion, no change", like nightly). A migration that wrote
+    // `starsOn: true` into old files would switch the stars back on under an
+    // operator who had turned them off.
+    for (const v of [1, 2, 3, CURRENT_PRESET_VERSION]) {
+      const out = migratePreset({ _version: v, colorIdx: 3 });
+      assert.equal('starsOn' in out, false, `a v${v} file came back with a starsOn it never held`);
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

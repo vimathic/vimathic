@@ -18,6 +18,10 @@
 // The assertion that matters most here is the pairing one. k0 writing uK1 would
 // be invisible in every other test in this repository and in most use — the
 // knob would still move something.
+//
+// The last group, "where they live", pins their move out of ADVANCED → SHADER
+// EDITOR into the panel's formula slot, where they take Formula Detail /
+// Formula Phase's place on a numbered SHADER MODE entry.
 
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,11 +55,11 @@ const code = src => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, 
 const glslValue = (expr, vars) =>
   Function(...Object.keys(vars), `return (${expr});`)(...Object.values(vars));
 
-let PARAMS, MIDI_PARAMS, REQUIRED_IDS, VS, FS, resetParamsToDefault;
+let PARAMS, MIDI_PARAMS, REQUIRED_IDS, VS, FS, SE_PRESETS, resetParamsToDefault;
 before(async () => {
   ({ PARAMS, MIDI_PARAMS, resetParamsToDefault } = await import('../src/params.js'));
   ({ REQUIRED_IDS } = await import('../src/dom.js'));
-  ({ VS, FS } = await import('../src/shaders.js'));
+  ({ VS, FS, SE_PRESETS } = await import('../src/shaders.js'));
 });
 
 /** A ctx with the four uniforms and nothing else the knobs need. */
@@ -328,15 +332,144 @@ describe('a user can find out they exist', () => {
     // The sliders are useless if the operator cannot guess what to write.
     //
     // Anchored on the group's own heading div rather than on the bare words
-    // "SHADER KNOBS": r6 added a note beside the formula knobs that mentioned
-    // this group by name, and being EARLIER in the document it captured
-    // indexOf — the slice then covered a different part of the panel and this
-    // test failed with "the panel group does not name the uniforms it drives",
-    // which was not true of the group and not what had changed.
+    // "SHADER KNOBS", because prose elsewhere in the page names the group (r6's
+    // NO EFFECT note under the formula pair did, and captured indexOf; the
+    // comments above the formula slot do now). So the heading keeps
+    // `class="xp"` as its first and only attribute before the style — moved
+    // verbatim into #shader-knobs-wrap, not given an id or a second class.
     const html = read('index.html');
     const at = html.search(/<div class="xp"[^>]*>\s*SHADER KNOBS/);
     assert.ok(at >= 0, 'the SHADER KNOBS group heading is gone from the panel');
     const section = html.slice(at, at + 900);
     assert.match(section, /uK0/, 'the panel group does not name the uniforms it drives');
+  });
+
+  // FIX(review): at the panel's 268 px the heading's last line broke between
+  // "4" and "palette", so the knob's number sat at the end of one line and its
+  // meaning alone on the next. Each pair is joined by &nbsp; now.
+  /** The heading div's inner HTML, by the same anchor as the test above. */
+  const heading = () => {
+    const html = read('index.html');
+    const m = html.match(/<div class="xp"[^>]*>(\s*SHADER KNOBS[\s\S]*?)<\/div>/);
+    assert.ok(m, 'the SHADER KNOBS group heading is gone from the panel');
+    return m[1];
+  };
+  const PAIRS = [['1', 'scale'], ['2', 'depth'], ['3', 'phase'], ['4', 'palette']];
+  const joined = (n, word) => new RegExp(`>${n}</span>&nbsp;${word}\\b`);
+
+  test('the heading keeps each knob\'s number with its meaning — the four pairs are joined by &nbsp;', () => {
+    const h = heading();
+    for (const [n, word] of PAIRS) {
+      assert.match(h, joined(n, word), `"${n}" and "${word}" can break onto different lines`);
+    }
+  });
+
+  test('control — the same check refuses the heading as it shipped, with plain spaces', () => {
+    const shipped = '<span style="color:#0fc">1</span> scale · <span style="color:#0fc">2</span> depth ·\n' +
+      '        <span style="color:#0fc">3</span> phase · <span style="color:#0fc">4</span> palette';
+    for (const [n, word] of PAIRS) assert.doesNotMatch(shipped, joined(n, word));
+  });
+
+  test('the editor reference strip no longer sends anyone to SHADER EDITOR for them', () => {
+    // The strip is what an author reads with the code in front of them, and it
+    // named the old place. It still has to name the knobs — see the test above
+    // it — and now names where they are.
+    const strip = read('index.html').match(/<div id="se-ref">([\s\S]*?)<\/div>/)[1];
+    assert.doesNotMatch(strip, /under SHADER EDITOR/, '#se-ref still points at the knobs\' old home');
+    assert.match(strip, /FORMULA section/, '#se-ref does not say where the sliders are now');
+    assert.match(strip, /MIDI-mappable/, '#se-ref dropped the MIDI half of the line');
+  });
+
+  test('the shipped bodies do not spell out a route through the panel', () => {
+    // The default vertex body and the 🎛 Knobs example both said "ADVANCED >
+    // SHADER KNOBS", and both went stale the day the sliders moved. They name
+    // the sliders now, not the way to them. (The old wording survives only as
+    // SE_DEFAULT_VERT_LEGACY and its sibling, which exist to recognise it.)
+    const src = read('src/shaders.js');
+    const def = src.match(/SE_DEFAULT_VERT\s*=\s*`([\s\S]*?)`/)?.[1];
+    assert.ok(def, 'SE_DEFAULT_VERT is no longer a template literal');
+    const knobs = SE_PRESETS.find(p => p.id === 'knobs-vert')?.code;
+    assert.ok(knobs, 'the 🎛 Knobs example lost its id');
+    for (const [name, body] of [['the default vertex body', def], ['the 🎛 Knobs example', knobs]]) {
+      assert.doesNotMatch(body, /ADVANCED/, `${name} still names a route through the panel`);
+      assert.match(body, /SHADER KNOBS/, `${name} no longer says where its knobs are at all`);
+    }
+  });
+});
+
+// ── Where they live ──────────────────────────────────────────────────────────
+// They moved out of ADVANCED → SHADER EDITOR into the formula slot under Wave
+// Intensity, where they take Formula Detail / Formula Phase's place on a
+// numbered SHADER MODE entry (and also show over a formula while a custom
+// shader is applied — controls.js _syncFormulaKnobs, driven for real in
+// tests/controls-wiring.test.js). The owner's words for the old home: they are
+// not needed there if they move. These read the markup by offset — the pattern
+// tests/audio-band-shape.test.js uses for Spectrum Rings — because what is at
+// stake is which side of the collapsed ADVANCED <details> they fall on.
+describe('where they live', () => {
+
+  const html = read('index.html');
+  const offset = needle => html.indexOf(needle);
+
+  test('all four sliders and readouts sit in the formula slot, outside ADVANCED', () => {
+    const slot  = offset('id="shader-knobs-wrap"');
+    const pair  = offset('id="formula-knobs-wrap"');
+    const rings = offset('id="band-depth"');
+    const adv   = offset('<details class="adv-section">');
+    assert.ok(slot > 0 && pair > 0 && rings > 0 && adv > 0, 'a landmark this test measures from is gone');
+    for (let n = 0; n < 4; n++) {
+      for (const id of [`shader-k${n}`, `k${n}v`]) {
+        const at = offset(`id="${id}"`);
+        assert.ok(at > pair, `#${id} sits before the formula pair, outside the slot`);
+        assert.ok(at > slot, `#${id} is not inside #shader-knobs-wrap`);
+        assert.ok(at < rings, `#${id} sits after Spectrum Rings, outside the slot`);
+        assert.ok(at < adv, `#${id} is back inside the collapsed ADVANCED block`);
+      }
+    }
+    const heading = html.search(/<div class="xp"[^>]*>\s*SHADER KNOBS/);
+    assert.ok(heading > slot && heading < offset('id="shader-k0"'),
+      'the SHADER KNOBS heading is not at the head of its own block');
+  });
+
+  test('control — the same measure puts the editor button inside ADVANCED', () => {
+    // The opener stayed where it was; if this ever passed the "outside ADVANCED"
+    // check, the offsets above would be measuring nothing.
+    assert.ok(offset('id="btn-open-editor"') > offset('<details class="adv-section">'));
+  });
+
+  test('SHADER EDITOR keeps its button and nothing else of theirs', () => {
+    const at = html.indexOf('<summary>SHADER EDITOR</summary>');
+    assert.ok(at > 0, 'the SHADER EDITOR <details> is gone');
+    const block = html.slice(at, html.indexOf('</details>', at)).replace(/<!--[\s\S]*?-->/g, '');
+    assert.match(block, /id="btn-open-editor"/, 'the editor can no longer be opened from the panel');
+    assert.doesNotMatch(block, /shader-k/, 'a Shader Knob slider is still inside SHADER EDITOR');
+    assert.doesNotMatch(block, /SHADER KNOBS/, 'the SHADER KNOBS heading is still inside SHADER EDITOR');
+  });
+
+  test('the dimmed pair and its NO EFFECT note are gone from the page and the code', () => {
+    // The swap replaced them. A leftover class with no rule, or an id dom.js no
+    // longer resolves, is how a later reader is sent looking for a mechanism
+    // that does not exist. Comments are allowed to remember them; code is not.
+    const stripHtml = s => s.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const stripJs = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
+    const files = [];
+    const walk = dir => {
+      for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(rel);
+        else if (rel.endsWith('.js')) files.push(rel);
+      }
+    };
+    walk('src');
+    // presets.js is read like every other file here — with fs, which a NUL byte
+    // inside it does not trouble (ripgrep would skip the whole file).
+    assert.ok(files.includes('src/ui/presets.js') && files.includes('src/ui/controls.js'),
+      'the walk missed the files that wrote these');
+    for (const [rel, body] of [['index.html', stripHtml(read('index.html'))],
+                               ...files.map(f => [f, stripJs(read(f))])]) {
+      for (const word of ['fk-note', 'fk-inert', 'fkNote']) {
+        assert.ok(!body.includes(word), `${rel} still uses "${word}" outside a comment`);
+      }
+    }
   });
 });

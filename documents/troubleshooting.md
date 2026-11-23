@@ -32,6 +32,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 - Wrong device selected. Open **Audio Source** modal → check the device dropdown is your actual mic.
 - Tab audio only works in Chrome. Firefox and Safari don't support it.
 - System audio requires Windows + Chrome with `getDisplayMedia({ audio: true })` — won't work on macOS.
+- VIMATHIC listens to live input without playing it back: you hear the tab, the player or the room itself, once. With a virtual cable set as the default playback device, turn on **Listen to this device** for the cable in Windows (Sound settings → Recording → the cable → Properties → Listen), or on a Mac play through a **Multi-Output Device** with BlackHole and your speakers.
 
 ### **Crossfade glitch between tracks**
 
@@ -42,8 +43,8 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 ### **Frame rate is low (15–30 fps)**
 
 - Window too large. Resize the browser to ~1280×720; performance scales quadratically with pixel count.
-- Heavy formula on heavy mesh. Switch to a simpler formula (try **Surface → Trigonometry** category) or a smaller shape (Plane, Cylinder).
-- Post-processing stack is heavy, and the panel cannot lighten it. The Bloom slider sets the glow's *strength*, not whether the pass runs: the bright-pass extract, the five blurred mip levels and the composite all execute at 0 exactly as they do at 1.5. Shrink the window instead. (God Rays and Motion Blur exist in the engine but ship disabled, with no panel control — they are never the culprit. The one pass you can switch off is the afterglow the **smoke** particle style borrows in PTS mode: pick *squares* or *dots* and it stops rendering.)
+- Heavy formula on heavy mesh. Switch to a simpler formula (try **Surface → Trigonometry** category) or a smaller shape (Plane, Cylinder). With the math Web Worker running, a heavy CPU formula no longer drags the whole picture down: the surface then moves at the rate the worker manages, while the camera, the GPU and the panel keep the full frame rate.
+- Post-processing stack is heavy, and the panel cannot lighten it. The Bloom slider sets the glow's *strength*, not whether the pass runs: the bright-pass extract, the five blurred mip levels and the composite all execute at 0 exactly as they do at 1.5. Shrink the window instead. (God Rays and Motion Blur exist in the engine but ship disabled, with no panel control — they are never the culprit. The one pass you can switch off is the afterglow that the **smoke** particle style borrows in PTS mode and the **Trails** wire style borrows in WIRE mode: pick another style and it stops rendering. In WIRE, **Hidden line**, **Hologram**, **Rows**, **Contours** and **Glass** also draw the body a second time under the lines, and **Lattice** draws over the whole body — *Classic* drops that too.)
 - Browser tab is in the background. Some browsers throttle backgrounded tabs to 1 fps. Bring the tab to foreground.
 
 ### **Web Worker not active (math runs slow)**
@@ -129,7 +130,7 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
 
 ### **Watermark is in the way**
 
-- The "VIMATHIC" watermark is a deliberate attribution marker. It can't be disabled in the UI. See `LICENSE.txt` for the legal context.
+- The "VIMATHIC" watermark is a deliberate attribution marker. It can't be disabled in the UI.
 
 ## Output
 

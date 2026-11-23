@@ -16,6 +16,14 @@
 // The drag floor is exported from params.js for the same reason. It used to be
 // a literal 0.1 inside controls.js, invisible to anything that wanted to state
 // the range.
+//
+// FIX(knob keys): and the range itself is now one exported helper, dragRange,
+// which controls.js drags by and the first test below reads. This test used to
+// re-type the drag's formula — `[Math.max(p.min, DRAG_FLOOR), p.extendedMax ??
+// p.max]` — which is a second copy of the rule, and the formula slot's six,
+// which take no floor and stop at max, would have needed a third. The table's
+// KEY column is checked against the binding too, both ways, now that six
+// letters have moved.
 
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,24 +34,45 @@ import path from 'node:path';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = rel => readFileSync(path.join(ROOT, rel), 'utf8');
 
+/**
+ * Source with whole-line comments removed — the reading
+ * tests/hotkey-focus-standdown.test.js explains: a comment quoting the old map
+ * must not satisfy a check on the new one.
+ */
+const code = rel => read(rel).split('\n')
+  .filter(line => { const t = line.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); })
+  .join('\n');
+
 // gif.js touches `self` at import time, and src/recorder.js imports it.
 globalThis.self   = globalThis;
 globalThis.window = globalThis;
 
-let PARAMS, DRAG_FLOOR, gifFramePlan;
+let PARAMS, DRAG_FLOOR, dragRange, gifFramePlan;
 before(async () => {
-  ({ PARAMS, DRAG_FLOOR } = await import('../src/params.js'));
-  ({ gifFramePlan }       = await import('../src/recorder.js'));
+  ({ PARAMS, DRAG_FLOOR, dragRange } = await import('../src/params.js'));
+  ({ gifFramePlan }                  = await import('../src/recorder.js'));
 });
 
-// The same key → param map controls.js binds the drag to (_fsParams).
+// Every row of the hold-and-drag table: the label it carries, and the PARAMS id
+// controls.js binds its keys to (_fsParams). Spectrum Rings was missing from
+// this list — its 0.1 – 2.5 was never checked — and the KEY column check below
+// cannot place a row this list does not name. The formula slot's six are
+// labelled with the PARAMS labels themselves.
 const ROWS = [
   ['Bass sensitivity',   'bassSens'],
   ['Treble sensitivity', 'trebleSens'],
   ['Amplitude',          'amp'],
   ['Wave intensity',     'waveInt'],
   ['Bloom',              'bloom'],
+  ['Spectrum Rings',     'bandDepth'],
+  ['Formula Detail',     'detail'],
+  ['Formula Phase',      'phase'],
+  ['Shader Knob 1',      'k0'],
+  ['Shader Knob 2',      'k1'],
+  ['Shader Knob 3',      'k2'],
+  ['Shader Knob 4',      'k3'],
 ];
+const SLOT_IDS = ['detail', 'phase', 'k0', 'k1', 'k2', 'k3'];
 
 /** The "Range" cell of a row in the hold-and-drag table, as two numbers. */
 function documentedRange(md, label) {
@@ -56,22 +85,118 @@ function documentedRange(md, label) {
   return [parseFloat(m[1]), parseFloat(m[2])];
 }
 
+/** controls.js's _fsParams as its source states it: letter → PARAMS id. */
+function boundKeys() {
+  const src = code('src/ui/controls.js');
+  const at  = src.indexOf('const _fsParams = {');
+  assert.ok(at >= 0, 'controls.js no longer declares _fsParams the way this test reads it');
+  const body = src.slice(at, src.indexOf('};', at));
+  return new Map([...body.matchAll(/'([a-z])'\s*:\s*'(\w+)'/g)].map(m => [m[1], m[2]]));
+}
+
+/** The KEY column of the hold-and-drag table: one { key, id } per <kbd>. */
+function documentedKeys(md) {
+  const from = md.indexOf('## Hold-and-drag shortcuts');
+  assert.ok(from >= 0, 'documents/hotkeys.md has no hold-and-drag section');
+  const section = md.slice(from, md.indexOf('\n## ', from + 1));
+  const out = [];
+  for (const line of section.split('\n')) {
+    if (!line.startsWith('| <kbd>')) continue;
+    const cells = line.split('|').map(c => c.trim());
+    const id = ROWS.find(([label]) => label === cells[2])?.[1];
+    assert.ok(id, `a hold-and-drag row this test cannot place — add it to ROWS: ${line}`);
+    for (const m of cells[1].matchAll(/<kbd>([^<]+)<\/kbd>/g)) out.push({ key: m[1].toLowerCase(), id });
+  }
+  return out;
+}
+
+/** Every way the table's keys and the binding disagree, as sentences. */
+function keyColumnDisagreements(documented, bound) {
+  const bad = [];
+  const seen = new Map();
+  for (const { key, id } of documented) {
+    const K = key.toUpperCase();
+    if (seen.has(key)) bad.push(`${K} is listed twice, for ${seen.get(key)} and for ${id}`);
+    seen.set(key, id);
+    if (!bound.has(key)) bad.push(`the table lists ${K} for ${id}, and controls.js binds no ${K}`);
+    else if (bound.get(key) !== id) bad.push(`the table puts ${K} on ${id}; controls.js drags ${bound.get(key)} with it`);
+  }
+  for (const [key, id] of bound) {
+    if (!seen.has(key)) bad.push(`${key.toUpperCase()} drags ${id}, and the table does not list it`);
+  }
+  return bad;
+}
+
 describe('documents/hotkeys.md describes the drag the code performs', () => {
 
   test('every documented range is the range the drag actually covers', () => {
     const md = read('documents/hotkeys.md');
 
     for (const [label, id] of ROWS) {
-      const p = PARAMS[id];
-      const expected = [Math.max(p.min, DRAG_FLOOR), p.extendedMax ?? p.max];
-      assert.deepEqual(documentedRange(md, label), expected,
-        `${label} (${id}): the table and params.js disagree`);
+      const { lo, hi } = dragRange(PARAMS[id]);
+      assert.deepEqual(documentedRange(md, label), [lo, hi],
+        `${label} (${id}): the table and dragRange (params.js) disagree`);
     }
   });
 
   test('control — the table still has a row for every drag key', () => {
     const md = read('documents/hotkeys.md');
     for (const [label] of ROWS) assert.ok(md.includes('| ' + label + ' |'), label);
+  });
+
+  test('control — the shared range is not one answer for every row', () => {
+    // If dragRange ever gave the six the floor, or the audio keys none, the
+    // range test above would still agree with a table rewritten to match.
+    // The two kinds have to come out different, and as documents/hotkeys.md
+    // explains them.
+    for (const id of ['bassSens', 'trebleSens', 'bloom', 'bandDepth']) {
+      assert.equal(dragRange(PARAMS[id]).lo, DRAG_FLOOR, `${id} lost the floor its 0 needs`);
+      assert.equal(dragRange(PARAMS[id]).bounded, false, `${id} is clamped at its comfortable reach`);
+    }
+    for (const id of SLOT_IDS) {
+      const r = dragRange(PARAMS[id]);
+      assert.deepEqual([r.lo, r.hi, r.bounded], [PARAMS[id].min, PARAMS[id].max, true],
+        `${id} does not drag over exactly its own range`);
+    }
+  });
+
+  test('the six formula-slot rows carry the labels the panel shows', () => {
+    // The panel labels are PARAMS' (the MIDI dropdown reads them too), so a
+    // reader can find the row for the slider in front of them.
+    for (const id of SLOT_IDS) {
+      const row = ROWS.find(([, rid]) => rid === id);
+      assert.equal(row[0], PARAMS[id].label, `the ${id} row is labelled differently from its slider`);
+    }
+  });
+
+  test('the KEY column is the key map controls.js binds, both ways', () => {
+    const bad = keyColumnDisagreements(documentedKeys(read('documents/hotkeys.md')), boundKeys());
+    assert.deepEqual(bad, [],
+      'documents/hotkeys.md and _fsParams in src/ui/controls.js disagree about the hold-and-drag keys:\n  ' +
+      bad.join('\n  '));
+  });
+
+  test('control — the comparison sees a stale key, a missing row and a key nobody binds', () => {
+    const md    = read('documents/hotkeys.md');
+    const bound = boundKeys();
+    // The reader reads the real map, not an empty one.
+    assert.equal(bound.get('l'), 'bassSens', 'the _fsParams reader is not reading the map');
+    assert.equal(bound.get('y'), 'k0', 'the _fsParams reader is not reading the map');
+    assert.ok(documentedKeys(md).length >= ROWS.length, 'the KEY column reader found fewer keys than rows');
+
+    // The table as it stood before 08.10.2026, one row of it: J back on Amplitude.
+    const stale = md.replace('| <kbd>V</kbd> | Amplitude |', '| <kbd>J</kbd> / <kbd>V</kbd> | Amplitude |');
+    assert.notEqual(stale, md, 'precondition: the Amplitude row is where this control expects it');
+    assert.ok(keyColumnDisagreements(documentedKeys(stale), bound).some(s => s.includes('J')),
+      'a table that still puts J on Amplitude reads clean');
+
+    const dropped = md.split('\n').filter(l => !l.includes('| Shader Knob 3 |')).join('\n');
+    assert.ok(keyColumnDisagreements(documentedKeys(dropped), bound).some(s => s.startsWith('H drags k2')),
+      'a table without Shader Knob 3 reads clean');
+
+    const stray = md.replace('| <kbd>S</kbd> | Spectrum Rings |', '| <kbd>S</kbd> / <kbd>Q</kbd> | Spectrum Rings |');
+    assert.ok(keyColumnDisagreements(documentedKeys(stray), bound).some(s => s.includes('binds no Q')),
+      'a key the table promises and nothing binds reads clean');
   });
 });
 
@@ -298,17 +423,19 @@ describe('no document states a fixed total for the unit suite', () => {
 });
 
 // ── Attribution ───────────────────────────────────────────────────────────────
-// LICENSE.txt is the notice a redistributor must ship, so it is the list. The
-// in-app License page and the README both dropped micromark-extension-gfm-table
-// from it while DISCLAIMER.md and safety.md carried it.
+// The third-party block is the list. The in-app License page and the README
+// both dropped micromark-extension-gfm-table from it while DISCLAIMER.md and
+// safety.md carried it. The block lived in LICENSE.txt until the move to MIT,
+// which left LICENSE.txt holding the MIT text alone — anything else in it and
+// GitHub no longer recognises the licence — so it is read from NOTICE.md now.
 
-/** Library names from the third-party block of LICENSE.txt. */
+/** Library names from the third-party block of NOTICE.md. */
 function attributedLibraries() {
-  const txt   = read('LICENSE.txt');
+  const txt   = read('NOTICE.md');
   const start = txt.indexOf('VIMATHIC incorporates the following third-party libraries');
-  assert.ok(start > 0, 'LICENSE.txt has no third-party attribution block');
+  assert.ok(start > 0, 'NOTICE.md has no third-party attribution block');
   const block = txt.slice(start, txt.indexOf('makes no copyright claim to these libraries', start));
-  return [...block.matchAll(/^\s+-\s+(\S[^—]*?)\s+—/gm)].map(m => m[1]);
+  return [...block.matchAll(/^\s*-\s+(\S[^—]*?)\s+—/gm)].map(m => m[1]);
 }
 
 describe('every document that lists the third-party libraries lists all of them', () => {
@@ -326,16 +453,16 @@ describe('every document that lists the third-party libraries lists all of them'
       const body = read(rel);
       for (const lib of libs) {
         assert.ok(body.includes(lib),
-          `${rel} omits ${lib}, which LICENSE.txt attributes and a redistributor must carry`);
+          `${rel} omits ${lib}, which NOTICE.md attributes and a redistributor must carry`);
       }
     }
   });
 
   test('control — the binding list is read, not assumed', () => {
     const libs = attributedLibraries();
-    assert.ok(libs.length >= 6, `only ${libs.length} libraries parsed from LICENSE.txt`);
+    assert.ok(libs.length >= 6, `only ${libs.length} libraries parsed from NOTICE.md`);
     assert.ok(libs.includes('micromark-extension-gfm-table'),
-      'the entry that went missing is no longer in LICENSE.txt — re-read the block');
+      'the entry that went missing is no longer in NOTICE.md — re-read the block');
   });
 });
 

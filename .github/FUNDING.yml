@@ -1,16 +1,17 @@
 # These are the official sponsorship channels for VIMATHIC.
 # GitHub will render a "❤ Sponsor" button at the top of the repo page
 # using this file. Anything the GitHub spec doesn't cover — and the
-# non-monetary ways to help — is described in the Roadmap doc instead.
+# non-monetary ways to help — is described in the Support doc instead.
 #
-# FIX(#30): the links below point at documents/roadmap.md — documents/support.md
-# no longer exists (folded into the roadmap, 90ed86c), so pointing there 404s.
+# FIX(#30): these links pointed at documents/support.md after it had been folded
+# into documents/roadmap.md (9ab5458), so they 404ed. The page is support.md
+# again: the roadmap was taken out of it and the page renamed back to Support.
 #
 # Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
 
 ko_fi: smelentyev
 
-# Ko-fi details, the "why support this" context, and the non-monetary ways
-# to help (star, share, report bugs, contribute a MIDI mapping) live here:
-# https://vimathic.com/docs/roadmap.html
-# https://github.com/vimathic/vimathic/blob/main/documents/roadmap.md
+# Ko-fi details and the non-monetary ways to help (star, share, report bugs,
+# contribute a MIDI mapping) live here:
+# https://vimathic.com/docs/support.html
+# https://github.com/vimathic/vimathic/blob/main/documents/support.md

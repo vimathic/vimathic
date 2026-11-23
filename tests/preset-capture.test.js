@@ -249,10 +249,14 @@ function makeDistinctUi() {
   });
   Object.assign(ui.render, {
     currentShape: 'torus', vizMode: 'points', currentParticleStyle: 'sparks',
+    currentWireStyle: 'scan',
     U: { uMode: { value: 27 }, uK0: { value: 0 }, uK1: { value: 0 }, uK2: { value: 0 }, uK3: { value: 0 }, },
     camera: { position: { x: 1.5, y: -2.25, z: 3.75 }, fov: 61.5 },
     orbit:  { target: { x: -0.5, y: 0.25, z: -0.75 } },
     grid:   { visible: false },
+    // STARS off — the non-default value, so a hard-coded `true` cannot pass.
+    starsOn: false,
+    stars:  { visible: false },
     bloomPass: { strength: 1.35 },
   });
   ui.mathViz = { _mode: 'volume', _volumeKey: 'fields/curl' };
@@ -270,12 +274,42 @@ describe('captureState — the scene fields', () => {
     assert.equal(snap.shape, 'torus');
     assert.equal(snap.vizMode, 'points');
     assert.equal(snap.particleStyle, 'sparks');
+    // Recorded in PTS too: the wire style is remembered while WIRE is not on
+    // screen, and a snapshot that dropped it would hand back Classic later.
+    assert.equal(snap.wireStyle, 'scan');
     assert.equal(snap.gpuSelVal, 'm:waves:standingWave',
       'gpuSelVal is what the restore path reads to put the dropdown back');
     assert.equal(snap.gpuMode, 27);
     assert.equal(snap.deformMode, 'volume');
     assert.equal(snap.volumeKey, 'fields/curl');
     assert.equal(snap.gridVisible, false);
+    assert.equal(snap.starsOn, false, 'a preset saved with STARS off must say so');
+  });
+
+  test('STARS records the wish, not the starfield TRANSPARENT BG forced off', () => {
+    // An alpha capture hides the stars whatever STARS says, so stars.visible
+    // reads false for every preset and autosave taken in transparent mode.
+    // Recording that would switch the stars off on the next load — a choice
+    // the operator never made. gridVisible reads the live `visible` and has
+    // exactly that flaw; starsOn must not copy it.
+    const ui = makeDistinctUi();
+    ui.render.starsOn = true;                 // the operator wants stars...
+    ui.render.stars = { visible: false };     // ...and TRANSPARENT BG hides them
+    ui.render.transparentBg = true;
+
+    assert.equal(ui.captureState().starsOn, true,
+      'the snapshot recorded the output format\'s forced value instead of the STARS wish');
+  });
+
+  test('control — STARS switched off inside transparent mode is still recorded as off', () => {
+    // The other half: reading the wish must not turn into "always true while
+    // transparent". An operator who switched STARS off in there meant it.
+    const ui = makeDistinctUi();
+    ui.render.starsOn = false;
+    ui.render.stars = { visible: false };
+    ui.render.transparentBg = true;
+
+    assert.equal(ui.captureState().starsOn, false);
   });
 
   test('control — gpuSelVal falls back to the live mode when the dropdown is empty', () => {
@@ -287,12 +321,16 @@ describe('captureState — the scene fields', () => {
   test('control — a host with no grid or no particle style records the defaults', () => {
     const ui = makeDistinctUi();
     delete ui.render.grid;
+    delete ui.render.starsOn;                 // an engine from before STARS
     ui.render.currentParticleStyle = null;
+    ui.render.currentWireStyle = null;        // an engine from before wire styles
     ui.mathViz = null;
 
     const snap = ui.captureState();
     assert.equal(snap.gridVisible, true);
+    assert.equal(snap.starsOn, true, 'no STARS field means the shipped sky, which has stars');
     assert.equal(snap.particleStyle, 'squares');
+    assert.equal(snap.wireStyle, 'classic', 'no wire style means the wire as it shipped');
     assert.equal(snap.deformMode, 'surface');
     assert.equal(snap.volumeKey, null);
   });

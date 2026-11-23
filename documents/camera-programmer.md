@@ -7,7 +7,7 @@ description: Tiny JavaScript DSL for scripting camera behaviour — audio-reacti
 
 # Camera Programmer
 
-The Camera Programmer lets you write small JavaScript snippets that run every frame to drive the camera. Variables for time, audio bands, beats, and BPM are passed in directly — no API calls needed. Eight built-in presets cover most use cases; the editor exists for when you want something specific.
+The Camera Programmer lets you write small JavaScript snippets that run every frame to drive the camera. Variables for time, audio bands, beats, and BPM are passed in directly — no API calls needed. Nine built-in presets cover most use cases; the editor exists for when you want something specific.
 
 ## Opening it
 
@@ -17,7 +17,7 @@ In the control panel, open **CAMERA PROGRAMMER** (under ADVANCED) and click **PR
 - **PARAMS** — sliders for tunables (rotSpeed, radius, height, gravity, etc.)
 - **TIMELINE** — keyframes that layer extra script code at moments in the track
 
-The preset strip beneath the code editor has eight starter scripts to try. Click one to load it into the editor.
+The preset strip beneath the code editor has nine starter scripts to try. Click one to load it into the editor.
 
 ## How it runs
 
@@ -87,7 +87,7 @@ ctx.cam.y = sin(state.phase) * 3;
 - `clamp(v, lo, hi)` — clamp to range
 - `orbit(radius, speed, height)` — sets `cam.x/y/z` for a circular orbit; advances `rotAngle` internally
 
-## Eight starter presets
+## Nine starter presets
 
 | Preset | What it does |
 |---|---|
@@ -99,6 +99,7 @@ ctx.cam.y = sin(state.phase) * 3;
 | 🎢 Roller | Looping rollercoaster path with bass-driven climbs |
 | 🌑 Dark Matter | Slow spiral orbit with bass pull and gentle vertical wobble |
 | 🌙 Moon | Slow hopping vertical motion — a hop every ~8 s, quickening with bass |
+| 🔄 Top Flip | Straight down from above the centre, slowly turning about the axis; every 30 s a quick flip to straight up from below, 30 s there, and back. Timed in real seconds, so it keeps turning through STOP MOTION — `HOLD`, `FLIP` and `TURN` at the top of the script set the timing, `p.radius` the distance |
 
 Click a preset name to load its code into the editor. You can then click **APPLY** to run it, edit freely, or **RESET** to go back to the default.
 
@@ -133,6 +134,7 @@ This is how you compose a multi-part "shot list" — different camera language f
 - **Start with `lerp`** for smooth transitions: `ctx.fov = lerp(ctx.fov, target, 0.1)` is much more cinematic than direct assignment.
 - **Use `state` for velocities**, not derivatives. Computing `vel = (newPos - oldPos)` per frame creates jitter; integrating `vel += accel * dt` and `pos += vel` is stable.
 - **Don't write `Math.random()` per frame** — it produces visible noise. Sample once into `state` and reuse.
+- **Timing in real seconds:** `time` is the animation clock (0.48 per second, held by STOP MOTION). For a schedule in seconds read the wall clock — `performance.now() / 1000` — and keep the start in `state`, the way **🔄 Top Flip** does.
 - **Beats are short impulses.** `beat * 0.05` gives a frame-long nudge; for smoother reactions use `state.kick = state.kick * 0.85 + beat * 0.5`.
 - **Test your script with auto-rotate ON** — that's when it actually runs. Dragging the camera pauses the script for as long as you hold it; hold the drag past half a second and auto-rotate switches off too, so the script stays stopped until you flip auto-rotate back on. A quick drag or a wheel zoom never gets that far — the script resumes by itself when you let go.
 

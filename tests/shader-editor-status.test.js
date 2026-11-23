@@ -321,3 +321,132 @@ describe('the compile probe hands the renderer back', () => {
       'the probe target was never bound, so the link check never ran');
   });
 });
+
+// ── A third moment the editor speaks: the program on screen changed ─────────
+// The panel's formula slot shows the Shader Knobs over a CPU formula only while
+// a custom shader is applied (controls.js _syncFormulaKnobs), so it has to hear
+// about every change of customVS / customFS. onCompileResult is not that
+// signal: revertToBuiltIn — how a preset with the built-in look undoes a live
+// shader — reports nothing through it, while TIDY and the status line's own
+// blanking timer report through it without changing any program. Hence a
+// callback of its own, and these tests of who fires it.
+describe('the editor says when the live program changes, and only then', () => {
+  let render, se, said;
+  beforeEach(() => {
+    document._els.clear();
+    render = makeRender({ mathMode: 0 });
+    se = new ShaderEditor(render);
+    results(se);
+    said = [];
+    se.cb.onProgramChange = () => said.push({ vs: se.customVS, fs: se.customFS });
+  });
+
+  test('an APPLY that compiles says so, after the new program is recorded', () => {
+    se._tab = 'frag';
+    document.getElementById('se-code').value = 'c = paletteAt(t) * (1.0 + uK1);';
+    assert.equal(se.compileAndApply(), true);
+    se.claimStatus();
+    assert.equal(said.length, 1, 'APPLY changed the program and nobody was told');
+    assert.ok(said[0].fs && said[0].vs, 'it fired before customVS / customFS were written, so a listener reads the old program');
+  });
+
+  test('control — an APPLY that fails says nothing: the previous program is still live', () => {
+    render = makeRender({ mathMode: 0, failWith: { frag: "ERROR: 0:9: 'q' : undeclared identifier" } });
+    se = new ShaderEditor(render);
+    results(se);
+    se.cb.onProgramChange = () => said.push('changed');
+    se._tab = 'frag';
+    document.getElementById('se-code').value = 'c = q;';
+    assert.equal(se.compileAndApply(), false);
+    assert.deepEqual(said, []);
+  });
+
+  test('revertToBuiltIn says so — the path a preset with the built-in look takes', () => {
+    se._tab = 'frag';
+    document.getElementById('se-code').value = 'c = paletteAt(t);';
+    se.compileAndApply();
+    se.claimStatus();
+    said.length = 0;
+
+    se.revertToBuiltIn();
+    assert.equal(said.length, 1, 'a live shader was reverted and nobody was told');
+    assert.equal(said[0].vs, null, 'it fired before the program was cleared');
+    assert.equal(said[0].fs, null);
+  });
+
+  test('and so does the editor\'s RESET, which goes through it', () => {
+    se._tab = 'frag';
+    document.getElementById('se-code').value = 'c = paletteAt(t);';
+    se.compileAndApply();
+    se.claimStatus();
+    said.length = 0;
+
+    se.reset();
+    assert.equal(said.length, 1);
+    assert.equal(said[0].fs, null);
+  });
+
+  test('control — the status line\'s own timer changes no program and says nothing', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    se._tab = 'vert';
+    document.getElementById('se-code').value = 'y = 0.0;';
+    se.compileAndApply();
+    said.length = 0;
+    t.mock.timers.tick(11000);
+    assert.deepEqual(said, [], 'the blanking timer was mistaken for a change of program');
+  });
+});
+
+// ── "The untouched default" includes the default an earlier build shipped ────
+// FIX(shader knobs): the default vertex body's knob comment named "ADVANCED >
+// SHADER KNOBS", and the sliders moved. Rewording it changed the text that
+// `authored` compares against, and sessions and presets store that text. A
+// buffer holding the OLD default would read as a displacement the operator
+// wrote, and every APPLY from the fragment tab over a CPU formula would raise
+// the ten-second amber warning the r6 second pass removed. FIX(review): this
+// used to say a returning operator's buffer would hold it. A restore maps the
+// old text to today's before it compiles (the restore half, in
+// tests/preset-apply.test.js), so what this group guards is the rarer road: the
+// old text in the buffer by hand.
+describe('a default body from an earlier build is still the default', () => {
+  // The default vertex body round 5 shipped (SE_DEFAULT_VERT at main@2a13a70),
+  // verbatim. FIX(review): this group took its "old" body from
+  // SE_DEFAULT_VERT_LEGACY itself, so the constant was only ever compared with
+  // itself — one space changed in it, and the text main shipped stopped being
+  // recognised while every test stayed green. The same literal stands next to
+  // KNOBS_R5 in tests/preset-apply.test.js, which also pins that the legacy
+  // list holds it.
+  const DEFAULT_R5 =
+    '// b bass  t treble  m mid  bt beat  T time  wi waveInt  a amp\n' +
+    '// pos.x pos.z = coords   r = radius   ang = angle\n' +
+    '// uK0..uK3 = four free knobs: ADVANCED > SHADER KNOBS, and MIDI-mappable.\n' +
+    '// Put one where you would have typed a constant and it becomes playable.\n' +
+    'y = sin(r * 8.0 * wi * (1.0 + uK0 * 2.0) + T) * (0.2 + b * 0.8) * a\n' +
+    '  + turb(pos.xz * (2.0 + t) * wi) * b * 0.3\n' +
+    '  + bt * 0.5;';
+
+  const applyFromFragTab = vertBuffer => {
+    document._els.clear();
+    const render = makeRender({ mathMode: 1 });            // a CPU formula is drawing
+    const se = new ShaderEditor(render);
+    const seen = results(se);
+    se._vert = vertBuffer;
+    se._tab = 'frag';
+    document.getElementById('se-code').value = 'c = paletteAt(t);';
+    assert.equal(se.compileAndApply(), true);
+    se.claimStatus();
+    return seen[0];
+  };
+
+  test('the previous wording of the default is not mistaken for the operator\'s code', () => {
+    const r = applyFromFragTab(DEFAULT_R5);
+    assert.equal(r.level, 'ok',
+      'a colour-only APPLY over a formula warned about the old default as if the operator wrote it');
+  });
+
+  test('control — the same body with one edit IS the operator\'s, and is warned about', () => {
+    const theirs = DEFAULT_R5.replace('8.0', '9.0');
+    assert.notEqual(theirs, DEFAULT_R5, 'precondition: the edit took');
+    assert.equal(applyFromFragTab(theirs).level, 'warn');
+  });
+});

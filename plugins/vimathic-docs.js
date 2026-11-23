@@ -509,9 +509,9 @@ function renderLlmsTxt(siteUrl, docs, bundleBytes = null) {
     .join('\n');
   return `# VIMATHIC
 
-> VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 54 colour schemes.
+> VIMATHIC is a browser-based mathematical music visualizer — a playground where real mathematics moves to your music. It runs entirely in a modern web browser with no installation, accounts, or plugins, and turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 54 colour schemes.
 
-VIMATHIC is source-available under Business Source License 1.1 (auto-converting to GPL v3 four years after each version's release — 2030-05-18 for 1.0.0-beta). The entire application is bundled into ${bundleSizePhrase(bundleBytes)} plus three companion files: a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
+VIMATHIC is open-source under the MIT License. The entire application is bundled into ${bundleSizePhrase(bundleBytes)} plus three companion files: a Web Worker for off-main-thread math, the second-screen popup target, and the bundled intro track. It runs offline after first load and makes no telemetry or analytics calls. Recording, MIDI controller support, second-screen output, OBS integration, and a built-in shader editor are all included.
 
 The math accuracy is documented per-formula with tier classification: 122 formulas at IEEE 754 double precision (~10⁻¹⁴), 42 with bounded numerical approximations (10⁻³ to 10⁻⁷), and 28 at visualisation-grade. Reference values cross-checked against mpmath, scipy.special, and NIST DLMF.
 

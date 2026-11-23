@@ -90,6 +90,7 @@ function makeUi() {
     _clearPersisted() {},
     audio: { colorIdx: 16, bassSens: 1.2, trebleSens: 1, amp: 0.7, waveInt: 1 },
     render: { camera, orbit: { target: { x: 0, y: 0, z: 0 } }, grid: { visible: true },
+              starsOn: true,
               currentShape: 'plane', vizMode: 'surface', currentMaterial: 'matte',
               currentParticleStyle: 'squares', bloom: 0.5 },
     camera: { cpParams: { rotSpeed: 0.00002 } },
@@ -153,6 +154,10 @@ describe('the periodic tick sees what the snapshot stores', () => {
     ['the shape (R)',              ui => { ui.render.currentShape = 'torus'; }],
     ['a slider held and dragged',  ui => { ui.audio.amp = 1.4; }],
     ['the material',               ui => { ui.render.currentMaterial = 'glass'; }],
+    // The STARS wish — what captureState writes, not stars.visible. A click on
+    // the button schedules through the panel listener anyway; this row is for
+    // a path that reaches the engine without one.
+    ['the starfield (STARS)',      ui => { ui.render.starsOn = false; }],
   ]) {
     test(`${what} schedules a save`, () => {
       assert.ok(scheduled(mutate) > 0, `${what} moved nothing the fingerprint watches`);
@@ -160,6 +165,6 @@ describe('the periodic tick sees what the snapshot stores', () => {
   }
 
   test('control — with nothing changing, nothing is written', () => {
-    assert.equal(scheduled(() => {}), 0, 'the tick writes on its own, so the six above prove nothing');
+    assert.equal(scheduled(() => {}), 0, 'the tick writes on its own, so the seven above prove nothing');
   });
 });

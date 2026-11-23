@@ -1,6 +1,6 @@
 ## SECURITY.md
 
-# Security Policy — VIMATHIC™ 1.0 (Beta)
+# Security Policy — VIMATHIC 1.0 (Beta)
 
 ## Reporting a Vulnerability
 
@@ -13,7 +13,7 @@ into four self-contained files: `index.html`, `math-worker-*.js`,
 
 The build ships these alongside a static copy of the documentation
 (`docs/*.html`) and inert site assets — icons, `sitemap.xml`, `llms.txt`,
-`robots.txt`, and the roadmap hero image the About modal loads — none of
+`robots.txt`, and the Support page hero image the About modal loads — none of
 which carry executable logic.
 
 That keeps the attack surface small but does not eliminate it. If you find:

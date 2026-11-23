@@ -12,8 +12,10 @@ import { clampFov } from '../camera.js';
 import { selectShape } from '../shapes.js';
 import { normalizeVizMode, DEFAULT_VIZ_MODE } from '../viz-mode.js';
 // The editor's example gallery — read by _seedFactoryPresets so the factory
-// preset's GLSL has one home and not two.
-import { SE_PRESETS } from '../shaders.js';
+// preset's GLSL has one home and not two. currentShippedBody maps a body an
+// earlier build shipped to today's wording (see the shader branch of
+// _applyStateFields).
+import { SE_PRESETS, currentShippedBody } from '../shaders.js';
 
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
@@ -39,8 +41,8 @@ const PARAM_FIELDS = ['bassSens', 'trebleSens', 'amp', 'waveInt', 'bloom', 'colo
 // list: gpuMode is written but never read back (the mode is restored from
 // gpuSelVal), so a file carrying only gpuMode tells us nothing we can apply.
 const STATE_FIELDS = [
-  'shape', 'vizMode', 'material', 'particleStyle', 'gpuSelVal', 'deformMode',
-  'volumeKey', 'gridVisible', 'nightly', 'camera', 'camScript', 'shader',
+  'shape', 'vizMode', 'material', 'particleStyle', 'wireStyle', 'gpuSelVal', 'deformMode',
+  'volumeKey', 'gridVisible', 'starsOn', 'nightly', 'camera', 'camScript', 'shader',
   // Where the bands land is part of what a preset looks like: the same depth
   // with the rings layout and with the formula's own layout are two different
   // pictures. Without this a preset inherited whichever way the checkbox
@@ -253,25 +255,41 @@ export const PresetMixin = {
       // 'squares' covers both a build without particle styles and a snapshot
       // taken before the field existed — the two are the same look.
       particleStyle: r.currentParticleStyle ?? 'squares',
+      // Same reasoning, same kind of default: 'classic' is the wire as it
+      // shipped before styles, so an old snapshot and a missing field agree.
+      wireStyle:   r.currentWireStyle ?? 'classic',
       gpuSelVal:   DOM.gpuSel.value || String(r.U.uMode.value),  // e.g. "3" or "m:waves:standingWave"
       gpuMode:     r.U.uMode.value,                              // GPU integer mode (when not CPU)
       deformMode:  mv?._mode      ?? 'surface',
       volumeKey:   mv?._volumeKey ?? null,
       gridVisible: r.grid?.visible ?? true,
+      // STARS — the operator's wish (r.starsOn), never stars.visible.
+      // TRANSPARENT BG forces `visible` off for an alpha capture, so reading it
+      // would record "no stars" for every preset and every autosave taken in
+      // transparent mode — a choice nobody made. (gridVisible just above reads
+      // the live `visible` and has exactly that flaw; it is left alone here.)
+      // `?? true` only for a host with no engine field, where the shipped sky
+      // is the honest answer.
+      starsOn:     r.starsOn ?? true,
       // NIGHT is part of the look, not a session preference: a snapshot taken
-      // at 3 a.m. that comes back with the starfield on and the panel glowing
-      // is not the snapshot that was taken.
+      // at 3 a.m. that comes back with the panel glowing and the surface's
+      // glare at full strength is not the snapshot that was taken.
+      // (FIX(stars): this used to say "with the starfield on"; NIGHT has not
+      // touched the stars since r6 — they are `starsOn`'s business, the field
+      // above.)
       //
       // FIX(night): this used to promise that older files "have no such key
       // and read as false, which is what they were". They do not. The apply
       // side is guarded by `s.nightly != null` (_applyStateFields), so a file
       // written before this key existed leaves the mode exactly as it found
-      // it — load one while NIGHT is on and its bright colorIdx arrives under
-      // a starless sky. That is the same "no opinion, no change" policy the
+      // it — load one while NIGHT is on and its bright colorIdx arrives inside
+      // the mode. That is the same "no opinion, no change" policy the
       // s.shader branch keeps a few lines further down, and it is the one
       // corrected here rather than the code: a preset that never recorded the
       // mode has nothing to say about it, and guessing false for it would be
-      // an opinion the file does not hold.
+      // an opinion the file does not hold. `starsOn` above follows the same
+      // policy, for the same reason: a file from before STARS existed leaves
+      // the starfield as the operator has it.
       nightly:     r.nightly ?? false,
       bandCharacter: this.audio?.bandCharacter !== false,
 
@@ -405,6 +423,10 @@ export const PresetMixin = {
       r.grid.visible = s.gridVisible;
       DOM.btnToggleGrid.style.opacity = s.gridVisible ? '1' : '0.45';
     }
+    // Through the panel's one painter (controls.js ui.setStars), so the button
+    // follows the engine. No opinion, no change, as with nightly below: an
+    // optional field, so no version bump (see CURRENT_PRESET_VERSION).
+    if (s.starsOn != null) this.setStars?.(!!s.starsOn);
     // keepPalette: the snapshot's own colorIdx was applied above, through
     // PARAM_FIELDS. Without it NIGHT would drag a bright-palette snapshot to
     // scheme 44 on restore — the switch-on nudge is for a hand on the button,
@@ -437,6 +459,12 @@ export const PresetMixin = {
     // not drawn outside PTS, so it needs no mode rule of its own. 'squares' is
     // the pre-field default.
     const ptsKey = s.particleStyle ?? 'squares';
+    // And the wire style, the same way: no mode rule of its own, and 'classic'
+    // is the pre-field look. Unlike the particle style it is usually ON SCREEN
+    // when this runs (WIRE is the boot mode), so the default is not academic: a
+    // snapshot from before the field resolves to the plain wire it was saved
+    // under, not to whatever style the operator happens to have up.
+    const wireKey = s.wireStyle ?? 'classic';
     // The viz mode that will be in effect once this snapshot is applied: the
     // snapshot's own, or — when it carries none — whatever the engine already
     // shows. The material rule keys off the mode the user will be looking at,
@@ -459,7 +487,7 @@ export const PresetMixin = {
     // call: a build without the helper still gets the engine change, and the
     // fallback below still applies the material.
     if (this.syncVizModeUI) {
-      this.syncVizModeUI(vizMode, matKey, ptsKey);
+      this.syncVizModeUI(vizMode, matKey, ptsKey, wireKey);
       // The helper's material half is a no-op when the dropdown is absent.
       matHandled = !!matSel;
     } else {
@@ -467,6 +495,8 @@ export const PresetMixin = {
       // event, so push it straight at the engine. Harmless in any mode — the
       // engine files it away and applies it when PTS next draws.
       r.setParticleStyle?.(ptsKey);
+      // The wire style likewise — applied at once in WIRE, filed away elsewhere.
+      r.setWireStyle?.(wireKey);
     }
 
     if (!matHandled) {
@@ -511,23 +541,99 @@ export const PresetMixin = {
       onFlatActions.push(() => r.setShape(shape));
     }
 
-    if (s.gpuSelVal != null) {
-      DOM.gpuSel.value = s.gpuSelVal;
+    // FIX(knobs-K1): '' is no selection, the same as a missing field. It used
+    // to pass `!= null`, so a hand-edited `gpuSelVal: ''` blanked the select,
+    // took the GPU branch below and ran setGPUModeAnimated(+'' = 0) — shader 1
+    // drew — while the formula slot, which reads '' as a CPU formula, showed
+    // Formula Detail / Phase and hid the knobs that were live. One of the two
+    // rules had to give. A blank value carries no information: captureState
+    // never writes one (it falls back to uMode), the select ships no ''
+    // option, and nothing — no test, document or comment — asked for '' to
+    // mean shader 1. So '' is skipped here, and the select and the slot stay
+    // where they were.
+    //
+    // FIX(review R1/R2/R3): that comment ended "…and counts as no selection in
+    // cpuPath too: the select, the slot and the engine stay where they were,
+    // and all three still agree". Three inputs broke the last clause:
+    //   • a non-string value — a hand-edited `"gpuSelVal": 5` — wrote the
+    //     select and told the slot, and only then threw on `.startsWith`, so
+    //     applyState returned false over a half-moved panel. The value is
+    //     normalised first now, before anything is touched: a string is the
+    //     selection, an integer number is that number as a string (5 means
+    //     shader 5), and anything else is no selection;
+    //   • an `m:` value this build does not ship (a newer build's formula, a
+    //     renamed key) blanked the select and put the pair up while nothing
+    //     moved the engine — the flat-frame guard below compares the blank
+    //     select with the value and never arms the formula — so the previous
+    //     shader drew under a slot describing a formula, and the keys followed
+    //     the slot. The select is asked whether the value took; if not, it
+    //     gets its previous value back and the snapshot counts as carrying no
+    //     selection, so the engine, the select and the slot stay put together.
+    //     An unshipped NUMBERED value is a different case and keeps its
+    //     b11cb4e handling: the engine is told the number and draws it, and the
+    //     slot is told the value although the select blanks;
+    //   • no selection read as "CPU" in cpuPath, so '' or a missing field
+    //     beside deformMode 'volume' armed VOLUME over a numbered shader that
+    //     kept drawing (setVolumeFormula sets uMathMode = 1, which switches the
+    //     shader's displacement off). With no selection, cpuPath now describes
+    //     the selection already in effect — see below.
+    //
+    // FIX(review, fixer note on acc6a4c): a string was taken as a selection
+    // whatever it said, so 'abc' (or '3.5', or ' 7') went down the GPU branch
+    // as setGPUModeAnimated(+'abc' = NaN) and the slot was told 'abc' — a
+    // shader number the engine cannot draw and a slot rule fed a value no
+    // option has. #gpu-sel holds two shapes of value and nothing else: `m:…`
+    // for a formula, and a shader's number in decimal digits. A string of
+    // neither shape now counts as no selection, like '' — and so does a
+    // negative number, which names no shader. A whole number the build does
+    // not ship ('41') still has the right shape and keeps its b11cb4e
+    // handling above.
+    const rawSel = s.gpuSelVal;
+    const asText = typeof rawSel === 'string' ? rawSel
+                 : Number.isInteger(rawSel)   ? String(rawSel)
+                 : '';
+    const sel = (asText.startsWith('m:') || /^\d+$/.test(asText)) ? asText : '';
+    let hasSel = sel !== '';
+    if (hasSel) {
+      const prevSel = DOM.gpuSel.value;
+      DOM.gpuSel.value = sel;
+      if (sel.startsWith('m:') && DOM.gpuSel.value !== sel) {
+        DOM.gpuSel.value = prevSel;
+        hasSel = false;
+      }
+    }
+    if (hasSel) {
+      // The formula slot follows the selection: Formula Detail / Phase for an
+      // `m:` value, the Shader Knobs for a numbered one (controls.js,
+      // _syncFormulaKnobs) — through the panel's adapter, the same contract as
+      // syncDeformUI below. The snapshot's own value (`sel`, normalised above)
+      // rather than the select read back, because that is what the engine
+      // branch below keys on, and an unshipped number blanks the select while
+      // the engine draws it (an unshipped `m:` value no longer gets this far —
+      // see FIX(review R1/R2/R3) above). FIX(shader knobs): nothing here
+      // told the slot, so a preset, an import, a clip step or the boot restore
+      // onto a shader left it describing the previous engine. A snapshot that
+      // also carries a custom shader restores it at the end of this method,
+      // AFTER this line; the editor's onProgramChange re-syncs the slot then,
+      // and that is what settles it — for the value handed over here, which
+      // the slot remembers, not for a blanked select read back (FIX(knobs-K1)
+      // in controls.js).
+      this.syncFormulaKnobsUI?.(sel);
 
-      if (s.gpuSelVal.startsWith('m:')) {
-        const [, colId, key] = s.gpuSelVal.split(':');
+      if (sel.startsWith('m:')) {
+        const [, colId, key] = sel.split(':');
         // FIX(r2): same live check as ui.applyMathFormula. The flat frame is up
         // to 400 ms away, and a shader picked in that window — by hand or by
         // the next clip step — owns the surface; arming this formula then sets
         // uMathMode = 1 and the shader draws nothing at all.
         onFlatActions.push(() => {
-          if (mv && DOM.gpuSel.value === s.gpuSelVal) mv.setFormula(colId, key);
+          if (mv && DOM.gpuSel.value === sel) mv.setFormula(colId, key);
         });
       } else {
         // GPU shader mode — has its own crossfade (uModeBlend), doesn't need
         // to be inside the morph. Schedule it but NOT inside onFlat.
         if (mv) mv.deactivate();
-        r.setGPUModeAnimated(+s.gpuSelVal);
+        r.setGPUModeAnimated(+sel);
       }
     }
 
@@ -544,7 +650,24 @@ export const PresetMixin = {
     // formula the user picks auto-exits into COLLAPSE while the panel reads
     // SURFACE. 'collapse' needs no special case: unlike setVolumeFormula it
     // never touches uMathMode, so it round-trips over a GPU shader untouched.
-    const cpuPath = s.gpuSelVal == null || s.gpuSelVal.startsWith('m:');
+    //
+    // FIX(review R2): a snapshot with no selection ('' or a missing field, or
+    // an `m:` value the select refused above) used to count as cpuPath
+    // outright, so its deformMode 'volume' was restored over whatever numbered
+    // shader was drawing. With no selection of its own it leaves the
+    // selection in effect, so cpuPath describes THAT one, asked of the
+    // formula slot's memory through the panel's adapter (controls.js,
+    // ui.formulaOwnsSurface — the rule the VOLUME button refuses by and the
+    // pair bank is shown by). The slot remembers a value the select cannot
+    // hold ('41'), which reading the select back here would lose. A host
+    // without the adapter falls back to the select's own rule: an `m:` value,
+    // or none.
+    const liveIsCpu = () => {
+      if (this.formulaOwnsSurface) return !!this.formulaOwnsSurface();
+      const v = DOM.gpuSel.value;
+      return !v || v.startsWith('m:');
+    };
+    const cpuPath = hasSel ? sel.startsWith('m:') : liveIsCpu();
     const deformTarget = (!cpuPath && s.deformMode === 'volume') ? 'surface' : s.deformMode;
 
     // What #gpu-sel holds now that this snapshot has written its own value into
@@ -748,13 +871,22 @@ export const PresetMixin = {
       // captureState writes `se._appliedVert ?? se._vert`. Comparing the wrong
       // pair would make this guard one that can never fire, which is worse than
       // no guard, because it reads as a fix.
+      //
+      // FIX(shader knobs): a body an earlier build shipped under different
+      // wording comes back as today's text (shaders.js, currentShippedBody —
+      // the default vertex body and the 🎛 Knobs example used to name
+      // "ADVANCED > SHADER KNOBS", where the sliders no longer are). Mapped
+      // BEFORE the comparison, so a live program applied from today's default
+      // still counts as the one this snapshot carries.
+      const vert = currentShippedBody(s.shader.vert);
+      const frag = currentShippedBody(s.shader.frag);
       const live = !!se?.customVS;
       const alreadyLive = live
-        && (se._appliedVert ?? se._vert) === s.shader.vert
-        && (se._appliedFrag ?? se._frag) === s.shader.frag;
+        && (se._appliedVert ?? se._vert) === vert
+        && (se._appliedFrag ?? se._frag) === frag;
       if (!alreadyLive) {
-        se._vert = s.shader.vert;
-        se._frag = s.shader.frag;
+        se._vert = vert;
+        se._frag = frag;
         // Re-apply the custom shader via the compileAndApply path.
         if (DOM.seCode) DOM.seCode.value = se._tab === 'vert' ? se._vert : se._frag;
         // FIX: compileAndApply writes the driver's message into #se-error —
@@ -787,7 +919,10 @@ export const PresetMixin = {
       // applied yet, and a clip step arriving every few seconds must not
       // overwrite what they are typing. revertToBuiltIn() for the same reason —
       // reset() would stomp the editor text back to the default snippets and
-      // re-fire onOpen mid-clip.
+      // re-fire onOpen mid-clip. It does announce the change of program
+      // (onProgramChange), and that is what takes the Shader Knobs back off
+      // the formula slot when this snapshot is a CPU formula — the slot was
+      // synced above while the custom program was still live.
       se.revertToBuiltIn();
     }
   },
@@ -967,7 +1102,12 @@ export const PresetMixin = {
           safe(() => mv?._mode), safe(() => mv?._volumeKey),
           safe(() => r.currentShape), safe(() => r.vizMode),
           safe(() => r.currentMaterial), safe(() => r.currentParticleStyle),
+          safe(() => r.currentWireStyle),
           safe(() => DOM.gpuSel?.value), safe(() => r.grid?.visible),
+          // The STARS wish, which is what captureState writes — not
+          // stars.visible. A click on the button already schedules a save
+          // through the panel listener; this covers any path from outside it.
+          safe(() => r.starsOn),
           safe(() => cp.x.toFixed(2)), safe(() => cp.y.toFixed(2)), safe(() => cp.z.toFixed(2)),
           safe(() => ct ? `${ct.x.toFixed(2)},${ct.y.toFixed(2)},${ct.z.toFixed(2)}` : ''),
           // FIX: the comment below claims "It covers what the snapshot covers
@@ -1261,11 +1401,12 @@ export const PresetMixin = {
    *    exists for, and a shipped example must not walk into it.
    * 3. It carries every field that would otherwise be DEFAULTED, and omits only
    *    the ones that are genuinely skipped when absent. That distinction is not
-   *    cosmetic and the first version of this got it wrong: `material` and
-   *    `particleStyle` are read as `s.material ?? 'matte'` and
-   *    `s.particleStyle ?? 'squares'` (_applyStateFields), so leaving them out
-   *    does not mean "leave the operator's finish alone" — it means "silently
-   *    set it to Matte and squares". `deformMode` is worse: with a numeric
+   *    cosmetic and the first version of this got it wrong: `material`,
+   *    `particleStyle` and `wireStyle` are read as `s.material ?? 'matte'`,
+   *    `s.particleStyle ?? 'squares'` and `s.wireStyle ?? 'classic'`
+   *    (_applyStateFields), so leaving them out does not mean "leave the
+   *    operator's finish alone" — it means "silently set it to Matte, squares
+   *    and the plain wire". `deformMode` is worse: with a numeric
    *    gpuSelVal and no deform field, no branch writes the mode, and the note
    *    above that code says what follows — mathViz._mode stays stuck at 'volume'
    *    while the panel and the engine disagree.
@@ -1304,11 +1445,13 @@ export const PresetMixin = {
         // is that it is not a formula, so uMathMode is 0 and `y` survives.
         gpuSelVal: '1',
         gpuMode: 1,
-        // Stated rather than defaulted — see rule 3. Matte and squares are what
-        // an absent field resolves to anyway; writing them down is what makes
+        // Stated rather than defaulted — see rule 3. Matte, squares and the
+        // classic wire are what an absent field resolves to anyway; writing
+        // them down is what makes
         // the row's effect something a test can read and a reader can predict.
         material: 'matte',
         particleStyle: 'squares',
+        wireStyle: 'classic',
         // The body this shader displaces is a plain surface. Without this the
         // deform block writes no mode at all and mathViz can be left in
         // 'volume' under a GPU shader that carries none.

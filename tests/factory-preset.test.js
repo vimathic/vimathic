@@ -134,7 +134,8 @@ describe('what the row carries', () => {
     // predict. deformMode is the sharper one: with a numeric gpuSelVal and no
     // deform field, no branch writes the mode at all and mathViz._mode can stay
     // stuck at 'volume' under a GPU shader that carries none.
-    for (const stated of ['material', 'particleStyle', 'deformMode']) {
+    // wireStyle joined with the wire styles, on the same `?? 'classic'` footing.
+    for (const stated of ['material', 'particleStyle', 'wireStyle', 'deformMode']) {
       assert.ok(stated in state, `${stated} is absent, so applying the example defaults it silently`);
     }
     assert.equal(state.deformMode, 'surface', 'the example displaces a surface, not a volume');

@@ -58,8 +58,6 @@ Extended sessions can still warm the device. WebGL is a real GPU workload; phone
 
 **About the browser's "Desktop site" toggle.** Switching to "Desktop site" in your mobile browser **does not unlock desktop performance**. It only changes how the page is told to lay itself out; the underlying GPU, thermal envelope, and rendering budget stay exactly the same as before. In practice the toggle makes things slightly worse on mobile, because the visualizer no longer applies its mobile optimisations and tries to render the full desktop pipeline on a chip that wasn't built for it. The device will get hotter, frame rate will drop, and battery will drain faster. We recommend leaving the toggle in its default "Mobile" position when using VIMATHIC.
 
-A dedicated **VIMATHIC Mobile app** — built natively for iOS and Android, with proper GPU scheduling and platform-specific optimisations — is on the [Roadmap](./roadmap.md). The web version on mobile is best treated as a preview until that ships.
-
 There are no hidden processes, no cryptominers, no analytics beacons, and no requests to anything beyond the site the page came from — just mathematics rendering to your music.
 
 ## Importing Presets

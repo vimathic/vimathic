@@ -1,6 +1,6 @@
-# Disclaimer — VIMATHIC™ 1.0 (Beta)
+# Disclaimer — VIMATHIC 1.0 (Beta)
 
-> **This is VIMATHIC™ 1.0 (Beta).**
+> **This is VIMATHIC 1.0 (Beta).**
 > Beta software under active development. The points below apply in full to
 > anyone running this build — please read before launching.
 
@@ -60,9 +60,8 @@ guidance.
   keeps the app responsive but cannot fully neutralise the thermal load of
   sustained GPU rendering on hardware that was not built for it. Switching
   your mobile browser to "Desktop site" does not improve performance — it
-  removes the mobile optimisations and makes the load worse. A dedicated
-  mobile app is on the roadmap; until it ships, treat the web version on
-  mobile as a preview.
+  removes the mobile optimisations and makes the load worse. Treat the web
+  version on mobile as a preview.
 - **No cryptominers, no trojans, no background tasks.** VIMATHIC does only
   one thing: render mathematics to a canvas in response to your audio. There
   is no analytics, no telemetry, no third-party network activity at runtime —
@@ -150,14 +149,15 @@ verify it against the primary source.
 
 ## Legal
 
-- The license (BUSL-1.1) and its educational exception have not been
-  reviewed by a lawyer.
+- The code is under the standard MIT License. What this project adds around
+  it — the bundled-audio terms in [NOTICE.md](./NOTICE.md) and the
+  plain-English summary in `documents/license.md` — has not been reviewed by
+  a lawyer.
 - If you intend to rely on the license terms for commercial, institutional,
   or legal purposes, consult a qualified attorney.
-- Formal contribution terms are governed by [CONTRIBUTING.md](./CONTRIBUTING.md),
-  which establishes a dual-grant model: contributions are licensed to the
-  project under BUSL-1.1 / GPL v3, and separately grant the maintainer
-  rights to use them in proprietary commercial derivatives.
+- Formal contribution terms are governed by [CONTRIBUTING.md](./CONTRIBUTING.md):
+  contributions are licensed under the MIT License, the same as the rest of
+  the project.
 
 ---
 
@@ -181,7 +181,7 @@ issues arising from their use.
 
 ## In Short
 
-VIMATHIC is a mathematical VJ studio built honestly, with care, and with the
+VIMATHIC is a mathematical music visualizer built honestly, with care, and with the
 best tools available to the author — including AI. That doesn't make every
 claim correct, and it doesn't make the visuals safe for everyone.
 

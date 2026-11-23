@@ -41,8 +41,10 @@ test.beforeEach(async ({ page }) => {
   });
   await page.goto('/');
   await expect(page.locator('canvas')).toBeVisible();
-  // Hotkeys stand down while an input, select or textarea holds focus — and the
-  // panel's pickers keep focus after a click. Put it on the canvas.
+  // Hotkeys stand down while a text field, select or textarea holds focus.
+  // (FIX(review K1): the panel's pickers and sliders no longer count — they
+  // keep only the keys they act on. The click just starts every test with the
+  // focus on the picture.)
   await page.locator('canvas').click({ position: { x: 40, y: 40 } });
 });
 

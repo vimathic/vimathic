@@ -67,6 +67,17 @@ function makeRender() {
     _ptsGeo: null,
     setVizModeGPU(...a)    { return RenderEngine.prototype.setVizModeGPU.apply(this, a); },
     setParticleStyle(...a) { return RenderEngine.prototype.setParticleStyle.apply(this, a); },
+    // setVizModeGPU's WIRE branch hands the wire to its style now
+    // (tests/wire-style.test.js), so a round trip through WIRE needs the setter.
+    currentWireStyle: 'classic',
+    gpuWireFill: null, _wireOccluderMat: null,
+    setWireStyle(...a)      { return RenderEngine.prototype.setWireStyle.apply(this, a); },
+    _syncWireFill(...a)     { return RenderEngine.prototype._syncWireFill.apply(this, a); },
+    _wireOccluderMaterial(...a) { return RenderEngine.prototype._wireOccluderMaterial.apply(this, a); },
+    gpuWireLines: null, _wireLinesGeo: null, _wireLinesMat: null, _wireEdgeCache: new WeakMap(),
+    _syncWireLines(...a)     { return RenderEngine.prototype._syncWireLines.apply(this, a); },
+    _wireLineIndex(...a)     { return RenderEngine.prototype._wireLineIndex.apply(this, a); },
+    _wireLinesMaterial(...a) { return RenderEngine.prototype._wireLinesMaterial.apply(this, a); },
   };
 }
 

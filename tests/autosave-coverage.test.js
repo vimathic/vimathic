@@ -82,6 +82,7 @@ beforeEach(() => {
       orbit:  { target: { x: 0, y: 0, z: 0 } },
       currentShape: 'plane', vizMode: 'surf',
       currentMaterial: 'matte', currentParticleStyle: 'dot',
+      currentWireStyle: 'classic',
       grid: { visible: true },
       U: {},
     },
@@ -164,6 +165,16 @@ describe('the fingerprint covers what the snapshot covers', () => {
     ui.camera.cpKeyframes = [{ t: 0.5, code: 'cam.y = 9;' }];
     settle();
     assert.equal(writes, 1, 'the keyframe list is fingerprinted by length or time only');
+  });
+
+  test('a wire style picked off the panel schedules a save', () => {
+    // The panel's own listener catches a pick from the row; this is every other
+    // path — a preset or clip step that lands one, RESET ALL's sync, a console
+    // call. WIRE is the boot mode, so the wire style is usually on screen and a
+    // crash that lost it would bring the session back in a different look.
+    ui.render.currentWireStyle = 'hologram';
+    settle();
+    assert.equal(writes, 1, 'the wire style was invisible to the autosave');
   });
 
   test('control — the fields that always worked still do', () => {

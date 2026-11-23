@@ -1,7 +1,7 @@
 /**
- * VIMATHIC — Mathematical VJ Studio
- * Copyright (c) 2026 S. Melentyev. All rights reserved.
- * Licensed under BUSL-1.1 — see LICENSE.txt
+ * VIMATHIC — Mathematical Music Visualizer
+ * Copyright (c) 2026 S. Melentyev
+ * Licensed under the MIT License — see LICENSE.txt
  * https://github.com/vimathic/vimathic
  */
 
@@ -461,13 +461,26 @@ export class AudioEngine {
         this.analyser.maxDecibels = -10;
         this.fftData  = new Uint8Array(this.analyser.frequencyBinCount);
         // FIX(#29): removed the unread `waveData` allocation (see constructor).
-        // WARNING(#7): the analyser doubles as the audible path, and
-        // captureMicrophone() feeds the mic into it with echoCancellation:false
-        // — open speakers plus a real mic close an acoustic loop and howl.
-        // A silent tap instead would change how file playback sounds, so the
-        // routing stays: mute monitors or capture via a loopback device
-        // (VB-Cable / BlackHole).
-        this.analyser.connect(this.audioCtx.destination);
+        // The audible path: analyser → monitor → speakers. The monitor is open
+        // for file playback and closed while a live source drives the analyser
+        // (_setMonitor, from the capture paths and stopLiveCapture). A live
+        // source is already heard where it plays: sending it out again doubled
+        // a shared tab a few tens of milliseconds late, fed system-audio capture
+        // and a default-output virtual cable back into themselves, and let a
+        // mic with echoCancellation:false howl through open speakers. The
+        // analyser keeps measuring with the monitor shut — an AnalyserNode
+        // reads its input whatever its output feeds.
+        try {
+          this._monitor = this.audioCtx.createGain();
+          this.analyser.connect(this._monitor);
+          this._monitor.connect(this.audioCtx.destination);
+        } catch (e) {
+          // An engine without createGain keeps the old direct path: file
+          // playback is unchanged, live sources are heard twice as before.
+          console.warn('audio monitor unavailable:', e);
+          this._monitor = null;
+          this.analyser.connect(this.audioCtx.destination);
+        }
         // FIX(r11): _nyq was the constructor's 22050 placeholder — the sample
         // rate of the context was never read, so every band edge below was off
         // by whatever the device's rate is not: 8.8 % on a 48 kHz context, and
@@ -553,8 +566,19 @@ export class AudioEngine {
       try { this._liveSrc.disconnect(); } catch (_) {}
       this._liveSrc = null;
     }
+    this._setMonitor(true);
     this.liveMode = null;
     this.cb.onLiveMode(null);
+  }
+
+  /**
+   * Open or close the speakers behind the analyser — see ensureCtx(). Closed
+   * only while a live source is connected; every path that ends a capture goes
+   * through stopLiveCapture(), which opens it again.
+   */
+  _setMonitor(open) {
+    if (!this._monitor) return;
+    this._monitor.gain.value = open ? 1 : 0;
   }
 
   /**
@@ -617,6 +641,7 @@ export class AudioEngine {
 
       this._liveSrc    = this.audioCtx.createMediaStreamSource(stream);
       this._liveStream = stream;
+      this._setMonitor(false);
       this._liveSrc.connect(this.analyser);
       this.isPlaying = true;
       this.liveMode  = 'mic';
@@ -675,6 +700,7 @@ export class AudioEngine {
 
       this._liveSrc    = this.audioCtx.createMediaStreamSource(stream);
       this._liveStream = stream;
+      this._setMonitor(false);
       this._liveSrc.connect(this.analyser);
       this.isPlaying = true;
       this.liveMode  = hint;

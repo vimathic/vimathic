@@ -115,4 +115,26 @@ describe('the dom.js id contract covers what app code assumes', () => {
     assert.doesNotMatch(code('src/ui/controller.js'), /getElementById\(\s*'track-error'\s*\)/,
       'controller.js is back to looking track-error up by hand');
   });
+
+  test('the hint\'s boot flash reads #hotkey-hint through DOM, not by hand', () => {
+    // FIX(review L2): controls.js looked it up with getElementById into a local
+    // and dereferenced that — the shape the RAW scan above deliberately lets
+    // through as guarded. It was not guarded, and DOM.hotkeyHint (REQUIRED,
+    // which main.js's I already uses) is the declared way in.
+    const code = f => fs.readFileSync(path.join(ROOT, f), 'utf8')
+      .split('\n')
+      .filter(l => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); })
+      .join('\n');
+    const LOOKUP = /getElementById\(\s*'hotkey-hint'\s*\)/;
+    for (const f of ['src/ui/controls.js', 'src/main.js']) {
+      assert.doesNotMatch(code(f), LOOKUP, `${f} looks #hotkey-hint up by hand`);
+    }
+    assert.match(code('src/ui/controls.js'), /DOM\.hotkeyHint\.classList\.add\('visible'\)/,
+      'the boot flash no longer shows the hint through DOM.hotkeyHint');
+    assert.ok(REQUIRED_IDS.includes('hotkey-hint'), 'hotkey-hint is not in REQUIRED');
+  });
+
+  test('control — the lookup pattern sees the line the flash used to have', () => {
+    assert.match("    const h = document.getElementById('hotkey-hint');", /getElementById\(\s*'hotkey-hint'\s*\)/);
+  });
 });

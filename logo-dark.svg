@@ -48,5 +48,5 @@
   <circle cx="74" cy="44" r="1.5" fill="#ffffff"/>
   <line x1="148" y1="24" x2="148" y2="136" stroke="#1e3a4a" stroke-width="0.8"/>
   <text x="168" y="88" font-family="'Courier New', monospace" font-size="52" font-weight="700" letter-spacing="-1" fill="url(#textGrad)">VIMATHIC</text>
-  <text x="170" y="112" font-family="'Courier New', monospace" font-size="9" letter-spacing="4" fill="#2a4a5a">MATHEMATICAL VISUALIZER</text>
+  <text x="170" y="112" font-family="'Courier New', monospace" font-size="9" letter-spacing="2.8" fill="#2a4a5a">MATHEMATICAL MUSIC VISUALIZER</text>
 </svg>

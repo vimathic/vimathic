@@ -63,6 +63,10 @@ const REQUIRED = {
   particleStyleWrap:   'particle-style-wrap',
   particleStyleSel:    'particle-style-sel',
   particleStyleDesc:   'particle-style-desc',
+  // Wire style — the WIRE counterpart of the particle style row.
+  wireStyleWrap:       'wire-style-wrap',
+  wireStyleSel:        'wire-style-sel',
+  wireStyleDesc:       'wire-style-desc',
   modeSurface:       'mode-surface',
   modeWireframe:     'mode-wireframe',
   modePoints:        'mode-points',
@@ -89,6 +93,8 @@ const REQUIRED = {
   blmv:              'blmv',
 
   // ── Shader knobs — the four free scalars a custom shader can read ───────
+  // (and, on a numbered SHADER MODE entry, scale · depth · phase · palette).
+  // They sit in the formula slot's second bank, #shader-knobs-wrap, below.
   shaderK0:          'shader-k0',
   shaderK1:          'shader-k1',
   shaderK2:          'shader-k2',
@@ -103,12 +109,15 @@ const REQUIRED = {
   formulaPhase:      'formula-phase',
   fdv:               'fdv',
   fpv:               'fpv',
-  // The pair's wrapper and the line that says when they are inert. Both are
-  // dereferenced by _syncFormulaKnobs in controls.js, so both belong in this
-  // contract — an id app code reads without being listed here is exactly what
-  // d2d2713 found and closed.
+  // The formula slot's two banks: the pair's wrapper and the Shader Knobs'
+  // wrapper, which take turns by engine (_syncFormulaKnobs in controls.js
+  // shows one, or both while a custom shader is applied over a formula). Both
+  // are dereferenced by that sync, so both belong in this contract — an id app
+  // code reads without being listed here is exactly what d2d2713 found and
+  // closed. FIX(shader knobs): fkNote, the NO EFFECT line under a dimmed pair,
+  // left with the dimming; the slot swaps banks instead.
   formulaKnobsWrap:  'formula-knobs-wrap',
-  fkNote:            'fk-note',
+  shaderKnobsWrap:   'shader-knobs-wrap',
 
   // ── Camera buttons ──────────────────────────────────────────────────────
   btnReset:          'btn-reset',
@@ -118,6 +127,7 @@ const REQUIRED = {
   // ── Viewport tools ──────────────────────────────────────────────────────
   btnFullscreen:     'btn-fullscreen',
   btnFreezeFrame:    'btn-freeze-frame',
+  btnToggleStars:    'btn-toggle-stars',
   btnToggleGrid:     'btn-toggle-grid',
   btnTranspBg:       'btn-transp-bg',
   beatRing:          'beat-ring',
@@ -287,6 +297,27 @@ function resolveGroup(map, required) {
   return out;
 }
 
+// For elementOwnsKey, below: the keys a slider steps by, and the keys a
+// readOnly picker reads, lowercased. 'Up' / 'Down' / 'Left' / 'Right' and 'Esc'
+// are IE/old-Edge's spellings, accepted for the same reason as 'Spacebar' there.
+const ARROW_KEYS  = new Set(['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'up', 'down', 'left', 'right']);
+const STEP_KEYS   = new Set([...ARROW_KEYS, 'home', 'end', 'pageup', 'pagedown']);
+// FIX(review RR-C3 / RR-LIVE-1): exactly the keys the picker's own keydown
+// handler reads — index.html, makeDropdown, `input.addEventListener('keydown',
+// …)`: Escape and Enter close the list, ArrowDown and ArrowUp step it, in the
+// open state and the closed one alike — plus the old spellings of those same
+// keys. That handler is the source of truth, and
+// tests/hotkey-focus-standdown.test.js reads both and fails when they part.
+// This used to be every key a list COULD be driven by (the side arrows, Home,
+// End, Page Up / Down and Space as well), which the widget acts on none of: a
+// readOnly field with no text does nothing with them either. So after a mouse
+// pick Space (play / pause) and ← / → (tracks) went to a field that dropped
+// them while main.js stood down for it, and stayed dead until the canvas was
+// clicked. Now they pass, like the letters.
+const PICKER_KEYS = new Set(['arrowup', 'arrowdown', 'enter', 'escape', 'up', 'down', 'esc']);
+// Input types that are pressed, not typed into or stepped.
+const BUTTON_LIKE_INPUTS = new Set(['button', 'submit', 'reset', 'image', 'color', 'file']);
+
 /**
  * Does the focused element already mean something by this key?
  *
@@ -313,6 +344,51 @@ function resolveGroup(map, required) {
  * and T are performance hotkeys that must keep working after a click. A button
  * consumes Space and Enter and nothing else, so that is exactly what it gets.
  *
+ * FIX(review K1): the same argument was never applied to <input>, which owned
+ * EVERY key whatever its type. Two kinds of input in the panel take no text at
+ * all and keep focus after a mouse gesture: the pickers (3D SHAPE, SHADER
+ * MODE, COLOR SCHEME, VOLUME FORMULA — index.html's makeDropdown turns each
+ * into a readOnly text field, and picking an option calls preventDefault, so
+ * the field stays focused on purpose), and every range slider, which Chrome
+ * focuses on a mouse drag. So "pick a numbered shader, then play its knobs" —
+ * the main use of the Y U H J keys — did nothing until the canvas was clicked,
+ * and neither did D F R T after a slider was touched; hotkeys.md documented
+ * the workaround. Letters may pass now because nothing in those inputs reads a
+ * letter: the pickers stopped taking text when they became readOnly (01.09),
+ * and a slider never did. What each of them DOES read it keeps:
+ *   • a text-entry input (text, search, number, email, date, … — any type not
+ *     named below) that is writable owns every key, as before: typing is not
+ *     a hotkey. That covers the preset name and a value badge being typed in;
+ *   • a readOnly one — the pickers — owns the keys its list handler reads:
+ *     ↑ and ↓, which step it, and Enter and Escape, which close it. FIX(review
+ *     RR-C3): this said "the keys a list is driven by: the arrows, Home / End /
+ *     Page Up / Page Down, Enter, Escape and Space", and the picker reads only
+ *     four of them — so Space and ← / → work right after a pick now (see
+ *     PICKER_KEYS above);
+ *   • a range owns the arrows and Home / End / Page Up / Page Down;
+ *   • a checkbox owns Space, and a radio Space and the arrows;
+ *   • the button-like types (button, submit, reset, image, color, file) own
+ *     Space and Enter, exactly as a <button> does;
+ *   • a disabled input owns nothing, like a disabled button — it takes no key
+ *     and no focus.
+ * SELECT and TEXTAREA still own every key: native type-ahead and text. A
+ * closed native <select> jumps to the option a typed letter starts, so letting
+ * letters through would change the option AND fire the hotkey. That leaves the
+ * panel's plain drop-downs — the ones makeDropdown does not wrap: Surface
+ * Material, Particle Style, Wire Style, the clip player's Bars and Camera, and
+ * the "+ Add parameter…" list in MIDI mapping — standing every key down after a
+ * mouse pick, as before, and documents/hotkeys.md says so (FIX(review RR-C1)).
+ * FIX(review RR3-C2): this said "the MIDI mapping lists". A CC row's own
+ * parameter list gives focus up as soon as a pick changes its value: the
+ * change handler re-renders the mapping list (modals.js _renderMappings
+ * empties it), the focused <select> leaves the page and focus falls back to
+ * the body, so the keys work right after that pick. (FIX(review RR4-2): a pick
+ * that changes nothing — the same option again, or Esc — fires no change, and
+ * that list then keeps focus like any plain drop-down.) The add row's list,
+ * which has no change handler, keeps focus and every key after every pick.
+ * Wrapping them, or blurring one after a pointer pick, is a behaviour change
+ * left to the owner.
+ *
  * @param {Element|null} el  usually document.activeElement
  * @param {string} key       KeyboardEvent.key
  * @returns {boolean} true when the listener must not act on this key
@@ -325,11 +401,24 @@ export function elementOwnsKey(el, key) {
   if (el.isContentEditable) return true;
 
   const tag = el.tagName;
-  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return true;
+  if (tag === 'SELECT' || tag === 'TEXTAREA') return true;
 
   // 'Spacebar' is IE/old-Edge's spelling and costs one comparison to accept.
   const k = String(key ?? '').toLowerCase();
-  const isActivation = k === ' ' || k === 'spacebar' || k === 'enter';
+  const isSpace = k === ' ' || k === 'spacebar';
+  const isActivation = isSpace || k === 'enter';
+
+  if (tag === 'INPUT') {
+    if (el.disabled) return false;
+    // A browser reports `type` lowercased and 'text' when the attribute is
+    // missing or unknown; a stand-in object may carry none at all.
+    const type = String(el.type || 'text').toLowerCase();
+    if (type === 'range')    return STEP_KEYS.has(k);
+    if (type === 'checkbox') return isSpace;
+    if (type === 'radio')    return isSpace || ARROW_KEYS.has(k);
+    if (BUTTON_LIKE_INPUTS.has(type)) return isActivation;
+    return el.readOnly ? PICKER_KEYS.has(k) : true;
+  }
 
   // <summary> is activated by both, like a button. A disabled button is
   // activated by neither, and is not focusable in the first place.

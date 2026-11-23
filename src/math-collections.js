@@ -1,7 +1,7 @@
 /**
- * VIMATHIC — Mathematical VJ Studio
- * Copyright (c) 2026 S. Melentyev. All rights reserved.
- * Licensed under BUSL-1.1 — see LICENSE.txt
+ * VIMATHIC — Mathematical Music Visualizer
+ * Copyright (c) 2026 S. Melentyev
+ * Licensed under the MIT License — see LICENSE.txt
  * https://github.com/vimathic/vimathic
  */
 
@@ -5278,8 +5278,13 @@ function sampleHeightField(heightField, grid, extent, step, x, z) {
  *                                  same FIELD_EXTENT that function defaults to, so
  *                                  a caller that passes neither cannot mismatch
  *                                  them; a caller that passes one must pass both.
+ * @param {boolean}              normals       — recompute the geometry's normals
+ *                                  afterwards (the default, and what this always
+ *                                  did). See NORMALS_NOTE below: MathVisualizer
+ *                                  passes false outside PTS, where nothing reads
+ *                                  them.
  */
-export function applyHeightField(geometry, heightField, basePositions = null, extent = FIELD_EXTENT, baseNormals = null, maxDepth = Infinity, bandLayer = null) {
+export function applyHeightField(geometry, heightField, basePositions = null, extent = FIELD_EXTENT, baseNormals = null, maxDepth = Infinity, bandLayer = null, normals = true) {
   const pos  = geometry.attributes.position;
   const n    = pos.count;
   const grid = Math.max(1, Math.floor(Math.sqrt(heightField.length)));
@@ -5395,7 +5400,17 @@ export function applyHeightField(geometry, heightField, basePositions = null, ex
   if (field) field.needsUpdate = true;
   if (band) band.needsUpdate = true;
   if (bandU) bandU.needsUpdate = true;
-  geometry.computeVertexNormals();
+  // NORMALS_NOTE — the live normal attribute is read by exactly one thing: the
+  // PTS spray in the vertex program (pos += normal * …, behind uPtBand, which
+  // only the points proxy raises). Every surface lighting and material path
+  // reconstructs its normal from screen-space derivatives, and the displacing
+  // modes move along the FROZEN base normals they snapshot at a transition,
+  // right after _restorePristineToMesh recomputes them. So outside PTS this
+  // recompute — and the upload of the whole normal buffer it triggers — is
+  // work nobody reads: measured in node, 0.97 ms on the 83² boot grid and
+  // 3.68 ms on the 161² plate, every applied field, about a fifth of a 60 Hz
+  // frame there. The caller says when it is needed.
+  if (normals) geometry.computeVertexNormals();
 }
 
 /**
@@ -5596,8 +5611,11 @@ export function bandRingValue(layer, x, z, vertexIndex) {
  * @param {THREE.BufferGeometry} geometry
  * @param {Float32Array}         df           — [dx0,dy0,dz0, ...] length = count*3
  * @param {Float32Array}         basePositions — [x0,y0,z0, ...] original positions
+ * @param {object|null}          bandLayer
+ * @param {boolean}              normals      — recompute normals afterwards (default,
+ *                                  as always); see NORMALS_NOTE in applyHeightField
  */
-export function applyDisplacementField(geometry, df, basePositions, bandLayer = null) {
+export function applyDisplacementField(geometry, df, basePositions, bandLayer = null, normals = true) {
   const pos = geometry.attributes.position;
   const ba = geometry.attributes.aBand;
   const band = (ba && ba.array && ba.array.length === pos.count) ? ba : null;
@@ -5631,7 +5649,7 @@ export function applyDisplacementField(geometry, df, basePositions, bandLayer = 
   pos.needsUpdate = true;
   if (band) band.needsUpdate = true;
   if (bandU) bandU.needsUpdate = true;
-  geometry.computeVertexNormals();
+  if (normals) geometry.computeVertexNormals();
 }
 
 /**
@@ -5643,8 +5661,11 @@ export function applyDisplacementField(geometry, df, basePositions, bandLayer = 
  * @param basePositions — flat Float32Array [x0,y0,z0,x1,y1,z1,...]
  * @param baseNormals   — flat Float32Array [nx0,ny0,nz0,...]
  * @param strength      — multiplier applied uniformly (default 1)
+ * @param bandLayer     — the 24-band layer, or null
+ * @param normals       — recompute normals afterwards (default, as always); see
+ *                        NORMALS_NOTE in applyHeightField
  */
-export function applyCollapseField(geometry, scalarField, basePositions, baseNormals, strength = 1, bandLayer = null) {
+export function applyCollapseField(geometry, scalarField, basePositions, baseNormals, strength = 1, bandLayer = null, normals = true) {
   const pos = geometry.attributes.position;
   const ba = geometry.attributes.aBand;
   const band = (ba && ba.array && ba.array.length === pos.count) ? ba : null;
@@ -5666,7 +5687,7 @@ export function applyCollapseField(geometry, scalarField, basePositions, baseNor
   pos.needsUpdate = true;
   if (band) band.needsUpdate = true;
   if (bandU) bandU.needsUpdate = true;
-  geometry.computeVertexNormals();
+  if (normals) geometry.computeVertexNormals();
 }
 
 /**

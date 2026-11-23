@@ -243,6 +243,11 @@ test.describe('the shipped example arrives without anyone opening the editor', (
     // The knobs the bodies were written around arrive with it.
     await expect(page.locator('#shader-k0')).not.toHaveValue('0');
     await expect(page.locator('#k0v')).not.toHaveText('0.00');
+    // And they are on screen to be played: a preset writes #gpu-sel without
+    // going through the dropdown, so this is applyState's own sync of the
+    // formula slot (the knobs in Formula Detail / Phase's place).
+    await expect(page.locator('#shader-k0')).toBeVisible();
+    await expect(page.locator('#formula-detail')).toBeHidden();
 
     // And the shader really is the custom one. NOT `/uK0/`: the shipped default
     // body reads a knob too since 89de1ba, so that pattern no longer tells the

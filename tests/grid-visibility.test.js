@@ -26,9 +26,13 @@
 //    WebM recorder. The ⊞ GRID button then read the opposite of reality, and
 //    stayed inverted.
 //
-// Stars are deliberately left alone: nothing else writes stars.visible, so
-// restoring them to true is always the right answer. The control case below
-// pins that, so a future "symmetry" cleanup does not add state it doesn't need.
+// Stars need no snapshot like the grid's, and the control cases below pin that
+// they come back. FIX(stars): this used to say "nothing else writes
+// stars.visible, so restoring them to true is always the right answer". Since
+// the STARS button that is false — the operator can switch them off — and the
+// restore asks the wish instead: `starsOn` lives in its own field, so leaving
+// transparent mode needs no remembered state to know what to give back.
+// The STARS-off round trip itself is pinned in tests/stars-toggle.test.js.
 //
 // ── What "run against the unfixed code first" means in each half ──────────────
 // The transparent-background cases are a true before/after: run against the old
@@ -66,15 +70,15 @@ let host;
 beforeEach(() => {
   clock = 0;
   // Object.create rather than a bare literal, for the reason
-  // tests/night-mode.test.js gives: setTransparentBackground now reaches a
-  // sibling method (_setStarsNow, which displaces a NIGHT star fade instead of
-  // racing it), so `this` has to carry the prototype. A literal made every
-  // transparent-background case here die with "not a function".
+  // tests/night-mode.test.js gives: setTransparentBackground reaches a sibling
+  // method (_syncStars, the one writer of stars.visible), so `this` has to
+  // carry the prototype. A literal made every transparent-background case here
+  // die with "not a function".
   host = Object.assign(Object.create(RenderEngine.prototype), {
     transitions: new TransitionManager(),
     grid:  { visible: false, material: { opacity: GRID_OPACITY, transparent: true } },
-    // The starfield fades across a NIGHT toggle now, so it carries a material
-    // the way the grid does; setTransparentBackground parks its opacity.
+    // A material the way the grid has one: _syncStars() parks the starfield's
+    // opacity at STARS_OPACITY whenever it writes `visible`.
     stars: { visible: true, material: { opacity: 0.35, transparent: true } },
     scene: {}, renderer: { setClearColor() {} },
     // What a shown grid rests at. The engine sets this in its constructor and
@@ -83,9 +87,13 @@ beforeEach(() => {
     // fadeGrid on purpose — a `?? GRID_OPACITY` fallback there would let an
     // engine that never initialised the field look correct in every test.
     gridLitOpacity: GRID_OPACITY,
-    // Read by setTransparentBackground's restore branch, which now asks the
-    // mode instead of writing `true`: the stars have two owners.
-    nightly: false,
+    // Read by _syncStars(), which setTransparentBackground calls on both
+    // branches: the STARS wish. Stated here for the same reason as
+    // gridLitOpacity — _syncStars reads it with no `?? true` fallback.
+    // FIX(stars): this slot used to hold `nightly: false`, "read by the
+    // restore branch, which now asks the mode". Nothing here has read the mode
+    // since r6; the restore asks STARS.
+    starsOn: true,
   });
 });
 
@@ -158,14 +166,15 @@ describe('transparent background restores what it hid', () => {
     assert.equal(host.grid.visible, true);
   });
 
-  test('control — stars always come back, they have no other owner', () => {
+  test('control — stars come back when STARS has them on', () => {
     host.stars.visible = true;
 
     transparent(true);
     assert.equal(host.stars.visible, false);
     transparent(false);
 
-    assert.equal(host.stars.visible, true);
+    assert.equal(host.stars.visible, true,
+      'STARS has them on, so leaving transparent mode must give them back');
   });
 });
 
@@ -211,11 +220,12 @@ describe('leaving transparent background gives the grid back, but does not take 
     assert.equal(host.grid.visible, true);
   });
 
-  test('control — stars come back either way', () => {
+  test('control — stars come back when STARS has them on, whatever the grid did', () => {
     transparent(true);
     assert.equal(host.stars.visible, false);
     transparent(false);
-    assert.equal(host.stars.visible, true, 'nothing else writes stars.visible');
+    assert.equal(host.stars.visible, true,
+      'the grid bookkeeping must not reach the stars — they follow the STARS wish');
   });
 });
 

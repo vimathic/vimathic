@@ -30,7 +30,18 @@
 //                 600 px of drag, a fixed distance and not a fraction of
 //                 the window, covers [max(min, DRAG_FLOOR)..extendedMax],
 //                 not [min..Infinity] — and (b) the default upper bound
-//                 when a tool needs a "sensible default range".
+//                 when a tool needs a "sensible default range". The span
+//                 is dragRange()'s answer below, and an entry marked
+//                 dragBounded does not consult extendedMax at all.
+//   dragBounded — When true, hold-and-drag covers exactly [min..max] and
+//                 stops at both ends: no DRAG_FLOOR at the bottom, no
+//                 extendedMax at the top. For the formula slot's six — the
+//                 pair and the four Shader Knobs — where 0 is a rest
+//                 position and max is the end of the range. A value already
+//                 above max (typed, or from a preset) is not snapped down.
+//                 See dragRange() for why. Data rather than a list of ids in
+//                 controls.js, so the drag and the documented table read one
+//                 fact.
 //
 // DECISION (08.09.2026): the unbounded values stay unbounded. An audit raised
 // the missing ceiling on amp and waveInt as a loose end from the black-squares
@@ -119,13 +130,54 @@ export function nextInPool(pool, current) {
   return pool[(pool.indexOf(current) + 1) % pool.length];
 }
 
-// Floor for hold-and-drag. Some params allow min = 0 (bassSens, trebleSens,
-// bloom), and dragging one to exactly 0 makes the visualiser go silent, which
-// reads as broken mid-performance — 0.1 keeps a sliver of motion. min stays 0
-// for the MIDI, preset and RESET paths. Exported so the drag path and the
-// documented range table cannot drift apart; tests/docs-consistency.test.js
-// checks them against each other.
+// Floor for hold-and-drag on the audio and bloom keys. Some params allow
+// min = 0 (bassSens, trebleSens, bloom, bandDepth), and dragging one to exactly
+// 0 makes the visualiser go silent, which reads as broken mid-performance — 0.1
+// keeps a sliver of motion. min stays 0 for the MIDI, preset and RESET paths.
+// (waveInt declares min 0.3, aligned with its slider, so the floor never moves
+// it.) Exported so the drag path and the documented range table cannot drift
+// apart; tests/docs-consistency.test.js checks them against each other.
+//
+// FIX(knob keys): this used to read as the floor for every drag. It is not any
+// more — the formula slot's six (dragBounded) take none, because their 0 is
+// not silence. See dragRange.
 export const DRAG_FLOOR = 0.1;
+
+/**
+ * The span one 600-pixel hold-and-drag sweep covers, and whether the drag is
+ * held inside it — the rule controls.js's _applyDragDelta drags by, and the one
+ * tests/docs-consistency.test.js holds documents/hotkeys.md's table to. One
+ * helper so the drag and the documented range cannot drift apart; that test
+ * exists for exactly that, and it used to re-type the formula itself.
+ *
+ * Two kinds of parameter, and the difference is what their ends mean:
+ *
+ *   • The audio and bloom keys: [max(min, DRAG_FLOOR) .. extendedMax], and
+ *     `bounded` false. 0 is silence there, hence the floor. extendedMax is a
+ *     comfortable reach, not a ceiling: past it the drag speeds up on a log
+ *     curve and nothing clamps the top (the DECISION at the head of this file).
+ *
+ *   • `dragBounded` (FIX(knob keys), 08.10.2026 — the formula pair and the
+ *     Shader Knobs got keys): exactly [min .. max], and `bounded` true, which
+ *     the drag reads as "stop at both ends". Their 0 is a rest position (Phase
+ *     0, every knob at 0 is identity) or the useful coarse end (Detail 0 is how
+ *     an operator buys back update rate — see PARAMS.detail). Under the floor a
+ *     knob dragged down would stop at 0.1 and never come back to rest. Their
+ *     top is the end of the range: `comp` is clamped to [0, 1] where
+ *     MathVisualizer builds it, so Detail above 1 changes nothing, and the
+ *     knobs are 0..1 by design (the range a MIDI CC maps onto). An unbounded
+ *     drag would wind into a dead zone the operator then has to unwind.
+ *     A value already above max — typed into the badge, or from a preset — is
+ *     not snapped down by the drag; that half lives in _applyDragDelta, which
+ *     is the code that knows the value being dragged.
+ *
+ * @param {object} p  a PARAMS entry
+ * @returns {{lo: number, hi: number, bounded: boolean}}
+ */
+export function dragRange(p) {
+  if (p.dragBounded) return { lo: p.min, hi: p.max, bounded: true };
+  return { lo: Math.max(p.min, DRAG_FLOOR), hi: p.extendedMax ?? p.max, bounded: false };
+}
 
 export const PARAMS = {
   amp: {
@@ -133,9 +185,10 @@ export const PARAMS = {
     slider:  'amplitude',
     display: 'ampv',
     min: 0.2, max: 1.5, default: 0.7,
-    // J + drag covers up to 2.0 over a 600-pixel sweep — typical
+    // V + drag covers up to 2.0 over a 600-pixel sweep — typical
     // performance over-drive range. Values above 2.0 are reachable via
-    // click-to-type.
+    // click-to-type. (J + drag too, until J went to Shader Knob 4 on
+    // 08.10.2026.)
     extendedMax: 2.0,
     format: v => v.toFixed(2),
     get: ctx => ctx.audio.amp,
@@ -150,9 +203,10 @@ export const PARAMS = {
     // Range matches index.html slider (was 0..2.0 — drift from HTML 0.3..3.5).
     // Keep them aligned: index.html is the visible truth for slider geometry.
     min: 0.3, max: 3.5, default: 1.0,
-    // N + drag covers up to 5.0 over a 600-pixel sweep — comfortable range
+    // C + drag covers up to 5.0 over a 600-pixel sweep — comfortable range
     // before FFT phase wraps so densely the surface aliases. Higher values
     // are reachable via click-to-type if the user wants extreme ripple.
+    // (N + drag too, until N went to Formula Phase on 08.10.2026.)
     extendedMax: 5.0,
     format: v => v.toFixed(2),
     get: ctx => ctx.audio.waveInt,
@@ -226,11 +280,14 @@ export const PARAMS = {
     slider:  'bloom',
     display: 'blmv',
     min: 0, max: 1.5, default: 0.55,
-    // B + drag covers 0.1..2.0 over a 600-pixel sweep (the bottom is
+    // A + drag covers 0.1..2.0 over a 600-pixel sweep (the bottom is
     // DRAG_FLOOR, not min). Above ~2 the EffectComposer's bloom pass clips
     // highlights to flat white; the visual signal stops responding past
-    // that point, so extending via click-to-type rarely helps — but it's
-    // allowed.
+    // that point, so extending it rarely helps. Its badge takes no typed
+    // value — index.html's click-to-type skips blmv — and presets, MIDI and
+    // the A drag, which has no ceiling, can still go higher. (FIX(review T6):
+    // this said click-to-type could, "but it's allowed"; the badge never
+    // could.) (B + drag too, until B went to Formula Detail on 08.10.2026.)
     extendedMax: 2.0,
     format: v => v.toFixed(2),
     get: ctx => ctx.render.bloomPass.strength,
@@ -360,11 +417,25 @@ export const PARAMS = {
   // meaning; `detail` has to rest at 0.5 because it is bipolar, and giving one
   // MIDI CC "shader frequency" on one mode and "formula detail" on the next is
   // the kind of surprise a set does not survive. Two banks, one per engine,
-  // each inert where its engine is not drawing — which is the arrangement the
-  // app already had, unstated.
+  // sharing one slot in the panel: it shows the bank of the engine that is
+  // drawing (controls.js, _syncFormulaKnobs).
+  //
+  // FIX(shader knobs): this used to call each bank "inert where its engine is
+  // not drawing". That holds for these two — nothing reads them under a
+  // numbered shader — but not for the knobs above: the built-in fragment
+  // program applies uK3's palette shift with no uMathMode gate, and a custom
+  // fragment body reads uK0..uK3 over a CPU formula too. That is why the slot
+  // also shows the knobs over a formula while a custom shader is applied, and
+  // why Knob 4 is the one hidden control that still acts (MIDI, presets and
+  // RESET ALL reach it).
   //
   // Both are stored on RenderEngine (see its constructor) rather than on
   // MathVisualizer, because `render` is what this registry's ctx carries.
+  //
+  // FIX(knob keys): all six — this pair and the four knobs above — have a
+  // hold-and-drag key since 08.10.2026 (B, N, Y, U, H, J; controls.js
+  // _fsParams), and `dragBounded` keeps that drag inside [min..max] with no
+  // floor. See dragRange.
   detail: {
     label: 'Formula Detail', slider: 'formulaDetail', display: 'fdv',
     // Bipolar about the centre, and the centre is where it rests: at 0.5 the
@@ -375,7 +446,7 @@ export const PARAMS = {
     // against a 16.7 ms tick, so turning detail DOWN is how an operator buys
     // back the update rate on the eleven formulas that cannot keep up. Turning
     // it up spends it.
-    min: 0, max: 1, default: 0.5, format: v => v.toFixed(2),
+    min: 0, max: 1, default: 0.5, format: v => v.toFixed(2), dragBounded: true,
     get: ctx => ctx.render.formulaDetail,
     set: (ctx, v) => { ctx.render.formulaDetail = v; }, midi: true },
   phase: {
@@ -384,24 +455,24 @@ export const PARAMS = {
     // the beat already nudges that clock by 0.3, and this is the same nudge
     // held in a hand — slide a crest onto a downbeat instead of waiting for the
     // track to put it there.
-    min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+    min: 0, max: 1, default: 0, format: v => v.toFixed(2), dragBounded: true,
     get: ctx => ctx.render.formulaPhase,
     set: (ctx, v) => { ctx.render.formulaPhase = v; }, midi: true },
 
   k0: { label: 'Shader Knob 1', slider: 'shaderK0', display: 'k0v',
-        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2), dragBounded: true,
         get: ctx => ctx.render.U.uK0.value,
         set: (ctx, v) => { ctx.render.U.uK0.value = v; }, midi: true },
   k1: { label: 'Shader Knob 2', slider: 'shaderK1', display: 'k1v',
-        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2), dragBounded: true,
         get: ctx => ctx.render.U.uK1.value,
         set: (ctx, v) => { ctx.render.U.uK1.value = v; }, midi: true },
   k2: { label: 'Shader Knob 3', slider: 'shaderK2', display: 'k2v',
-        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2), dragBounded: true,
         get: ctx => ctx.render.U.uK2.value,
         set: (ctx, v) => { ctx.render.U.uK2.value = v; }, midi: true },
   k3: { label: 'Shader Knob 4', slider: 'shaderK3', display: 'k3v',
-        min: 0, max: 1, default: 0, format: v => v.toFixed(2),
+        min: 0, max: 1, default: 0, format: v => v.toFixed(2), dragBounded: true,
         get: ctx => ctx.render.U.uK3.value,
         set: (ctx, v) => { ctx.render.U.uK3.value = v; }, midi: true },
 };

@@ -77,7 +77,9 @@ You also have helper functions: `turb(vec2 p)` for fractal turbulence, `ramu(vec
 
 ### Four knobs — `uK0` … `uK3`
 
-Everything else in your shader is a number typed into the text. These four are not: they are sliders in the panel under **ADVANCED → SHADER EDITOR**, they are MIDI-mappable like any other parameter, and they travel in presets.
+Everything else in your shader is a number typed into the text. These four are not: they are sliders in the panel, they are MIDI-mappable like any other parameter, and they travel in presets.
+
+**Where the sliders are.** In the panel's FORMULA section, under Wave Intensity, headed **SHADER KNOBS** — and not always on screen. With a **numbered** SHADER MODE entry selected they take the place of *Formula Detail* / *Formula Phase*, which do nothing to a GPU shader. With a formula selected they also show, beside that pair, **while your own shader is applied** (APPLY here, or a preset that carries one), because your fragment body colours formulas too. With a formula and the built-in shader, they are hidden. They used to sit under **ADVANCED → SHADER EDITOR**; they are not there any more.
 
 ```glsl
 y = sin(r * (2.0 + uK0 * 20.0) + T) * (0.2 + uK1) * a;
@@ -91,9 +93,13 @@ They run 0–1 with a default of 0, which is what a MIDI CC maps onto without a 
 
 To put one on a controller: **ADVANCED → MIDI**, pick *Shader Knob 1*, then move the knob.
 
+Or play them from the keyboard: hold **Y**, **U**, **H** or **J** — Knob 1, 2, 3 or 4 — and drag the mouse (or swipe, or roll the wheel), the same hold-and-drag the audio keys use. The drag covers the whole 0 – 1 and stops at both ends, so a knob always comes back to rest. The keys act only while the SHADER KNOBS are the panel's bank for what is drawing — a numbered entry, or your own shader applied over a formula — and do nothing while Formula Detail / Phase stand in their place; full screen, a collapsed panel or a folded FORMULA section, where the sliders are out of sight by design, do not stop them. They work straight after a pick in SHADER MODE, and while one is held the wheel turns the knob without zooming the camera. See **Hotkeys**.
+
 **They also play the built-in modes.** With one of the numbered entries in SHADER MODE selected there is no custom body to give them a meaning, so they carry a fixed one: **1** scales the field (up to three times finer), **2** deepens it (up to 2.5×), **3** slides its clock (one sweep is one full turn, the same contract *Formula Phase* carries on the CPU side) and **4** moves the palette along its ramp. All four rest at 0 and every one of them is *identity* there, so a look you tuned before they did this comes back exactly as it was. Apply a custom body and the meanings go back to being yours — a program that could not reassign its own uniforms would not be one.
 
-**Where to see them working.** Two entries in the editor's preset gallery are written around them — **🎛 Knobs** on the vertex tab (K1 frequency, K2 depth, K3 twist) and **🎛 Knob Tint** on the fragment tab (K1 hue drift, K2 contrast, K3 audio lift). Click one, press APPLY, then move a slider in **ADVANCED → SHADER KNOBS** and watch the shape change without the editor being touched again. Both shipped default bodies read a knob too, at a scale that is a no-op while the knob is at 0 — so the look you already know is the look you still get.
+One of the four reaches further than its slider: the built-in shader applies **4**'s palette shift on formulas as well, where the sliders are hidden. A palette offset you set on a numbered entry therefore stays on the colours when you move to a formula. To change it there, pick a numbered entry and move it back, or put Shader Knob 4 on a MIDI CC; RESET ALL returns it to 0. On a plain formula **J** does not reach it either: like the slider, the key acts only while the knobs are on the panel.
+
+**Where to see them working.** Two entries in the editor's preset gallery are written around them — **🎛 Knobs** on the vertex tab (K1 frequency, K2 depth, K3 twist) and **🎛 Knob Tint** on the fragment tab (K1 hue drift, K2 contrast, K3 audio lift). Click one, press APPLY, then move one of the **SHADER KNOBS** sliders in the panel and watch the shape change without the editor being touched again — for **🎛 Knobs**, with a numbered SHADER MODE entry selected, since a formula discards the vertex body's `y`; **🎛 Knob Tint** works over a formula too, and its sliders stay up there while it is applied. Both shipped default bodies read a knob too, at a scale that is a no-op while the knob is at 0 — so the look you already know is the look you still get.
 
 There is also one preset in the panel's own list, **🎛 Knobs (example)**, on a browser that has never saved one. It carries that shader, a numbered GPU mode (so the displacement is not discarded) and the knob positions it was written for — the whole thing on one click, without opening this editor at all. Delete it and it stays deleted.
 

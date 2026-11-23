@@ -77,8 +77,7 @@ Details:
 - [ ] My code follows the existing style (comments explain *why*, not *what*)
 - [ ] I have not reformatted unrelated files
 - [ ] I have added comments to any non-obvious code
-- [ ] My contribution is licensed under BUSL-1.1 (auto-converts to GPL v3
-      four years after the release it ships in, along with the rest of the
-      project — 2030-05-18 for 1.0.0-beta)
+- [ ] My contribution is licensed under the MIT License, the same as the
+      rest of the project
 - [ ] I have the right to submit this contribution (e.g. if employed, my
       employer permits open-source contributions)
