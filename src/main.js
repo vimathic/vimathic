@@ -71,7 +71,7 @@ const audio  = new AudioEngine();
 // _loadIntroIfNeeded for the logic).
 //
 // FIX: the wait is what makes the math worker arrive on time. The track is
-// 3.9 MB pulled by fetch(), which Chromium gives priority High, while the
+// 8.9 MB pulled by fetch(), which Chromium gives priority High, while the
 // module of a dedicated Worker is requested at VeryLow — and both travel the
 // one HTTP/2 connection that also carried the document. On a narrow link the
 // track starves math-worker-*.js outright: measured on a reporting machine,
@@ -87,7 +87,7 @@ const audio  = new AudioEngine();
 // every load.
 //
 // Deliberately no timeout fallback: a visitor who never touches the page never
-// needs the track, and not spending 3.9 MB of their traffic is the point.
+// needs the track, and not spending 8.9 MB of their traffic is the point.
 const INTRO_GESTURES = ['pointerdown', 'keydown'];
 const loadIntroOnGesture = () => {
   for (const ev of INTRO_GESTURES) window.removeEventListener(ev, loadIntroOnGesture);

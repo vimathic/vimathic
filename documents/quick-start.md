@@ -13,7 +13,7 @@ VIMATHIC is a mathematical music visualizer that runs in your browser. Drop in a
 
 ## 1. Get audio into the app
 
-VIMATHIC starts with an intro track already loaded — *S. Melentyev — Vimathic*. Click **▶ PLAY** and it'll play, driving the visualization. The track is bundled with the app and works offline.
+VIMATHIC starts with an intro track already loaded — *Stilicium*. Click **▶ PLAY** and it'll play, driving the visualization. The track is bundled with the app and works offline.
 
 If you want to play your own music instead:
 

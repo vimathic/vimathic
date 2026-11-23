@@ -331,7 +331,7 @@ test.describe('Math worker', () => {
 
 // ── 8. The intro track waits for a gesture (regression guard) ──
 //
-// It is guarding a race, not a preference. The track is 3.9 MB fetched at
+// It is guarding a race, not a preference. The track is 8.9 MB fetched at
 // priority High; the worker module is requested at VeryLow over the same
 // connection, so a track started during load can starve it past the 15s
 // cold-start watchdog in math-visualizer.js and push every surface frame onto

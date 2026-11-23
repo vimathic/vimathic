@@ -6,7 +6,7 @@ third-party libraries VIMATHIC is built on.
 
 ## Bundled audio
 
-The audio file `vimathic-intro.mp3` (the track "S. Melentyev — Vimathic")
+The audio file `vimathic-intro.mp3` (the track "Stilicium")
 bundled with VIMATHIC is **not** licensed under the MIT License. It is
 © 2026 S. Melentyev, All Rights Reserved, and is licensed separately under the
 following terms.

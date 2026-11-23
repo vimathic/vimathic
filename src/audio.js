@@ -1204,11 +1204,11 @@ export class AudioEngine {
       // objects from drag-drop / <input>) treats it uniformly.
       const file = new File(
         [blob],
-        'S.Melentyev - Vimathic.mp3',
+        'Stilicium.mp3',
         { type: 'audio/mpeg', lastModified: Date.now() }
       );
       // FIX: ask again. The two refusals above were answered before an await
-      // of a 3.9 MB fetch, and acted on seconds later — so a track dropped in
+      // of an 8.9 MB fetch, and acted on seconds later — so a track dropped in
       // that window got the intro mixed into it, and a CLEAR pressed in that
       // window got the intro back AND playing, through addFiles' auto-play
       // branch, moments after the operator asked for it to go. The JSDoc above
