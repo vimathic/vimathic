@@ -25,6 +25,17 @@
 // applied at the top of the next tick. The animation steps backwards for one
 // frame and then forwards again.
 //
+// ── Defect 3: every slow formula was computed twice (FIX(cpu double work)) ────
+// The fix for defect 2 bumped the generation after each main-thread field, so
+// the worker's answer for the tick in flight was always thrown away — and the
+// main thread computed a field on EVERY frame that found the worker busy. Any
+// formula slower than a frame therefore ran on both threads with only the main
+// thread's copy used: measured in Chrome, Winding Number 80 replies, 80
+// discarded, 79 main-thread fields in 6 s, at 26 fps. A busy frame now waits on
+// a channel that has answered once; defect 2 survives only where a main-thread
+// field can still run beside a live worker — a stalled frame, and the cold
+// start before the first reply — and is pinned there.
+//
 // ── Why this runs in plain Node ───────────────────────────────────────────────
 // The constructor's only environmental need is `Worker`; a stub gives the tests
 // hand-delivered replies, which is what makes the ordering above expressible at
@@ -201,6 +212,92 @@ describe('a worker reply cannot move the surface backwards', () => {
   });
 });
 
+describe('a live worker is waited on, not doubled (FIX(cpu double work))', () => {
+  /** The tick messages posted so far — setFormula posts too, and is not one. */
+  const ticks = () => lastWorker.posted.filter(m => m.type === 'tick');
+  /** A viz whose channel has answered once, with its next tick in flight. */
+  function answered() {
+    const r = makeViz();
+    r.viz.setFormula('trigonometry', 'travelingWave');
+    r.viz.tick(1.0);                                             // posts t=1.0
+    lastWorker.reply(new Float32Array(GRID * GRID).fill(0.2), ticks().at(-1).gen);
+    r.viz.tick(1.1);                                             // applies it, posts t=1.1
+    return r;
+  }
+
+  test('a frame that finds a tick in flight computes nothing and queues nothing', () => {
+    const { viz, geometry } = answered();
+    const posts = ticks().length, gen = viz._generation, before = xyz(geometry);
+    viz.tick(1.2);
+    viz.tick(1.3);
+    assert.equal(viz._generation, gen,
+      'a main-thread field was computed beside the worker — and the generation bump throws the worker\'s answer away');
+    assert.ok(maxDelta(xyz(geometry), before, 1) < 1e-9, 'the main thread moved the surface the worker is computing');
+    assert.equal(ticks().length, posts, 'a second tick was queued behind the one in flight');
+  });
+
+  test('and the answer it waited for is the one applied', () => {
+    const { viz, geometry } = answered();
+    const before = xyz(geometry);
+    viz.tick(1.2);                                               // waits
+    lastWorker.reply(new Float32Array(GRID * GRID).fill(0.9), ticks().at(-1).gen);
+    viz.tick(1.3);
+    assert.ok(maxDelta(xyz(geometry), before, 1) > 0.1, 'the awaited answer was dropped');
+    assert.equal(ticks().length, 3, 'the channel did not move on to the next tick');
+  });
+
+  test('a stalled frame still computes once, and the late answer it overtook is discarded', () => {
+    // Defect 2 on the one path where a main-thread field can still run beside
+    // a live worker: the watchdog's frame.
+    const { viz, geometry } = answered();
+    const late = ticks().at(-1);
+    viz._workerPostTime = performance.now() - 60_000;            // t=1.1 unanswered past any budget
+    const gen = viz._generation;
+    viz.tick(2.0);                                               // the watchdog's frame computes t=2.0
+    assert.ok(viz._generation > gen, 'the stalled frame did not compute — a dead channel would freeze the surface');
+    const newest = xyz(geometry);
+    lastWorker.reply(new Float32Array(GRID * GRID).fill(0.9), late.gen);
+    viz.tick(2.1);
+    assert.ok(maxDelta(xyz(geometry), newest, 1) < 0.5,
+      'the stalled tick\'s late answer was applied over the newer field');
+  });
+
+  test('control — before the channel has ever answered, a busy frame still computes (the cold start)', () => {
+    // Until the first reply the worker may still be loading its module, and
+    // waiting would hold the boot surface flat for that long.
+    const { viz, geometry } = makeViz();
+    viz.setFormula('trigonometry', 'travelingWave');
+    viz.tick(1.0);                                               // posts; nothing has ever answered
+    const gen = viz._generation, before = xyz(geometry);
+    viz.tick(2.0);
+    assert.ok(viz._generation > gen, 'the cold start no longer fills in on the main thread');
+    assert.ok(maxDelta(xyz(geometry), before, 1) > 1e-6, 'the cold-start frame did not move the surface');
+  });
+});
+
+
+// ── The normals recompute belongs to PTS (NORMALS_NOTE, math-collections.js) ──
+describe('the displacing modes recompute normals only for the points cloud', () => {
+  const normalVersion = g => g.attributes.normal.version;
+
+  for (const [label, arm] of [
+    ['volume',   viz => viz.setVolumeFormula('breathe')],
+    ['collapse', viz => { viz.setFormula('trigonometry', 'travelingWave'); viz.setMode('collapse'); }],
+  ]) {
+    test(`${label}: no recompute outside PTS, a recompute in PTS`, () => {
+      const { viz, render, geometry } = makeViz();
+      arm(viz);
+      render.vizMode = 'wireframe';
+      viz.tick(1.0);                                  // settle any transition writes
+      const v0 = normalVersion(geometry);
+      viz.tick(1.1); viz.tick(1.2);
+      assert.equal(normalVersion(geometry), v0, `${label} recomputed normals in WIRE, where nothing reads them`);
+      render.vizMode = 'points';
+      viz.tick(1.3);
+      assert.ok(normalVersion(geometry) > v0, `${label} left the PTS spray on stale normals`);
+    });
+  }
+});
 
 // ── Round 11: WAVE INTENSITY is the app's main formula control ───────────────
 describe('the volume tick reads the same sliders the other two modes read', () => {

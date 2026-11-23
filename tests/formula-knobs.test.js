@@ -13,6 +13,10 @@
 // These tests drive the real _tickSurface with the worker disabled, so what they
 // observe is the argument object the formula itself receives — not a copy of the
 // arithmetic restated in the test, which would pass on any tree.
+//
+// The last group is about where the pair sits: one slot in the panel that it
+// shares with the four Shader Knobs, by engine. Under a numbered GPU shader the
+// pair moves nothing, so the knobs take its place (see "The slot swaps banks").
 
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,6 +26,12 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+// Source with its comment lines removed, so an assertion reads the code and not
+// the prose about it. src/ui/presets.js is read with fs on purpose: it carries
+// a NUL byte that makes ripgrep treat it as binary, and fs does not care.
+const code = rel => read(rel).split('\n')
+  .filter(l => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')); })
+  .join('\n');
 
 let MathVisualizer, PARAMS, THREE;
 before(async () => {
@@ -304,30 +314,99 @@ describe('they are ordinary parameters, so everything else comes free', () => {
     }
   });
 
-  test('the app says on screen when the pair is inert, not only in a comment', () => {
-    // The boundary is real and deliberate; the silence was not. What a unit
-    // test can hold here is that the parts exist and are wired — the visible
-    // behaviour is carried by tests/e2e/smoke.spec.js, because _syncFormulaKnobs
-    // is a closure and the question is what an operator sees after a selection.
+  // ── The slot swaps banks; it does not dim one ─────────────────────────────
+  // REVERSED (shader knobs): the test that stood here held the r6 arrangement —
+  // the pair dimmed under a numbered GPU shader by a .fk-inert rule, with a
+  // NO EFFECT line (#fk-note) under it. The boundary it described is still
+  // real (nothing reads Detail / Phase under a numbered shader); what changed
+  // is the answer to it. The slot now shows the pair on a CPU formula and the
+  // four Shader Knobs on a numbered shader — the knobs that DO act there, and
+  // that used to sit three clicks deep in ADVANCED → SHADER EDITOR.
+  //
+  // What a source read can hold is that the parts exist and every road is
+  // wired. The behaviour is driven for real in tests/controls-wiring.test.js
+  // (the closure, through bindControls) and tests/e2e/smoke.spec.js (what an
+  // operator sees).
+  test('the slot has both banks, and the second ships hidden', () => {
     const html = read('index.html');
-    assert.match(html, /id="formula-knobs-wrap"/, 'the pair has no wrapper to dim');
-    assert.match(html, /id="fk-note"/, 'nothing on screen can say why they are inert');
-    assert.match(html, /#formula-knobs-wrap\.fk-inert .cg\{opacity/,
-      'the dim rule is gone, so the class would toggle nothing');
-
-    const controls = read('src/ui/controls.js');
-    assert.match(controls, /const _syncFormulaKnobs = /, 'the sync is gone');
-    // applyFormulaValue is the one funnel every selection passes through — the
-    // dropdown, R and F, and applyState. Wiring anywhere else would leave a
-    // road that dims nothing, which is how this class of bug arrives.
-    const funnel = controls.slice(controls.indexOf('ui.applyFormulaValue = '));
-    assert.match(funnel.slice(0, 400), /_syncFormulaKnobs\(val\)/,
-      'applyFormulaValue no longer syncs the pair, so some roads leave it lying');
+    assert.match(html, /id="formula-knobs-wrap"/, 'the pair has no wrapper to swap');
+    const wrap = html.match(/<div id="shader-knobs-wrap"[^>]*>/);
+    assert.ok(wrap, 'the Shader Knobs have no wrapper in the slot');
+    // Hidden in the markup: the boot selection is a CPU formula, and a wrapper
+    // that shipped visible would show both banks until the module ran.
+    assert.match(wrap[0], /style="display:none"/,
+      '#shader-knobs-wrap ships visible, so both banks flash on before controls.js runs');
+    assert.ok(html.indexOf('id="shader-knobs-wrap"') > html.indexOf('id="formula-knobs-wrap"'),
+      'the knobs come before the pair — the slot reads upside down');
   });
 
-  test('both new ids are inside the dom.js contract', async () => {
+  test('control — the pair ships visible, because the boot selection is a formula', () => {
+    // Without this, a slot that shipped with BOTH banks hidden would pass the
+    // test above.
+    const html = read('index.html');
+    const wrap = html.match(/<div id="formula-knobs-wrap"[^>]*>/);
+    assert.ok(wrap);
+    assert.doesNotMatch(wrap[0], /display:\s*none/, 'the pair ships hidden on a CPU formula');
+  });
+
+  test('the dropdown, R and F swap it on their way through applyFormulaValue', () => {
+    const controls = read('src/ui/controls.js');
+    assert.match(controls, /const _syncFormulaKnobs = /, 'the sync is gone');
+    // applyFormulaValue is the funnel the dropdown and R / F share. (It is not
+    // applyState's: the comment over this call claimed it was until the swap,
+    // and the slot went stale on every preset — see the next test.)
+    const funnel = controls.slice(controls.indexOf('ui.applyFormulaValue = '));
+    assert.match(funnel.slice(0, 400), /_syncFormulaKnobs\(val\)/,
+      'applyFormulaValue no longer syncs the slot, so the dropdown leaves it lying');
+  });
+
+  test('applyState swaps it right after it writes #gpu-sel', () => {
+    // A preset click, an import, a clip step and the boot restore all write
+    // #gpu-sel here, directly. Passing s.gpuSelVal (not the select read back)
+    // is the contract: a value this build does not ship blanks the select.
+    //
+    // FIX(review R1/R3): the value is normalised into `sel` first (a number
+    // from a hand-edited file is that number as a string), and between the
+    // write and the sync sits one check: an `m:` value the select refused
+    // puts the previous value back and skips the sync. This used to pin the
+    // two statements as adjacent; it pins the order, the value handed over,
+    // and that nothing between them touches the engine.
+    const presets = code('src/ui/presets.js');
+    const write = 'DOM.gpuSel.value = sel;';
+    const at = presets.indexOf(write);
+    assert.ok(at > 0, 'applyState no longer writes #gpu-sel the way this test reads it');
+    const sync = presets.indexOf('this.syncFormulaKnobsUI?.(sel);', at);
+    assert.ok(sync > at, 'the slot is not synced after the #gpu-sel write, with the snapshot\'s value');
+    const between = presets.slice(at + write.length, sync);
+    assert.match(between, /DOM\.gpuSel\.value\s*!==\s*sel/, 'the check that the select took the value is gone');
+    assert.doesNotMatch(between, /setGPUModeAnimated|deactivate\(|setFormula|setVolumeFormula|syncFormulaKnobsUI/,
+      'something between the write and the sync drives the engine or the slot');
+    assert.doesNotMatch(presets, /syncFormulaKnobsUI\?\.\(\s*DOM\.gpuSel\.value\s*\)/,
+      'the slot is handed the select read back, which a value this build does not ship has blanked');
+    const controls = code('src/ui/controls.js');
+    assert.match(controls, /ui\.syncFormulaKnobsUI = _syncFormulaKnobs;/,
+      'the adapter applyState calls is not the sync itself');
+  });
+
+  test('RESET ALL swaps it after both of its writes that decide it', () => {
+    // #gpu-sel back to the boot formula, and the custom shader cleared — the
+    // knobs show over a formula while a custom shader is applied, so a sync
+    // between the two would be undone by the second.
+    const controls = code('src/ui/controls.js');
+    const from = controls.indexOf("DOM.btnResetAll.addEventListener('click'");
+    assert.ok(from > 0, 'the RESET ALL handler moved');
+    const handler = controls.slice(from, controls.indexOf("ui._showToast('⟳ Reset to defaults')", from));
+    const gpu   = handler.indexOf('DOM.gpuSel.value = bootSel;');
+    const reset = handler.indexOf('se.reset?.()');
+    const sync  = handler.lastIndexOf('_syncFormulaKnobs(bootSel);');
+    assert.ok(gpu > 0 && reset > 0, 'RESET ALL no longer writes #gpu-sel or resets the shader the way this test reads it');
+    assert.ok(sync > gpu && sync > reset,
+      'RESET ALL does not sync the slot after both its #gpu-sel write and its shader reset');
+  });
+
+  test('both wrapper ids are inside the dom.js contract', async () => {
     const { REQUIRED_IDS } = await import('../src/dom.js');
-    for (const id of ['formula-knobs-wrap', 'fk-note']) {
+    for (const id of ['formula-knobs-wrap', 'shader-knobs-wrap']) {
       assert.ok(REQUIRED_IDS.includes(id), `${id} is dereferenced by app code but not in the contract`);
     }
   });

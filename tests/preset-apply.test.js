@@ -74,6 +74,8 @@ function makeUi() {
     currentMaterial: 'matte',           // what setSurfaceMaterial* keeps updated
     currentParticleStyle: 'squares',    // and what setParticleStyle keeps updated
     setParticleStyle: s => calls.push(['setParticleStyle', s]),
+    currentWireStyle: 'classic',        // and setWireStyle
+    setWireStyle: s => calls.push(['setWireStyle', s]),
     grid: { visible: true },
     uMathMode: 0,                       // stand-in for U.uMathMode.value
     gpuMat: { vertexShader: BUILTIN_VS, fragmentShader: BUILTIN_FS },
@@ -158,7 +160,12 @@ function makeUi() {
     // Recorded, not just swallowed: this is where the material half of an apply
     // ends up (controls.js owns the WIRE/PTS rule), so the material a snapshot
     // actually pushed is only observable through this argument.
-    syncVizModeUI(mode, mat, pts) { calls.push(['syncVizModeUI', mode, mat, pts]); },
+    // The wire style, the fourth argument, is recorded under a name of its own
+    // so the many three-argument assertions below keep reading what they read.
+    syncVizModeUI(mode, mat, pts, wire) {
+      calls.push(['syncVizModeUI', mode, mat, pts]);
+      calls.push(['syncVizModeUI.wire', wire]);
+    },
     syncDeformUI() {}, _showToast() {},
     called(name) { return this.calls.filter(c => c[0] === name); },
   });
@@ -344,6 +351,268 @@ describe('applyState — the PTS particle style rides with the snapshot', () => 
   // math visualizer too, and a fake complete enough for it would be a second
   // harness testing one property assignment. The save → change → load round
   // trip in tests/e2e/particle-styles.spec.js covers it against the real thing.
+});
+
+describe('applyState — the WIRE wire style rides with the snapshot', () => {
+  // The particle style's twin, with one difference that makes the default
+  // matter more: WIRE is the boot mode, so the wire style is usually ON SCREEN
+  // when a preset lands, not filed away.
+  let ui;
+  beforeEach(() => { ui = makeUi(); });
+
+  test('a snapshot carrying a style hands it to the viz-mode adapter', () => {
+    assert.equal(ui.applyState({
+      _version: 2, vizMode: 'wireframe', material: 'matte', wireStyle: 'hologram',
+    }), true);
+    assert.deepEqual(ui.called('syncVizModeUI.wire')[0], ['syncVizModeUI.wire', 'hologram']);
+  });
+
+  test('a snapshot from before the field existed reads as classic', () => {
+    // Every preset saved by an earlier build, and every autosave. Leaving the
+    // live style in place would make an old preset load as Neon for an operator
+    // who happens to have Neon up — a look that preset never had.
+    assert.equal(ui.applyState({ _version: 2, vizMode: 'wireframe' }), true);
+    assert.deepEqual(ui.called('syncVizModeUI.wire')[0], ['syncVizModeUI.wire', 'classic']);
+  });
+
+  test('a snapshot with no viz mode still carries its style through', () => {
+    // The adapter files it; the engine applies it if WIRE is what is on screen.
+    assert.equal(ui.applyState({ _version: 2, wireStyle: 'scan' }), true);
+    assert.deepEqual(ui.called('syncVizModeUI.wire')[0], ['syncVizModeUI.wire', 'scan']);
+  });
+
+  test('without the adapter the style goes straight to the engine', () => {
+    delete ui.syncVizModeUI;
+    assert.equal(ui.applyState({
+      _version: 2, vizMode: 'wireframe', wireStyle: 'neon',
+    }), true);
+    assert.deepEqual(ui.called('setWireStyle')[0], ['setWireStyle', 'neon']);
+  });
+
+  // That wireStyle is in STATE_FIELDS — migratePreset's definition of "looks
+  // like a preset" — is held by tests/factory-preset.test.js, whose example
+  // states the field and checks every field it carries against that list.
+});
+
+describe('applyState — the STARS wish rides with the snapshot', () => {
+  // The apply goes through the panel's one painter, ui.setStars (controls.js),
+  // so the button follows the engine on a preset click, an import, a clip step
+  // and a boot restore alike. The stub records what it was handed; the
+  // painter's own behaviour is tested in tests/controls-wiring.test.js.
+  let ui;
+  beforeEach(() => {
+    ui = makeUi();
+    ui.setStars = on => ui.calls.push(['setStars', on]);
+  });
+
+  test('a snapshot with starsOn:false switches the stars off through ui.setStars', () => {
+    assert.equal(ui.applyState({ _version: 4, starsOn: false }), true);
+    assert.deepEqual(ui.called('setStars'), [['setStars', false]],
+      'a preset saved with STARS off came back with the starfield on');
+  });
+
+  test('control — a snapshot without starsOn leaves the stars as they are', () => {
+    // No opinion, no change — the nightly policy. A preset from before STARS
+    // existed has nothing to say about the starfield, and guessing `true` for
+    // it would switch the stars back on under an operator who turned them off.
+    assert.equal(ui.applyState({ _version: 4, colorIdx: 5 }), true);
+    assert.equal(ui.called('setStars').length, 0);
+  });
+
+  test('control — starsOn:true is applied too, as a boolean', () => {
+    assert.equal(ui.applyState({ _version: 4, starsOn: 1 }), true);
+    assert.deepEqual(ui.called('setStars'), [['setStars', true]]);
+  });
+});
+
+describe('applyState — the formula slot is told which engine it restored', () => {
+  // The panel's formula slot shows Formula Detail / Phase on a CPU formula and
+  // the Shader Knobs on a numbered shader (controls.js _syncFormulaKnobs).
+  // applyState writes #gpu-sel itself — a preset click, an import, a clip step
+  // and the boot restore all come through here — so it has to say so, through
+  // the adapter, or the slot keeps describing the previous engine. The slot's
+  // own behaviour, the real adapter included, is driven in
+  // tests/controls-wiring.test.js; here the stub records what it was handed.
+  let ui;
+  beforeEach(() => {
+    ui = makeUi();
+    ui.syncFormulaKnobsUI = v => ui.calls.push(['syncFormulaKnobsUI', v]);
+  });
+
+  test('a numbered snapshot hands the slot its own value', () => {
+    assert.equal(ui.applyState({ _version: 4, gpuSelVal: '3' }), true);
+    assert.deepEqual(ui.called('syncFormulaKnobsUI'), [['syncFormulaKnobsUI', '3']],
+      'a preset restored a GPU shader and the slot was never told');
+  });
+
+  test('a formula snapshot hands over the m: value unchanged', () => {
+    assert.equal(ui.applyState({ _version: 4, gpuSelVal: 'm:fractals:henon' }), true);
+    assert.deepEqual(ui.called('syncFormulaKnobsUI'), [['syncFormulaKnobsUI', 'm:fractals:henon']]);
+  });
+
+  test('the value handed over is the snapshot\'s, not the select read back', () => {
+    // A value this build does not ship blanks a real <select>. The engine branch
+    // keys on s.gpuSelVal, so the slot has to as well.
+    const sel = document.getElementById('gpu-sel');
+    const desc = Object.getOwnPropertyDescriptor(sel, 'value');
+    Object.defineProperty(sel, 'value', { configurable: true, get: () => '', set() {} });
+    try {
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: '41' }), true);
+    } finally {
+      Object.defineProperty(sel, 'value', desc);
+    }
+    assert.deepEqual(ui.called('syncFormulaKnobsUI'), [['syncFormulaKnobsUI', '41']]);
+  });
+
+  test('control — a snapshot without gpuSelVal leaves the slot alone', () => {
+    // It leaves #gpu-sel alone too, so there is nothing new to describe.
+    assert.equal(ui.applyState({ _version: 4, deformMode: 'collapse' }), true);
+    assert.equal(ui.called('syncFormulaKnobsUI').length, 0);
+  });
+
+  test('a blank gpuSelVal is no selection: the select, the slot and the engine stay put', () => {
+    // FIX(knobs-K1): '' used to pass `!= null`. It blanked the select, took the
+    // GPU branch — setGPUModeAnimated(+'' = 0), shader 1 — and handed the slot
+    // '', which the slot reads as a CPU formula: the pair up and the knobs
+    // hidden over a shader. It now counts as the missing field above does.
+    // (The numbered-snapshot test at the top of this group is its control: a
+    // value that says something still reaches both.)
+    const sel = document.getElementById('gpu-sel');
+    sel.value = '7';                                    // a shader is on screen
+    try {
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: '' }), true);
+      assert.equal(sel.value, '7', "'' blanked the select");
+      assert.equal(ui.called('syncFormulaKnobsUI').length, 0, "the slot was told '' — a formula — over a shader");
+      assert.equal(ui.called('setGPUModeAnimated').length, 0, "'' put shader 1 on screen");
+      assert.equal(ui.called('deactivate').length, 0, "'' switched the formula engine off");
+    } finally {
+      sel.value = '';                                   // the stub outlives the test
+    }
+  });
+});
+
+describe('applyState — with no selection and no panel adapter, the select decides VOLUME', () => {
+  // FIX(review RRL-1): a snapshot with no selection of its own ('' or a missing
+  // field) judges the selection already in effect. Behind bindControls that is
+  // ui.formulaOwnsSurface, the formula slot's memory; a host that mixes in
+  // PresetMixin without the panel — this file's hosts — falls back to the
+  // select's own rule: an `m:` value, or none, is a CPU formula. That fallback
+  // had no test, so turning it back into "no selection is a CPU formula" (the
+  // rule until acc6a4c) restored VOLUME over a numbered shader here and every
+  // test stayed green.
+  let ui;
+  const sel = () => document.getElementById('gpu-sel');
+  const SNAP = { _version: 4, gpuSelVal: '', deformMode: 'volume', volumeKey: 'breathe' };
+  beforeEach(() => {
+    ui = makeUi();
+    ui.syncDeformUI = (mode, key) => ui.calls.push(['syncDeformUI', mode, key]);
+  });
+  // The stub outlives the test.
+  const withSelect = (value, fn) => { sel().value = value; try { fn(); } finally { sel().value = ''; } };
+
+  test("over shader 3, '' beside VOLUME restores SURFACE and arms no volume formula", () => {
+    assert.equal(ui.formulaOwnsSurface, undefined, 'precondition: this host has no panel adapter');
+    withSelect('3', () => {
+      assert.equal(ui.applyState({ ...SNAP }), true);
+      assert.deepEqual(ui.called('setVolumeFormula'), [],
+        'VOLUME was armed over shader 3: setVolumeFormula sets uMathMode = 1 and the shader draws no displacement');
+      assert.equal(ui.render.uMathMode, 0);
+      assert.deepEqual(ui.called('syncDeformUI'), [['syncDeformUI', 'surface', null]],
+        'the deform row lit a mode the engine is not in');
+      assert.equal(sel().value, '3', "'' moved the select");
+    });
+  });
+
+  test("control — over an m: formula the same snapshot restores VOLUME", () => {
+    withSelect('m:fractals:henon', () => {
+      assert.equal(ui.applyState({ ...SNAP }), true);
+      assert.deepEqual(ui.called('setVolumeFormula'), [['setVolumeFormula', 'breathe']]);
+      assert.deepEqual(ui.called('syncDeformUI'), [['syncDeformUI', 'volume', 'breathe']]);
+    });
+  });
+});
+
+describe('applyState — a body an earlier build shipped comes back in today\'s wording', () => {
+  // The default vertex body and the 🎛 Knobs example both carried a comment
+  // naming "ADVANCED > SHADER KNOBS"; the sliders moved, and the comment now
+  // names them without a route. Autosaves, presets and exported files store the
+  // bodies by text, so a returning operator's restore would put the stale route
+  // back in front of them. Only a comment line differs, so swapping in today's
+  // text changes no pixel.
+  let SE_DEFAULT_VERT, SE_DEFAULT_VERT_LEGACY, SE_PRESETS;
+  before(async () => {
+    ({ SE_DEFAULT_VERT, SE_DEFAULT_VERT_LEGACY, SE_PRESETS } = await import('../src/shaders.js'));
+  });
+
+  // What a 🎛 Knobs (example) preset seeded by round 5 carries, verbatim.
+  const KNOBS_R5 = '// K1 frequency   K2 depth   K3 twist   — ADVANCED > SHADER KNOBS, or a MIDI CC\n' +
+    'float freq = 3.0 + uK0 * 21.0;\nfloat twist = ang * uK2 * 6.0;\n' +
+    'y = sin(r * freq * wi - T * 2.0 + twist) * exp(-r * 0.35)\n  * (0.25 + uK1 * 0.75) * (0.4 + b * 0.9) * a;';
+  // The default vertex body round 5 shipped (SE_DEFAULT_VERT at main@2a13a70,
+  // src/shaders.js), verbatim — the text a returning operator's autosave,
+  // presets and exported files hold. FIX(review): the tests here and in
+  // tests/shader-editor-status.test.js took their "old" body from
+  // SE_DEFAULT_VERT_LEGACY[0] itself, so a drift in that constant (one space
+  // was enough) passed every test while the shipped text stopped being
+  // recognised. This literal is the outside reference, as KNOBS_R5 is for the
+  // example; shader-editor-status carries the same bytes for its half.
+  const DEFAULT_R5 =
+    '// b bass  t treble  m mid  bt beat  T time  wi waveInt  a amp\n' +
+    '// pos.x pos.z = coords   r = radius   ang = angle\n' +
+    '// uK0..uK3 = four free knobs: ADVANCED > SHADER KNOBS, and MIDI-mappable.\n' +
+    '// Put one where you would have typed a constant and it becomes playable.\n' +
+    'y = sin(r * 8.0 * wi * (1.0 + uK0 * 2.0) + T) * (0.2 + b * 0.8) * a\n' +
+    '  + turb(pos.xz * (2.0 + t) * wi) * b * 0.3\n' +
+    '  + bt * 0.5;';
+  const FRAG = 'c = paletteAt(t);';
+
+  test('the legacy list holds the default round 5 actually shipped, byte for byte', () => {
+    assert.ok(SE_DEFAULT_VERT_LEGACY.includes(DEFAULT_R5),
+      'SE_DEFAULT_VERT_LEGACY no longer holds the text main shipped, so a returning session\'s ' +
+      'default reads as the operator\'s own code and keeps the stale "ADVANCED > SHADER KNOBS" route');
+  });
+
+  test('control — today\'s default is not that text', () => {
+    // Otherwise the test above would pass with no legacy entry doing any work.
+    assert.notEqual(SE_DEFAULT_VERT, DEFAULT_R5);
+  });
+
+  test('the old default vertex body is restored as today\'s default', () => {
+    const ui = makeUi();
+    const old = DEFAULT_R5;
+    assert.match(old, /ADVANCED > SHADER KNOBS/, 'precondition: this is the wording that went stale');
+    assert.equal(ui.applyState({ _version: 4, shader: { hasCustom: true, vert: old, frag: FRAG } }), true);
+    assert.equal(ui.shaderEditor._vert, SE_DEFAULT_VERT, 'the stale wording came back into the editor');
+    assert.equal(ui.called('compileAndApply').length, 1);
+  });
+
+  test('the old 🎛 Knobs example is restored as today\'s', () => {
+    const ui = makeUi();
+    assert.equal(ui.applyState({ _version: 4, shader: { hasCustom: true, vert: KNOBS_R5, frag: FRAG } }), true);
+    assert.equal(ui.shaderEditor._vert, SE_PRESETS.find(p => p.id === 'knobs-vert').code);
+  });
+
+  test('control — a body the operator wrote is restored exactly as written', () => {
+    // Even one that is the old default with a single edit: it is theirs now.
+    const ui = makeUi();
+    const theirs = DEFAULT_R5.replace('8.0', '9.0');
+    assert.notEqual(theirs, DEFAULT_R5, 'precondition: the edit took');
+    ui.applyState({ _version: 4, shader: { hasCustom: true, vert: theirs, frag: FRAG } });
+    assert.equal(ui.shaderEditor._vert, theirs);
+  });
+
+  test('a live program applied from today\'s default counts as the one an old snapshot carries', () => {
+    // The already-live guard compares bodies. Without the mapping in front of
+    // it, every clip step carrying the old default would recompile a program
+    // that is already on screen, and rewrite the draft buffer while doing it.
+    const ui = makeUi();
+    ui.applyState({ _version: 4, shader: { hasCustom: true, vert: SE_DEFAULT_VERT, frag: FRAG } });
+    assert.equal(ui.called('compileAndApply').length, 1, 'precondition: the first apply compiles');
+    ui.shaderEditor._frag = 'half-typed idea';
+    ui.applyState({ _version: 4, shader: { hasCustom: true, vert: DEFAULT_R5, frag: FRAG } });
+    assert.equal(ui.called('compileAndApply').length, 1, 'the same program was compiled again');
+    assert.equal(ui.shaderEditor._frag, 'half-typed idea');
+  });
 });
 
 describe('applyState — AUTO COLOUR / AUTO MATERIAL outrank a clip step', () => {

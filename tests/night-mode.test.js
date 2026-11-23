@@ -7,9 +7,11 @@
 //
 // ── The claim ────────────────────────────────────────────────────────────────
 // NIGHT is a dark-room mode that writes ONE shader uniform — uGlare, how much
-// white the surface throws back — plus the furniture: the starfield off, the
-// grid dimmed, and, in controls.js rather than here, the unattended palette
-// pickers narrowed. It writes no bloom setting, and RenderEngine.setNightly —
+// white the surface throws back — plus the furniture: the grid dimmed, and, in
+// controls.js rather than here, the unattended palette pickers narrowed. (It
+// used to take the starfield out too; r6 reversed that, and since then the
+// starfield has its own switch, STARS — tests/stars-toggle.test.js.) It
+// writes no bloom setting, and RenderEngine.setNightly —
 // the entry point this file drives — writes no palette number. The write lives in
 // controls.js next to the pool narrowing: switched on over a scheme below
 // NIGHT_SCHEME_FIRST it moves the choice to the first NIGHT palette; over a
@@ -34,14 +36,21 @@
 // be copied into a third place.
 //
 // ── Why the starfield needs a test at all ────────────────────────────────────
-// It now has two owners. setTransparentBackground hides it for its own reason
-// (alpha output) and used to restore it by writing `true` unconditionally,
-// under a comment saying "nothing else writes stars.visible, so true is always
-// the right answer for them". That sentence stopped being true the moment NIGHT
-// existed, and the failure it describes is silent: leave transparent background
-// while NIGHT is on and 1200 white points come back into a mode whose entire
-// point is that they are gone. The same class of defect the grid half of
-// tests/grid-visibility.test.js was written for, one field over.
+// It is the one piece of furniture NIGHT used to own and no longer does, and
+// what this file pins is that the mode keeps its hands off it. Who does decide
+// it: two inputs, one writer. TRANSPARENT BG hides it for its own reason (alpha
+// output), the STARS button records the operator's wish (`starsOn`), and
+// RenderEngine._syncStars() combines the two and is the only thing that
+// writes stars.visible.
+//
+// History, because the shape of the defect repeats: setTransparentBackground
+// once restored the stars by writing `true` unconditionally, under a comment
+// saying "nothing else writes stars.visible, so true is always the right
+// answer for them". That stopped being true the moment NIGHT hid the stars,
+// and stopped being true again the moment STARS existed — and the failure is
+// silent both times: leave transparent background and 1200 white points come
+// back that somebody had switched off. The same class of defect the grid half
+// of tests/grid-visibility.test.js was written for, one field over.
 //
 // The numbers behind the two choices — starfield composites to bloom-luma 0.366
 // and so clears the 0.15 bloom gate at all times, a grid line at 0.1 opacity
@@ -80,8 +89,13 @@ beforeEach(() => {
   host = Object.assign(Object.create(RenderEngine.prototype), {
     transitions: new TransitionManager(),
     grid:  { visible: true, material: { opacity: GRID_OPACITY, transparent: true } },
-    // The starfield fades now, so it has a material like the grid does.
+    // A material like the grid's, because _syncStars() parks the opacity at
+    // STARS_OPACITY every time it writes `visible`.
     stars: { visible: true, material: { opacity: STARS_OPACITY, transparent: true } },
+    // The STARS wish, which _syncStars() reads strictly — no `?? true` there,
+    // so a host without it would hide the stars and fail every assertion
+    // below, as it should.
+    starsOn: true,
     scene: {}, renderer: { setClearColor() {} },
     // The uniform block, as much of it as setNightly touches. Written through
     // `this.U?.uGlare`, so an engine that has not built its uniforms yet is not
@@ -124,8 +138,9 @@ describe('NIGHT moves the furniture', () => {
     // The 400 ms cross-fade existed for one reason: `nightly` travels in
     // presets and in clip steps, so a clip alternating the mode cut 1200 white
     // points in and out every few seconds. With NIGHT out of the picture the
-    // only writer left is setTransparentBackground, which is instant on
-    // purpose. A fade appearing here again would mean a second owner came back.
+    // only writer left is _syncStars(), fed by TRANSPARENT BG and STARS, and it
+    // is instant on purpose. A fade appearing here again would mean NIGHT's
+    // claim on the stars came back.
     setNightly(true);
     advance(16);
     assert.equal(host.stars.visible, true, 'something is taking the stars down within a frame');
@@ -298,29 +313,34 @@ describe('NIGHT moves the furniture', () => {
   });
 });
 
-// r6: the two owners became one. NIGHT no longer touches the starfield, so
-// setTransparentBackground is the only writer and the tests that pinned the
-// shared expression are gone with it — named here rather than deleted quietly,
+// r6: NIGHT stopped touching the starfield, and the tests that pinned the
+// shared expression went with it — named here rather than deleted quietly,
 // because one of them was a control:
 //
 //   • "leaving transparent background does not undo NIGHT" — it asserted the
-//     opposite of the contract now: the restore gives the stars back, full
-//     stop. Rewritten below rather than dropped.
+//     opposite of the r6 contract: the restore gave the stars back, full stop.
+//     Rewritten below rather than dropped.
 //   • "reinjected — the pre-NIGHT restore … undoes NIGHT" — a real mutation
 //     control, and a good one: it rebuilt setTransparentBackground from its own
 //     source with `_setStarsNow(true)` put back, to prove the assertion above
-//     could discriminate. That mutant IS the shipped code now, so the control
-//     has nothing left to reinject.
+//     could discriminate. That mutant was the shipped code from r6 until STARS.
 //   • "the instant restore is not undone by a fade still running" — there is no
 //     fade to race any more; the slot, the duration and the cancel are gone.
-describe('the starfield has one owner now, and it is the output format', () => {
+//
+// FIX(stars): r6 also left setTransparentBackground as the starfield's "one
+// owner", and this describe was titled that way. The STARS button is a second
+// input now. The ownership is: two inputs (the STARS wish and the output
+// format), one writer (_syncStars), and NIGHT is neither. The STARS half —
+// a switched-off starfield surviving a transparent round trip — is pinned in
+// tests/stars-toggle.test.js; what stays here is NIGHT's restraint.
+describe('the starfield answers to STARS and the output format, never to NIGHT', () => {
   test('leaving transparent background gives the stars back, mode or no mode', () => {
     setNightly(true);
     transparent(true);
     assert.equal(host.stars.visible, false, 'alpha capture must not carry white points');
     transparent(false);
     assert.equal(host.stars.visible, true,
-      'the restore asked the mode — it has no business asking anyone');
+      'the restore asked the mode — it has no business asking anyone but STARS');
     assert.equal(host.stars.material.opacity, STARS_OPACITY, 'given back at half strength');
   });
 
@@ -331,7 +351,7 @@ describe('the starfield has one owner now, and it is the output format', () => {
     assert.equal(host.stars.visible, true);
   });
 
-  test('no writer but this one — NIGHT cannot move them, in either direction', () => {
+  test('NIGHT cannot move them, in either direction', () => {
     // The half that still has to hold: alpha capture must not gain 1200 white
     // points because someone toggled a mode, and it must not lose them either.
     // Both directions, and a frame allowed to pass after each, so a fade

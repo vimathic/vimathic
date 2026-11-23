@@ -77,7 +77,8 @@ ctx.roll = cos(state.phase * 0.43) * (0.12 + bass * 0.18 + p.roll);`;
 // gallery scans at a glance. The strings use literal "\n" because the
 // editor splits on newlines for line-numbering — escape sequences in
 // template literals keep that explicit.
-const CP_PRESETS = [
+// Exported for tests/camera-top-flip.test.js.
+export const CP_PRESETS = [
   { name:'🎬 Cinematic',  code:`const dolly=lerp(state.dolly||1,1+bass*.6,.08);state.dolly=dolly;\norbit(p.radius*1.3/dolly,p.rotSpeed*.5,p.height*.7+sin(time*.05)*1.5+bass*1.2);\nctx.target.y=0.3+bass*.5+sin(time*.08)*.2;\nctx.target.x=sin(time*.04)*.3;\nctx.fov=lerp(ctx.fov,42-bass*10+beat*8,0.08);\nctx.roll=sin(time*.12)*.05+bass*.04;` },
   { name:'⚡ Reactive',   code:`orbit(p.radius,p.rotSpeed*(1+bass*4),p.height+bass*2);\nstate.shake=(state.shake||0)*.7+beat*.4;\nctx.cam.x+=(Math.random()-.5)*state.shake;\nctx.cam.z+=(Math.random()-.5)*state.shake;\nctx.fov=lerp(ctx.fov,p.fov+beat*18,0.18);\nctx.target.y=bass*.6;` },
   { name:'🌊 Float',      code:`state.phase=(state.phase||0)+.008+bass*.004;\nstate.wave=(state.wave||0)*.92+beat*.7;\nconst h=clamp(p.height+sin(state.phase*.7)*2.2+sin(state.phase*.31)*1.1+state.wave*.8,1.0,9.5);\norbit(p.radius*(1+sin(state.phase*.5)*.25),p.rotSpeed*(1+bass*.5),h);\nctx.target.y=sin(time*.06)*.4+state.wave*.3;\nctx.target.x=cos(state.phase*.5)*.4;\nctx.fov=42+sin(state.phase*.4)*8+state.wave*4;\nctx.roll=sin(state.phase*.35)*.15+bass*.08;` },
@@ -86,6 +87,15 @@ const CP_PRESETS = [
   { name:'🎢 Roller',     code:`state.t=(state.t||0)+.006+bass*.008;\nctx.cam.x=sin(state.t)*p.radius;\nctx.cam.y=1.5+Math.pow(Math.abs(sin(state.t*.5)),2)*5;\nctx.cam.z=cos(state.t)*p.radius;\nctx.fov=70+bass*15;\nctx.roll=sin(state.t*2)*.3*p.roll;` },
   { name:'🌑 Dark Matter',code:`state.spiral=(state.spiral||0)+p.rotSpeed*60+bass*.02;\nconst pull=lerp(state.pull||1,1-bass*.3,.06);state.pull=pull;\nconst rad=p.radius*pull*(1+sin(state.spiral*.13)*.2);\nctx.cam.x=sin(state.spiral)*rad;\nctx.cam.y=p.height+sin(state.spiral*.27)*1.8+cos(state.spiral*.41)*.9;\nctx.cam.z=cos(state.spiral)*rad;\nctx.target.x=cos(state.spiral*.5)*treble*.4;\nctx.target.y=0.1+bass*.3;\nctx.fov=lerp(ctx.fov,p.fov+bass*12-treble*4,0.1);\nctx.roll=sin(state.spiral*.7)*.1*bass;` },
   { name:'🌙 Moon',       code:`state.phase=(state.phase||0)+.018+bass*.008;\nconst hop=Math.pow(Math.abs(sin(state.phase*.38)),.6)*2.6;\nconst sway=cos(state.phase*.76)*.12;\norbit(p.radius*1.1+sway,p.rotSpeed*.6,1.1+hop);\nctx.target.x=sway*.5;\nctx.target.y=.05+hop*.04;` },
+  // Owner's request (23.11.2026): straight down from above at the centre, a
+  // slow turn about the axis, after 30 s a quick flip to the other side, 30 s
+  // there, and back. Timed on the WALL clock, because `time` is the formula
+  // clock (0.48 per second, stopped by STOP MOTION) and "30 seconds" is meant
+  // as seconds — which also lets the camera keep turning round a frozen body.
+  // A hair off the axis on purpose: exactly overhead, the up vector and the
+  // view line coincide and OrbitControls has no azimuth to keep (the boot
+  // camera sits 0.001 off for the same reason).
+  { name:'🔄 Top Flip',   code:`// Straight down from above, slowly turning about the axis; every HOLD s a quick\n// flip to straight up from below, and back. Wall clock, so STOP MOTION freezes\n// the body while the camera keeps going. p.radius sets the distance.\nconst HOLD = 30, FLIP = 1.5, TURN = 40;   // seconds: each side, each flip, one full turn\nconst now = performance.now() / 1000;\nif (state.t0 === undefined) state.t0 = now;\nconst s = now - state.t0, k = s % (2 * (HOLD + FLIP));\nconst ease = t => t < .5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2;\nlet phi = 0;                               // 0 = above, PI = below\nif (k >= HOLD && k < HOLD + FLIP) phi = Math.PI * ease((k - HOLD) / FLIP);\nelse if (k >= HOLD + FLIP && k < 2 * HOLD + FLIP) phi = Math.PI;\nelse if (k >= 2 * HOLD + FLIP) phi = Math.PI * (1 - ease((k - 2 * HOLD - FLIP) / FLIP));\nconst D = p.radius * 1.3, spin = s * 2 * Math.PI / TURN;\nconst r = Math.max(D * sin(phi), 0.001);   // never exactly on the axis\nctx.cam.x = sin(spin) * r;\nctx.cam.y = D * cos(phi);\nctx.cam.z = cos(spin) * r;\nctx.target.x = 0; ctx.target.y = 0; ctx.target.z = 0;\nctx.fov = lerp(ctx.fov, p.fov, 0.05);` },
 ];
 
 // ── Field of view: the one set of bounds ──────────────────────────────────

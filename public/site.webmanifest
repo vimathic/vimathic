@@ -1,7 +1,7 @@
 {
   "name": "VIMATHIC",
   "short_name": "VIMATHIC",
-  "description": "Mathematical VJ Studio in your browser",
+  "description": "Mathematical music visualizer in your browser — a playground where real mathematics moves to your music",
   "icons": [
     {
       "src": "./android-chrome-192.png",
@@ -27,7 +27,7 @@
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "VIMATHIC — Mathematical VJ Studio"
+      "label": "VIMATHIC — Mathematical Music Visualizer"
     }
   ]
 }

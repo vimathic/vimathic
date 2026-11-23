@@ -36,8 +36,9 @@
 // for any id is installed BEFORE the import. The stubs record their listeners,
 // which is what lets a test fire the change event the app fires.
 
-import { test, describe, before, beforeEach } from 'node:test';
+import { test, describe, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 
 // controls.js → about-modal.js imports two Vite virtual modules (the docs
@@ -164,7 +165,19 @@ globalThis.document = {
 };
 globalThis.requestAnimationFrame = fn => { fn(0); return 0; };
 globalThis.localStorage = { getItem: () => '1', setItem() {}, removeItem() {} };
-globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {} }) };
+// FIX(review K6): window keeps its listeners too, with their options. The
+// hold-and-drag wheel listener moved there, into the capture phase, so that
+// OrbitControls' wheel listener on the canvas never sees a notch that turns a
+// knob; a window that dropped what it was given would drop that listener.
+const winLtnr = new Map();   // type → [{ fn, opts }]
+globalThis.window = {
+  addEventListener(type, fn, opts) {
+    if (!winLtnr.has(type)) winLtnr.set(type, []);
+    winLtnr.get(type).push({ fn, opts });
+  },
+  removeEventListener() {},
+  matchMedia: () => ({ matches: false, addEventListener() {} }),
+};
 
 let bindControls;
 // The two palette pools NIGHT swaps between, and where the series starts.
@@ -172,9 +185,13 @@ let bindControls;
 // the panel hands the cycler the pool params.js declares, not that the pool
 // happens to be ten numbers today.
 let NIGHT_SCHEMES, ALL_SCHEMES, NIGHT_SCHEME_FIRST;
+// The registry and the audio keys' floor, for the hold-and-drag groups: values
+// are read and seeded through PARAMS' own get / set, and DRAG_FLOOR is what the
+// old drag rule (dragBefore, further down) is written in.
+let PARAMS, DRAG_FLOOR;
 before(async () => {
   ({ bindControls } = await import('../src/ui/controls.js'));
-  ({ NIGHT_SCHEMES, ALL_SCHEMES, NIGHT_SCHEME_FIRST } = await import('../src/params.js'));
+  ({ NIGHT_SCHEMES, ALL_SCHEMES, NIGHT_SCHEME_FIRST, PARAMS, DRAG_FLOOR } = await import('../src/params.js'));
 });
 
 /** Fire the listener the app registered, the way the browser would. */
@@ -185,6 +202,9 @@ const fire = (id, type, extra = {}) => {
 /** The same for listeners the app put on `document`. */
 const fireDoc = (type, extra = {}) =>
   (docLtnr.get(type) ?? []).forEach(fn => fn({ type, preventDefault() {}, stopPropagation() {}, ...extra }));
+/** …and on `window`. */
+const fireWin = (type, extra = {}) =>
+  (winLtnr.get(type) ?? []).forEach(({ fn }) => fn({ type, preventDefault() {}, stopPropagation() {}, ...extra }));
 /** Let an awaited fullscreen request settle. */
 const settle = () => new Promise(r => setImmediate(r));
 
@@ -232,6 +252,8 @@ function makeUi() {
       setSurfaceMaterial: (m, ms) => calls.push(['setSurfaceMaterial', m, ms]),
       setSurfaceMaterialAnimated: (m, ms) => calls.push(['setSurfaceMaterial', m, ms]),
       setParticleStyle:   s => calls.push(['setParticleStyle', s]),
+      currentWireStyle: 'classic',
+      setWireStyle:       s => calls.push(['setWireStyle', s]),
       setVizModeGPU:      m => calls.push(['setVizModeGPU', m]),
       setGPUModeAnimated: n => calls.push(['setGPUModeAnimated', n]),
       setColorSchemeAnimated: i => calls.push(['setColorSchemeAnimated', i]),
@@ -249,6 +271,12 @@ function makeUi() {
       // state from, so the stub keeps the flag rather than only recording.
       nightly: false,
       setNightly(on) { this.nightly = !!on; calls.push(['render.setNightly', !!on]); },
+      // STARS, the same way: the engine half (the wish against TRANSPARENT BG)
+      // is tested against the real methods in tests/stars-toggle.test.js; here
+      // the click handler reads `starsOn` to decide which way to flip, so the
+      // stub keeps the flag as well as recording the call.
+      starsOn: true,
+      setStarsOn(on) { this.starsOn = !!on; calls.push(['render.setStarsOn', !!on]); },
     },
     // resetScript, setCamPhysics and buildTimeline are what the RESET ALL
     // handler calls; the mirror below is deliberately thin — it copies only the
@@ -277,7 +305,10 @@ function makeUi() {
         this.setCamPhysics('dark_matter');
       },
     },
-    shaderEditor: { customVS: null, customFS: null },
+    // `cb` because bindControls hangs the formula slot's re-sync on
+    // cb.onProgramChange — the real editor fires it when customVS / customFS
+    // change, and the tests below fire it the same way.
+    shaderEditor: { customVS: null, customFS: null, cb: {} },
     modelLoader: {
       clear:  () => calls.push(['ml.clear']),
       cancel: () => calls.push(['ml.cancel']),
@@ -308,6 +339,7 @@ beforeEach(() => {
     el.textContent = ''; el.value = ''; el.style = {}; el.offsetParent = {};
   }
   docLtnr.clear();
+  winLtnr.clear();
   document.fullscreenElement = null;
   document.documentElement.requestFullscreen = () => { document.fullscreenElement = document.documentElement; return Promise.resolve(); };
   ui = makeUi();
@@ -713,9 +745,15 @@ describe('an imported model can be removed again', () => {
 // anyway one nudge later. The two doors have to agree, and the question both
 // can answer is "is this still the selection the click was made against".
 describe('the deform buttons refuse a mode the engine cannot enter, and say why', () => {
+  // A pick by hand, the way the dropdown makes one: the value, then its change
+  // event, which runs ui.applyFormulaValue. FIX(review K2): the refusal asks
+  // the formula slot's memory now rather than reading #gpu-sel back, and every
+  // app path that writes the select tells the slot — so these tests make the
+  // write an app path makes. (They used to assign the stub's value alone.)
+  const pickByHand = v => { byId('gpu-sel').value = v; fire('gpu-sel', 'change'); };
 
   test('⬡ VOLUME with a GPU shader on screen refuses instead of lighting up', () => {
-    byId('gpu-sel').value = '7';                    // a GPU shader, picked by hand
+    pickByHand('7');                                // a GPU shader, picked by hand
     byId('volume-formula-sel').value = 'twist';
     byId('deform-volume').classList.toggle('active', false);
     byId('volume-formula-wrap').style.display = 'none';
@@ -736,7 +774,8 @@ describe('the deform buttons refuse a mode the engine cannot enter, and say why'
   });
 
   test('control — with a CPU formula selected ⬡ VOLUME still works in full', () => {
-    byId('gpu-sel').value = 'm:waves:standingWave';
+    pickByHand('7');                                // from a shader…
+    pickByHand('m:waves:standingWave');             // …to a formula, so the slot has moved
     byId('volume-formula-sel').value = 'twist';
 
     fire('deform-volume', 'click');
@@ -749,7 +788,7 @@ describe('the deform buttons refuse a mode the engine cannot enter, and say why'
   });
 
   test('a shader claiming the selection inside the morph window still stops it', () => {
-    byId('gpu-sel').value = 'm:waves:standingWave';
+    pickByHand('m:waves:standingWave');
     byId('volume-formula-sel').value = 'twist';
 
     fire('deform-volume', 'click');
@@ -763,7 +802,7 @@ describe('the deform buttons refuse a mode the engine cannot enter, and say why'
   test('#volume-formula-sel refuses in the same voice — one door of two is not a rule', () => {
     // This row stays on screen if the shader was picked AFTER volume mode was
     // entered, so it is a live way back into uMathMode = 1 behind the shader.
-    byId('gpu-sel').value = '7';
+    pickByHand('7');
     byId('volume-formula-sel').value = 'fluidVortex';
 
     fire('volume-formula-sel', 'change');
@@ -775,7 +814,8 @@ describe('the deform buttons refuse a mode the engine cannot enter, and say why'
   });
 
   test('control — the row still works over a CPU formula, and still stands down when superseded', () => {
-    byId('gpu-sel').value = 'm:waves:standingWave';
+    pickByHand('7');
+    pickByHand('m:waves:standingWave');
     byId('volume-formula-sel').value = 'fluidVortex';
 
     fire('volume-formula-sel', 'change');
@@ -1092,6 +1132,713 @@ describe('hold-and-drag does not reach through the About dialog', () => {
   });
 });
 
+// ── FIX(knob keys): every knob in the formula slot gets a hold-and-drag key ──
+//
+// The owner asked (08.10.2026): B Formula Detail, N Formula Phase, and Y U H J
+// Shader Knobs 1-4. B, N and J leave Bloom, Wave Intensity and Amplitude to do
+// it, which keep A, C and V; Y's glitch and H's hint move to P and I in
+// main.js (tests/hotkey-map.test.js holds that half). Three decisions ride on
+// the binding, and these groups drive each through the real listeners
+// bindControls puts on the stub document:
+//
+//   • A key reaches only the bank the slot is showing — the pair on a CPU
+//     formula, the knobs on a numbered shader or under the operator's own
+//     shader — asked of the slot's logical state, at the key AND at every
+//     delta, because the bank can leave while the key is held. A key that does
+//     not reach does not arm: no preventDefault on the keydown, none on the
+//     wheel, and whatever was armed stays armed.
+//   • The six drag over exactly [min..max]: no DRAG_FLOOR, a stop at max, and
+//     a value already above max left where it is by a drag up.
+//   • A modified key belongs to the browser — main.js's FIX(r6) rule, which
+//     the arming listener never had (Ctrl+L and Ctrl+K were being swallowed).
+//
+// The eight letters left on the audio and bloom must drag bit for bit as they
+// did; dragBefore is the old _applyDragDelta, verbatim, as the oracle.
+
+/** The pre-change _applyDragDelta for one delta, verbatim: the old rule. */
+function dragBefore(p, cur, pixels) {
+  const hi        = p.extendedMax ?? p.max;
+  const lo        = Math.max(p.min, DRAG_FLOOR);
+  const spdBase   = (hi - lo) / 600;
+  const absVal    = Math.abs(cur);
+  const overshoot = absVal > hi ? absVal / hi : 1;
+  const mult      = overshoot > 1 ? Math.log2(overshoot + 1) : 1;
+  const spd       = spdBase * mult;
+  return Math.max(lo, cur + pixels * spd);
+}
+
+describe('hold-and-drag reaches the bank of the formula slot that is on the panel', () => {
+  const FORMULA = 'm:fractals:henon', SHADER = '7';
+  const PAIR  = [['b', 'detail'], ['n', 'phase']];
+  const KNOBS = [['y', 'k0'], ['u', 'k1'], ['h', 'k2'], ['j', 'k3']];
+
+  const ctxOf = () => ({ audio: ui.audio, render: ui.render, camera: ui.camera });
+  const val   = id => PARAMS[id].get(ctxOf());
+  const put   = (id, v) => PARAMS[id].set(ctxOf(), v);
+  /** A keydown the way the browser sends it; true if the app called preventDefault. */
+  const keyDown = (key, mods = {}) => {
+    let prevented = false;
+    fireDoc('keydown', { key, ...mods, preventDefault: () => { prevented = true; } });
+    return prevented;
+  };
+  const keyUp = key => fireDoc('keyup', { key });
+  const move  = px => fireDoc('mousemove', { movementX: px });
+  /** A wheel event; true if the app took it from the page. (On window since FIX(review K6).) */
+  const wheel = (deltaX, deltaY = 0, deltaMode = 0) => {
+    let prevented = false;
+    fireWin('wheel', { deltaX, deltaY, deltaMode, preventDefault: () => { prevented = true; } });
+    return prevented;
+  };
+  /** Hold a key, drag, let go; true if the key armed. */
+  const hold = (key, px) => { const armed = keyDown(key); move(px); keyUp(key); return armed; };
+  const near = (got, want, msg = '') => assert.ok(Math.abs(got - want) < 1e-9, `${msg} — got ${got}, want ${want}`);
+
+  beforeEach(() => {
+    // The stub engine carries the uniforms; these are the rest of the values a
+    // drag reads, at their shipped defaults (the knobs rest at 0 in the stub).
+    ui.render.formulaDetail = 0.5;
+    ui.render.formulaPhase  = 0;
+    Object.assign(ui.audio, { amp: 0.7, waveInt: 1.0, bassSens: 1.2, trebleSens: 1.0, bandDepth: 0.3 });
+  });
+
+  test('on a formula, B drags Formula Detail and N drags Formula Phase', () => {
+    ui.applyFormulaValue(FORMULA);
+    assert.equal(hold('b', -150), true, 'B did not arm over a formula, where its slider is on the panel');
+    near(val('detail'), 0.25, 'B, 150 px left from the 0.5 rest');
+    assert.equal(byId('fdv').textContent, '0.25', 'the Detail badge does not follow the drag');
+    assert.equal(hold('n', 150), true, 'N did not arm over a formula');
+    near(val('phase'), 0.25, 'N, 150 px right from rest');
+  });
+
+  test('on a formula, Y U H J arm nothing and move nothing — the knob sliders are hidden', () => {
+    ui.applyFormulaValue(FORMULA);
+    for (const [key, id] of KNOBS) {
+      assert.equal(keyDown(key), false, `${key.toUpperCase()} called preventDefault for a knob that is not on the panel`);
+      move(300);
+      assert.equal(wheel(300), false, `${key.toUpperCase()} took the wheel from the page`);
+      keyUp(key);
+      assert.equal(val(id), 0, `${key.toUpperCase()} moved ${id}, whose slider is hidden`);
+    }
+  });
+
+  test('a key that does not arm leaves the key already held in charge', () => {
+    ui.applyFormulaValue(FORMULA);
+    assert.equal(keyDown('l'), true, 'precondition: L arms');
+    keyDown('y');                         // a knob key over a formula: not on the panel
+    move(200);
+    assert.equal(ui.audio.bassSens, dragBefore(PARAMS.bassSens, 1.2, 200),
+      'the knob key that did not arm took the drag away from Bass');
+    keyUp('l');
+  });
+
+  test('control — on a numbered shader Y U H J drag Shader Knobs 1-4, each its own', () => {
+    ui.applyFormulaValue(SHADER);
+    for (const [key, id] of KNOBS) {
+      for (const [, k] of KNOBS) put(k, 0);
+      assert.equal(hold(key, 300), true, `${key.toUpperCase()} did not arm on a numbered shader`);
+      for (const [, k] of KNOBS) {
+        if (k === id) near(val(k), 0.5, `${key.toUpperCase()} did not land on ${id}`);
+        else assert.equal(val(k), 0, `${key.toUpperCase()} moved ${k} as well as ${id}`);
+      }
+    }
+    assert.equal(byId('k3v').textContent, '0.50', 'the Knob 4 badge does not follow the drag');
+  });
+
+  test('on a numbered shader, B and N arm nothing and move nothing — nothing reads the pair there', () => {
+    ui.applyFormulaValue(SHADER);
+    for (const [key, id] of PAIR) {
+      const before = val(id);
+      assert.equal(keyDown(key), false, `${key.toUpperCase()} called preventDefault with its slider hidden`);
+      move(-300);
+      assert.equal(wheel(-300), false, `${key.toUpperCase()} took the wheel from the page`);
+      keyUp(key);
+      assert.equal(val(id), before, `${key.toUpperCase()} moved ${id} under a numbered shader`);
+    }
+  });
+
+  test('over a formula with your own shader applied, all six act', () => {
+    // Both banks are on the panel there: a custom fragment body colours a
+    // formula, so the knobs are live beside the pair.
+    ui.shaderEditor.customFS = 'FS';
+    ui.applyFormulaValue(FORMULA);
+    for (const [key, id] of [...PAIR, ...KNOBS]) {
+      put(id, 0);
+      assert.equal(hold(key, 300), true, `${key.toUpperCase()} did not arm with both banks up`);
+      near(val(id), 0.5, `${key.toUpperCase()} → ${id}`);
+    }
+  });
+
+  test('a collapsed panel or full screen does not stand the keys down — the slot is asked, not the layout', () => {
+    // Both hide every slider (.collapsed, fs-hidden). A gate that read the
+    // wrappers' visibility back would stop the keys exactly where hotkeys.md
+    // promises they work.
+    ui.applyFormulaValue(SHADER);
+    const panel = document.querySelector('.controls-panel');
+    panel.classList.add('collapsed');
+    panel.classList.add('fs-hidden');
+    for (const id of ['formula-knobs-wrap', 'shader-knobs-wrap', 'formula-detail', 'shader-k0']) {
+      byId(id).offsetParent = null;
+    }
+    assert.equal(hold('y', 300), true, 'Y stood down because the panel is out of sight');
+    near(val('k0'), 0.5);
+    assert.equal(keyDown('b'), false, 'and the bank rule still holds there: the pair is not the slot\'s bank');
+  });
+});
+
+describe('the formula slot\'s six drag over exactly their range', () => {
+  const ctxOf = () => ({ audio: ui.audio, render: ui.render, camera: ui.camera });
+  const val   = id => PARAMS[id].get(ctxOf());
+  const put   = (id, v) => PARAMS[id].set(ctxOf(), v);
+  const hold  = (key, px) => {
+    fireDoc('keydown', { key });
+    fireDoc('mousemove', { movementX: px });
+    fireDoc('keyup', { key });
+  };
+  const near = (got, want, msg = '') => assert.ok(Math.abs(got - want) < 1e-9, `${msg} — got ${got}, want ${want}`);
+
+  beforeEach(() => {
+    ui.render.formulaDetail = 0.5;
+    ui.render.formulaPhase  = 0;
+  });
+
+  test('a knob at rest dragged down stays at 0 — the six take no DRAG_FLOOR', () => {
+    ui.applyFormulaValue('7');
+    hold('y', -200);
+    assert.equal(val('k0'), 0, 'the knob stopped at the audio keys\' floor and can never come back to rest');
+    ui.applyFormulaValue('m:fractals:henon');
+    put('detail', 0.05);
+    hold('b', -200);
+    assert.equal(val('detail'), 0, 'Detail 0 is the coarse end an operator buys update rate back with');
+  });
+
+  test('control — Bloom on A still stops at DRAG_FLOOR', () => {
+    ui.render.bloomPass.strength = 0.15;
+    hold('a', -600);
+    assert.equal(ui.render.bloomPass.strength, DRAG_FLOOR,
+      'the floor is for the audio and bloom keys, and it has to survive the change');
+  });
+
+  test('a knob at 1 dragged up stays at 1', () => {
+    ui.applyFormulaValue('7');
+    put('k1', 1);
+    hold('u', 200);
+    assert.equal(val('k1'), 1, 'the drag wound the knob past the end of its range');
+    ui.applyFormulaValue('m:fractals:henon');
+    put('phase', 0.9);
+    hold('n', 300);
+    assert.equal(val('phase'), 1, 'Phase ran past one full turn');
+  });
+
+  test('a value typed above 1 is not snapped down: a drag up leaves it, a drag down lowers it from there', () => {
+    ui.applyFormulaValue('7');
+    put('k2', 3);                         // typed into the badge, or from a preset
+    hold('h', 200);
+    assert.equal(val('k2'), 3, 'a drag UP pulled a typed 3 down to the top of the range');
+    hold('h', -200);
+    assert.ok(val('k2') < 3, `a drag down from 3 did not lower it: ${val('k2')}`);
+    assert.ok(val('k2') > 1, `a drag down from 3 jumped to the range: ${val('k2')}`);
+  });
+
+  test('300 px from rest is the middle — 600 px is the whole 0 – 1', () => {
+    ui.applyFormulaValue('7');
+    hold('j', 300);
+    near(val('k3'), 0.5, 'the first 300 px');
+    hold('j', 300);
+    near(val('k3'), 1, 'the second 300 px');
+  });
+});
+
+describe('the letters the formula slot took no longer drag what they used to', () => {
+  // Each old letter is pressed where it DOES arm now, for its new param, so a
+  // stale entry cannot hide behind the bank gate.
+  const hold = (key, px) => {
+    fireDoc('keydown', { key });
+    fireDoc('mousemove', { movementX: px });
+    fireDoc('keyup', { key });
+  };
+  beforeEach(() => {
+    ui.render.formulaDetail = 0.5;
+    ui.render.formulaPhase  = 0;
+    Object.assign(ui.audio, { amp: 0.7, waveInt: 1.0 });
+  });
+
+  test('J drags Shader Knob 4, not Amplitude; V drags Amplitude', () => {
+    ui.applyFormulaValue('7');
+    hold('j', 200);
+    assert.equal(ui.audio.amp, 0.7, 'J still reaches Amplitude');
+    assert.ok(ui.render.U.uK3.value > 0, 'precondition: J armed, for Knob 4');
+    hold('v', 200);
+    assert.equal(ui.audio.amp, dragBefore(PARAMS.amp, 0.7, 200), 'V lost Amplitude');
+  });
+
+  test('N drags Formula Phase, not Wave Intensity; C drags Wave Intensity', () => {
+    ui.applyFormulaValue('m:fractals:henon');
+    hold('n', 200);
+    assert.equal(ui.audio.waveInt, 1.0, 'N still reaches Wave Intensity');
+    assert.ok(ui.render.formulaPhase > 0, 'precondition: N armed, for Phase');
+    hold('c', 200);
+    assert.equal(ui.audio.waveInt, dragBefore(PARAMS.waveInt, 1.0, 200), 'C lost Wave Intensity');
+  });
+
+  test('B drags Formula Detail, not Bloom; A drags Bloom', () => {
+    ui.applyFormulaValue('m:fractals:henon');
+    hold('b', 200);
+    assert.equal(ui.render.bloomPass.strength, 0.6, 'B still reaches Bloom');
+    assert.ok(ui.render.formulaDetail > 0.5, 'precondition: B armed, for Detail');
+    hold('a', 200);
+    assert.equal(ui.render.bloomPass.strength, dragBefore(PARAMS.bloom, 0.6, 200), 'A lost Bloom');
+  });
+});
+
+describe('the bank is asked at every delta, not only when the key went down', () => {
+  const val  = id => PARAMS[id].get({ audio: ui.audio, render: ui.render, camera: ui.camera });
+  const near = (got, want, msg = '') => assert.ok(Math.abs(got - want) < 1e-9, `${msg} — got ${got}, want ${want}`);
+  const wheel = deltaX => {
+    let prevented = false;
+    fireWin('wheel', { deltaX, deltaY: 0, deltaMode: 0, preventDefault: () => { prevented = true; } });
+    return prevented;
+  };
+
+  test('the knobs leaving while Y is held stop the drag at the next delta', () => {
+    ui.applyFormulaValue('7');
+    fireDoc('keydown', { key: 'y' });
+    fireDoc('mousemove', { movementX: 60 });
+    near(val('k0'), 0.1, 'precondition: Y drags Knob 1 on a numbered shader');
+
+    ui.syncFormulaKnobsUI('m:fractals:henon');  // a clip step or a preset lands on a formula
+    fireDoc('mousemove', { movementX: 300 });
+    near(val('k0'), 0.1, 'the knob kept moving after its slider left the panel');
+    assert.equal(wheel(300), false, 'the wheel is still taken from the page for a bank that has gone');
+    near(val('k0'), 0.1);
+    fireDoc('keyup', { key: 'y' });
+  });
+
+  test('the editor taking your shader away over a formula does the same to U', () => {
+    const se = ui.shaderEditor;
+    se.customFS = 'FS';
+    ui.applyFormulaValue('m:fractals:henon');
+    fireDoc('keydown', { key: 'u' });
+    fireDoc('mousemove', { movementX: 60 });
+    near(val('k1'), 0.1, 'precondition: U drags Knob 2 beside the pair');
+
+    se.customFS = null;
+    se.cb.onProgramChange();                     // the editor's RESET
+    fireDoc('mousemove', { movementX: 300 });
+    near(val('k1'), 0.1, 'Knob 2 kept moving after the shader that shows it was reset');
+    fireDoc('keyup', { key: 'u' });
+  });
+
+  test('control — a bank that comes back while the key is still held is driven again', () => {
+    // The gate drops deltas; it does not disarm. Without this the two tests
+    // above would pass on a key that stopped working for good.
+    ui.applyFormulaValue('7');
+    fireDoc('keydown', { key: 'y' });
+    ui.syncFormulaKnobsUI('m:fractals:henon');
+    fireDoc('mousemove', { movementX: 300 });
+    assert.equal(val('k0'), 0, 'precondition: nothing moves while the knobs are away');
+    ui.syncFormulaKnobsUI('7');
+    fireDoc('mousemove', { movementX: 300 });
+    near(val('k0'), 0.5, 'the knobs came back under a held Y and it did nothing');
+    fireDoc('keyup', { key: 'y' });
+  });
+
+  test('the wheel drives a knob the way the mouse does', () => {
+    ui.applyFormulaValue('7');
+    fireDoc('keydown', { key: 'u' });
+    assert.equal(wheel(300), true, 'the wheel scrolled the page instead of turning Knob 2');
+    near(val('k1'), 0.5, '300 px of horizontal wheel');
+    let prevented = false;
+    fireWin('wheel', { deltaX: 0, deltaY: -150, deltaMode: 0, preventDefault: () => { prevented = true; } });
+    assert.equal(prevented, true);
+    near(val('k1'), 0.75, 'a plain vertical wheel: up is more');
+    fireDoc('keyup', { key: 'u' });
+    assert.equal(wheel(300), false, 'control — let go, and the wheel is the page\'s again');
+  });
+});
+
+describe('a hold-and-drag key pressed with a modifier belongs to the browser', () => {
+  // main.js has stood its tap keys down for Ctrl / Cmd / Alt since FIX(r6);
+  // the arming listener never did, so Ctrl+L and Ctrl+K armed a drag and the
+  // preventDefault swallowed the browser's shortcut. With Y, U and H in the
+  // map, the same hole would have taken Ctrl+Y, Ctrl+U and Ctrl+H.
+  const keyDown = (key, mods = {}) => {
+    let prevented = false;
+    fireDoc('keydown', { key, ...mods, preventDefault: () => { prevented = true; } });
+    return prevented;
+  };
+
+  test('Ctrl, Cmd or Alt with a drag key arms nothing and prevents nothing', () => {
+    ui.applyFormulaValue('7');                   // so Y, U and H would arm unmodified
+    ui.audio.bassSens = 1.2; ui.audio.trebleSens = 1.0;
+    for (const mod of ['ctrlKey', 'metaKey', 'altKey']) {
+      for (const key of ['l', 'k', 'y', 'u', 'h']) {
+        assert.equal(keyDown(key, { [mod]: true }), false,
+          `${mod} + ${key.toUpperCase()} was swallowed — that shortcut is the browser's`);
+        fireDoc('mousemove', { movementX: 200 });
+        fireDoc('keyup', { key });
+      }
+    }
+    assert.equal(ui.audio.bassSens, 1.2, 'Ctrl+L dragged Bass Sensitivity');
+    assert.equal(ui.audio.trebleSens, 1.0, 'Ctrl+K dragged Treble Sensitivity');
+    for (const k of ['uK0', 'uK1', 'uK2']) assert.equal(ui.render.U[k].value, 0, `a modified key moved ${k}`);
+  });
+
+  test('control — the same keys unmodified still arm and drag, and Shift is not one of the three', () => {
+    ui.applyFormulaValue('7');
+    ui.audio.bassSens = 1.2;
+    assert.equal(keyDown('l'), true, 'plain L no longer arms');
+    fireDoc('mousemove', { movementX: 200 });
+    fireDoc('keyup', { key: 'l' });
+    assert.equal(ui.audio.bassSens, dragBefore(PARAMS.bassSens, 1.2, 200));
+    // Shift+Y reports 'Y'; the map is read case-folded, as before this change.
+    assert.equal(keyDown('Y', { shiftKey: true }), true, 'Shift+Y stopped arming Knob 1');
+    fireDoc('keyup', { key: 'Y' });
+  });
+});
+
+// ── FIX(review): the second review of the knob keys ──────────────────────────
+//
+// Four defects the keys inherited, each older than the knob keys and each made
+// easy to hit by them:
+//   • K1 — any focused <input> stood every key down. The SHADER MODE picker
+//     keeps focus after a mouse pick (a readOnly field, by design) and a slider
+//     keeps it after a mouse drag, so "pick a numbered shader, hold Y" did
+//     nothing until the canvas was clicked. elementOwnsKey's matrix lives in
+//     tests/hotkey-focus-standdown.test.js; here the real listener is driven.
+//   • K4 / K5 — one armed key, matched by character on keyup. Rolling Y → U and
+//     letting go of U left Y held and dead, and a key released under AltGr
+//     (L reports 'ł') or under Cmd on a Mac (no keyup at all) stayed armed.
+//   • K6 — the wheel listener sat on document in the bubble phase, after
+//     OrbitControls' listener on the canvas, so one notch turned the knob AND
+//     dollied the camera.
+//   • L2 — the hint's boot flash took away a hint the operator had shown.
+// The groups below drive each through the listeners bindControls installs.
+
+/** A keydown as the browser sends it; true if the app called preventDefault. */
+const keyDownAs = (key, code, mods = {}) => {
+  let prevented = false;
+  fireDoc('keydown', { key, code, ...mods, preventDefault: () => { prevented = true; } });
+  return prevented;
+};
+const keyUpAs = (key, code) => fireDoc('keyup', { key, code });
+const moveBy  = px => fireDoc('mousemove', { movementX: px });
+/** A wheel event through the window listeners: what the app did with it. */
+const wheelAs = (deltaX, deltaY = 0) => {
+  const ev = { prevented: false, stopped: false };
+  fireWin('wheel', { deltaX, deltaY, deltaMode: 0,
+                     preventDefault: () => { ev.prevented = true; },
+                     stopPropagation: () => { ev.stopped = true; } });
+  return ev;
+};
+const valOf  = id => PARAMS[id].get({ audio: ui.audio, render: ui.render, camera: ui.camera });
+const nearly = (got, want, msg = '') => assert.ok(Math.abs(got - want) < 1e-9, `${msg} — got ${got}, want ${want}`);
+/** Run `fn` with this element focused, the way document.activeElement reports it. */
+const withFocus = (el, fn) => {
+  const was = document.activeElement;
+  document.activeElement = el;
+  try { return fn(); } finally { document.activeElement = was; }
+};
+
+describe('a pick in a panel picker, or a drag on a slider, leaves the drag keys live', () => {
+  // What index.html's makeDropdown builds for SHADER MODE, and what it leaves
+  // focused after a mouse pick; and a range slider after a mouse drag.
+  const PICKER = { tagName: 'INPUT', type: 'text', readOnly: true, className: 'srch-input' };
+  const SLIDER = { tagName: 'INPUT', type: 'range', id: 'shader-k0' };
+
+  test('with the SHADER MODE picker still focused after a pick, Y arms and drags Knob 1', () => {
+    ui.applyFormulaValue('7');
+    withFocus(PICKER, () => {
+      assert.equal(keyDownAs('y', 'KeyY'), true, 'Y stood down for a picker that takes no text');
+      moveBy(300);
+      keyUpAs('y', 'KeyY');
+    });
+    nearly(valOf('k0'), 0.5, 'Knob 1 after a pick and 300 px');
+  });
+
+  test('with a slider still focused after a drag on it, H arms and drags Knob 3', () => {
+    ui.applyFormulaValue('7');
+    withFocus(SLIDER, () => {
+      assert.equal(keyDownAs('h', 'KeyH'), true, 'H stood down for a focused slider');
+      moveBy(300);
+      keyUpAs('h', 'KeyH');
+    });
+    nearly(valOf('k2'), 0.5);
+  });
+
+  test('control — a writable text field still stands the keys down', () => {
+    // The preset name, a value badge being typed into: typing Y there is a
+    // letter in a name, not Knob 1.
+    ui.applyFormulaValue('7');
+    withFocus({ tagName: 'INPUT', type: 'text', readOnly: false }, () => {
+      assert.equal(keyDownAs('y', 'KeyY'), false, 'typing Y into a name armed Knob 1');
+      moveBy(300);
+      keyUpAs('y', 'KeyY');
+    });
+    assert.equal(valOf('k0'), 0, 'a key typed into a text field moved Knob 1');
+  });
+});
+
+describe('the held drag keys are a set, tracked by the physical key', () => {
+
+  test('Y down, U down, U up: the mouse drives Knob 1 again', () => {
+    // The roll across the cluster. One slot was cleared by U's keyup while Y
+    // was still down, and Windows resumes no auto-repeat for Y to re-arm it.
+    ui.applyFormulaValue('7');
+    keyDownAs('y', 'KeyY');
+    keyDownAs('u', 'KeyU');
+    keyUpAs('u', 'KeyU');
+    moveBy(300);
+    nearly(valOf('k0'), 0.5, 'Y is still held and drives nothing');
+    assert.equal(valOf('k1'), 0, 'U was let go and still drove Knob 2');
+    keyUpAs('y', 'KeyY');
+  });
+
+  test('U down, Y down, Y up: Knob 2', () => {
+    ui.applyFormulaValue('7');
+    keyDownAs('u', 'KeyU');
+    keyDownAs('y', 'KeyY');
+    keyUpAs('y', 'KeyY');
+    moveBy(300);
+    nearly(valOf('k1'), 0.5);
+    assert.equal(valOf('k0'), 0);
+    keyUpAs('u', 'KeyU');
+  });
+
+  test('control — while both are down the one pressed last drives, and a release ends the hold', () => {
+    ui.applyFormulaValue('7');
+    keyDownAs('y', 'KeyY');
+    keyDownAs('u', 'KeyU');
+    moveBy(300);
+    nearly(valOf('k1'), 0.5, 'the newest key does not have the drag');
+    assert.equal(valOf('k0'), 0, 'two knobs moved on one mouse');
+    keyUpAs('u', 'KeyU');
+    keyUpAs('y', 'KeyY');
+    moveBy(300);
+    nearly(valOf('k0'), 0, 'a key let go still drives');
+    nearly(valOf('k1'), 0.5);
+  });
+
+  test('a keyup that spells the key differently still lets it go — AltGr+L reports ł', () => {
+    // Polish (programmer) layout: hold L, press AltGr, release L. The keyup's
+    // `key` is the character under the modifiers, 'ł'; its `code` is KeyL.
+    ui.applyFormulaValue('m:fractals:henon');
+    ui.audio.bassSens = 1.2;
+    assert.equal(keyDownAs('l', 'KeyL'), true, 'precondition: L arms');
+    keyUpAs('ł', 'KeyL');
+    moveBy(200);
+    assert.equal(ui.audio.bassSens, 1.2, 'L was let go and Bass still follows the mouse');
+    assert.equal(wheelAs(300).prevented, false, 'and the wheel is still taken from the page');
+  });
+
+  test('control — the keyup of a different key leaves the held one held', () => {
+    ui.applyFormulaValue('m:fractals:henon');
+    ui.audio.bassSens = 1.2;
+    keyDownAs('l', 'KeyL');
+    keyUpAs('k', 'KeyK');
+    moveBy(200);
+    assert.equal(ui.audio.bassSens, dragBefore(PARAMS.bassSens, 1.2, 200), 'K\'s keyup let go of L');
+    keyUpAs('l', 'KeyL');
+  });
+
+  test('a Cmd keyup ends every hold — macOS sends no keyup for a letter released under Cmd', () => {
+    ui.applyFormulaValue('7');
+    ui.audio.bassSens = 1.2;
+    keyDownAs('y', 'KeyY');
+    keyDownAs('l', 'KeyL');
+    keyUpAs('Meta', 'MetaLeft');
+    moveBy(300);
+    assert.equal(valOf('k0'), 0, 'Knob 1 still follows the mouse after Cmd was let go');
+    assert.equal(ui.audio.bassSens, 1.2, 'Bass still follows the mouse after Cmd was let go');
+  });
+
+  test('control — a Shift keyup ends nothing', () => {
+    ui.applyFormulaValue('7');
+    keyDownAs('y', 'KeyY');
+    keyUpAs('Shift', 'ShiftLeft');
+    moveBy(300);
+    nearly(valOf('k0'), 0.5, 'a Shift keyup let go of Y');
+    keyUpAs('y', 'KeyY');
+  });
+
+  test('the window losing focus, or the document hiding, ends every hold', () => {
+    // FIX(r11)'s rule, which nothing here could reach while the stub window
+    // dropped its listeners.
+    ui.applyFormulaValue('7');
+    keyDownAs('y', 'KeyY');
+    keyDownAs('u', 'KeyU');
+    fireWin('blur');
+    moveBy(300);
+    assert.equal(valOf('k0') + valOf('k1'), 0, 'a blurred window still drags');
+    keyDownAs('h', 'KeyH');
+    document.hidden = true;
+    try { fireDoc('visibilitychange'); } finally { delete document.hidden; }
+    moveBy(300);
+    assert.equal(valOf('k2'), 0, 'a hidden document still drags');
+  });
+
+  test('control — without either, the same held key drags', () => {
+    ui.applyFormulaValue('7');
+    keyDownAs('h', 'KeyH');
+    fireDoc('visibilitychange');                 // visible again, say
+    moveBy(300);
+    nearly(valOf('k2'), 0.5);
+    keyUpAs('h', 'KeyH');
+  });
+
+  test('a key event with no `key` at all throws nothing — Chrome\'s autofill sends them', () => {
+    assert.doesNotThrow(() => fireDoc('keydown', {}), 'keydown without key');
+    assert.doesNotThrow(() => fireDoc('keyup', {}), 'keyup without key');
+    assert.doesNotThrow(() => fireDoc('keyup', { code: 'KeyL' }), 'keyup with a code and no key');
+  });
+
+  test('control — the events above are the ones the listeners read: a plain Y still arms', () => {
+    ui.applyFormulaValue('7');
+    assert.equal(keyDownAs('y', ''), true, 'an empty code falls back to the letter');
+    keyUpAs('y', '');
+    moveBy(300);
+    assert.equal(valOf('k0'), 0, 'a keyup with an empty code did not let go of Y');
+  });
+});
+
+describe('the wheel turns the knob, not the camera as well', () => {
+
+  test('the drag wheel listener is on window, in the capture phase, and not passive', () => {
+    // Capture on window runs before any element sees the event — OrbitControls'
+    // wheel listener included, which is on the canvas (render.js).
+    const onWin = winLtnr.get('wheel') ?? [];
+    assert.equal(onWin.length, 1, 'expected one wheel listener on window');
+    assert.equal(onWin[0].opts?.capture, true, 'the wheel listener is not a capture listener');
+    assert.equal(onWin[0].opts?.passive, false, 'a passive listener cannot take the wheel from the page');
+    assert.equal((docLtnr.get('wheel') ?? []).length, 0, 'a wheel listener is still on document, in the bubble phase');
+  });
+
+  test('while a held key reaches its param, the wheel is stopped as well as prevented', () => {
+    ui.applyFormulaValue('7');
+    keyDownAs('y', 'KeyY');
+    const ev = wheelAs(0, -150);
+    assert.equal(ev.prevented, true, 'the panel would scroll');
+    assert.equal(ev.stopped, true, 'the event goes on to the canvas, and OrbitControls zooms on it');
+    nearly(valOf('k0'), 0.25, 'and the knob turns');
+    keyUpAs('y', 'KeyY');
+  });
+
+  test('control — with no key held, or only one whose bank is hidden, the wheel is left alone entirely', () => {
+    ui.applyFormulaValue('7');
+    let ev = wheelAs(0, -150);
+    assert.deepEqual(ev, { prevented: false, stopped: false }, 'the camera can no longer zoom with no key held');
+    ui.applyFormulaValue('m:fractals:henon');
+    keyDownAs('y', 'KeyY');                       // a knob key over a formula: not on the panel
+    ev = wheelAs(0, -150);
+    assert.deepEqual(ev, { prevented: false, stopped: false }, 'a key that drives nothing kept the wheel');
+    assert.equal(valOf('k0'), 0);
+    keyUpAs('y', 'KeyY');
+  });
+});
+
+describe('the hint\'s boot flash yields to the operator\'s I', () => {
+  // Bind again with the timers in hand: the flash is two setTimeouts, 1 s to
+  // show and 3 s more to hide, and these tests run them on demand.
+  let timers, realSet, realClear;
+  beforeEach(() => {
+    for (const el of [...els.values(), ...selEls.values(), document.body, document.documentElement]) {
+      el._classes.clear(); el._listeners.clear();
+    }
+    docLtnr.clear(); winLtnr.clear();
+    timers = [];
+    realSet = globalThis.setTimeout; realClear = globalThis.clearTimeout;
+    globalThis.setTimeout   = (fn, ms) => { const t = { fn, ms, live: true }; timers.push(t); return t; };
+    globalThis.clearTimeout = t => { if (t && typeof t === 'object' && 'live' in t) t.live = false; else realClear(t); };
+    ui = makeUi();
+    bindControls(ui);
+  });
+  afterEach(() => { globalThis.setTimeout = realSet; globalThis.clearTimeout = realClear; });
+
+  /** Run the flash's timers still live — the 1 s show, and the 3 s hide it sets. */
+  const runFlash = () => {
+    for (let i = 0; i < timers.length; i++) {
+      const t = timers[i];
+      if (t.live && (t.ms === 1000 || t.ms === 3000)) { t.live = false; t.fn(); }
+    }
+  };
+  const showTimer = () => timers.find(t => t.ms === 1000);
+  const hint = () => byId('hotkey-hint');
+  const shown = () => hint().classList.contains('visible');
+  /** What main.js's case 'i' does (tests/hotkey-map.test.js pins that it does). */
+  const pressI = () => { ui.cancelHintFlash(); hint().classList.toggle('visible'); };
+  // Earlier tests' bindings left real flash timers running on this same
+  // element; each test starts from a hidden hint inside its own synchronous
+  // body, where none of those can fire.
+  const start = () => hint().classList.remove('visible');
+
+  test('an I pressed before the flash shows the hint, and the flash does not take it away', () => {
+    start();
+    pressI();
+    assert.equal(shown(), true, 'precondition: I showed the hint');
+    runFlash();
+    assert.equal(shown(), true, 'the boot flash hid a hint the operator had shown');
+  });
+
+  test('an I that hides the hint mid-flash, and a second that shows it, both stand', () => {
+    start();
+    const show = showTimer();
+    show.live = false; show.fn();                // the flash comes on
+    assert.equal(shown(), true, 'precondition: the flash is showing');
+    pressI();
+    assert.equal(shown(), false);
+    pressI();
+    runFlash();
+    assert.equal(shown(), true, 'the flash\'s own hide outlived the operator\'s show');
+  });
+
+  test('control — left alone, the flash still shows the hint and then hides it', () => {
+    start();
+    const show = showTimer();
+    assert.ok(show, 'no 1 s timer — the flash is gone, so the tests above prove nothing');
+    show.live = false; show.fn();
+    assert.equal(shown(), true, 'the flash did not show the hint');
+    runFlash();
+    assert.equal(shown(), false, 'the flash did not hide it again');
+  });
+});
+
+describe('the audio and bloom keys drag exactly as they did before', () => {
+  const ctxOf = () => ({ audio: ui.audio, render: ui.render, camera: ui.camera });
+
+  test('every one of the eight letters, inside the range, at the floor and past extendedMax', () => {
+    // [key, id, start, px]: a routine drag, the floor, the log-scaled regime
+    // past extendedMax, and no ceiling — for each param, through each letter.
+    const CASES = [
+      ['l', 'bassSens',   1.2,  200], ['x', 'bassSens',   0.4, -333],
+      ['k', 'trebleSens', 0.2, -600], ['z', 'trebleSens', 2.9,   77],
+      ['v', 'amp',        3.0,  100], ['v', 'amp',        1.9,  600],
+      ['c', 'waveInt',    4.9,  600], ['c', 'waveInt',   12,    -40],
+      ['a', 'bloom',      0.15, -600], ['a', 'bloom',     0.6,   13],
+      ['s', 'bandDepth',  0.3,  250], ['s', 'bandDepth',  7.5,   90],
+    ];
+    for (const [key, id, start, px] of CASES) {
+      PARAMS[id].set(ctxOf(), start);
+      fireDoc('keydown', { key });
+      fireDoc('mousemove', { movementX: px });
+      fireDoc('keyup', { key });
+      assert.equal(PARAMS[id].get(ctxOf()), dragBefore(PARAMS[id], start, px),
+        `${key.toUpperCase()} on ${id}, from ${start} by ${px} px, no longer drags as it did`);
+    }
+  });
+
+  test('control — the oracle is the old rule, and the six no longer follow it', () => {
+    // A dragBefore that had drifted into the new rule would make the test above
+    // pass on anything; here it has to disagree with the app where the rule
+    // really changed.
+    ui.applyFormulaValue('7');
+    fireDoc('keydown', { key: 'y' });
+    fireDoc('mousemove', { movementX: -200 });
+    fireDoc('keyup', { key: 'y' });
+    assert.equal(ui.render.U.uK0.value, 0);
+    assert.equal(dragBefore(PARAMS.k0, 0, -200), DRAG_FLOOR, 'the old rule floors a knob at 0.1');
+    assert.ok(dragBefore(PARAMS.k0, 1, 200) > 1, 'the old rule has no top');
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FIX(#24, r4) made a reload restore the persisted camera script instead of
 // blanking it. That blanking was also, by accident, the only thing that ever
@@ -1124,6 +1871,71 @@ describe('RESET ALL — the camera programmer goes back to defaults for real', (
 
     assert.deepEqual(ui.camera.cpKeyframes, []);
     assert.equal(ui.called('buildTimeline').length, 1);
+  });
+});
+
+// ── The Wire Style row ──────────────────────────────────────────────────────
+// The WIRE counterpart of Particle Style: shown in WIRE and nowhere else, a
+// pick goes to the engine, a snapshot's key lands in the row unless this build
+// does not know it, and RESET ALL goes back to Classic. The engine half — what
+// each style does to the wire, and that nothing leaks out of WIRE — is
+// tests/wire-style.test.js.
+describe('the Wire Style row belongs to WIRE', () => {
+  const WIRE_OPTS = ['classic', 'neon', 'hidden', 'trails', 'depth', 'scan', 'hologram', 'rows', 'grid', 'contour',
+                     'lattice', 'electric', 'aurora', 'paint', 'glass']
+    .map(value => ({ value }));
+  const shown = () => byId('wire-style-wrap').style.display !== 'none';
+
+  test('the mode buttons show it in WIRE and hide it everywhere else', () => {
+    fire('mode-surface', 'click');
+    assert.equal(shown(), false, 'the row is up in SURF');
+    fire('mode-wireframe', 'click');
+    assert.equal(shown(), true, 'the row is missing in WIRE');
+    fire('mode-points', 'click');
+    assert.equal(shown(), false, 'the row is up in PTS, next to its particle twin');
+  });
+
+  test('a pick reaches the engine and says what it does', () => {
+    byId('wire-style-sel').options = WIRE_OPTS;
+    byId('wire-style-sel').value = 'neon';
+    fire('wire-style-sel', 'change');
+    assert.deepEqual(ui.called('setWireStyle').at(-1), ['setWireStyle', 'neon']);
+    assert.notEqual(byId('wire-style-desc').textContent, '', 'the description line stayed empty');
+  });
+
+  test('a mode switch hands the remembered pick to the engine, in every mode', () => {
+    // Outside WIRE the engine only files it away (setWireStyle returns early);
+    // the panel still has to tell it, or a style picked and left would not be
+    // the one that comes back.
+    byId('wire-style-sel').options = WIRE_OPTS;
+    byId('wire-style-sel').value = 'scan';
+    fire('mode-surface', 'click');
+    assert.deepEqual(ui.called('setWireStyle').at(-1), ['setWireStyle', 'scan']);
+  });
+
+  test('a snapshot\'s style lands in the row, and an unknown one leaves it alone', () => {
+    byId('wire-style-sel').options = WIRE_OPTS;
+    byId('wire-style-sel').value = 'classic';
+    ui.syncVizModeUI('wireframe', null, null, 'hologram');
+    assert.equal(byId('wire-style-sel').value, 'hologram');
+    assert.equal(shown(), true);
+    // A key from a build with more styles: writing it to a <select> would blank it.
+    ui.syncVizModeUI('wireframe', null, null, 'laser-show-2000');
+    assert.equal(byId('wire-style-sel').value, 'hologram', 'an unknown key reached the dropdown');
+    // And omitting it leaves the pick alone — a plain UI refresh.
+    ui.syncVizModeUI('surface');
+    assert.equal(byId('wire-style-sel').value, 'hologram');
+    assert.equal(shown(), false);
+  });
+
+  test('RESET ALL goes back to Classic, with the row on screen', () => {
+    byId('wire-style-sel').options = WIRE_OPTS;
+    byId('wire-style-sel').value = 'trails';
+    fire('btn-reset-all', 'click');
+    assert.equal(byId('wire-style-sel').value, 'classic');
+    assert.deepEqual(ui.called('setWireStyle').at(-1), ['setWireStyle', 'classic'],
+      'the engine was not told — the trail of the old style would run under a Classic label');
+    assert.equal(shown(), true, 'RESET ALL lands in WIRE, so the row belongs on screen');
   });
 });
 
@@ -1264,15 +2076,88 @@ describe('NIGHT — what the panel switch owns', () => {
   });
 });
 
+// ── STARS: the starfield's switch, and its button ──────────────────────────
+//
+// The engine half — the wish against TRANSPARENT BG, the one writer — is in
+// tests/stars-toggle.test.js. What lives here is the panel half: the click
+// reaches the engine, and the button says what the engine now holds. The grid
+// button is the cautionary tale: its look is written in three places and the
+// G hotkey writes none of them, so it can read the opposite of the scene.
+// STARS has one painter, ui.setStars, and these tests drive it from both of
+// its kinds of caller — a click, and a direct call as applyState makes one.
+describe('STARS — the button drives the engine and paints itself', () => {
+
+  test('a click switches the starfield off and dims the button; a second puts both back', () => {
+    fire('btn-toggle-stars', 'click');
+    assert.equal(ui.render.starsOn, false, 'the click did not reach the engine');
+    assert.deepEqual(ui.called('render.setStarsOn').at(-1), ['render.setStarsOn', false]);
+    assert.equal(byId('btn-toggle-stars').style.opacity, '0.45',
+      'the stars are off and the button still reads ON');
+
+    fire('btn-toggle-stars', 'click');
+    assert.equal(ui.render.starsOn, true);
+    assert.equal(byId('btn-toggle-stars').style.opacity, '1',
+      'the stars are back and the button still reads OFF');
+  });
+
+  test('control — binding alone touches neither the engine nor the button', () => {
+    // The button ships ON in index.html (no inline opacity) because the stars
+    // ship visible. A bind-time paint or engine call would be harmless today
+    // and wrong the day a boot restore runs first — bootPersist runs after
+    // bindControls and is the one that brings back a saved STARS-off.
+    assert.equal(ui.called('render.setStarsOn').length, 0);
+    assert.equal(byId('btn-toggle-stars').style.opacity, undefined);
+  });
+
+  test('a direct ui.setStars call — what applyState makes — paints the button too', () => {
+    ui.setStars(false);
+    assert.equal(ui.render.starsOn, false);
+    assert.equal(byId('btn-toggle-stars').style.opacity, '0.45',
+      'a preset switched the stars off and left the button reading ON');
+    ui.setStars(true);
+    assert.equal(byId('btn-toggle-stars').style.opacity, '1');
+  });
+
+  test('the button reports what the engine holds, not what it was asked for', () => {
+    // The paint reads r.starsOn after the call rather than echoing its own
+    // argument — the same rule the grid button's click follows. An engine that
+    // kept the stars off (here: one that ignores the wish) must leave the
+    // button reading OFF; the direct-call test above is this one's control.
+    ui.render.setStarsOn = function () { this.starsOn = false; };
+    ui.setStars(true);
+    assert.equal(byId('btn-toggle-stars').style.opacity, '0.45');
+  });
+});
+
 // ── Round 11: RESET ALL has to reset ────────────────────────────────────────
 describe('RESET ALL leaves the state it advertises', () => {
+
+  test('the starfield comes back ON, and its button with it', () => {
+    fire('btn-toggle-stars', 'click');
+    assert.equal(ui.render.starsOn, false, 'precondition: STARS is off');
+    assert.equal(byId('btn-toggle-stars').style.opacity, '0.45');
+
+    fire('btn-reset-all', 'click');
+
+    assert.equal(ui.render.starsOn, true,
+      'RESET ALL left the starfield off — the startup sky has stars in it');
+    assert.equal(byId('btn-toggle-stars').style.opacity, '1',
+      'the stars are back and the button still reads OFF');
+  });
+
+  test('control — with the stars already on, RESET ALL leaves them on', () => {
+    fire('btn-reset-all', 'click');
+    assert.equal(ui.render.starsOn, true);
+    assert.equal(byId('btn-toggle-stars').style.opacity, '1');
+  });
 
   test('NIGHT is a mode, so the reset clears it', () => {
     // The button's own comment calls AUTO COLOUR and AUTO MATERIAL "modes, not
     // values" and switches them off for that reason. NIGHT is one by the same
-    // test, and the reset did not restore it: it left bright Amber under a
-    // starless sky with both unattended pickers still locked to the NIGHT ten,
-    // and the panel's autosave then persisted that across a reload.
+    // test, and the reset did not restore it: it left bright Amber (under a
+    // starless sky, back then — NIGHT has not touched the stars since r6) with
+    // both unattended pickers still locked to the NIGHT ten, and the panel's
+    // autosave then persisted that across a reload.
     // (`volumeKey` is also unrestored, and separately so — a pre-existing gap
     // this test does not speak for.)
     fire('night-btn', 'click');
@@ -1300,4 +2185,645 @@ describe('RESET ALL leaves the state it advertises', () => {
       `the last repaint said ${paints.at(-1)?.[1]}, so the button would read ON`);
   });
 
+});
+
+// ── SHADER KNOBS take Formula Detail / Formula Phase's place ────────────────
+//
+// One slot under Wave Intensity, two banks of hands, and the engine that is
+// drawing decides which is on screen. The pair (#formula-knobs-wrap) speaks to
+// CPU formulas and moves nothing under a numbered GPU shader; the four Shader
+// Knobs (#shader-knobs-wrap) carry a fixed meaning on a numbered shader, and
+// any meaning the operator gives them in a custom shader — which colours CPU
+// formulas too, so they also show over a formula while one is applied.
+//
+// Before the swap the pair was dimmed under a shader and the knobs lived in
+// ADVANCED → SHADER EDITOR. The dim had the same hole this has to close: only
+// applyFormulaValue re-synced it, so a preset, an import, a clip step, the boot
+// restore and RESET ALL — all of which write #gpu-sel directly — left the panel
+// describing the previous engine. The groups below drive every road.
+describe('the formula slot shows the bank of the engine that is drawing', () => {
+  const pair  = () => byId('formula-knobs-wrap').style.display;
+  const knobs = () => byId('shader-knobs-wrap').style.display;
+  const SHOWN = '', HIDDEN = 'none';
+
+  test('bind time paints the shipped selection: the pair shown, the knobs hidden', () => {
+    // beforeEach leaves #gpu-sel at '' — which counts as a CPU formula, as it
+    // does for _cpuOwnsSurface — and wipes every inline style first, so these
+    // values were written by bindControls and not inherited from a test.
+    assert.equal(pair(), SHOWN);
+    assert.equal(knobs(), HIDDEN);
+  });
+
+  test('a numbered shader puts the Shader Knobs in the pair\'s place', () => {
+    ui.applyFormulaValue('7');
+    assert.equal(pair(), HIDDEN, 'Formula Detail / Phase stay up under a shader that never reads them');
+    assert.equal(knobs(), SHOWN, 'the knobs that DO act on a numbered shader are not on screen');
+  });
+
+  test('an m: formula puts the pair back', () => {
+    ui.applyFormulaValue('7');
+    ui.applyFormulaValue('m:fractals:henon');
+    assert.equal(pair(), SHOWN);
+    assert.equal(knobs(), HIDDEN, 'the knobs outlived the shader they were shown for');
+  });
+
+  test("an empty selection counts as a CPU formula", () => {
+    // What a <select> reports for a value it does not ship. _cpuOwnsSurface
+    // treats it as a formula; the slot must not disagree with it.
+    ui.syncFormulaKnobsUI('7');
+    ui.syncFormulaKnobsUI('');
+    assert.equal(pair(), SHOWN);
+    assert.equal(knobs(), HIDDEN);
+    ui.syncFormulaKnobsUI('7');
+    ui.syncFormulaKnobsUI(null);
+    assert.equal(pair(), SHOWN, 'null reads as a shader');
+  });
+
+  test('a formula under the operator\'s own shader shows both banks', () => {
+    // A custom fragment body colours CPU formulas, and the shipped default
+    // body reads uK1 — hiding the knobs here would hide live controls.
+    ui.shaderEditor.customVS = 'VS'; ui.shaderEditor.customFS = 'FS';
+    ui.applyFormulaValue('m:fractals:henon');
+    assert.equal(pair(), SHOWN);
+    assert.equal(knobs(), SHOWN, 'the knobs a custom shader reads are hidden over a formula it colours');
+  });
+
+  test('control — the same formula under the built-in program shows the pair alone', () => {
+    ui.applyFormulaValue('m:fractals:henon');
+    assert.equal(pair(), SHOWN);
+    assert.equal(knobs(), HIDDEN);
+  });
+
+  test('a numbered shader under a custom shader still hides the pair', () => {
+    ui.shaderEditor.customVS = 'VS'; ui.shaderEditor.customFS = 'FS';
+    ui.applyFormulaValue('7');
+    assert.equal(pair(), HIDDEN, 'a custom shader does not make Formula Detail / Phase reach anything');
+    assert.equal(knobs(), SHOWN);
+  });
+
+  test('the editor\'s program-change announcement repaints the slot', () => {
+    // APPLY and the editor's RESET reach the slot only this way: neither
+    // touches #gpu-sel. The real editor fires it after customVS / customFS
+    // change (tests/shader-editor-status.test.js pins that half).
+    const se = ui.shaderEditor;
+    assert.equal(typeof se.cb.onProgramChange, 'function', 'bindControls did not take the editor\'s announcement');
+    se.customVS = 'VS'; se.customFS = 'FS';
+    se.cb.onProgramChange();
+    assert.equal(knobs(), SHOWN, 'APPLY over a formula left the knobs hidden');
+    se.customVS = null; se.customFS = null;
+    se.cb.onProgramChange();
+    assert.equal(knobs(), HIDDEN, 'the editor\'s RESET left the knobs over a formula');
+  });
+
+  test('control — without the announcement the slot does not move on its own', () => {
+    // So the repaint above came from the hook, not from something that polls.
+    ui.shaderEditor.customVS = 'VS'; ui.shaderEditor.customFS = 'FS';
+    assert.equal(knobs(), HIDDEN);
+  });
+
+  test('the announcement repaints for the last selection, so a revert on a numbered shader keeps the knobs', () => {
+    // FIX(knobs-K1): it used to read #gpu-sel back, which a value the select
+    // does not ship had blanked — see the group on such values further down.
+    ui.applyFormulaValue('7');
+    ui.shaderEditor.cb.onProgramChange();     // a custom shader reverted, say
+    assert.equal(pair(), HIDDEN);
+    assert.equal(knobs(), SHOWN);
+  });
+
+  test('RESET ALL from a numbered shader brings the pair back and hides the knobs', () => {
+    ui.applyFormulaValue('7');
+    assert.equal(knobs(), SHOWN, 'precondition: the knobs are up');
+
+    fire('btn-reset-all', 'click');
+
+    assert.equal(byId('gpu-sel').value, 'm:differentialEqs:pendulumNonLinear', 'precondition: the reset wrote the boot formula');
+    assert.equal(pair(), SHOWN, 'RESET ALL lands on a formula with Formula Detail / Phase hidden');
+    assert.equal(knobs(), HIDDEN, 'RESET ALL left the Shader Knobs up over the boot formula');
+  });
+
+  test('RESET ALL takes the knobs away with a custom shader, whether or not the editor says so', () => {
+    // This editor clears its program and announces nothing. The handler's own
+    // sync, placed after the shader reset, is what has to get it right.
+    const se = ui.shaderEditor;
+    se.customVS = 'VS'; se.customFS = 'FS';
+    se.reset = function () { this.customVS = null; this.customFS = null; };
+    ui.applyFormulaValue('m:fractals:henon');
+    assert.equal(knobs(), SHOWN, 'precondition: both banks are up');
+
+    fire('btn-reset-all', 'click');
+
+    assert.equal(se.customFS, null, 'precondition: the reset reached the editor');
+    assert.equal(pair(), SHOWN);
+    assert.equal(knobs(), HIDDEN, 'the shader was cleared and its knobs were left over the formula');
+  });
+
+  test('control — RESET ALL from the pair leaves the pair', () => {
+    fire('btn-reset-all', 'click');
+    assert.equal(pair(), SHOWN);
+    assert.equal(knobs(), HIDDEN);
+  });
+
+  test('ui.applyMathFormula tells the slot itself — it writes #gpu-sel, and VOLUME is judged by the slot', () => {
+    // FIX(review K2): every writer of the select tells the slot, because the
+    // slot's memory is what VOLUME's refusal asks now. applyFormulaValue, its
+    // one caller today, tells it first; this is a caller going straight in.
+    ui.applyFormulaValue('7');
+    ui.applyMathFormula('fractals', 'henon');
+    assert.equal(pair(), SHOWN, 'the slot still describes shader 7 after a formula was written');
+    assert.equal(knobs(), HIDDEN);
+    ui.calls.length = 0;
+    byId('volume-formula-sel').value = 'twist';
+    fire('deform-volume', 'click');
+    assert.equal(ui.called('toast').length, 0, 'VOLUME was refused over the formula applyMathFormula just armed');
+  });
+});
+
+// ── …and a snapshot, which restores the shader AFTER it writes #gpu-sel ─────
+//
+// applyState writes #gpu-sel early and restores the custom shader at its very
+// end, so the slot is synced while the PREVIOUS program is still live. For a
+// snapshot that carries a shader it is the editor's own announcement, fired from
+// inside that late compile or revert, that settles the slot — and these tests
+// prove it by unplugging the announcement and watching the result go wrong.
+//
+// Real PresetMixin, real ShaderEditor (compileAndApply against a renderer stub
+// that links everything, as tests/shader-editor-status.test.js does), real
+// bindControls. The preset path is the boot restore's path too: bootPersist
+// runs after bindControls and hands its snapshot to the same applyState.
+describe('a snapshot settles the formula slot in the order it restores things', () => {
+  let PresetMixin, ShaderEditor, se;
+  before(async () => {
+    ({ PresetMixin } = await import('../src/ui/presets.js'));
+    ({ ShaderEditor } = await import('../src/shaders.js'));
+  });
+
+  const pair  = () => byId('formula-knobs-wrap').style.display;
+  const knobs = () => byId('shader-knobs-wrap').style.display;
+
+  /** The smallest host compileAndApply runs against: nothing ever fails to link. */
+  const editorHost = () => ({
+    U: { uMathMode: { value: 1 } },
+    applyShaderSource() {},
+    renderer: { debug: {}, compile() {}, render() {}, getRenderTarget() { return null; }, setRenderTarget() {} },
+  });
+
+  beforeEach(() => {
+    // Rebind from scratch with a real editor in place of the stub: bindControls
+    // hangs its hook on whatever editor it is handed, and the listeners of the
+    // outer beforeEach's binding have to go first or every event fires twice.
+    for (const el of [...els.values(), ...selEls.values(), document.body, document.documentElement]) {
+      el._classes.clear(); el._listeners.clear();
+      el.textContent = ''; el.value = ''; el.style = {}; el.offsetParent = {};
+    }
+    docLtnr.clear();
+    winLtnr.clear();
+    se = new ShaderEditor(editorHost());
+    ui = makeUi();
+    ui.shaderEditor = se;
+    bindControls(ui);
+    // Only the two apply methods: the mixin's preset-list methods would take
+    // over the stubs bindControls calls at bind time.
+    ui.applyState = PresetMixin.applyState;
+    ui._applyStateFields = PresetMixin._applyStateFields;
+  });
+  // The success path arms a two-second timer that blanks the status line; it
+  // has nothing to say to these tests and would hold the run open.
+  afterEach(() => se.claimStatus());
+
+  const FORMULA = 'm:fractals:henon';
+  const CUSTOM  = { hasCustom: true,  vert: 'y = sin(r * 4.0 + T) * a;', frag: 'c = paletteAt(t) * (1.0 + uK1);' };
+  const BUILTIN = { hasCustom: false, vert: 'y = 0.0;', frag: 'c = paletteAt(t);' };
+
+  test('a formula snapshot that brings its own shader ends with both banks', () => {
+    assert.equal(ui.applyState({ _version: 4, gpuSelVal: FORMULA, shader: CUSTOM }), true);
+    assert.ok(se.customFS, 'precondition: the snapshot\'s shader compiled and went live');
+    assert.equal(pair(), '');
+    assert.equal(knobs(), '', 'the knobs this shader reads are hidden over the formula it colours');
+  });
+
+  test('control — with the announcement unplugged, applyState\'s own sync leaves the knobs hidden', () => {
+    // Its sync ran while no custom program was live yet. If this ever passes
+    // with the announcement unplugged, applyState has started restoring the
+    // shader before #gpu-sel and the test above no longer proves the order.
+    se.cb.onProgramChange = () => {};
+    assert.equal(ui.applyState({ _version: 4, gpuSelVal: FORMULA, shader: CUSTOM }), true);
+    assert.ok(se.customFS);
+    assert.equal(knobs(), 'none');
+  });
+
+  test('a snapshot with the built-in look reverts a live shader and takes the knobs off the formula', () => {
+    ui.applyState({ _version: 4, gpuSelVal: FORMULA, shader: CUSTOM });
+    assert.equal(knobs(), '', 'precondition: both banks are up');
+
+    assert.equal(ui.applyState({ _version: 4, gpuSelVal: FORMULA, shader: BUILTIN }), true);
+
+    assert.equal(se.customFS, null, 'precondition: the live shader was reverted');
+    assert.equal(pair(), '');
+    assert.equal(knobs(), 'none', 'the knobs of a shader that is gone stayed up over the formula');
+  });
+
+  test('control — unplugged, that revert leaves the knobs standing', () => {
+    // revertToBuiltIn reports nothing through onCompileResult, so a slot hung
+    // on that callback would fail exactly like this.
+    ui.applyState({ _version: 4, gpuSelVal: FORMULA, shader: CUSTOM });
+    se.cb.onProgramChange = () => {};
+    ui.applyState({ _version: 4, gpuSelVal: FORMULA, shader: BUILTIN });
+    assert.equal(se.customFS, null);
+    assert.equal(knobs(), '');
+  });
+
+  test('a numbered snapshot puts the knobs up at once — the boot restore onto a shader', () => {
+    assert.equal(ui.applyState({ _version: 4, gpuSelVal: '3' }), true);
+    assert.equal(pair(), 'none');
+    assert.equal(knobs(), '');
+  });
+
+  test('RESET ALL over a formula with a custom shader applied ends with the pair alone', () => {
+    ui.applyState({ _version: 4, gpuSelVal: FORMULA, shader: CUSTOM });
+    assert.equal(knobs(), '', 'precondition: both banks are up');
+
+    fire('btn-reset-all', 'click');
+
+    assert.equal(se.customFS, null, 'precondition: the real editor was reset');
+    assert.equal(pair(), '');
+    assert.equal(knobs(), 'none');
+  });
+
+  // ── …including a value the select cannot hold ────────────────────────────
+  // FIX(knobs-K1). Two snapshot values a real <select> cannot show, which only
+  // a hand-edited file or a build with more shaders produces:
+  //   • '' — applyState routed it to the GPU branch (+'' = 0, shader 1 drew)
+  //     while the slot read it as a CPU formula: the pair up, the live knobs
+  //     hidden. It is now no selection, as a missing field is, and nothing moves.
+  //   • '41' — the engine is told 41 and draws a GPU shader, and the select
+  //     blanks. applyState's own sync was right; the editor's next
+  //     announcement (an APPLY, its RESET, or the snapshot's own shader
+  //     restore) read the blank select back as a CPU formula and put the pair
+  //     over the shader. The slot now remembers what it was last told.
+  // Here #gpu-sel behaves as the real one does: a value index.html does not
+  // ship reads back as ''. FIX(review R1): the set is index.html's own option
+  // values, read from the markup. It used to be "any `m:…`, or 0..37", which
+  // kept an `m:` formula no build ships — the one value that showed the slot
+  // and the engine parting (see the group on unshipped formulas below).
+  describe('a snapshot value the select cannot hold', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const block = html.slice(html.indexOf('<select id="gpu-sel">'), html.indexOf('</select>', html.indexOf('<select id="gpu-sel">')));
+    const OPTIONS = new Set([...block.matchAll(/<option[^>]*\bvalue="([^"]*)"/g)].map(m => m[1]));
+    const SHIPPED = v => OPTIONS.has(v);
+    beforeEach(() => {
+      let held = byId('gpu-sel').value;
+      Object.defineProperty(byId('gpu-sel'), 'value', {
+        configurable: true, enumerable: true,
+        get: () => held,
+        set: v => { v = String(v); held = SHIPPED(v) ? v : ''; },
+      });
+    });
+    afterEach(() => {
+      // A plain field again: every other test assigns it and reads it back.
+      Object.defineProperty(byId('gpu-sel'), 'value',
+        { configurable: true, enumerable: true, writable: true, value: '' });
+    });
+
+    /** An APPLY from the editor's fragment tab, compiled for real. */
+    const applyFromEditor = () => {
+      se._tab = 'frag';
+      byId('se-code').value = 'c = paletteAt(t) * (1.0 + uK1);';
+      assert.equal(se.compileAndApply(), true, 'precondition: the APPLY compiled');
+      assert.ok(se.customFS, 'precondition: the APPLY went live');
+    };
+
+    test('control — the stub blanks what index.html does not ship, and keeps what it does', () => {
+      // The reader found the whole list (38 shaders and the formulas beside
+      // them), not a fragment of it.
+      assert.ok(OPTIONS.has('0') && OPTIONS.has('37') && OPTIONS.has('m:differentialEqs:pendulumNonLinear'),
+        'the option reader did not find index.html\'s #gpu-sel');
+      assert.ok(OPTIONS.size > 200, `read ${OPTIONS.size} options`);
+      const sel = byId('gpu-sel');
+      sel.value = '7';     assert.equal(sel.value, '7');
+      sel.value = '37';    assert.equal(sel.value, '37');
+      sel.value = FORMULA; assert.equal(sel.value, FORMULA);
+      sel.value = '41';    assert.equal(sel.value, '', 'the stub held a value a real <select> would blank');
+      sel.value = 'm:fractals:fromANewerBuild';
+      assert.equal(sel.value, '', 'the stub held an m: value index.html does not ship');
+    });
+
+    test("'' over a numbered shader moves nothing: the shader keeps drawing and the knobs stay", () => {
+      ui.applyState({ _version: 4, gpuSelVal: '3' });
+      assert.equal(knobs(), '', 'precondition: the knobs are up');
+      ui.calls.length = 0;
+
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: '' }), true);
+
+      assert.deepEqual(ui.called('setGPUModeAnimated'), [], "'' still sent the engine to a shader");
+      assert.deepEqual(ui.called('deactivate'), []);
+      assert.equal(byId('gpu-sel').value, '3', "'' was written into the select");
+      assert.equal(pair(), 'none', 'Formula Detail / Phase came up over a shader that never reads them');
+      assert.equal(knobs(), '', 'the knobs of the shader still drawing were hidden');
+    });
+
+    test("'' over a formula moves nothing either: the formula keeps drawing and the pair stays", () => {
+      ui.applyState({ _version: 4, gpuSelVal: FORMULA });
+      ui.calls.length = 0;
+
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: '' }), true);
+
+      assert.deepEqual(ui.called('setGPUModeAnimated'), [], "'' put shader 1 in the formula's place");
+      assert.deepEqual(ui.called('deactivate'), [], "'' switched the formula engine off");
+      assert.equal(pair(), '');
+      assert.equal(knobs(), 'none');
+    });
+
+    test('control — a shipped number still sends the engine to its shader and puts the knobs up', () => {
+      // So the two tests above pass because '' is skipped, not because this
+      // snapshot path stopped routing anything.
+      ui.applyState({ _version: 4, gpuSelVal: FORMULA });
+      ui.calls.length = 0;
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: '3' }), true);
+      assert.deepEqual(ui.called('setGPUModeAnimated'), [['setGPUModeAnimated', 3]]);
+      assert.equal(pair(), 'none');
+      assert.equal(knobs(), '');
+    });
+
+    test("'41' keeps the knobs through the editor's APPLY and RESET that follow it", () => {
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: '41' }), true);
+      assert.deepEqual(ui.called('setGPUModeAnimated'), [['setGPUModeAnimated', 41]],
+        'precondition: the engine was told shader 41');
+      assert.equal(byId('gpu-sel').value, '', 'precondition: the select blanked');
+      assert.equal(pair(), 'none');
+      assert.equal(knobs(), '');
+
+      applyFromEditor();
+      assert.equal(pair(), 'none', 'APPLY read the blank select back and put Formula Detail / Phase over shader 41');
+      assert.equal(knobs(), '');
+
+      se.reset();                                    // the editor's RESET
+      assert.equal(se.customFS, null, 'precondition: the editor reverted to the built-in program');
+      assert.equal(pair(), 'none', "the editor's RESET put the pair back over shader 41");
+      assert.equal(knobs(), '', 'the knobs of the shader still drawing were hidden');
+    });
+
+    test("'41' that brings its own shader ends with the knobs alone", () => {
+      // The restore inside applyState announces, after applyState's own sync.
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: '41', shader: CUSTOM }), true);
+      assert.ok(se.customFS, 'precondition: the snapshot\'s shader compiled, so the editor announced');
+      assert.equal(pair(), 'none', 'the shader restore put the pair beside the knobs over shader 41');
+      assert.equal(knobs(), '');
+    });
+
+    test('control — a formula through the same APPLY and RESET ends with the pair alone', () => {
+      // The memory is of the selection, not of the knobs: a formula's slot
+      // still takes the knobs on and off with the custom shader.
+      ui.applyState({ _version: 4, gpuSelVal: FORMULA });
+      applyFromEditor();
+      assert.equal(pair(), '');
+      assert.equal(knobs(), '', 'APPLY over a formula left the knobs hidden');
+      se.reset();
+      assert.equal(pair(), '');
+      assert.equal(knobs(), 'none', 'the knobs outlived the custom shader over a formula');
+    });
+
+    test('control — after \'41\', a formula picked by hand takes the slot back for good', () => {
+      // Every caller that writes #gpu-sel tells the slot, so the remembered
+      // value moves on with the selection and a later announcement follows it.
+      ui.applyState({ _version: 4, gpuSelVal: '41' });
+      ui.applyFormulaValue(FORMULA);
+      assert.equal(pair(), '');
+      assert.equal(knobs(), 'none');
+      se.cb.onProgramChange();
+      assert.equal(pair(), '', 'the announcement went back to shader 41');
+      assert.equal(knobs(), 'none');
+    });
+
+    // ── FIX(review R1/R2/R3/K2): what b11cb4e's "the slot follows the engine
+    // for any snapshot" still missed ──────────────────────────────────────────
+    // • an `m:` formula this build does not ship blanked the select and put
+    //   the pair up, while nothing moved the engine: the shader kept drawing
+    //   under a slot describing a formula, and the keys followed the slot;
+    // • a snapshot with no selection counted as a CPU formula, so its
+    //   deformMode 'volume' armed VOLUME over the numbered shader on screen;
+    // • a numeric gpuSelVal wrote the select and the slot and only then threw;
+    // • after '41' the select is blank, and VOLUME read that as a formula.
+    const ENGINE = ['setGPUModeAnimated', 'deactivate', 'setFormula', 'setVolumeFormula', 'setMode', 'morph'];
+    const engineCalls = () => ui.calls.filter(c => ENGINE.includes(c[0]));
+    const UNSHIPPED = 'm:fractals:fromANewerBuild';
+    const deformLit = () => ['surface', 'volume', 'collapse'].filter(m => byId('deform-' + m).classList.contains('active'));
+    /** A keydown; true if the app armed it (called preventDefault). */
+    const arms = key => { const p = keyDownAs(key, ''); keyUpAs(key, ''); return p; };
+
+    test('an unshipped m: formula over shader 7 leaves the select, the slot and the engine where they were', () => {
+      ui.applyState({ _version: 4, gpuSelVal: '7' });
+      ui.render.flatFrame();
+      ui.calls.length = 0;
+
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: UNSHIPPED }), true);
+      ui.render.flatFrame();
+
+      assert.equal(byId('gpu-sel').value, '7', 'the select was left blank — or holding what it cannot show');
+      assert.equal(knobs(), '', 'the knobs of the shader still drawing were hidden');
+      assert.equal(pair(), 'none', 'Formula Detail / Phase came up over a shader that never reads them');
+      assert.deepEqual(engineCalls(), [], 'the engine was moved for a formula this build cannot draw');
+      assert.equal(arms('y'), true, 'Y no longer reaches the knobs of the shader on screen');
+      assert.equal(arms('b'), false, 'B arms for a Formula Detail nothing reads');
+    });
+
+    test('…and the same when the snapshot brings its own shader', () => {
+      ui.applyState({ _version: 4, gpuSelVal: '7' });
+      ui.render.flatFrame();
+      ui.calls.length = 0;
+
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: UNSHIPPED, shader: CUSTOM }), true);
+      ui.render.flatFrame();
+
+      assert.ok(se.customFS, 'precondition: the snapshot\'s shader went live, so the editor announced');
+      assert.equal(byId('gpu-sel').value, '7');
+      assert.equal(knobs(), '');
+      assert.equal(pair(), 'none', 'the shader restore put the pair up beside the knobs over shader 7');
+      assert.deepEqual(engineCalls(), []);
+      assert.equal(arms('y'), true);
+      assert.equal(arms('b'), false);
+    });
+
+    test('control — a shipped m: formula over shader 7 still arms it and swaps the slot', () => {
+      ui.applyState({ _version: 4, gpuSelVal: '7' });
+      ui.render.flatFrame();
+      ui.calls.length = 0;
+
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: FORMULA }), true);
+      ui.render.flatFrame();
+
+      assert.equal(byId('gpu-sel').value, FORMULA);
+      assert.deepEqual(ui.called('setFormula'), [['setFormula', 'fractals:henon']]);
+      assert.equal(pair(), '');
+      assert.equal(knobs(), 'none');
+      assert.equal(arms('b'), true);
+      assert.equal(arms('y'), false);
+    });
+
+    test("'' beside deformMode 'volume' over shader 3 ends on SURFACE — the shader keeps drawing", () => {
+      ui.applyState({ _version: 4, gpuSelVal: '3' });
+      ui.render.flatFrame();
+      ui.calls.length = 0;
+
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: '', deformMode: 'volume', volumeKey: 'breathe' }), true);
+      ui.render.flatFrame();
+
+      assert.deepEqual(ui.called('setVolumeFormula'), [],
+        'VOLUME was armed over shader 3: uMathMode = 1 switches its whole displacement off');
+      assert.deepEqual(ui.called('setMode'), [['setMode', 'surface']]);
+      assert.deepEqual(deformLit(), ['surface'], 'the panel lit a deform mode the engine is not in');
+      assert.equal(byId('gpu-sel').value, '3');
+      assert.equal(knobs(), '');
+    });
+
+    test('…and so does a snapshot with no gpuSelVal at all', () => {
+      ui.applyState({ _version: 4, gpuSelVal: '3' });
+      ui.render.flatFrame();
+      ui.calls.length = 0;
+
+      assert.equal(ui.applyState({ _version: 4, deformMode: 'volume', volumeKey: 'breathe' }), true);
+      ui.render.flatFrame();
+
+      assert.deepEqual(ui.called('setVolumeFormula'), []);
+      assert.deepEqual(deformLit(), ['surface']);
+    });
+
+    test('…and an unshipped m: formula beside VOLUME, which leaves shader 3 the selection', () => {
+      ui.applyState({ _version: 4, gpuSelVal: '3' });
+      ui.render.flatFrame();
+      ui.calls.length = 0;
+
+      ui.applyState({ _version: 4, gpuSelVal: UNSHIPPED, deformMode: 'volume', volumeKey: 'breathe' });
+      ui.render.flatFrame();
+
+      assert.deepEqual(ui.called('setVolumeFormula'), []);
+      assert.deepEqual(deformLit(), ['surface']);
+    });
+
+    test("…and after '41', where the select is blank: the slot is asked, not the select", () => {
+      // The panel's adapter (ui.formulaOwnsSurface) answers from the slot's
+      // memory, which still says 41; the select's own rule would read its
+      // blank as a CPU formula and restore VOLUME over shader 41.
+      ui.applyState({ _version: 4, gpuSelVal: '41' });
+      assert.equal(byId('gpu-sel').value, '', 'precondition: the select blanked');
+      ui.calls.length = 0;
+
+      ui.applyState({ _version: 4, gpuSelVal: '', deformMode: 'volume', volumeKey: 'breathe' });
+      ui.render.flatFrame();
+
+      assert.deepEqual(ui.called('setVolumeFormula'), [], 'VOLUME was armed over shader 41');
+      assert.deepEqual(deformLit(), ['surface']);
+    });
+
+    test("control — '' beside VOLUME over an m: formula still restores VOLUME", () => {
+      // The no-selection case judges the selection in effect; over a formula
+      // that is a CPU one, and VOLUME is the snapshot's to restore.
+      ui.applyState({ _version: 4, gpuSelVal: FORMULA });
+      ui.render.flatFrame();
+      ui.calls.length = 0;
+
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: '', deformMode: 'volume', volumeKey: 'breathe' }), true);
+      ui.render.flatFrame();
+
+      assert.deepEqual(ui.called('setVolumeFormula'), [['setVolumeFormula', 'breathe']]);
+      assert.deepEqual(deformLit(), ['volume']);
+    });
+
+    test('a numeric gpuSelVal is the shader it names — "gpuSelVal": 5 is shader 5', () => {
+      ui.applyState({ _version: 4, gpuSelVal: FORMULA });
+      ui.render.flatFrame();
+      ui.calls.length = 0;
+
+      assert.equal(ui.applyState({ _version: 4, gpuSelVal: 5 }), true,
+        'the snapshot was rejected — after the select and the slot had already moved');
+      assert.equal(byId('gpu-sel').value, '5');
+      assert.deepEqual(ui.called('setGPUModeAnimated'), [['setGPUModeAnimated', 5]]);
+      assert.deepEqual(ui.called('deactivate'), [['deactivate']]);
+      assert.equal(knobs(), '');
+      assert.equal(pair(), 'none');
+    });
+
+    test('a gpuSelVal that is neither a string nor a whole number is no selection: nothing moves, nothing throws', () => {
+      for (const bad of [{}, true, 1.5, ['3']]) {
+        ui.applyState({ _version: 4, gpuSelVal: FORMULA });
+        ui.render.flatFrame();
+        ui.calls.length = 0;
+
+        assert.equal(ui.applyState({ _version: 4, gpuSelVal: bad }), true,
+          `${JSON.stringify(bad)} made applyState reject the snapshot`);
+        ui.render.flatFrame();
+        assert.equal(byId('gpu-sel').value, FORMULA, `${JSON.stringify(bad)} moved the select`);
+        assert.equal(pair(), '', `${JSON.stringify(bad)} moved the slot`);
+        assert.deepEqual(engineCalls(), [], `${JSON.stringify(bad)} moved the engine`);
+      }
+    });
+
+    // FIX(review, fixer note on acc6a4c): a STRING was a selection whatever it
+    // said. 'abc' went down the GPU branch as setGPUModeAnimated(+'abc' = NaN)
+    // and the slot was told 'abc', which it reads as a numbered shader — so
+    // over a formula the pair went down and the knobs came up for a shader
+    // that does not exist. #gpu-sel holds `m:…` and shader numbers; a string of
+    // neither shape is no selection now.
+    test("a string that is neither m:… nor a shader's number moves nothing, over a shader or a formula", () => {
+      for (const start of ['3', FORMULA]) {
+        for (const bad of ['abc', '3.5', ' 7', '7 ', '-2', '0x3']) {
+          ui.applyState({ _version: 4, gpuSelVal: start });
+          ui.render.flatFrame();
+          const slot = { pair: pair(), knobs: knobs() };
+          ui.calls.length = 0;
+
+          assert.equal(ui.applyState({ _version: 4, gpuSelVal: bad }), true,
+            `${JSON.stringify(bad)} made applyState reject the snapshot`);
+          ui.render.flatFrame();
+
+          const what = `${JSON.stringify(bad)} over ${start}`;
+          assert.equal(byId('gpu-sel').value, start, `${what} moved the select`);
+          assert.deepEqual({ pair: pair(), knobs: knobs() }, slot, `${what} moved the slot`);
+          assert.deepEqual(engineCalls(), [], `${what} moved the engine`);
+          assert.ok(!ui.calls.some(c => c.slice(1).some(a => Number.isNaN(a))), `${what} handed NaN to the engine`);
+        }
+      }
+    });
+
+    test('control — a whole number in digits still reaches the engine as that number, shipped or not', () => {
+      for (const [v, n] of [['7', 7], ['41', 41], ['0', 0]]) {
+        ui.applyState({ _version: 4, gpuSelVal: FORMULA });
+        ui.render.flatFrame();
+        ui.calls.length = 0;
+
+        assert.equal(ui.applyState({ _version: 4, gpuSelVal: v }), true);
+        assert.deepEqual(ui.called('setGPUModeAnimated'), [['setGPUModeAnimated', n]], `'${v}' did not reach the engine as ${n}`);
+        assert.equal(pair(), 'none', `'${v}' left Formula Detail / Phase up over shader ${n}`);
+        assert.equal(knobs(), '');
+      }
+    });
+
+    test("after '41' a click on VOLUME is refused out loud, as over any shader", () => {
+      ui.applyState({ _version: 4, gpuSelVal: '41' });
+      assert.equal(byId('gpu-sel').value, '', 'precondition: the select blanked');
+      ui.calls.length = 0;
+      byId('volume-formula-sel').value = 'twist';
+
+      fire('deform-volume', 'click');
+      ui.render.flatFrame();
+
+      assert.deepEqual(ui.called('setVolumeFormula'), [],
+        'VOLUME was accepted over shader 41: a blank select read as a CPU formula');
+      assert.ok(ui.called('toast').some(([, m]) => /VOLUME needs a CPU formula/.test(m)), 'no refusal was shown');
+      assert.equal(byId('deform-volume').classList.contains('active'), false);
+    });
+
+    test('control — VOLUME over a formula is accepted', () => {
+      ui.applyState({ _version: 4, gpuSelVal: '41' });
+      ui.applyFormulaValue(FORMULA);
+      ui.render.flatFrame();
+      ui.calls.length = 0;
+      byId('volume-formula-sel').value = 'twist';
+
+      fire('deform-volume', 'click');
+      ui.render.flatFrame();
+
+      assert.deepEqual(ui.called('setVolumeFormula'), [['setVolumeFormula', 'twist']]);
+      assert.equal(ui.called('toast').length, 0);
+    });
+  });
 });

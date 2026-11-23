@@ -99,7 +99,7 @@ Safari users: WebM is unreliable. Stick to GIF, or use OBS with the Virtual Came
 
 ## Watermark
 
-Both recorders draw a "VIMATHIC" text watermark in the bottom-right corner of the output. It's an attribution marker, not a copyright claim — your creative output belongs to you (with the usual caveats around the audio you record over). The watermark cannot be disabled in the UI; see `LICENSE.txt` for the legal context.
+Both recorders draw a "VIMATHIC" text watermark in the bottom-right corner of the output. It's an attribution marker, not a copyright claim — your creative output belongs to you (with the usual caveats around the audio you record over). The watermark cannot be disabled in the UI.
 
 ## Choosing GIF vs WebM
 

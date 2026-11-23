@@ -8,7 +8,7 @@
 
 import { DOM, elementOwnsKey } from '../dom.js';
 import { bindParamSliders, resetParamsToDefault, PARAMS, applyParam,
-         NIGHT_SCHEME_FIRST, NIGHT_SCHEMES, ALL_SCHEMES, DRAG_FLOOR } from '../params.js';
+         NIGHT_SCHEME_FIRST, NIGHT_SCHEMES, ALL_SCHEMES, dragRange } from '../params.js';
 import { bindAboutModal, closeAbout } from './about-modal.js';
 import { bindOverlayFocus, isAnyOverlayOpen } from './overlay-focus.js';
 import { AutoCycler } from './auto-cycle.js';
@@ -242,6 +242,53 @@ export function bindControls(ui) {
     _applyParticle();
   };
 
+  // ── Wire style (WIRE viz mode) ────────────────────────────────────────────
+  // The WIRE counterpart of Particle Style, under the same rule: the row is
+  // shown while WIRE is the mode and hidden everywhere else, and the pick is
+  // kept while it is hidden and comes back with WIRE (render.currentWireStyle).
+  // Nothing to force on the way out — setVizModeGPU takes every part of the
+  // style off the moment another mode is drawn.
+  const _wireSel  = DOM.wireStyleSel;
+  const _wireDesc = DOM.wireStyleDesc;
+  const _wireWrap = DOM.wireStyleWrap;
+  const _wireDescriptions = {
+    classic:  'Thin lines on every edge — the original look',
+    neon:     'Glowing lines that add up where they cross',
+    hidden:   'Lines behind the body are hidden, so it reads as a solid',
+    trails:   'Every line drags a fading trail as the surface moves',
+    depth:    'Far lines fade into the dark, near ones stay bright',
+    scan:     'A ring of light runs outward across the mesh',
+    hologram: 'A see-through glowing body under the lines',
+    rows:     'One direction of the grid, the rest of the body hidden',
+    grid:     'The grid without its triangle diagonals',
+    contour:  'Lines of equal height, like a relief map',
+    lattice:  'The body drifts through a lattice of light',
+    electric: 'Knots of energy crawl over glowing lines',
+    aurora:   'The palette flows over the wire in slow curtains',
+    paint:    'Glowing lines that leave long light trails',
+    glass:    'Glowing edges on a dark glass body',
+  };
+
+  const _applyWire = () => {
+    if (!_wireSel) return;
+    const key = _wireSel.value;
+    if (_wireDesc) _wireDesc.textContent = _wireDescriptions[key] ?? '';
+    r.setWireStyle?.(key);
+  };
+  if (_wireSel) _wireSel.addEventListener('change', _applyWire);
+
+  // The particle row's twin, guard for guard: a snapshot's unknown key is
+  // ignored rather than assigned (an unknown value blanks a <select>), and the
+  // apply runs in every mode so the engine files the choice away outside WIRE.
+  const _syncWireForVizMode = (vizMode, presetStyle = null) => {
+    if (!_wireSel) return;
+    if (presetStyle && Array.from(_wireSel.options).some(o => o.value === presetStyle)) {
+      _wireSel.value = presetStyle;
+    }
+    if (_wireWrap) _wireWrap.style.display = vizMode === 'wireframe' ? '' : 'none';
+    _applyWire();
+  };
+
   // The viz-mode button row. Declared here so the boot sync just below and
   // _setVizModeBtns further down share one list.
   const _vizBtns = ['surface','wireframe','points'];
@@ -259,6 +306,7 @@ export function bindControls(ui) {
     ) || 'wireframe';
     _syncMaterialForVizMode(bootMode);
     _syncParticleForVizMode(bootMode);
+    _syncWireForVizMode(bootMode);
   }
 
   // ── Deform mode (Surface / Volume / Collapse) ─────────────────────────────
@@ -272,6 +320,102 @@ export function bindControls(ui) {
   // definition, the R/F hotkeys through main.js, and applyState — so it is what
   // work queued for a flat frame asks when it finally runs.
   const _gpuSel        = () => document.getElementById('gpu-sel');
+  // (_cpuOwnsSurface — "can the CPU deformation own pos.y right now?" — is
+  // defined below the formula slot, whose memory it asks since FIX(review K2).)
+
+  /**
+   * Put the bank of hands that speaks to the engine on screen into the formula
+   * slot: Formula Detail / Formula Phase for a CPU formula, the four Shader
+   * Knobs for a numbered GPU shader.
+   *
+   * REVERSED (shader knobs): this used to DIM the pair under a numbered shader
+   * and show a NO EFFECT line under it. That was FIX(r6) — two live-looking
+   * sliders that moved nothing, readouts counting, presets storing, not a pixel
+   * changing; the boundary was right and the silence was not. The owner asked
+   * for the slot to swap instead: the pair does nothing at all on a numbered
+   * entry, while the Shader Knobs, which DO act there, sat three clicks deep in
+   * ADVANCED → SHADER EDITOR. #fk-note and the .fk-inert rule are gone.
+   *
+   * Two rules, one predicate — _slotBanks, just below, which the hold-and-drag
+   * keys ask as well (FIX(knob keys)) — and `cpu` is _cpuOwnsSurface's rule:
+   * an `m:` value, or none — '' is what a <select> reports when it holds
+   * nothing; applyState now reads a snapshot's '' the same way, as no
+   * selection, and does not hand it here — see FIX(knobs-K1) in presets.js:
+   *   • #formula-knobs-wrap shows iff `cpu`. VOLUME cannot be entered while a
+   *     shader owns the surface — _setDeformMode refuses it out loud — so all
+   *     three deform modes are live under an `m:` formula and inert under a
+   *     numbered one.
+   *   • #shader-knobs-wrap shows iff `!cpu`, OR the operator's own shader is
+   *     applied — se.customVS / customFS, the test RESET ALL uses below to
+   *     decide there is a shader to clear. A custom fragment body colours CPU
+   *     formulas too and the shipped default body reads uK1, which is the
+   *     workflow documents/shader-editor.md promises, so hiding the sliders
+   *     there would hide live controls. Both banks show in that case.
+   *   Known and left alone (a render change, not a panel one): the BUILT-IN
+   *   fragment program applies Knob 4's palette shift with no uMathMode gate
+   *   (shaders.js, `t + uK3 * .47`), so it still acts on a plain CPU formula
+   *   while its slider is hidden. MIDI, presets and RESET ALL reach it, and
+   *   syncParamUI keeps a hidden slider's value current.
+   *
+   * It takes the value because applyFormulaValue calls it BEFORE either of its
+   * branches writes #gpu-sel — R and F hand in the formula picker's draw, a
+   * value the select does not hold yet. (This used to say applyMathFormula
+   * writes the dropdown on the flat frame of a morph; it writes it at call
+   * time.) applyState passes the snapshot's own value for a second reason: a
+   * value this build does not ship blanks a <select>, and the engine was told
+   * the snapshot's number, not ''.
+   *
+   * FIX(knobs-K1): calls with no value — the editor's announcement — used to
+   * read #gpu-sel, and that undid the reason above inside the same applyState.
+   * A snapshot from a build with more shaders ('41') blanks the select, the
+   * engine draws shader 41, applyState's own call put the knobs up — and the
+   * next APPLY, editor RESET, or the snapshot's own shader restore re-read the
+   * blank select as a CPU formula and put the pair back over a GPU shader.
+   * So the slot remembers the last selection it was told (`_slotSel`); every
+   * caller that writes #gpu-sel tells it (applyFormulaValue, applyState
+   * through ui.syncFormulaKnobsUI, RESET ALL), and a call with no value reuses
+   * that rather than asking a select that cannot hold the answer. Only the
+   * bind-time call, before anyone has told it anything, reads #gpu-sel.
+   *
+   * Every road that changes the selection or the live program reaches it:
+   *   • ui.applyFormulaValue — the dropdown, and R / F through the picker;
+   *   • ui.syncFormulaKnobsUI, which applyState calls right after it writes
+   *     #gpu-sel — a preset click, an import, a clip step, the boot restore;
+   *   • RESET ALL, after its #gpu-sel write and its shader reset;
+   *   • se.cb.onProgramChange, the shader editor saying customVS / customFS
+   *     changed — APPLY, the editor's RESET, a preset compiling its shader or
+   *     reverting a live one. applyState writes #gpu-sel BEFORE it restores
+   *     the shader, so for a snapshot that carries one it is this hook, not
+   *     applyState's own call, that settles the slot;
+   *   • the bind-time call below.
+   */
+  const _customShaderLive = () => !!(se?.customVS || se?.customFS);
+  let _slotSel = null;   // the last selection the slot was told; null until bind time
+  /**
+   * The two rules above as one answer: which banks the slot shows for a
+   * selection — `pair` (Formula Detail / Phase) and `knobs` (the four Shader
+   * Knobs). _syncFormulaKnobs paints it.
+   *
+   * FIX(knob keys): pulled out of _syncFormulaKnobs so the hold-and-drag keys
+   * can ask the same question — B / N reach the pair and Y U H J the knobs
+   * only while that bank is on the panel (_keyReaches, by _fsParams below).
+   * It reads the slot's LOGICAL state, the same inputs the paint uses (the
+   * selection the slot was last told, and whether the operator's own shader is
+   * live), never the wrappers' style.display read back: full screen hides the
+   * whole panel (fs-hidden) and so does collapsing it, and the keys must keep
+   * working in both.
+   */
+  const _slotBanks = (value = _slotSel ?? _gpuSel()?.value) => {
+    const v = value == null ? '' : String(value);
+    const cpu = !v || v.startsWith('m:');
+    return { pair: cpu, knobs: !cpu || _customShaderLive() };
+  };
+  const _syncFormulaKnobs = (value = _slotSel ?? _gpuSel()?.value) => {
+    _slotSel = value == null ? '' : String(value);
+    const show = _slotBanks(_slotSel);
+    DOM.formulaKnobsWrap.style.display = show.pair  ? '' : 'none';
+    DOM.shaderKnobsWrap.style.display  = show.knobs ? '' : 'none';
+  };
 
   /**
    * Can the CPU deformation own pos.y right now?
@@ -283,44 +427,44 @@ export function bindControls(ui) {
    * uMathMode = 1 and the `if(uMathMode==0)` branch of the vertex program in
    * shaders.js gates the shader's ENTIRE displacement, so the two cannot both
    * be on: one of them draws nothing.
+   *
+   * FIX(review K2): asked of the formula slot's memory — `_slotBanks().pair`,
+   * the very answer the pair bank is painted by and the B / N keys arm by —
+   * instead of reading #gpu-sel back. The select cannot hold every selection:
+   * a snapshot from a build with more shaders ('41') blanks it while the
+   * engine draws shader 41, and a blank select read as "a CPU formula", so
+   * VOLUME was accepted over that shader, set uMathMode = 1 and switched its
+   * displacement off, while the slot kept the knobs up. One memory answers
+   * the slot, the keys, both VOLUME refusals and applyState's no-selection
+   * case now. It is only as good as its writers, and every writer of #gpu-sel
+   * tells the slot: applyFormulaValue (the dropdown, R and F), applyMathFormula
+   * itself, applyState through ui.syncFormulaKnobsUI, RESET ALL, and the
+   * bind-time call that reads the shipped value.
    */
-  const _cpuOwnsSurface = () => {
-    const v = _gpuSel()?.value;
-    return !v || v.startsWith('m:');
-  };
-
-  /**
-   * Dim Formula Detail / Formula Phase, and say why, when the engine they
-   * speak to is not the one drawing.
-   *
-   * FIX(r6): they were two live-looking sliders that moved nothing under a
-   * numbered GPU shader — readouts counting, presets storing, not a pixel
-   * changing. The boundary itself is correct and deliberate (two banks, one per
-   * engine); what was missing is that the app never said so anywhere an
-   * operator could read. This is the same repair commit 7fc26fd made one row
-   * down, where APPLY reported a clean compile and stayed silent about the
-   * scaffold discarding the body's `y`.
-   *
-   * The predicate is _cpuOwnsSurface and nothing more: VOLUME cannot be entered
-   * while a shader owns the surface — _setDeformMode refuses it out loud — so
-   * all three deform modes are live under an `m:` formula and inert under a
-   * numbered one.
-   *
-   * It takes the value rather than reading #gpu-sel because applyMathFormula
-   * writes that dropdown on the flat frame of a morph: reading it here would
-   * describe the PREVIOUS selection for the length of the transition, which is
-   * the window in which the operator is most likely to reach for the knob.
-   */
-  const _syncFormulaKnobs = (value = _gpuSel()?.value) => {
-    const v = value == null ? '' : String(value);
-    const live = !v || v.startsWith('m:');
-    document.getElementById('formula-knobs-wrap')?.classList.toggle('fk-inert', !live);
-    const note = document.getElementById('fk-note');
-    if (note) note.style.display = live ? 'none' : '';
-  };
-  // Boot: index.html ships the pair undimmed and #fk-note hidden, which is
-  // right for the shipped default (an `m:` formula) and wrong for a session
-  // restored onto a shader. Say it once here rather than trusting the markup.
+  const _cpuOwnsSurface = () => _slotBanks().pair;
+  // For applyState: a snapshot that names no selection leaves this one in
+  // effect, and its deformMode is judged against it (presets.js, cpuPath).
+  ui.formulaOwnsSurface = _cpuOwnsSurface;
+  // Which bank each of the slot's params sits in: #formula-knobs-wrap holds the
+  // pair's sliders and #shader-knobs-wrap the knobs' (index.html). The drag gate
+  // looks a held key's param up here; a param outside the slot (amp, bloom, …)
+  // is always on the panel.
+  const _SLOT_BANK = { detail: 'pair', phase: 'pair', k0: 'knobs', k1: 'knobs', k2: 'knobs', k3: 'knobs' };
+  // UI-only adapter for applyState — the same contract as ui.syncDeformUI and
+  // ui.syncVizModeUI: it paints the panel and touches no engine state.
+  ui.syncFormulaKnobsUI = _syncFormulaKnobs;
+  // The editor announces a change of program; the slot repaints for the
+  // selection it was last told (see FIX(knobs-K1) above — not #gpu-sel read
+  // back). Guarded because some test hosts hand bindControls an editor with no
+  // callback table.
+  if (se?.cb) se.cb.onProgramChange = () => _syncFormulaKnobs();
+  // Boot: index.html ships the pair shown and the knobs hidden, which is right
+  // for the shipped selection (an `m:` formula); this call says it once rather
+  // than trusting the markup. FIX(shader knobs): it used to claim to cover "a
+  // session restored onto a shader" as well. It never could — bootPersist runs
+  // AFTER bindControls (main.js) — and that restore reaches the slot through
+  // ui.syncFormulaKnobsUI and the program-change hook instead. Being the first
+  // call, it is also the one that reads #gpu-sel and gives `_slotSel` its value.
   _syncFormulaKnobs();
 
   const _deformBtns    = ['surface','volume','collapse'];
@@ -439,6 +583,11 @@ export function bindControls(ui) {
     // and a third caller that forgot would otherwise get a formula that
     // silently never arms.
     _gpuSel().value = want;
+    // FIX(review K2): and a writer of #gpu-sel tells the slot, which
+    // _cpuOwnsSurface and the keys ask in its place. applyFormulaValue, the
+    // one caller today, has told it already; this is for the next caller, so
+    // it cannot leave VOLUME judged against the selection before it.
+    _syncFormulaKnobs(want);
     const runFormula = () => {
       if (onFlat) onFlat();
       // FIX(r2): ask what is selected NOW. The flat frame is up to 400 ms
@@ -467,7 +616,8 @@ export function bindControls(ui) {
 
   /**
    * Apply a #gpu-sel value — a CPU formula or a GPU shader — for whoever asked:
-   * this dropdown, the R and F hotkeys, or a preset.
+   * this dropdown or the R and F hotkeys. (A preset does not come through here:
+   * applyState writes #gpu-sel and drives the engine itself.)
    *
    * The CPU branch carries the volume→collapse auto-switch (the 192
    * m:-formulas are scalar fields, Z = f(x,y), and only fit Surface and
@@ -489,8 +639,9 @@ export function bindControls(ui) {
    */
   ui.applyFormulaValue = (value, onFlat) => {
     const val = String(value);
-    // Every road to a selection ends here — the dropdown, R and F, and
-    // applyState — so this one call keeps the pair honest on all of them.
+    // The dropdown, R and F end here, so this call swaps the slot for all of
+    // them. FIX(shader knobs): this said applyState did too; it writes #gpu-sel
+    // itself and calls ui.syncFormulaKnobsUI.
     _syncFormulaKnobs(val);
     if (val.startsWith('m:')) {
       const [, colId, key] = val.split(':');
@@ -553,6 +704,8 @@ export function bindControls(ui) {
       _syncMaterialForVizMode(mode);
       // Mirror image for particles: their row belongs to PTS and nowhere else.
       _syncParticleForVizMode(mode);
+      // And the wire style's row to WIRE.
+      _syncWireForVizMode(mode);
     });
   });
 
@@ -621,12 +774,15 @@ export function bindControls(ui) {
    * @param {string|null} particleStyle  Particle style from the same snapshot,
    *   for the PTS row. Same contract: omit to leave the current choice alone,
    *   and an unknown key is ignored rather than blanking the dropdown.
+   * @param {string|null} wireStyle  Wire style from the same snapshot, for the
+   *   WIRE row — the same contract once more.
    */
-  ui.syncVizModeUI = (mode, material = null, particleStyle = null) => {
+  ui.syncVizModeUI = (mode, material = null, particleStyle = null, wireStyle = null) => {
     _setVizModeBtns(mode);
-    // both no-op when their select is absent
+    // all three no-op when their select is absent
     _syncMaterialForVizMode(mode, material);
     _syncParticleForVizMode(mode, particleStyle);
+    _syncWireForVizMode(mode, wireStyle);
   };
 
   if (_volSel) {
@@ -731,7 +887,9 @@ export function bindControls(ui) {
     ui.onColorPoolChange?.(on);
 
     // Switching on while a bright palette is up would leave the mode looking
-    // broken — stars gone, grid dimmed, picture still glaring.
+    // broken — grid dimmed, picture still glaring. (FIX(stars): this used to
+    // say "stars gone" as well; NIGHT stopped hiding the starfield in r6, and
+    // taking it out is the STARS button's job now.)
     //
     // FIX(night): asking a.colorIdx alone was asking the wrong question. What
     // is on screen is mix(getColor(uCM), getColor(uCMNext), uCMBlend), and
@@ -775,6 +933,28 @@ export function bindControls(ui) {
   };
   DOM.nightBtn?.addEventListener('click', () => ui.setNightly(!r.nightly));
 
+  // ── STARS ─────────────────────────────────────────────────────────────────
+  // The starfield behind the body, and only that: the grid has its own button,
+  // background colour and fog are TRANSPARENT BG's output settings, and the
+  // solar orbits, Spectrum Rings and an imported model are the subject.
+  //
+  // One painter, modelled on ui.setNightly rather than on the grid. The grid's
+  // look is written in three places (main.js's click, presets.js's apply and
+  // RESET ALL below) and the G hotkey writes none of them, which is how its
+  // button can go stale. Here the click, every applyState (preset, import,
+  // clip step, boot restore) and RESET ALL all come through this one function,
+  // so the button cannot disagree with the engine.
+  //
+  // The button paints the WISH (r.starsOn), not stars.visible: while
+  // TRANSPARENT BG is on the stars are hidden either way, and the button keeps
+  // saying what will come back when it is switched off. Bound here rather than
+  // in main.js so tests/controls-wiring.test.js can drive it.
+  ui.setStars = on => {
+    r.setStarsOn(!!on);
+    DOM.btnToggleStars.style.opacity = r.starsOn ? '1' : '0.45';
+  };
+  DOM.btnToggleStars.addEventListener('click', () => ui.setStars(!r.starsOn));
+
   // ── Camera reset / auto-rot ───────────────────────────────────────────────
   DOM.btnReset.addEventListener('click', () => {
     r.camera.position.set(5.5, 4.2, 6.8);
@@ -785,9 +965,9 @@ export function bindControls(ui) {
   // ── Reset ALL — hard reset to startup state ──────────────────────────────
   // Restores: shape (Pyramid Smooth), formula (Nonlinear Pendulum Phase),
   // viz mode (Wireframe) + material (Matte), color scheme (Amber, idx 16),
-  // grid (OFF), camera (looking up at object's bottom), all sliders to
-  // defaults, deform mode (surface), freeze-frame (off), custom shader
-  // (cleared).
+  // grid (OFF), stars (ON), camera (looking up at object's bottom), all
+  // sliders to defaults, deform mode (surface), freeze-frame (off), custom
+  // shader (cleared), formula slot (Detail / Phase shown, Shader Knobs hidden).
   //
   // FIX(#2/#28): the Amber line above only holds while PARAMS.colorIdx.default
   // is 16 — resetParamsToDefault() runs last and stomps the explicit write
@@ -800,13 +980,15 @@ export function bindControls(ui) {
     ui.autoColor?.disable();
     ui.autoMaterial?.disable();
     // FIX(night): and NIGHT, which is a mode by the same test. Nothing undoes
-    // it transitively: resetParamsToDefault sweeps only registered PARAMS,
-    // AutoCycler.disable() leaves a pool alone, and the starfield has no other
-    // writer. Left on, "back to the startup state" landed on bright Amber
-    // under a starless sky with both unattended pickers still locked to the
-    // NIGHT ten — verbatim the picture setNightly's own comment calls broken —
-    // and the capture-phase autosave in presets.js then wrote it back, so it
-    // survived the reload too.
+    // it transitively: resetParamsToDefault sweeps only registered PARAMS and
+    // AutoCycler.disable() leaves a pool alone. Left on, "back to the startup
+    // state" landed on bright Amber with the grid still dimmed and both
+    // unattended pickers still locked to the NIGHT ten — verbatim the picture
+    // setNightly's own comment calls broken — and the capture-phase autosave in
+    // presets.js then wrote it back, so it survived the reload too.
+    // FIX(stars): this used to add "under a starless sky" and say "the
+    // starfield has no other writer". Neither holds: NIGHT has not touched the
+    // stars since r6, and the starfield's own switch is STARS, reset below.
     ui.setNightly?.(false);
 
     // ── Visual mode + shape + formula ─────────────────────────────────────
@@ -815,9 +997,10 @@ export function bindControls(ui) {
     // clip time-base row dark, and setVizModeGPU alone left a mirror material
     // live in WIRE with its dropdown hidden. 'matte' also resets the remembered
     // SURF pick, which would otherwise outlive the reset — and 'squares' does
-    // the same for the remembered PTS particle style.
+    // the same for the remembered PTS particle style, and 'classic' for the
+    // wire style, which unlike those two is on screen the moment this lands.
     r.setVizModeGPU('wireframe');
-    ui.syncVizModeUI('wireframe', 'matte', 'squares');
+    ui.syncVizModeUI('wireframe', 'matte', 'squares', 'classic');
 
     r.setShapeAnimated('pyramid-smooth');
     DOM.shapeSel.value = 'pyramid-smooth';
@@ -825,7 +1008,8 @@ export function bindControls(ui) {
     // CPU formula via morph transition (deflate → swap → inflate).
     // Shape swap and formula switch are combined in one morph callback so
     // they both apply at the flat frame.
-    DOM.gpuSel.value = 'm:differentialEqs:pendulumNonLinear';
+    const bootSel = 'm:differentialEqs:pendulumNonLinear';
+    DOM.gpuSel.value = bootSel;
     r.triggerMorphTransition(() => {
       r.setShape('pyramid-smooth');
       if (ui.mathViz) ui.mathViz.setFormula('differentialEqs', 'pendulumNonLinear');
@@ -848,6 +1032,7 @@ export function bindControls(ui) {
     // Grid OFF.
     if (r.grid) r.grid.visible = false;
     DOM.btnToggleGrid.style.opacity = '0.45';
+    ui.setStars(true);  // Stars ON — the shipped sky; the button repaints with it
 
     // All registered params (amp, wave-int, bandDepth, bass/treble-sens, bloom,
     // colorIdx, rotSpeed) reset to their factory defaults declared in params.js.
@@ -895,6 +1080,20 @@ export function bindControls(ui) {
     if (se && (se.customVS || se.customFS)) {
       se.reset?.();
     }
+
+    // The formula slot, after BOTH writes that decide it: the #gpu-sel one
+    // above and the shader reset just here. The boot formula is a CPU one, so
+    // Detail / Phase come back and the Shader Knobs go. FIX(shader knobs):
+    // this handler wrote #gpu-sel and never told the slot, so a reset from a
+    // numbered shader left it describing the shader — a dimmed pair and a NO
+    // EFFECT line over a live formula before the swap, the knobs in place of
+    // the pair after it. se.reset() announces through onProgramChange as well;
+    // this call does not lean on that, because with no custom shader live
+    // there is nothing to reset and nothing is announced. And when it does
+    // announce, the slot still remembers the selection from before the reset
+    // (FIX(knobs-K1): the announcement reuses it), so it is this explicit call
+    // that tells the slot bootSel — in the same task, before any frame.
+    _syncFormulaKnobs(bootSel);
 
     // Freeze-frame off — the freeze flag lives in main.js, so click through.
     if (DOM.btnFreezeFrame.textContent.includes('RESUME')) DOM.btnFreezeFrame.click();
@@ -1015,33 +1214,41 @@ export function bindControls(ui) {
   // ── Keyboard-drag slider control (works in fullscreen AND normal mode) ──
   // Hold key + drag mouse/touchpad horizontally to adjust the mapped param.
   //
-  // Each entry maps a key to a PARAMS id. min/max for the drag interaction
-  // come from PARAMS[id] — using extendedMax as the ceiling so the drag can
-  // push the value beyond the slider's visible HTML max. applyParam handles
-  // engine write + slider grow + display sync uniformly, so the slider
-  // remains a usable fine-tuner after an extension instead of clamping back.
+  // Each entry maps a key to a PARAMS id, and the span one 600 px sweep covers
+  // is dragRange(PARAMS[id]) in params.js. For the audio and bloom keys that is
+  // DRAG_FLOOR up to extendedMax, a comfortable reach rather than a ceiling, so
+  // the drag can push the value beyond the slider's visible HTML max; for the
+  // formula slot's six (dragBounded) it is exactly [min..max], with no floor,
+  // and the drag stops at both ends. dragRange's docblock says why each.
+  // applyParam handles engine write + slider grow + display sync uniformly, so
+  // the slider remains a usable fine-tuner after an extension instead of
+  // clamping back.
   //
-  // Two key letters per param — original L/K/J/N/B (right side of the
-  // keyboard, easy reach for a right-handed mouse user) plus aliases
-  // Z/X/V/C/A (left side, easier when the right hand is on a mouse and
-  // the left wants to grab a parameter without crossing over). Both map
-  // to the same param via PARAMS[id], so there's no duplicated state and
-  // adding more aliases later is a one-line change here.
+  // FIX(knob keys), 08.10.2026: this used to say "two key letters per param —
+  // original L/K/J/N/B (right side of the keyboard) plus aliases Z/X/V/C/A
+  // (left side)". The owner asked for every knob in the formula slot to have a
+  // key — B Formula Detail, N Formula Phase, Y U H J Shader Knobs 1-4 — and B,
+  // N and J left Bloom, Wave Intensity and Amplitude to do it. Those three
+  // answer to their left-hand letters alone now (A, C, V), so only Bass and
+  // Treble Sensitivity keep a letter in each cluster (L/X, K/Z). The six take
+  // no alias: none was asked for, and the left-hand cluster has no free letter.
+  // Every entry still names a PARAMS id, so two letters on one param share one
+  // state, and adding a letter is a one-line change here.
   //
-  // Why min uses Math.max(p.min, DRAG_FLOOR): some PARAMS allow min=0
-  // (bassSens, trebleSens, bloom) but hold-and-drag at exactly 0 makes the
-  // visualizer go silent, which feels broken mid-performance. The floor keeps
-  // a sliver of motion. PARAMS.min stays at 0 for MIDI / preset / reset paths.
-  // FIX(#28): waveInt is not in that list — params.js declares min 0.3
-  // (aligned with the index.html slider), so the clamp never moves it.
+  // Y and H had tap-actions — the glitch punch and the hint overlay. They moved
+  // to P and I in main.js rather than being dropped, for the reason S's did on
+  // 01.09: a letter cannot hold both. Arming a drag calls preventDefault, and
+  // the tap would fire on every arm. tests/hotkey-map.test.js holds that rule
+  // against both files.
+  //
+  // The six reach only the bank of the formula slot that is on the panel — see
+  // _keyReaches below.
   const _fsParams = {
-    // Right-hand cluster (original)
+    // Audio and bloom. L / K are the original right-hand letters; X Z V C A
+    // the left-hand cluster, where the fingers are while the right hand is on
+    // the mouse.
     'l': 'bassSens',
     'k': 'trebleSens',
-    'j': 'amp',
-    'n': 'waveInt',
-    'b': 'bloom',
-    // Left-hand cluster (aliases)
     'x': 'bassSens',
     'z': 'trebleSens',
     'v': 'amp',
@@ -1052,12 +1259,95 @@ export function bindControls(ui) {
     // cluster, where the fingers already are.
     //
     // S had a tap-action before this — glitch + bloom punch + beat-ring flash —
-    // and that moved to Y rather than being dropped. A letter cannot hold both:
-    // arming a drag calls preventDefault, and the tap-action would fire on
-    // every arm.
+    // and that moved to Y rather than being dropped (and on to P on 08.10, when
+    // Y became Shader Knob 1). A letter cannot hold both: arming a drag calls
+    // preventDefault, and the tap-action would fire on every arm.
     's': 'bandDepth',
+    // The formula slot, in the owner's order: the pair on a CPU formula, the
+    // four Shader Knobs on a numbered SHADER MODE entry or a custom shader.
+    'b': 'detail',
+    'n': 'phase',
+    'y': 'k0',
+    'u': 'k1',
+    'h': 'k2',
+    'j': 'k3',
   };
-  let _dragKey = null;
+  /**
+   * The drag keys being held, oldest first: physical key → the map letter it
+   * went down as.
+   *
+   * FIX(review K4/K5): this was one `_dragKey`, matched by e.key on keyup.
+   * Two things went wrong with that.
+   *   • One slot. Y U H J sit side by side and are played as a cluster, and
+   *     rolling from Y to U and letting go of U cleared the slot while Y was
+   *     still down. Windows resumes no auto-repeat for the earlier key, so
+   *     nothing re-armed it: Y held, and dead. A set of held keys, with the
+   *     drag going to the most recent one still down that reaches its param
+   *     (_dragTarget), hands the drag back to Y.
+   *   • Matched by character. A keyup reports e.key for the modifiers at
+   *     release, so L released with AltGr down arrives as 'ł' (N as 'ń', and
+   *     on macOS Option+Y as '¥'), never matched, and left Bass armed for every
+   *     mouse move with no key held. A key is tracked by e.code — which key it
+   *     physically is — captured when it went down (the lowercased e.key when
+   *     an event carries no code), so its own keyup clears it whatever it
+   *     spells. macOS delivers no letter keyup at all while Cmd is down, so a
+   *     Cmd keyup clears the lot.
+   * The MAP is still looked up by e.key at keydown: whether hotkeys should
+   * follow the physical key instead (a Cyrillic layout reports 'н' for Y, so
+   * none fire) is the owner's decision, pending.
+   */
+  const _held = new Map();
+
+  /**
+   * May a held key move its param right now?
+   *
+   * FIX(knob keys): a key whose bank of the formula slot is not on the panel
+   * does nothing — B / N only while Formula Detail / Phase are shown (a CPU
+   * formula), Y U H J only while the Shader Knobs are (a numbered shader, or
+   * the operator's own shader applied). Under a numbered shader nothing reads
+   * Detail / Phase, and under a CPU formula the knob sliders are hidden, so a
+   * hidden value moving under a held key is a change the operator cannot see —
+   * and B, N, J, Y and H all had other jobs until 08.10.2026, so muscle memory
+   * will press them. MIDI is not gated: it still reaches either bank, as
+   * documented since the slot swap.
+   *
+   * Asked through _slotBanks, the slot's logical state, not the wrappers'
+   * display: full screen, a collapsed panel and a folded FORMULA section hide
+   * both banks, and the keys work there ("Works in both normal mode and
+   * full-screen mode", documents/hotkeys.md).
+   *
+   * Known and not changed: the built-in program applies Knob 4's palette shift
+   * on CPU formulas while its slider is hidden (see _syncFormulaKnobs). Under
+   * this rule J does not reach it there; MIDI, presets and RESET ALL do.
+   */
+  const _keyReaches = id => {
+    const bank = _SLOT_BANK[id];
+    return !bank || _slotBanks()[bank];
+  };
+  /**
+   * The param the held keys drag at this delta, or null: the most recently
+   * pressed key still held whose param reaches (_keyReaches). Asked at EVERY
+   * mouse and wheel delta, not only when a key went down: the bank can leave
+   * while the key is held — a clip step, a preset, R or F, the editor's RESET
+   * — and from then on that key's deltas move nothing, and the wheel is left
+   * to the page, exactly as for a key that never armed. The key stays held,
+   * so a bank that comes back mid-hold is driven again; and a held key whose
+   * bank is hidden is passed over, so the key held before it keeps the drag.
+   *
+   * FIX(review S6): this listed "the editor's APPLY or RESET" among what takes
+   * a bank away. APPLY cannot: it only ever makes the operator's shader live,
+   * which can only ADD the knobs (knobs = !cpu || _customShaderLive()), and
+   * the pair depends on the selection alone. The editor's RESET — or a preset
+   * that reverts the shader — is what takes the knobs away.
+   */
+  const _dragTarget = () => {
+    const letters = [..._held.values()];
+    for (let i = letters.length - 1; i >= 0; i--) {
+      const id = _fsParams[letters[i]];
+      if (id && _keyReaches(id)) return id;
+    }
+    return null;
+  };
 
   document.addEventListener('keydown', e => {
     // The twin of main.js's stand-down, and it drifted the same way. Every key
@@ -1077,21 +1367,58 @@ export function bindControls(ui) {
     // sibling listener in main.js, and for the same reason. This is the copy the
     // note above predicted would be missed.
     if (isAnyOverlayOpen()) return;
-    const key = e.key.toLowerCase();
-    if (_fsParams[key]) { _dragKey = key; e.preventDefault(); }
+    // FIX(knob keys): and not with a modifier — main.js's FIX(r6) rule, "a
+    // modified key belongs to the browser or the OS, never to a hotkey here",
+    // which this listener never had. So every drag letter armed with Ctrl, Cmd
+    // or Alt held, and the preventDefault below swallowed the browser's own
+    // shortcut on that letter wherever the browser lets a page cancel it —
+    // Ctrl+L, Ctrl+K, Ctrl+A, Ctrl+C and Ctrl+S among them. (FIX(review S6):
+    // this used to name only Ctrl+L and Ctrl+K, and to say Ctrl+Y, Ctrl+U and
+    // Ctrl+H worked "only because main.js guards them". Ctrl+Y and Ctrl+H did —
+    // Y and H were main.js's tap keys — but U was bound to nothing, so Ctrl+U
+    // worked because no listener wanted U.) Moving Y, U and H into the drag
+    // map would have taken all three. The same three flags, for every key.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // `?? ''`: Chrome dispatches key events with no `key` when an autofill
+    // suggestion is accepted, and `undefined.toLowerCase()` threw (FIX(review
+    // K7)).
+    const key = (e.key ?? '').toLowerCase();
+    const id  = _fsParams[key];
+    if (!id) return;
+    // Held from here, moved to the newest end of the set, whether or not its
+    // bank is on the panel: a held key that does not reach its param is passed
+    // over at every delta (_dragTarget), so the key held before it keeps the
+    // drag, and the moment its bank comes back it takes over. A key whose bank
+    // is not on the panel does not ARM: no preventDefault. See _keyReaches.
+    const slot = e.code || key;
+    _held.delete(slot);
+    _held.set(slot, key);
+    if (_keyReaches(id)) e.preventDefault();
   });
   document.addEventListener('keyup', e => {
-    if (e.key.toLowerCase() === _dragKey) _dragKey = null;
+    // macOS delivers no keyup for a letter released while Cmd is down, so a
+    // key let go under Cmd would stay held: Cmd's own keyup ends every hold.
+    if (e.key === 'Meta') { _held.clear(); return; }
+    // By the physical key it went down as — its own keyup, whatever it spells
+    // now (see _held). An event with no code is matched by letter, the way it
+    // was recorded.
+    if (e.code) { _held.delete(e.code); return; }
+    const letter = (e.key ?? '').toLowerCase();
+    for (const [slot, l] of _held) if (l === letter) _held.delete(slot);
   });
-  // FIX(r11): keyup was the ONLY place that cleared it. Hold L, K, J, N, B, X,
-  // Z, V, C or A and let the focus leave the document — Alt+Tab, Ctrl+T, a
-  // system dialog — and the keyup lands in the other window: the key stays
-  // armed for the rest of the session. After that every mouse move drags a
-  // parameter and the wheel handler swallows the page's scroll, with no key
-  // held and nothing on screen to say why. A window that has lost focus cannot
-  // be holding a key, and a hidden document cannot either.
-  window.addEventListener('blur', () => { _dragKey = null; });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) _dragKey = null; });
+  // FIX(r11): keyup was the ONLY place that cleared it. Hold a drag key and let
+  // the focus leave the document — Alt+Tab, Ctrl+T, a system dialog — and the
+  // keyup lands in the other window: the key stays armed for the rest of the
+  // session. After that every mouse move drags a parameter and the wheel
+  // handler swallows the page's scroll, with no key held and nothing on screen
+  // to say why. A window that has lost focus cannot be holding a key, and a
+  // hidden document cannot either. (FIX(knob keys): this named the drag keys
+  // as "L, K, J, N, B, X, Z, V, C or A". FIX(review T3): and then said three
+  // of those mean something else now and six more joined, which counted
+  // params, not letters. J, N and B mean something else now, S was missing,
+  // and Y, U and H joined — so it names the map instead.)
+  window.addEventListener('blur', () => { _held.clear(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) _held.clear(); });
   // ── NOTE on touchpad freezing while a drag key is held ────────────────
   // All three desktop OSes ship "disable touchpad while typing" enabled
   // by default. JavaScript cannot override this — it happens before the
@@ -1130,30 +1457,40 @@ export function bindControls(ui) {
   // fast sustained drag can hit 1e+20 in a second.
   //
   // Two-regime sensitivity, matching MIDI relative dispatch:
-  //   • Normal range (|cur| ≤ extendedMax): 600 px = full sweep of
-  //     [min..extendedMax]. Standard slider feel for routine use.
-  //   • Extended range (|cur| > extendedMax): speed grows with
-  //     log₂(|cur| / extendedMax + 1). Reaching 1e+27 by drag is
-  //     mathematically infeasible — multiplier grows logarithmically
-  //     while value grows linearly with the drag.
+  //   • Normal range (|cur| ≤ hi): 600 px = full sweep of [lo..hi], the span
+  //     dragRange gives. Standard slider feel for routine use.
+  //   • Extended range (|cur| > hi): speed grows with log₂(|cur| / hi + 1).
+  //     Reaching 1e+27 by drag is mathematically infeasible — multiplier
+  //     grows logarithmically while value grows linearly with the drag.
+  //
+  // FIX(knob keys): the span comes from dragRange, which the documented table
+  // is checked against too (it was computed here, and re-typed in the test).
+  // For the audio and bloom keys it is the same [max(min, DRAG_FLOOR)..
+  // extendedMax] as before and the arithmetic below is unchanged, bit for bit
+  // — tests/controls-wiring.test.js replays the old expression against it. For
+  // a `bounded` param (the formula slot's six) it is [min..max], and the drag
+  // stops at both ends: never below min, and never pushed above max. A value
+  // already above max — typed into the badge, or from a preset — is not
+  // snapped down: moving up leaves it where it is, moving down lowers it from
+  // where it is (on the extended-range speed, the same rule as everywhere).
   const _applyDragDelta = (id, pixels) => {
     const p = PARAMS[id];
     if (!p) return;
-    const hi        = p.extendedMax ?? p.max;
-    const lo        = Math.max(p.min, DRAG_FLOOR);
+    const { lo, hi, bounded } = dragRange(p);
     const cur       = p.get(ctx);
     const spdBase   = (hi - lo) / 600;
     const absVal    = Math.abs(cur);
     const overshoot = absVal > hi ? absVal / hi : 1;
     const mult      = overshoot > 1 ? Math.log2(overshoot + 1) : 1;
     const spd       = spdBase * mult;
-    const v         = Math.max(lo, cur + pixels * spd);
-    applyParam(ctx, id, v);
+    let v = cur + pixels * spd;
+    if (bounded) v = Math.min(v, Math.max(hi, cur));
+    applyParam(ctx, id, Math.max(lo, v));
   };
 
   document.addEventListener('mousemove', e => {
-    if (!_dragKey) return;
-    _applyDragDelta(_fsParams[_dragKey], e.movementX);
+    const id = _dragTarget();
+    if (id) _applyDragDelta(id, e.movementX);
   });
 
   // ── Touchpad / wheel support ──────────────────────────────────────────
@@ -1174,18 +1511,33 @@ export function bindControls(ui) {
   //
   // preventDefault on the wheel event stops the page from scrolling
   // while the user is holding a drag key — otherwise the panel scrolls
-  // around as a side effect of trying to adjust amplitude.
-  document.addEventListener('wheel', e => {
-    if (!_dragKey) return;
+  // around as a side effect of trying to adjust amplitude. FIX(knob keys):
+  // only while the held key actually reaches its param (_dragTarget); a key
+  // whose bank is not on the panel leaves the wheel to the page.
+  //
+  // FIX(review K6/S4): preventDefault stopped the scroll and not the camera.
+  // OrbitControls listens for the wheel on the canvas itself (render.js
+  // attaches it to renderer.domElement) and zooms on every event it sees, and
+  // this listener sat on document in the bubble phase — so over the picture
+  // the canvas handled each notch first and dollied the camera, and then the
+  // knob turned as well: one notch, two changes, about 1% of zoom apiece. Held
+  // on window in the CAPTURE phase it runs before any element sees the event,
+  // and while a held key reaches its param it stops the propagation too, so
+  // the wheel turns the knob and nothing else. While no held key reaches, it
+  // does nothing at all: the camera zooms and the panel scrolls as before.
+  window.addEventListener('wheel', e => {
+    const id = _dragTarget();
+    if (!id) return;
     e.preventDefault();
+    e.stopPropagation();
     const unit = e.deltaMode === 1 ? 16   // lines → ~one text row in px
               : e.deltaMode === 2 ? 400  // pages → ~one screen height
               : 1;                       // pixels (default for touchpads)
     // Prefer horizontal axis when present; otherwise use vertical (inverted
     // so up = positive, matching right-drag convention).
     const dx = e.deltaX !== 0 ? e.deltaX * unit : -e.deltaY * unit;
-    _applyDragDelta(_fsParams[_dragKey], dx);
-  }, { passive: false }); // passive:false required to call preventDefault
+    _applyDragDelta(id, dx);
+  }, { capture: true, passive: false }); // passive:false required to call preventDefault
 
   // ── Track name overlay ────────────────────────────────────────────────────
   // ── Rings follow the formula ───────────────────────────────────────────
@@ -1337,9 +1689,17 @@ export function bindControls(ui) {
   }
 
   // ── Show hotkey hint briefly on load ──────────────────────────────────────
-  setTimeout(() => {
-    const h = document.getElementById('hotkey-hint');
-    h.classList.add('visible');
-    setTimeout(() => h.classList.remove('visible'), 3000);
-  }, 1000);
+  // FIX(review L2): the operator's I wins over this flash. Its two timers
+  // were anonymous, and nothing cancelled them, so an I pressed before the
+  // flash showed the hint and the 4 s timer then took it away unasked (and an
+  // I pressed to hide it during the flash, then again to show it, lost the
+  // same way). main.js's I case calls ui.cancelHintFlash before it toggles, so
+  // once a hand has touched the hint no timer does. And through DOM.hotkeyHint,
+  // the house rule — this was the one lookup of #hotkey-hint by hand.
+  const _hintFlash = [];
+  ui.cancelHintFlash = () => { _hintFlash.forEach(clearTimeout); _hintFlash.length = 0; };
+  _hintFlash.push(setTimeout(() => {
+    DOM.hotkeyHint.classList.add('visible');
+    _hintFlash.push(setTimeout(() => DOM.hotkeyHint.classList.remove('visible'), 3000));
+  }, 1000));
 }

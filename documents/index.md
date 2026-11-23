@@ -1,12 +1,12 @@
 ---
 title: Overview
 order: 0
-description: VIMATHIC is a browser-based mathematical VJ studio that turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 54 colour schemes.
+description: VIMATHIC is a browser-based mathematical music visualizer that turns audio into real-time visualizations driven by 192 canonical mathematical formulas, 38 GPU shaders, and 54 colour schemes.
 ---
 
-# VIMATHIC — Mathematical VJ Studio
+# VIMATHIC — Mathematical Music Visualizer
 
-VIMATHIC is a browser-based mathematical VJ studio. It runs entirely in a modern web browser, with no installation, no accounts, and no plugins. You load audio — a music file, the microphone, a browser tab, or system output — and the visualizer reacts in real time using 192 mathematical formulas, 38 GPU shaders, and 54 colour schemes.
+VIMATHIC is a browser-based mathematical music visualizer — a playground where real mathematics moves to your music. It runs entirely in a modern web browser, with no installation, no accounts, and no plugins. You load audio — a music file, the microphone, a browser tab, or system output — and the visualizer reacts in real time using 192 mathematical formulas, 38 GPU shaders, and 54 colour schemes.
 
 ## What it does
 
@@ -53,9 +53,9 @@ This documentation covers every part of VIMATHIC in detail. Pick the topic that 
 - [Presets & Clips](./presets.md) — save looks, recall them instantly, sequence them as live clips
 - [Output](./output.md) — send VIMATHIC to a projector, OBS, or professional VJ software
 
-### Roadmap and support
+### Support
 
-- [Roadmap](./roadmap.md) — what VIMATHIC is now, the planned next step (mobile app), and how community support shapes what comes after
+- [Support](./support.md) — ways to support VIMATHIC: Ko-fi, and ways that aren't money
 
 ### About
 
@@ -66,7 +66,7 @@ This documentation covers every part of VIMATHIC in detail. Pick the topic that 
 
 ## Technical details
 
-VIMATHIC is built with Three.js for WebGL rendering, the Web Audio API for spectral analysis and beat detection, and the Web MIDI API for controller integration. The source code is on [GitHub](https://github.com/vimathic/vimathic) under Business Source License 1.1, automatically converting to GPL v3 four years after each version's release — 2030-05-18 for the current 1.0.0-beta. After conversion, VIMATHIC and any derivative work that gets distributed must remain open-source under GPL v3. Accredited educational institutions can use VIMATHIC immediately under either Apache 2.0 or GPL v3 terms — recipient's choice, free of charge.
+VIMATHIC is built with Three.js for WebGL rendering, the Web Audio API for spectral analysis and beat detection, and the Web MIDI API for controller integration. The source code is on [GitHub](https://github.com/vimathic/vimathic) under the MIT License.
 
 ## Browser support
 
@@ -74,4 +74,4 @@ VIMATHIC targets modern browsers with WebGL 2.0 and the Web Audio API. Chrome an
 
 ---
 
-*VIMATHIC™ · v1.0 (Beta) · Mathematical VJ Studio*
+*VIMATHIC · v1.0 (Beta) · Mathematical Music Visualizer*

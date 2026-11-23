@@ -479,7 +479,9 @@ export class MathVisualizer {
     // ── Worker channel ──────────────────────────────────────────────────
     // _workerBusy gates posting a new tick while the previous one is still
     // in flight — we accept 1-frame latency rather than queueing work that
-    // would arrive stale. _pendingHF holds the latest result waiting to be
+    // would arrive stale, and a frame that finds the gate shut waits for the
+    // reply rather than computing the same field itself (FIX(cpu double work)
+    // in _tickSurface). _pendingHF holds the latest result waiting to be
     // applied; it's cleared once consumed.
     this._worker      = createMathWorker();
     this._workerReady = !!this._worker;
@@ -1167,7 +1169,7 @@ export class MathVisualizer {
 
     applyCollapseField(
       this.render.gpuMesh.geometry, sf,
-      this._basePositions, this._baseNormals, strength, this._bandLayer()
+      this._basePositions, this._baseNormals, strength, this._bandLayer(), this._liveNormals()
     );
     const ptsGeo = this._ownPtsGeometry();
     if (ptsGeo && this._basePtsPositions && this._basePtsNormals) {
@@ -1178,7 +1180,7 @@ export class MathVisualizer {
       );
       applyCollapseField(
         ptsGeo, sfPts,
-        this._basePtsPositions, this._basePtsNormals, strength, this._bandLayer()
+        this._basePtsPositions, this._basePtsNormals, strength, this._bandLayer(), this._liveNormals()
       );
     }
   }
@@ -1231,10 +1233,10 @@ export class MathVisualizer {
     // counted, presets and autosave stored the value, and not one pixel changed
     // — because both DEFORM modes have their own door into the geometry and
     // neither had been given the layer. Found by a review sweep.
-    applyDisplacementField(this.render.gpuMesh.geometry, df, this._basePositions, this._bandLayer());
+    applyDisplacementField(this.render.gpuMesh.geometry, df, this._basePositions, this._bandLayer(), this._liveNormals());
     const ptsGeo = this._ownPtsGeometry();
     if (ptsGeo) {
-      applyDisplacementField(ptsGeo, df, this._basePtsPositions ?? this._basePositions, this._bandLayer());
+      applyDisplacementField(ptsGeo, df, this._basePtsPositions ?? this._basePositions, this._bandLayer(), this._liveNormals());
     }
   }
 
@@ -1290,18 +1292,47 @@ export class MathVisualizer {
 
     // Worker path: post next tick, return immediately. The result lands
     // in onmessage and is picked up at the top of the next tick.
-    if (this._workerReady && this._worker && !this._workerBusy && !stalled) {
-      this._workerBusy = true;
-      this._workerPostTime = performance.now();   // FIX(#4): watchdog baseline
-      this._worker.postMessage({
-        type: 'tick',
-        time: t,
-        gridSize: this._gridSize,
-        extent: 3.5,
-        audioParams,
-        gen: this._generation,
-      });
-      return;
+    //
+    // FIX(cpu double work): while a tick is IN FLIGHT this frame now waits for
+    // it. It used to fall through to the sync branch below and compute the very
+    // field the worker was already computing, then bump the generation — which
+    // threw the worker's answer away when it landed. So any formula slower than
+    // one frame was computed twice, and only the main thread's copy was ever
+    // used: the worker was pure overhead and the formula's whole cost sat on the
+    // frame. Measured on this build in Chrome (boot shape, 6 s windows): Stieltjes
+    // 432 worker replies, 432 discarded, 432 main-thread fields; Poisson Integral
+    // 145 / 145 / 145 at 48 fps; Winding Number 80 / 80 / 79 at 26 fps; a fast
+    // formula (Traveling Wave) 862 replies and 2 discarded. Waiting keeps the
+    // field updating at the worker's own rate — the rate the sync branch was
+    // updating it at anyway, every other frame — and gives the frame back to the
+    // camera, the GPU and the panel.
+    //
+    // The sync branch is left with exactly the cases it exists for: no worker,
+    // a worker not ready yet, and a stalled one (FIX(#4) — the watchdog released
+    // the gate and skipped the post, so this frame computes once by itself) —
+    // plus the cold start. Until the channel has answered once, the worker may
+    // still be loading its module graph (a fraction of a second from the built
+    // file, ~3.5 s through Vite's dev pipeline — see WORKER_COLD_START_MS), and
+    // waiting on it would hold the boot surface flat for that long. So a busy
+    // frame waits only on a channel that has proven itself; before that it
+    // computes, exactly as it always did, and the first reply ends it.
+    if (this._workerReady && this._worker && !stalled) {
+      if (!this._workerBusy) {
+        this._workerBusy = true;
+        this._workerPostTime = performance.now();   // FIX(#4): watchdog baseline
+        this._worker.postMessage({
+          type: 'tick',
+          time: t,
+          gridSize: this._gridSize,
+          extent: 3.5,
+          audioParams,
+          gen: this._generation,
+        });
+        return;
+      }
+      // A tick is in flight. A channel that has answered before is waited on;
+      // during the cold start this frame falls through and computes.
+      if (this._workerAnswered) return;
     }
 
     // Sync fallback: compute on main thread and apply immediately.
@@ -1318,7 +1349,9 @@ export class MathVisualizer {
     // surface steps backwards one frame and then forwards again. Bumping the
     // generation reuses the guard in onmessage that already exists for a
     // formula changing mid-computation; the worker echoes gen unchanged, so
-    // nothing on that side needs to know.
+    // nothing on that side needs to know. Since FIX(cpu double work) a tick can
+    // be in flight here only on a stalled frame or before the channel's first
+    // reply: those are the main-thread applies that run beside a live worker.
     this._generation++;
   }
 
@@ -2040,13 +2073,29 @@ export class MathVisualizer {
     // on a closed body that moves the top and the bottom of every column the
     // same way: the shape shears and never changes thickness.
     applyHeightField(geo, hf, this._pristinePositions, FIELD_EXTENT, this._pristineNormals, this._pristineDepth,
-                     this._bandLayer());
+                     this._bandLayer(), this._liveNormals());
     // FIX(#52): same guard as everywhere else, through the one helper — this
     // site is where the pattern was born (FIX(r11)).
     const ptsGeo = this._ownPtsGeometry();
     if (ptsGeo) {
       applyHeightField(ptsGeo, hf, this._pristinePtsPositions, FIELD_EXTENT, this._pristinePtsNormals, this._pristineDepth,
-                       this._bandLayer());
+                       this._bandLayer(), this._liveNormals());
     }
+  }
+
+  /**
+   * Whether an applied field should recompute the mesh normals.
+   *
+   * Only the points cloud reads the live normal attribute (the PTS spray in the
+   * vertex program); everything else derives its normal from screen-space
+   * derivatives, and the displacing modes travel along the base normals they
+   * snapshot from clean geometry. So outside PTS the recompute is skipped —
+   * see NORMALS_NOTE in math-collections.js for the cost it saves. Entering PTS
+   * needs nothing special: the next applied field recomputes them, a frame (or
+   * one worker reply) later, and the spray it feeds is a band-driven scatter
+   * that cannot show a frame's staleness.
+   */
+  _liveNormals() {
+    return this.render?.vizMode === 'points';
   }
 }

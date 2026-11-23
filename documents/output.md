@@ -103,6 +103,10 @@ The browser build ships **no Spout control** — there is nothing to click in th
 
 Want VIMATHIC composited *over* something else (a webcam feed, a different layer in OBS)? The Output modal has a **TRANSPARENT BG** toggle. The renderer sets its clear color to transparent and the canvas alpha channel is preserved through to the output stream.
 
+The starfield is hidden for as long as TRANSPARENT BG is on, whatever the **STARS** button says, and when you switch it off the stars come back only if STARS has them on.
+
+The bloom glow is part of the transparent picture: where it shines it covers in proportion to its brightness, and everywhere else the background stays clear — at any Bloom setting. (Before 23.11.2026 the bloom made the whole frame opaque from a Bloom of about 0.3 up, including the shipped 0.55.)
+
 - **OBS Browser Source** — works automatically
 - **NDI / Spout** — depends on the receiver's alpha support
 - **Second Screen** — the popup has a black background; transparent bg shows through to it as black

@@ -23,14 +23,14 @@
        `width=device-width` stays, which is what keeps Chrome from restoring the
        300 ms tap delay and double-tap-to-zoom. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VIMATHIC™ — Mathematical VJ Studio</title>
-  <meta name="description" content="VIMATHIC — Mathematical VJ Studio. 192 CPU formulas, 38 GPU shaders, MIDI, presets, clip player. Version 1.0 (Beta).">
+  <title>VIMATHIC — Mathematical Music Visualizer</title>
+  <meta name="description" content="VIMATHIC — Mathematical Music Visualizer. A playground where real mathematics moves to your music. 192 CPU formulas, 38 GPU shaders, MIDI, presets, clip player. Version 1.0 (Beta).">
 
   <!-- Favicon — inline SVG, no external file needed -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23040412'/><polygon points='16,3 29,26 3,26' fill='none' stroke='%23ff3a7a' stroke-width='2'/><polygon points='16,8 25,23 7,23' fill='%2300ffcc' fill-opacity='.18'/><circle cx='16' cy='16' r='2' fill='%2300ffcc'/></svg>">
 
   <!-- Open Graph — for link previews -->
-  <meta property="og:title"       content="VIMATHIC — Mathematical VJ Studio">
+  <meta property="og:title"       content="VIMATHIC — Mathematical Music Visualizer">
   <meta property="og:description" content="Turn your music into reactive geometry. 192 formulas, 38 GPU shaders, MIDI, clip player. v1.0 (Beta).">
   <meta property="og:type"        content="website">
   <meta property="og:url"         content="https://vimathic.com/">
@@ -44,7 +44,7 @@
   <!-- FIX(r5): card and image were set, title and description were not, so X
        fell back to the Open Graph pair and the copy written for a 280-character
        context never appeared. They are shorter than the OG text on purpose. -->
-  <meta name="twitter:title"       content="VIMATHIC — Mathematical VJ Studio">
+  <meta name="twitter:title"       content="VIMATHIC — Mathematical Music Visualizer">
   <meta name="twitter:description" content="Turn your music into reactive geometry. 192 formulas, 38 GPU shaders, in the browser.">
   <link rel="canonical" href="https://vimathic.com/">
   <meta name="robots" content="index,follow">
@@ -207,12 +207,6 @@
     .cg{margin-bottom:8px}
     .cg label{display:block;margin-bottom:3px;font-size:9px;color:#889;letter-spacing:1px}
     .cg input[type=range]{width:100%;cursor:pointer;accent-color:var(--accent);height:3px}
-    /* The formula knobs, dimmed while the engine they speak to is not drawing.
-       Dimmed and not DISABLED on purpose: the value is part of a look, so it
-       has to stay settable before switching to the formula that will use it,
-       and it round-trips through presets either way. The note beside them is
-       what carries the reason — see #fk-note. */
-    #formula-knobs-wrap.fk-inert .cg{opacity:.42}
     .cg select{width:100%;background:#0a0a1a;color:#ddd;border:1px solid rgba(255,58,122,.35);
       border-radius:6px;padding:6px 7px;font-size:10px;cursor:pointer;font-family:monospace}
     .cg select option{background:#0a0a1a;color:#ddd}
@@ -371,6 +365,12 @@
       .autobtn{padding:9px 4px;font-size:10px;flex-basis:78px}
       .cg select{padding:9px 8px;font-size:11px}
       input[type=range]{height:8px;margin:12px 0}
+      /* The FPS row's three text buttons carry inline padding and an 8px font
+         (the desktop row's width budget — see .eq-fps-row), which beats the
+         button rule above, so on a phone they were 17-19px tall. Height only:
+         by id, because `.eq-fps-row button` would also stretch the round
+         #btn-about. */
+      #btn-freeze-frame,#btn-toggle-stars,#btn-toggle-grid{min-height:32px}
     }
 
     /* Drag handle — visible on mobile, hidden on desktop */
@@ -443,7 +443,16 @@
       margin:0;font-family:var(--display,'Courier New',monospace);
       font-size:12px;letter-spacing:2px;color:var(--green,#0fc);
       font-weight:normal;
+      /* The close button inherits the panel's full-width button rule, and in a
+         flex row the two shrink together, so the title used to be squeezed to
+         whatever width its own length left it — "VIMATHIC" over the descriptor
+         only while the descriptor happened to be short, and padded out to that
+         with braille-blank characters. Now the descriptor is its own line, the
+         title keeps its width, and it still wraps rather than push the button
+         out on a very narrow screen. */
+      flex:0 0 auto;max-width:calc(100% - 40px);
     }
+    #about-header h2 .about-subtitle{ display:block; }
     #about-close{
       background:none;border:none;color:#778;
       font-size:18px;cursor:pointer;line-height:1;padding:2px 6px;
@@ -801,7 +810,20 @@
     input[type="checkbox"].neon-pink:checked::after{border-color:var(--accent)}
 
   /* ── EQ + FPS row ─────────────────────────────────────────── */
-  .eq-fps-row{display:flex;align-items:center;gap:8px;margin:6px 0;justify-content:space-between}
+  /* gap 4px (was 8px), and the three text buttons carry padding 3px 4px plus
+     letter-spacing 0 inline, because the row had to take STARS. Measured in
+     Chrome at desktop panel width: the row is 258px while the panel scrolls
+     (its scrollbar takes 10px; 268px when it does not). The old row needed
+     247.2px, and STARS in the old style 298.2px — 40px over at 258, with
+     .ctrl-body's overflow:hidden clipping TOGGLE GRID rather than scrolling.
+     Tightened, it needs 235.2px in Consolas (Windows' default monospace), so
+     22.8px spare at 258. FIX(review): this said 22.8-32.8px and "room for a
+     wider system monospace"; at the real 258px the room is smaller — about
+     11-15px with 0.6em fonts (Courier New measured; Menlo and DejaVu Sans Mono
+     are inferred from that metric), and a fixed-width font set to Lucida
+     Console in the browser overflows by about 22px. tests/e2e/stars.spec.js
+     checks the 258px row at 1280x720 and 1920x1080. */
+  .eq-fps-row{display:flex;align-items:center;gap:4px;margin:6px 0;justify-content:space-between}
   #fps-inline{font-size:10px;color:#556;font-family:monospace;white-space:nowrap;text-align:center;flex:0 0 auto;padding:4px 7px;background:rgba(255,58,122,.06);border-radius:5px;border:1px solid rgba(255,58,122,.18);letter-spacing:.5px;line-height:1.4}
   #fps-inline.active{color:var(--green)}
   /* ── Controls panel collapse → floating button ────────────────────────────── */
@@ -915,15 +937,16 @@
      The visible "VIMATHIC" is a panel header, sized and placed for the control
      column, and promoting it would have been a heading that names a panel
      rather than the page. This one names the page and is read, not seen. -->
-<h1 class="sr-only">VIMATHIC — Mathematical VJ Studio</h1>
+<h1 class="sr-only">VIMATHIC — Mathematical Music Visualizer</h1>
 <div class="beat-ring" id="beat-ring"></div>
 <div id="hotkey-hint">
   SPACE play/pause · ← → tracks<br>
   F random formula · D next shape · T material · R random all<br>
   Q random color · E next color<br>
-  W flip camera · G grid · H this hint · Y glitch<br>
+  W flip camera · G grid · I this hint · P glitch<br>
   <span style="color:#445">Hold + drag (mouse / touchpad / wheel):<br>
-  amp J/V · wave N/C · bloom B/A · bass L/X · treble K/Z · rings S</span>
+  amp V · wave C · bloom A · bass L/X · treble K/Z · rings S<br>
+  formula detail B · phase N · shader knobs Y U H J</span>
 </div>
 <input type="file" id="audio-file" accept="audio/*" multiple>
 
@@ -1032,7 +1055,7 @@
       <button id="color-auto" class="autobtn"
         title="AUTO COLOUR — keeps changing the palette on its own, always as a crossfade that fills the whole period, so the palette is never standing still. On the beat while music plays (8 bars), on a timer while it doesn't. While it is on, clip-player steps stop applying their preset's colour.">⟳ AUTO</button>
       <button id="night-btn" class="autobtn"
-        title="NIGHT — for a dark room. Narrows the palette pool to the NIGHT series, hides the starfield, dims the grid and turns the lamps down (glare 0.65 → 0.45), so the mathematics is the brightest thing on screen. Bloom is left alone and G still works. Switched on over a bright scheme it moves the palette to the first NIGHT one; over a NIGHT palette it leaves your choice alone. The dropdown stays free — this changes what the app picks for you, not what you can pick.">☾ NIGHT</button>
+        title="NIGHT — for a dark room. Narrows the palette pool to the NIGHT series, dims the grid and turns the lamps down (glare 0.65 → 0.45), so the mathematics is the brightest thing on screen. The starfield stays; STARS switches it off. Bloom is left alone and G still works. Switched on over a bright scheme it moves the palette to the first NIGHT one; over a NIGHT palette it leaves your choice alone. The dropdown stays free — this changes what the app picks for you, not what you can pick.">☾ NIGHT</button>
       </div></div>
     <div class="cg"><label>Surface Material</label>
       <div class="cg-row">
@@ -1058,6 +1081,31 @@
         <option value="smoke">Smoke trail (small + wake)</option>
       </select>
       <div id="particle-style-desc" style="font-size:8px;color:#445;font-family:monospace;padding:3px 2px;min-height:12px"></div>
+    </div>
+    <!-- Wire style — the WIRE counterpart of Particle Style. Ships VISIBLE,
+         unlike its twin, because the boot viz mode is WIRE; controls.js shows
+         it in WIRE only. Lines stay one pixel wide (WebGL caps lineWidth at 1
+         on Windows), so every style here works on colour, blending, a body
+         drawn under the lines, or a trail — see RenderEngine.WIRE_STYLES. -->
+    <div class="cg" id="wire-style-wrap"><label>Wire Style</label>
+      <select id="wire-style-sel">
+        <option value="classic" selected>Classic (thin lines)</option>
+        <option value="neon">Neon (additive glow)</option>
+        <option value="hidden">Hidden line (solid body)</option>
+        <option value="trails">Trails (light painting)</option>
+        <option value="depth">Depth fade</option>
+        <option value="scan">Scan (running ring)</option>
+        <option value="hologram">Hologram (glowing body)</option>
+        <option value="rows">Rows (ridgelines)</option>
+        <option value="grid">Grid (no diagonals)</option>
+        <option value="contour">Contours (equal height)</option>
+        <option value="lattice">Lattice (planes of light)</option>
+        <option value="electric">Electric (crawling energy)</option>
+        <option value="aurora">Aurora (flowing palette)</option>
+        <option value="paint">Light painting (neon + trails)</option>
+        <option value="glass">Glass (neon on dark glass)</option>
+      </select>
+      <div id="wire-style-desc" style="font-size:8px;color:#445;font-family:monospace;padding:3px 2px;min-height:12px"></div>
     </div>
     <div class="cg"><label>Bloom <span id="blmv" class="vd">0.55</span></label>
       <input type="range" id="bloom" min="0" max="1.5" step="0.05" value="0.55"></div>
@@ -1389,7 +1437,14 @@
       <input type="range" id="amplitude" min="0.2" max="1.5" step="0.01" value="0.70"></div>
     <div class="cg xp"><label>Wave Intensity <span id="wiv" class="vd">1.00</span></label>
       <input type="range" id="wave-int" min="0.3" max="3.5" step="0.05" value="1.0"></div>
-    <!-- Formula Detail / Formula Phase: the two hands on a CPU formula, and
+    <!-- The formula slot: two banks of hands, and the engine that is drawing
+         decides which one is on screen. #formula-knobs-wrap (Formula Detail /
+         Formula Phase) shows on an `m:` formula; #shader-knobs-wrap (the four
+         Shader Knobs, just below) shows on a numbered SHADER MODE entry, and
+         also on a formula while the operator's own shader is applied.
+         _syncFormulaKnobs in controls.js is the one place that decides.
+
+         Formula Detail / Formula Phase are the two hands on a CPU formula, and
          they sit HERE for the same reason Spectrum Rings does — a control that
          decides how the body answers is a core visual control, and 192 of the
          ~230 entries in SHADER MODE are CPU formulas. Every formula already
@@ -1397,24 +1452,75 @@
          two, and until r6 the third carried nothing of the operator's at all.
          Detail rests at the centre, where the arithmetic is what it always was;
          turning it DOWN is also how you buy back update rate on a heavy
-         formula (see PARAMS.detail and `npm run bench:formulas`). Both are
-         inert while a numbered GPU shader is drawing, which is the mirror of
-         the four shader knobs being inert under a formula.
+         formula (see PARAMS.detail and `npm run bench:formulas`).
 
-         FIX(r6): that last sentence used to live ONLY in this comment, where no
-         operator can read it. The panel showed two live sliders whose readouts
-         counted while nothing moved — the same silence the shader editor's
-         amber warning exists to break, one control row down. #fk-note says it
-         on screen now, and _syncFormulaKnobs decides when. -->
+         REVERSED (shader knobs): r6 kept this pair on screen under a numbered
+         GPU shader, dimmed by a .fk-inert rule, with a NO EFFECT line (#fk-note)
+         under it, so that a value stayed settable before switching to the
+         formula that would use it. The owner asked for the slot to swap
+         instead. Under a numbered shader the pair moves nothing at all —
+         MathVisualizer is deactivated and nothing reads it — while the Shader
+         Knobs, which DO act there, sat three clicks deep in ADVANCED → SHADER
+         EDITOR. So the pair hides and the knobs take its place; the dim rule
+         and the note went with it. A hidden slider still takes MIDI, presets
+         and RESET ALL (syncParamUI in params.js writes it either way), so what
+         is lost is only setting it by hand ahead of time — and, since the
+         slot's six got hold-and-drag keys (B N for the pair, Y U H J for the
+         knobs), by key: a key acts only on the bank that is shown
+         (_keyReaches in controls.js). -->
     <div id="formula-knobs-wrap">
       <div class="cg xp"><label>Formula Detail <span id="fdv" class="vd">0.50</span></label>
         <input type="range" id="formula-detail" min="0" max="1" step="0.01" value="0.5"></div>
       <div class="cg xp"><label>Formula Phase <span id="fpv" class="vd">0.00</span></label>
         <input type="range" id="formula-phase" min="0" max="1" step="0.01" value="0"></div>
-      <div id="fk-note" class="xp" style="display:none;font-size:8px;color:#c96;margin:-2px 0 6px;letter-spacing:.5px">
-        NO EFFECT — a numbered GPU shader is drawing. These two reach CPU formulas only:
-        pick an <span style="color:#0fc">m:</span>… entry in SHADER MODE.
+    </div>
+    <!-- Four numbers a custom shader can read and nothing else touches.
+         They exist because a hand-written shader was otherwise frozen: every
+         number in it is baked in, and changing one means reopening a modal
+         that blacks out the screen and disarms every hotkey, editing text,
+         and taking a hard recompile — which is a cut, not a fade. That is
+         not something anyone does mid-set.
+         With these, the shader is written once with uK0..uK3 in it and then
+         PLAYED: they are MIDI-mappable like any other param, so they reach a
+         controller, and they carry in presets. The sliders are here so the
+         feature also works for someone without hardware.
+
+         They moved here from ADVANCED → SHADER EDITOR. On a numbered SHADER
+         MODE entry they carry the fixed meaning the heading names, and that is
+         when they take Formula Detail / Formula Phase's place. They also show
+         on a formula while the operator's own shader is applied (APPLY in the
+         editor, or a preset or session that restored one): a custom fragment
+         body colours CPU formulas too, and the shipped default body reads uK1,
+         so hiding them there would hide live controls. Known and left alone:
+         the built-in fragment program applies Knob 4's palette shift with no
+         uMathMode gate, so it acts on a plain formula while this block is
+         hidden — MIDI, presets and RESET ALL still reach it.
+
+         Ships hidden because the boot selection is a CPU formula (the
+         `selected` option of #gpu-sel above); controls.js shows it. Shipping it
+         visible would flash both banks before the module runs.
+
+         Each "N word" pair in the heading is joined by &nbsp;: at the panel's
+         width the last line broke between "4" and "palette", parting the
+         knob's number from its meaning (measured with the heading 268 px wide
+         at 1280x720 and 1920x1080; it is 258 px while the panel scrolls).
+         The heading div keeps `class="xp"` first and alone —
+         tests/shader-knobs.test.js anchors on it. -->
+    <div id="shader-knobs-wrap" style="display:none">
+      <div class="xp" style="font-size:8px;color:#556;margin:0 0 4px;letter-spacing:.5px">
+        SHADER KNOBS — read as <span style="color:#0fc">uK0…uK3</span> in your code.<br>
+        On a numbered SHADER MODE they carry a fixed meaning instead:
+        <span style="color:#0fc">1</span>&nbsp;scale · <span style="color:#0fc">2</span>&nbsp;depth ·
+        <span style="color:#0fc">3</span>&nbsp;phase · <span style="color:#0fc">4</span>&nbsp;palette
       </div>
+      <div class="cg xp"><label>Shader Knob 1 <span id="k0v" class="vd">0.00</span></label>
+        <input type="range" id="shader-k0" min="0" max="1" step="0.01" value="0"></div>
+      <div class="cg xp"><label>Shader Knob 2 <span id="k1v" class="vd">0.00</span></label>
+        <input type="range" id="shader-k1" min="0" max="1" step="0.01" value="0"></div>
+      <div class="cg xp"><label>Shader Knob 3 <span id="k2v" class="vd">0.00</span></label>
+        <input type="range" id="shader-k2" min="0" max="1" step="0.01" value="0"></div>
+      <div class="cg xp"><label>Shader Knob 4 <span id="k3v" class="vd">0.00</span></label>
+        <input type="range" id="shader-k3" min="0" max="1" step="0.01" value="0"></div>
     </div>
     <!-- Spectrum Rings: the 24 Bark bands laid across the body — the low end
          where the formula is broad, the cymbals where it is finely corrugated.
@@ -1439,8 +1545,14 @@
     <div class="eq-fps-row">
       <div id="fps-inline">FPS<br><span id="fps">60</span></div>
       <button id="btn-about" title="About / documentation" aria-label="About">i</button>
-      <button id="btn-freeze-frame" title="Freeze / resume 3D animation" style="background:rgba(255,58,122,.08);border:1px solid rgba(255,58,122,.4);color:var(--accent);font-size:8px;padding:3px 7px;border-radius:5px;font-family:monospace;cursor:pointer;white-space:nowrap">⏸ STOP MOTION</button>
-      <button id="btn-toggle-grid" title="Toggle grid visibility" style="background:rgba(0,255,170,.08);border:1px solid rgba(0,255,170,.3);color:var(--green);font-size:8px;padding:3px 7px;border-radius:5px;font-family:monospace;cursor:pointer;white-space:nowrap;opacity:0.45">TOGGLE GRID</button>
+      <button id="btn-freeze-frame" title="Freeze / resume 3D animation" style="background:rgba(255,58,122,.08);border:1px solid rgba(255,58,122,.4);color:var(--accent);font-size:8px;padding:3px 4px;border-radius:5px;font-family:monospace;cursor:pointer;white-space:nowrap;letter-spacing:0">⏸ STOP MOTION</button>
+      <!-- STARS: the starfield behind the body, and nothing else — the grid has
+           its own button, and background colour and fog belong to TRANSPARENT
+           BG. Ships ON (no inline opacity) because the stars ship visible; OFF
+           is 0.45, the grid button's convention. ui.setStars in controls.js is
+           its only painter. -->
+      <button id="btn-toggle-stars" title="Show / hide the starfield behind the formula (TRANSPARENT BG hides it either way)" style="background:rgba(0,255,170,.08);border:1px solid rgba(0,255,170,.3);color:var(--green);font-size:8px;padding:3px 4px;border-radius:5px;font-family:monospace;cursor:pointer;white-space:nowrap;letter-spacing:0">STARS</button>
+      <button id="btn-toggle-grid" title="Toggle grid visibility" style="background:rgba(0,255,170,.08);border:1px solid rgba(0,255,170,.3);color:var(--green);font-size:8px;padding:3px 4px;border-radius:5px;font-family:monospace;cursor:pointer;white-space:nowrap;opacity:0.45;letter-spacing:0">TOGGLE GRID</button>
     </div>
     <span id="gpu-mem" style="display:none;font-size:8px;color:#445"></span>
     <div style="display:flex;gap:4px">
@@ -1555,30 +1667,9 @@
       <details class="adv-sub">
         <summary>SHADER EDITOR</summary>
         <button id="btn-open-editor" class="xp">✎ EDIT GLSL SHADER</button>
-        <!-- Four numbers a custom shader can read and nothing else touches.
-             They exist because a hand-written shader was otherwise frozen: every
-             number in it is baked in, and changing one means reopening a modal
-             that blacks out the screen and disarms every hotkey, editing text,
-             and taking a hard recompile — which is a cut, not a fade. That is
-             not something anyone does mid-set.
-             With these, the shader is written once with uK0..uK3 in it and then
-             PLAYED: they are MIDI-mappable like any other param, so they reach a
-             controller, and they carry in presets. The sliders are here so the
-             feature also works for someone without hardware. -->
-        <div class="xp" style="font-size:8px;color:#556;margin:6px 0 2px;letter-spacing:.5px">
-          SHADER KNOBS — read as <span style="color:#0fc">uK0…uK3</span> in your code.<br>
-          On a numbered SHADER MODE they carry a fixed meaning instead:
-          <span style="color:#0fc">1</span> scale · <span style="color:#0fc">2</span> depth ·
-          <span style="color:#0fc">3</span> phase · <span style="color:#0fc">4</span> palette
-        </div>
-        <div class="cg xp"><label>Shader Knob 1 <span id="k0v" class="vd">0.00</span></label>
-          <input type="range" id="shader-k0" min="0" max="1" step="0.01" value="0"></div>
-        <div class="cg xp"><label>Shader Knob 2 <span id="k1v" class="vd">0.00</span></label>
-          <input type="range" id="shader-k1" min="0" max="1" step="0.01" value="0"></div>
-        <div class="cg xp"><label>Shader Knob 3 <span id="k2v" class="vd">0.00</span></label>
-          <input type="range" id="shader-k2" min="0" max="1" step="0.01" value="0"></div>
-        <div class="cg xp"><label>Shader Knob 4 <span id="k3v" class="vd">0.00</span></label>
-          <input type="range" id="shader-k3" min="0" max="1" step="0.01" value="0"></div>
+        <!-- The four Shader Knobs used to follow this button. They live in the
+             formula slot now (#shader-knobs-wrap, under Wave Intensity), where
+             the note above them says when they show. -->
       </details>
 
       <details class="adv-sub">
@@ -1633,7 +1724,7 @@
         <b style="color:#aaa">Uniforms:</b> <span>uTime</span> · <span>uBass</span> 0–1.2 · <span>uMid</span> 0–1 · <span>uTreble</span> 0–1.2 · <span>uBeat</span> 0–1 · <span>uAmp</span> · <span>uWI</span><br>
         <b style="color:#aaa">Vertex:</b> <span>position</span> vec3 · <span>r</span>=length(xz) · <span>ang</span>=atan(z,x) · write into <span>y</span><br>
         <b style="color:#aaa">Spectrum (vertex only):</b> <span>bandAtRadius(r)</span> · <span>bandAtU(0–1)</span> · <span>uBands[24]</span> · <span>uBandR</span> body radius — Spectrum Rings already adds one band term, set it to 0 to avoid doubling<br>
-        <b style="color:#aaa">Knobs:</b> <span>uK0</span> · <span>uK1</span> · <span>uK2</span> · <span>uK3</span> 0–1 — sliders under SHADER EDITOR in the panel, and MIDI-mappable; put one where you would type a constant<br>
+        <b style="color:#aaa">Knobs:</b> <span>uK0</span> · <span>uK1</span> · <span>uK2</span> · <span>uK3</span> 0–1 — sliders in the panel's FORMULA section — they take Formula Detail/Phase's place on a numbered SHADER MODE, and also show while your own shader is applied — and MIDI-mappable; put one where you would type a constant<br>
         <b style="color:#aaa">Colour (fragment):</b> <span>paletteAt(x)</span> — the chosen scheme, crossfading over 600 ms when you change it; <span>getColor(uCM, x)</span> is the same colour without the fade. SURF lighting now runs over your <span>c</span> automatically<br>
         <b style="color:#aaa">What APPLY takes over:</b> <span>SHADER MODE</span> 1–38 — APPLY installs BOTH programs whichever tab you pressed it on, and your vertex body replaces that displacement, so all 38 numbered entries then draw the same thing. RESET gives them back. Everything else — shape, material, palette, Spectrum Rings, the knobs — still applies
       </div>
@@ -1762,7 +1853,9 @@
       </div>
       <div class="as-note">
         💡 <b>No virtual cable?</b> Works with a real mic too — point it at your speakers for a quick test.
-        For best quality use a loopback device.
+        For best quality use a loopback device.<br>
+        🔈 Live input is not played back — you hear the source itself. With a virtual cable as default playback,
+        turn on <b>Listen to this device</b> for it (Windows) or use a <b>Multi-Output Device</b> (Mac).
       </div>
     </div>
 
@@ -2301,6 +2394,10 @@ function makeDropdown(selId) {
   // way back. (The 'input' listener that used to sit here went with the typing.)
   input.addEventListener('click', () => open());
   input.addEventListener('blur', () => setTimeout(close, 150));
+  // The keys this handler reads are the keys the picker keeps from the app's
+  // hotkeys while it has focus (src/dom.js, PICKER_KEYS); every other key goes
+  // through to them. tests/hotkey-focus-standdown.test.js reads both and fails
+  // when they part, so a key added here goes there too.
   input.addEventListener('keydown', e => {
     if (e.key === 'Escape') { close(); input.blur(); return; }
     if (e.key === 'Enter')  { close(); input.blur(); return; }
@@ -2366,7 +2463,7 @@ window.addEventListener('load', () => {
 <div id="about-overlay" role="dialog" aria-modal="true" aria-labelledby="about-title">
   <div id="about-box">
     <div id="about-header">
-      <h2 id="about-title"> VIMATHIC ⠀  ⠀  ⠀  Mathematical VJ Studio</h2>
+      <h2 id="about-title">VIMATHIC <span class="about-subtitle">Mathematical Music Visualizer</span></h2>
       <button id="about-close" aria-label="Close">✕</button>
     </div>
     <div id="about-tabs" role="tablist"></div>

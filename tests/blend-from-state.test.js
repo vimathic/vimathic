@@ -327,11 +327,13 @@ describe('aBaseY falls back to a value the app chose', () => {
     const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
     assert.ok(/defaultAttributeValues\.aBaseY/.test(raw) && src.length < raw.length,
       'CONTROL: the comment stripper ran and the file still has the declaration');
-    // The materials that get VS: the surface material (vertexShader: VS) and
-    // the points proxy (vertexShader: this.activeVS).
+    // The materials that get VS: the surface material (vertexShader: VS), the
+    // points proxy, the wire styles' hidden-line occluder and their rows / grid
+    // lines (all three vertexShader: this.activeVS). The hologram's body is
+    // gpuMat itself and builds nothing.
     const decls = [...src.matchAll(/vertexShader:\s*(VS|this\.activeVS)\b/g)];
-    assert.equal(decls.length, 2,
-      `expected exactly two materials built from the shipped VS, found ${decls.length} ` +
+    assert.equal(decls.length, 4,
+      `expected exactly four materials built from the shipped VS, found ${decls.length} ` +
       '— the scan below would miss the others');
     // Both spellings of the same thing. The first draft accepted only the
     // property set, so writing it as Object.assign — which produces a
@@ -341,8 +343,8 @@ describe('aBaseY falls back to a value the app chose', () => {
     const ABASEY_DEFAULT =
       /defaultAttributeValues(?:\.aBaseY\s*=\s*\[\s*0\s*\]|\s*,\s*\{[^}]*\baBaseY\s*:\s*\[\s*0\s*\])/g;
     const defaults = [...src.matchAll(ABASEY_DEFAULT)];
-    assert.equal(defaults.length, 2,
-      `each of those two materials needs its own aBaseY default; found ${defaults.length} ` +
+    assert.equal(defaults.length, 4,
+      `each of those four materials needs its own aBaseY default; found ${defaults.length} ` +
       'declaration(s). If the default IS there in a spelling this pattern does not know, ' +
       'widen the pattern — do not respell the source to suit it. See attachBaseY for why ' +
       'the default is needed at all.');

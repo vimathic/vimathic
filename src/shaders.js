@@ -1,7 +1,7 @@
 /**
- * VIMATHIC — Mathematical VJ Studio
- * Copyright (c) 2026 S. Melentyev. All rights reserved.
- * Licensed under BUSL-1.1 — see LICENSE.txt
+ * VIMATHIC — Mathematical Music Visualizer
+ * Copyright (c) 2026 S. Melentyev
+ * Licensed under the MIT License — see LICENSE.txt
  * https://github.com/vimathic/vimathic
  */
 
@@ -1146,6 +1146,225 @@ const _POINT_MASK = `
     _pAlpha *= uPtGain;
   }`;
 
+// ── Wire styles (WIRE mode) ───────────────────────────────────────────────────
+// WIRE draws the mesh as GL_LINES, and a line is one pixel wide wherever this
+// app is likely to run: WebGL caps lineWidth at 1 on ANGLE (every browser on
+// Windows) and on most desktop drivers. So a wire style cannot make a line
+// thicker; it changes the four other things a line has — its colour along its
+// length, how it blends, what is drawn under it from the same geometry, and
+// what trails behind it (RenderEngine.WIRE_STYLES). This block is the colour
+// half: what a fragment of a line, or of the hologram's body under the lines,
+// does differently from the plain wire.
+//
+// Gated twice, and both gates rest at 0. uWireFx is raised only by
+// setWireStyle while WIRE is the mode; uWirePass is non-zero only for the
+// length of one draw call — 1 for the hologram's body (gpuMat itself drawn a
+// second time as triangles), 2 for the Glass style's body (the occluder,
+// painting) — with the body mesh's render hooks raising and lowering it around
+// that call (RenderEngine._syncWireFill). The surface, the points and the
+// classic wire therefore run none of it, and every pixel they draw is what it
+// was.
+//
+// Depth fade and scan only ever DIM: the nearest line and the ring at its peak
+// are the plain wire's own colour, so the NIGHT contract (max channel 0.55,
+// see FS) holds for them by construction. Neon and the hologram are additive,
+// and the sum where lines and folds overlap is their look — the same trade the
+// smoke particle makes.
+//
+// ── Where each factor goes: colour, alpha, or both ──────────────────────────
+// The alpha matters wherever the frame leaves the app with it — TRANSPARENT BG
+// into OBS over a camera, VP9 alpha in the recorder — so every factor has to
+// land where the blend that draws it expects it (FIX(review W-1): it all went
+// into the colour, and over a transparent background the hologram's body came
+// out a near-black OPAQUE shape hiding the camera, and faded lines dark opaque
+// lines):
+//   • additive draws (the hologram's body; fx 1 — Neon's, Light painting's,
+//     the hologram's and Glass's lines; fx 5 Lattice; fx 6 Electric): into the
+//     ALPHA only. three's additive blend is (SRC_ALPHA, ONE) on colour and
+//     alpha alike, so the light added is colour × alpha — the same light as
+//     before — while the coverage added is alpha², a glow that leaves what is
+//     behind it visible instead of an alpha of 1 per draw. This is the smoke
+//     particle's arithmetic (_POINT_MASK puts uPtGain there too).
+//   • plain draws (fx 2, 3 — depth fade, scan): into BOTH. A plain wire draws
+//     with no blending, so the fragment IS the pixel, and the canvas composites
+//     premultiplied: colour × k with alpha k is the line at opacity k. Over the
+//     opaque stage nothing changes; over a transparent one a faded line fades
+//     out instead of turning into a dark one.
+//   • the rest say where theirs goes beside them: fx 4 (contour) is blended
+//     normally and carries only coverage in the alpha; fx 7 (aurora) moves the
+//     ramp parameter before the palette is read (_WIRE_T) and touches neither
+//     here; the Glass body is a solid and dims the colour alone.
+//
+// Shared by FS and SE_FS_TEMPLATE for the same reason _POINT_MASK is: a custom
+// colour body from the editor gets the wire styles too, with one owner.
+//
+// uBandR is the body's own radius (declared for the vertex program too, with
+// the same type, so the two stages link to one uniform). Depth fade and scan
+// measure in it, so both span the body on screen whatever its size.
+const _WIRE_UNIFORMS = `
+uniform int uWireFx;
+uniform int uWirePass;
+uniform float uWireGain;
+uniform float uBandR;`;
+
+// Two helpers the wire block calls, at global scope in both fragment programs
+// (after _STUDIO_ENV, so every varying they read is declared). Names carry the
+// _w prefix because SE_FS_TEMPLATE puts a user's body in the same program; a
+// body is statements inside main(), so it cannot define a clashing function,
+// and a local of the same name would only shadow these for its own scope.
+const _WIRE_FUNS = `
+// How edge-on the surface is to the eye, 0 facing … 1 grazing: the material
+// block's derivative normal with the same guards (see the notes there), abs()
+// because wire bodies are drawn from both sides, and the clamp that keeps pow()
+// off a negative base for the reason the rim term in the lighting block gives.
+float _wEdgeOn() {
+  vec3 nRaw = cross(dFdx(vWorldPos), dFdy(vWorldPos));
+  float nLen = length(nRaw);
+  vec3 V = normalize(vViewDir);
+  vec3 N = nLen > 1e-9 ? nRaw / nLen : V;
+  return pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 2.0);
+}
+// A cheap smooth 3D value noise for the styles that crawl (Electric): a
+// sin-free hash on the lattice corners, smoothstep-blended. No texture, so the
+// single-file bundle stays asset-free.
+float _wHash(vec3 p) {
+  p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float _wNoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(_wHash(i),                   _wHash(i + vec3(1.0, 0.0, 0.0)), f.x),
+                 mix(_wHash(i + vec3(0.0, 1.0, 0.0)), _wHash(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+             mix(mix(_wHash(i + vec3(0.0, 0.0, 1.0)), _wHash(i + vec3(1.0, 0.0, 1.0)), f.x),
+                 mix(_wHash(i + vec3(0.0, 1.0, 1.0)), _wHash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);
+}`;
+
+// Aurora (fx 7) — the one wire style that acts BEFORE the palette lookup, so it
+// is its own snippet, placed in both programs right where the ramp parameter t
+// is final and before anything reads it.
+//
+// The palette flows over the wire in slow curtains: t — which still carries the
+// music, through the height — is swung by a wave that drifts across the body
+// and climbs it, so bands of the palette's colours sweep along the lines.
+// Re-clamped into the [.03, .97] window FS writes every palette in, so each
+// pixel is a colour the chosen palette declares and the NIGHT contract holds as
+// it does for the plain wire. One sweep passes a point every ~6 s, on the clock.
+//
+// ── Why here and not in _WIRE_BLOCK ─────────────────────────────────────────
+// The first version recomputed the colour inside the block: two more calls of
+// getColor, whose 54-palette ladder the Windows toolchain inlines per call.
+// Measured through the editor's APPLY on this machine's ANGLE: eight gallery
+// programs compiled in 47.0 s against 23.4 s without the new styles — the
+// lion's share of that from the two extra ladders. Swinging t before the one
+// lookup FS already makes costs no ladder at all, and an editor body that
+// colours by t (the shipped default does) gets the aurora for free.
+const _WIRE_T = `
+  if (uWireFx == 7) {
+    float aR = max(uBandR, 0.5);
+    float aF = vWorldPos.y / aR * 0.9 + 0.35 * sin(vWorldPos.x / aR * 3.9 + uTime * 0.6) - uTime * 0.35;
+    t = clamp(t + 0.45 * sin(aF * 6.2831853), .03, .97);
+  }`;
+
+const _WIRE_BLOCK = `
+  if (uWirePass > 0) {
+    // A body under the lines. Both kinds weigh the palette colour by how
+    // edge-on the surface is to the eye, so the silhouette and every fold
+    // glow; _wEdgeOn is called once for the two, because each call is a copy
+    // the Windows toolchain compiles (see _WIRE_T on what copies cost).
+    float hFres = _wEdgeOn();
+    if (uWirePass == 1) {
+      // The hologram's body: a face turned to the viewer stays nearly clear.
+      // Additive: into the alpha (see "Where each factor goes" above). Scaled
+      // by the style's gain like its lines, so NIGHT dims body and lines
+      // together; at the hologram's 0.25 this is 0.02 + 0.3 * hFres.
+      _pAlpha *= (0.08 + 1.2 * hFres) * uWireGain;
+    } else {
+      // The Glass style's body: a dark glass in the palette's own colour under
+      // bright additive lines. A PLAIN, opaque draw that writes depth — the
+      // body is a solid, which is what hides the lines behind it — so the
+      // factor goes into the colour and the alpha stays 1. At most 0.5 of the
+      // palette: the NIGHT ceiling holds for the body.
+      color *= 0.05 + 0.45 * hFres;
+    }
+  } else if (uWireFx == 1) {
+    // Neon's and the hologram's lines — additive, so the gain goes into the
+    // alpha the blend multiplies the colour by.
+    _pAlpha *= uWireGain;
+  } else if (uWireFx == 4) {
+    // Contours: lines of equal height drawn ON the body by this program — the
+    // one wire style whose line has a width, because it is not a GL line.
+    // Height is world Y in steps of a 24th of the body's radius: on the plane a
+    // topographic map of the formula, on a closed body a stack of slices that
+    // the music bends. fwidth turns the distance to the nearest contour into
+    // pixels, so a line is about two pixels wide at any zoom, antialiased in its
+    // alpha; where contours crowd closer than that (a steep side seen edge-on)
+    // they fade out instead of merging into a moire.
+    float cH = vWorldPos.y / max(uBandR / 24.0, 1e-3);
+    float cW = max(fwidth(cH), 1e-4);
+    float cL = (1.0 - smoothstep(0.5, 1.5, abs(fract(cH - 0.5) - 0.5) / cW))
+             * (1.0 - smoothstep(0.25, 0.5, cW));
+    if (cL < 0.004) discard;
+    // Blended normally (setWireStyle makes the contour pass transparent), so
+    // the alpha alone carries the coverage — straight, not premultiplied.
+    _pAlpha *= cL;
+  } else if (uWireFx == 5) {
+    // Lattice: the body drifts through a 3D lattice of light — the planes of
+    // equal x, of equal y and of equal z, drawn where they cut the surface, the
+    // whole lattice rising slowly through the body. Contours in three axes,
+    // with the same fwidth arithmetic, but a soft glow profile instead of a
+    // hard line (about three pixels to half strength) and ADDITIVE, so the
+    // lines on the far side of the body show through and crossings flare
+    // under the bloom. Six planes per radius whatever the body's size; the
+    // drift is uTime-driven only: 0.17 of a cell per second.
+    vec3 lP = (vWorldPos + vec3(0.0, uTime * 0.35, 0.0)) / max(uBandR / 6.0, 1e-3);
+    vec3 lW = max(fwidth(lP), vec3(1e-4));
+    vec3 lD = abs(fract(lP - 0.5) - 0.5) / lW;
+    vec3 lL = exp(-lD * lD * 0.35) * (1.0 - smoothstep(vec3(0.3), vec3(0.6), lW));
+    float lC = max(lL.x, max(lL.y, lL.z));
+    if (lC < 0.004) discard;
+    // Additive: into the alpha.
+    _pAlpha *= lC * uWireGain;
+  } else if (uWireFx == 6) {
+    // Electric: thin veins of energy crawl over dim glowing lines. Two octaves
+    // of the value noise drift through the body, and only where the sum
+    // crosses its middle does a line light up — a ridge, sharpened by the
+    // power, so the bright part is a web of thin arcs rather than blobs, and
+    // it TRAVELS rather than pulsing in place. Clock only, never an onset, and
+    // slow: a given line is crossed about once every two seconds at most.
+    vec3 eP = vWorldPos / max(uBandR * 0.22, 1e-3) + vec3(0.0, -uTime * 0.9, uTime * 0.35);
+    float eN = _wNoise(eP) * 0.65 + _wNoise(eP * 2.1 + 7.3) * 0.35;
+    float eV = pow(1.0 - abs(2.0 * eN - 1.0), 10.0);
+    // Additive: into the alpha. A fifth of the gain on the dim lines, over four
+    // times it on a vein — the vein burns past the palette and the bloom
+    // gathers it; NIGHT_WIRE_GLOW scales both.
+    _pAlpha *= uWireGain * (0.2 + 4.0 * eV);
+  } else if (uWireFx > 1 && uWireFx < 4) {
+    float wK = uWireGain;
+    if (uWireFx == 2) {
+      // Depth fade: the far side of the body sinks into the dark. Measured
+      // from the body's centre, which is the origin, in units of its radius,
+      // so the fade spans the body at any size and any zoom: the near half
+      // keeps the full colour, the far rim keeps about a tenth of it.
+      float wD = (length(vViewDir) - length(cameraPosition)) / max(uBandR, 0.5);
+      wK *= mix(1.0, 0.07, smoothstep(-0.7, 0.8, wD));
+    } else if (uWireFx == 3) {
+      // Scan: a ring at the full palette colour runs outward from the Y axis
+      // over lines held at 30 %. Around the axis because the band layout is,
+      // so the ring crosses the spectrum in the order the bands sit in. Driven
+      // by the clock and nothing else — never by an onset — and slow: uTime
+      // runs 0.48 per second, so a given line is passed once every ~2.6 s and
+      // the front crosses the body's radius in ~3 s.
+      float wR = length(vWorldPos.xz) / max(uBandR, 0.5);
+      float wS = fract(uTime * 0.8 - wR * 1.2);
+      wK *= 0.3 + 0.7 * exp(-wS * 5.0);
+    }
+    // Plain-blended: into both, premultiplied (see above).
+    color   *= wK;
+    _pAlpha *= wK;
+  }`;
+
 const _STUDIO_ENV = `
 // Procedural studio environment — dark floor, brighter ceiling, three
 // soft-box highlights. Sampled by reflect(-V,N); no cubemap texture needed
@@ -1410,6 +1629,9 @@ ${_MATERIAL_UNIFORMS}
 // 0 = square sprite (the original), 1 = round dot, 2 = soft smoke puff.
 // Shared with SE_FS_TEMPLATE via _POINT_UNIFORMS.
 ${_POINT_UNIFORMS}
+// ── Wire style (WIRE mode) ───────────────────────────────────────────────
+// 0 everywhere but WIRE — see _WIRE_BLOCK. Shared via _WIRE_UNIFORMS.
+${_WIRE_UNIFORMS}
 varying float vH;
 varying float vBandU;
 varying vec3  vWorldPos;
@@ -1417,6 +1639,7 @@ varying vec3  vViewDir;
 
 ${_COLOR_FUNS}
 ${_STUDIO_ENV}
+${_WIRE_FUNS}
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 void main(){
@@ -1468,6 +1691,8 @@ void main(){
   // Exactly identity at rest: t is already inside the window, so clamp(t + 0)
   // returns t bit for bit. Half the window is the whole sweep.
   t = clamp(t + uK3 * .47, .03, .97);
+  // Aurora's swing of t (a wire style; inert unless it is live) — see _WIRE_T.
+  ${_WIRE_T}
   vec3 c    = getColor(uCM,    t);
   vec3 cNxt = getColor(uCMNext, t);
   // uCMBlend 0→1 crossfades between the two color schemes
@@ -1486,6 +1711,11 @@ ${_LIGHT_BLOCK}
   // No-op unless the POINTS proxy is drawing (uPtStyle == 0 everywhere else),
   // so the surface and wireframe paths are bit-for-bit what they were.
   ${_POINT_MASK}
+
+  // ── Wire style ──────────────────────────────────────────────────────────
+  // No-op unless a wire style is live in WIRE (uWireFx) or this is the
+  // hologram's body (uWirePass) — the mirror of the particle gate above.
+  ${_WIRE_BLOCK}
 
   ${_FINITE_GUARD}
   gl_FragColor = vec4(color, _pAlpha);
@@ -1665,6 +1895,7 @@ uniform int uLighting;
 uniform float uTime,uBass,uMid,uTreble,uBeat;
 ${_MATERIAL_UNIFORMS}
 ${_POINT_UNIFORMS}
+${_WIRE_UNIFORMS}
 varying float vH;
 // Mirrored from FS: which band this point listens to, and the same shift of the
 // palette parameter by it. A user's fragment body still starts from the same t
@@ -1675,6 +1906,7 @@ varying vec3  vWorldPos;
 varying vec3  vViewDir;
 ${_COLOR_FUNS}
 ${_STUDIO_ENV}
+${_WIRE_FUNS}
 // FIX(r6): the palette CHANGE, not just the palette.
 //
 // uCM, uCMNext and uCMBlend have been declared in this scaffold since it was
@@ -1697,6 +1929,7 @@ vec3 paletteAt(float x){return mix(getColor(uCM,x),getColor(uCMNext,x),uCMBlend)
 // declared their own.
 void main(){float t=clamp((vH+.8)*.6,.03,.97);
   t = clamp(t + step(0., vBandU) * .30 * (vBandU - .5), .03, .97);
+  ${_WIRE_T}
   vec3 c=vec3(0.0);
   ${body}
   vec3 color = c;
@@ -1707,13 +1940,20 @@ void main(){float t=clamp((vH+.8)*.6,.03,.97);
 ${_LIGHT_BLOCK}
   ${_MATERIAL_BLOCK}
   ${_POINT_MASK}
+  ${_WIRE_BLOCK}
   ${_FINITE_GUARD}
   gl_FragColor=vec4(color,_pAlpha);}`;
 
 // ── Shader editor default code snippets ───────────────────────────────────────
-const SE_DEFAULT_VERT = `// b bass  t treble  m mid  bt beat  T time  wi waveInt  a amp
+// Exported for tests only. FIX(shader knobs): its knob line used to name
+// "ADVANCED > SHADER KNOBS", and the sliders left that place. The new wording
+// names them without a route through the panel, so the next move of the panel
+// does not make this text wrong again. Text in here is compared by identity
+// (compileAndApply's `authored`) and stored in sessions and presets, so the
+// previous wording is kept below as SE_DEFAULT_VERT_LEGACY rather than lost.
+export const SE_DEFAULT_VERT = `// b bass  t treble  m mid  bt beat  T time  wi waveInt  a amp
 // pos.x pos.z = coords   r = radius   ang = angle
-// uK0..uK3 = four free knobs: ADVANCED > SHADER KNOBS, and MIDI-mappable.
+// uK0..uK3 = four free knobs: the SHADER KNOBS sliders in the panel, or a MIDI CC.
 // Put one where you would have typed a constant and it becomes playable.
 y = sin(r * 8.0 * wi * (1.0 + uK0 * 2.0) + T) * (0.2 + b * 0.8) * a
   + turb(pos.xz * (2.0 + t) * wi) * b * 0.3
@@ -1783,9 +2023,67 @@ export const SE_PRESETS = [
   // not work. Every knob is used at a scale chosen so the look at rest (all
   // knobs 0) is still worth looking at, because that is what a first click
   // shows.
-  { id:'knobs-vert', name:'🎛 Knobs',    tab:'vert', code:`// K1 frequency   K2 depth   K3 twist   — ADVANCED > SHADER KNOBS, or a MIDI CC\nfloat freq = 3.0 + uK0 * 21.0;\nfloat twist = ang * uK2 * 6.0;\ny = sin(r * freq * wi - T * 2.0 + twist) * exp(-r * 0.35)\n  * (0.25 + uK1 * 0.75) * (0.4 + b * 0.9) * a;` },
+  { id:'knobs-vert', name:'🎛 Knobs',    tab:'vert', code:`// K1 frequency   K2 depth   K3 twist   — the SHADER KNOBS sliders, or a MIDI CC\nfloat freq = 3.0 + uK0 * 21.0;\nfloat twist = ang * uK2 * 6.0;\ny = sin(r * freq * wi - T * 2.0 + twist) * exp(-r * 0.35)\n  * (0.25 + uK1 * 0.75) * (0.4 + b * 0.9) * a;` },
   { id:'knobs-frag', name:'🎛 Knob Tint',tab:'frag', code:`// K1 hue drift   K2 contrast   K3 audio lift\nfloat u = fract(t + uK0 + uTime * 0.05);\nvec3 base = paletteAt(u);\nc = mix(base, base * base * 2.0, uK1) * (1.0 + uK2 * (uBass + uTreble));` },
 ];
+
+/**
+ * Earlier texts of bodies this build still ships — kept because bodies are
+ * stored by TEXT and compared by text.
+ *
+ * FIX(shader knobs): the knob comment in the default vertex body and in the
+ * 🎛 Knobs example named "ADVANCED > SHADER KNOBS", and the sliders moved out
+ * of ADVANCED into the formula slot. Changing a comment changes the text, and
+ * the text is what two things key on:
+ *   • captureState stores the bodies, so autosaves, presets and exported files
+ *     carry the old wording, and restoring one would put the stale route back
+ *     in front of the operator. currentShippedBody() hands back today's text in
+ *     its place when a snapshot is restored — before applyState compiles it,
+ *     so a returning session's buffer never holds the old default at all.
+ *   • compileAndApply decides whether the vertex buffer holds a displacement
+ *     the operator WROTE by comparing it with the shipped default; a buffer
+ *     read as authored makes an APPLY from the fragment tab over a CPU formula
+ *     raise the amber "y is discarded" warning, and over an untouched default
+ *     that is the false alarm the r6 second pass removed. So a body equal to
+ *     one of these still counts as the default there too (see `authored`).
+ *     FIX(review): this used to say that term is what spares returning
+ *     sessions the warning. It is not — the mapping above already put today's
+ *     text in their buffer. The term matters only for a buffer that came by
+ *     the old text some other way, i.e. an operator pasting it in by hand.
+ * Both programs compile to the same thing — only a comment line differs — so
+ * nothing on screen changes.
+ *
+ * Only the wording this change retired. The default from before round 5 had
+ * no knob at all, so mapping it to today's would change the program; it is
+ * left as an authored body, as round 5 already treats it.
+ */
+export const SE_DEFAULT_VERT_LEGACY = Object.freeze([
+  `// b bass  t treble  m mid  bt beat  T time  wi waveInt  a amp
+// pos.x pos.z = coords   r = radius   ang = angle
+// uK0..uK3 = four free knobs: ADVANCED > SHADER KNOBS, and MIDI-mappable.
+// Put one where you would have typed a constant and it becomes playable.
+y = sin(r * 8.0 * wi * (1.0 + uK0 * 2.0) + T) * (0.2 + b * 0.8) * a
+  + turb(pos.xz * (2.0 + t) * wi) * b * 0.3
+  + bt * 0.5;`,
+]);
+const SE_KNOBS_VERT_LEGACY = `// K1 frequency   K2 depth   K3 twist   — ADVANCED > SHADER KNOBS, or a MIDI CC\nfloat freq = 3.0 + uK0 * 21.0;\nfloat twist = ang * uK2 * 6.0;\ny = sin(r * freq * wi - T * 2.0 + twist) * exp(-r * 0.35)\n  * (0.25 + uK1 * 0.75) * (0.4 + b * 0.9) * a;`;
+
+/**
+ * Today's text for a body that an earlier build shipped under different
+ * wording; any other body comes back unchanged.
+ *
+ * Called by applyState on the bodies a snapshot carries, before it compares
+ * them with the live program or compiles them. See SE_DEFAULT_VERT_LEGACY for
+ * why.
+ *
+ * @param {string} body
+ * @returns {string}
+ */
+export function currentShippedBody(body) {
+  if (SE_DEFAULT_VERT_LEGACY.includes(body)) return SE_DEFAULT_VERT;
+  if (body === SE_KNOBS_VERT_LEGACY) return SE_PRESETS.find(p => p.id === 'knobs-vert').code;
+  return body;
+}
 
 /**
  * Does this vertex body write the scaffold's `y`?
@@ -1846,6 +2144,21 @@ export class ShaderEditor {
       onOpen:          (_tab, _code, _presets) => {},
       /** Tab switched */
       onTabSwitch:     (_tab, _code) => {},
+      /**
+       * The live program changed between built-in and custom, or from one
+       * custom program to another: fired after customVS / customFS are written,
+       * by a successful compileAndApply and by revertToBuiltIn (so by reset()
+       * too). Not by a failed compile, which leaves the previous program live.
+       *
+       * Added for the formula slot in the panel (controls.js
+       * _syncFormulaKnobs), which shows the Shader Knobs over a CPU formula
+       * only while a custom shader is applied. onCompileResult could not stand
+       * in for it: revertToBuiltIn — the path a preset with the built-in look
+       * takes to undo a live shader — reports nothing there, and that callback
+       * also fires for TIDY and for the status line's own blanking timer,
+       * neither of which changes the program.
+       */
+      onProgramChange: () => {},
     };
   }
 
@@ -1951,6 +2264,9 @@ export class ShaderEditor {
       // One call reaches gpuMat, the live POINTS proxy, and any proxy built
       // later — see RenderEngine.applyShaderSource().
       this._render.applyShaderSource(fullVS, fullFS);
+      // Said here and in revertToBuiltIn, the two places customVS / customFS
+      // change. See the callback's note in the constructor.
+      this.cb.onProgramChange();
 
       // FIX: "compiled" and "will be visible" are different facts, and only one
       // of them was ever reported. The template discards the body's `y` whenever
@@ -1992,8 +2308,12 @@ export class ShaderEditor {
       // SE_DEFAULT_VERT until somebody edits it, and the shipped default assigns
       // y. So the question is not which tab is on screen; it is whether there is
       // a displacement the OPERATOR wrote. An untouched default is not one.
+      //
+      // FIX(shader knobs): "the untouched default" includes the default as an
+      // earlier build worded it — see SE_DEFAULT_VERT_LEGACY.
       const cpuMode  = this._render?.U?.uMathMode?.value !== 0;
-      const authored = this._tab === 'vert' || vertBody !== SE_DEFAULT_VERT;
+      const authored = this._tab === 'vert'
+        || (vertBody !== SE_DEFAULT_VERT && !SE_DEFAULT_VERT_LEGACY.includes(vertBody));
       const wasted   = cpuMode && authored && bodyAssignsY(vertBody);
       const message = wasted
         ? '⚠ Compiled — a CPU formula is active, so y is discarded. Pick a numbered GPU shader (1–38) in SHADER MODE.'
@@ -2181,9 +2501,12 @@ export class ShaderEditor {
 
   /**
    * Put the built-in program back on screen without touching the editor's
-   * text, its error line or the callbacks. Split out of reset() so a preset
-   * that carries no custom shader can undo a live one mid-clip: reset() would
-   * also stomp #se-code back to the defaults and re-fire onOpen.
+   * text, its error line or its status callbacks. Split out of reset() so a
+   * preset that carries no custom shader can undo a live one mid-clip: reset()
+   * would also stomp #se-code back to the defaults and re-fire onOpen.
+   *
+   * It does fire onProgramChange, which touches nothing in the editor: the
+   * program on screen has changed, and the panel's formula slot has to know.
    */
   revertToBuiltIn() {
     this.customVS = null; this.customFS = null;
@@ -2192,6 +2515,7 @@ export class ShaderEditor {
     // alone (see the test of the same name).
     this._appliedVert = null; this._appliedFrag = null;
     this._render.applyShaderSource();
+    this.cb.onProgramChange();
   }
 
   reset() {

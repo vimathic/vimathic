@@ -1,6 +1,8 @@
 // tests/render-bloom-punch.test.js
 //
-// Contract test for the S hotkey's bloom flash.
+// Contract test for the glitch hotkey's bloom flash — P since 08.10.2026, Y
+// before that and S before 01.09 (see main.js; the letter moved, the punch did
+// not).
 //
 // Run:
 //   node --test tests/render-bloom-punch.test.js

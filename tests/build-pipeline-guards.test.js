@@ -95,7 +95,7 @@ const FULL_DIST = [
   // plugins/vimathic-licenses.js; index.html carries them as a trailing comment
   // too, because it is the copy that gets shared on its own.
   'THIRD-PARTY-LICENSES.txt',
-  'docs/index.html', 'docs/roadmap.html',
+  'docs/index.html', 'docs/support.html',
 ];
 
 const TMPS = [];
@@ -136,7 +136,7 @@ describe('the required build check asks for the files a deploy needs', () => {
     ['robots.txt',         'the crawler policy is gone',           /robots\.txt/],
     ['llms.txt',           'the LLM summary is gone',              /llms\.txt/],
     ['docs/index.html',    'the whole docs site is gone',          /docs\/index\.html/],
-    ['support-hero.webp',  'the Roadmap hero is broken',           /support-hero\.webp/],
+    ['support-hero.webp',  'the Support page hero is broken',      /support-hero\.webp/],
     ['THIRD-PARTY-LICENSES.txt',
                            'the shipped build carries no MIT notice for the code it inlines',
                                                                    /THIRD-PARTY-LICENSES\.txt/],

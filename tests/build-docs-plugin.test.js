@@ -194,13 +194,14 @@ describe('`order` is read as a number or not at all', () => {
 
 describe('document assets are addressed relative to the page that shows them', () => {
 
-  // FIX(#41, r4). documents/roadmap.md pointed its hero at /support-hero.webp
-  // and /support-hero.png. Root-absolute resolves to the filesystem root when
+  // FIX(#41, r4). documents/roadmap.md — support.md again since the roadmap was
+  // taken out of it — pointed its hero at /support-hero.webp and
+  // /support-hero.png. Root-absolute resolves to the filesystem root when
   // dist/index.html is opened over file://, which README.md documents as a
   // supported way to run the app, so the Roadmap tab showed its alt text.
   const dir = () => fixture({
-    'index.md': fm('title: Overview\norder: 0\ndescription: Overview.', 'See [roadmap](./roadmap.md).'),
-    'roadmap.md': fm('title: Roadmap\norder: 4\ndescription: What comes next.',
+    'index.md': fm('title: Overview\norder: 0\ndescription: Overview.', 'See [support](./support.md).'),
+    'support.md': fm('title: Support\norder: 4\ndescription: Ways to support.',
       '<picture>\n  <source srcset="./support-hero.webp" type="image/webp">\n  <img src="./support-hero.png" alt="hero">\n</picture>\n\nSee [overview](./index.md).'),
   });
 
@@ -214,20 +215,20 @@ describe('document assets are addressed relative to the page that shows them', (
 
   test('the static docs page climbs out of dist/docs/ to reach the asset', () => {
     const out = emit(dir());
-    const page = out.read('dist/docs/roadmap.html');
+    const page = out.read('dist/docs/support.html');
     assert.match(page, /srcset="\.\.\/support-hero\.webp"/);
     assert.match(page, /src="\.\.\/support-hero\.png"/);
   });
 
   test('control — cross-document links still become .html on the static pages', () => {
     const out = emit(dir());
-    assert.match(out.read('dist/docs/roadmap.html'), /href="\.\/index\.html"/,
+    assert.match(out.read('dist/docs/support.html'), /href="\.\/index\.html"/,
       'the .md→.html rewrite must not be caught by the asset rewrite');
   });
 
   test('control — the modal copy still addresses its assets next to the bundle', () => {
     const { bySlug } = loadDocs(dir());
-    assert.match(bySlug['roadmap'].html, /srcset="\.\/support-hero\.webp"/,
+    assert.match(bySlug['support'].html, /srcset="\.\/support-hero\.webp"/,
       'inside dist/index.html the asset sits next to the page, so ./ is right there');
   });
 });

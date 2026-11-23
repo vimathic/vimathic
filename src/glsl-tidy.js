@@ -1,7 +1,7 @@
 /**
- * VIMATHIC — Mathematical VJ Studio
- * Copyright (c) 2026 S. Melentyev. All rights reserved.
- * Licensed under BUSL-1.1 — see LICENSE.txt
+ * VIMATHIC — Mathematical Music Visualizer
+ * Copyright (c) 2026 S. Melentyev
+ * Licensed under the MIT License — see LICENSE.txt
  * https://github.com/vimathic/vimathic
  */
 

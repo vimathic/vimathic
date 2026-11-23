@@ -260,9 +260,12 @@ function countingGeo(count, tag) {
     computeVertexNormals() { this.applied++; },
   };
 }
-function applyOnce(meshGeo, ptsGeo, hf) {
+// vizMode 'points': a proxy exists only in PTS, and PTS is the one mode that
+// still recomputes normals per applied field (MathVisualizer._liveNormals) —
+// which is what this harness counts executions by.
+function applyOnce(meshGeo, ptsGeo, hf, vizMode = 'points') {
   const mv = Object.create(MathVisualizer.prototype);
-  mv.render = { gpuMesh: { geometry: meshGeo }, gpuPtsProxy: ptsGeo ? { geometry: ptsGeo } : null };
+  mv.render = { vizMode, gpuMesh: { geometry: meshGeo }, gpuPtsProxy: ptsGeo ? { geometry: ptsGeo } : null };
   mv._applyHF(hf);
 }
 
@@ -294,5 +297,37 @@ describe('a height field is applied at most once per geometry object', () => {
     applyOnce(mesh, null, hf);
     assert.equal(mesh.applied, 1);
     assert.deepEqual([...mesh.ys], [...hf]);
+  });
+});
+
+// ── The normals recompute belongs to PTS ────────────────────────────────────
+// Only the points cloud reads the live normal attribute (the PTS spray); every
+// other path derives normals from screen-space derivatives. The recompute cost
+// ~1 ms per applied field on the boot grid and ~3.7 ms on the 161² plate, with
+// nobody reading it in SURF and WIRE (NORMALS_NOTE in math-collections.js).
+describe('an applied field recomputes normals only where they are read', () => {
+  const hf = Float32Array.from({ length: 4 }, (_, i) => i * 0.5);
+
+  test('SURF and WIRE write the field and skip the normals', () => {
+    for (const mode of ['surface', 'wireframe']) {
+      const mesh = countingGeo(4, mode);
+      applyOnce(mesh, null, hf, mode);
+      assert.equal(mesh.applied, 0, `${mode} recomputed normals nothing reads`);
+      assert.deepEqual([...mesh.ys], [...hf], `${mode} stopped writing the field itself`);
+    }
+  });
+
+  test('PTS still recomputes them — the spray reads them', () => {
+    const mesh = countingGeo(4, 'pts');
+    applyOnce(mesh, null, hf, 'points');
+    assert.equal(mesh.applied, 1);
+  });
+
+  test('the shared writers keep their old default for every other caller', async () => {
+    // A caller that does not say gets what it always got.
+    const { applyHeightField } = await import('../src/math-collections.js');
+    const mesh = countingGeo(4, 'default');
+    applyHeightField(mesh, hf);
+    assert.equal(mesh.applied, 1, 'the default of applyHeightField changed under its other callers');
   });
 });

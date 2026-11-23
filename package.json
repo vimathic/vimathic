@@ -1,7 +1,7 @@
 {
   "name": "vimathic",
   "version": "1.0.0-beta",
-  "description": "VIMATHIC — Mathematical VJ Studio. 192 CPU formulas, 38 GPU shaders, MIDI, presets, clip player, second screen output, GIF/WebM recording.",
+  "description": "VIMATHIC — Mathematical Music Visualizer. 192 CPU formulas, 38 GPU shaders, MIDI, presets, clip player, second screen output, GIF/WebM recording.",
   "homepage": "https://vimathic.com",
   "keywords": [
     "vj",
@@ -13,7 +13,7 @@
     "math",
     "midi"
   ],
-  "license": "BUSL-1.1",
+  "license": "MIT",
   "type": "module",
   "//engines": "22.18 is the floor because scripts/run-tests.mjs is the entry point npm test delegates to, and the ESM entry-point check it used before that version silently ran zero tests. With .npmrc's engine-strict, npm install refuses here rather than letting the suite report a green run it never had.",
   "engines": {

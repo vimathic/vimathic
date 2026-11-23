@@ -21,7 +21,7 @@ What gets captured:
 
 - Shape and color scheme indices
 - Visual mode (Surface / Wireframe / Points)
-- Surface material (Matte, Glossy, Metal, Mirror, Velvet, Glass) and particle style
+- Surface material (Matte, Glossy, Metal, Mirror, Velvet, Glass), particle style and wire style
 - NIGHT mode — the dark stage is part of the look, so a snapshot brings it back with everything else
 - GPU mode or CPU formula (and which math collection)
 - Deformation mode (Surface / Volume / Collapse) and volume formula
@@ -30,7 +30,10 @@ What gets captured:
 - Camera Programmer code and keyframes (if any)
 - Custom shader code (if applied)
 - Grid visibility
+- Starfield on/off (the STARS button)
 - Per-preset hold time for the Clip Player
+
+Presets saved before the STARS button existed don't record the starfield, so loading one leaves it as it is; the same goes for NIGHT and presets saved before it.
 
 What does NOT get captured:
 

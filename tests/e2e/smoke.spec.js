@@ -44,7 +44,7 @@ test.beforeEach(async ({ page }) => {
 
 // ── 1. Smoke: page loads, no JS errors, no missing DOM ids ────────────────────
 test.describe('Bootstrap', () => {
-  test('loads without console errors and exposes the engines on window', async ({ page }) => {
+  test('boots without console errors, with every id dom.js requires in the page', async ({ page }) => {
     const errors = [];
     page.on('pageerror',  e => errors.push(`pageerror: ${e.message}`));
     page.on('console',    msg => {
@@ -120,12 +120,16 @@ test.describe('Hotkeys', () => {
     // (`#surface-material-sel`) and into render.grid.material — so none of
     // the three may be dropped from this list.
     //
-    // Excluded on purpose: 'c' / 'n' / 's' are hold-and-drag keys owned by
-    // _fsParams in src/ui/controls.js and have no tap case ('s' drives Spectrum
-    // Rings since 01.09, which is why the glitch it used to fire is 'y' here),
-    // so pressing them asserts nothing; ' ' (togglePlay) needs a user-gesture'd
-    // AudioContext plus a loaded track; ArrowLeft / ArrowRight need a playlist.
-    const keys = ['d', 't', 'f', 'r', 'q', 'e', 'w', 'g', 'h', 'y'];
+    // Excluded on purpose: every letter of _fsParams in src/ui/controls.js is
+    // a hold-and-drag key with no tap case — L K X Z V C A S for the audio and
+    // bloom, B N Y U H J for the formula slot — so pressing one here asserts
+    // nothing about main.js. That is why the glitch is 'p' and the hint 'i':
+    // the glitch answered to 's' until 01.09 and to 'y' until 08.10.2026, the
+    // hint to 'h', and both letters went to drag keys (knob-keys.spec.js in
+    // this folder presses them to show they no longer tap). ' ' (togglePlay)
+    // needs a user-gesture'd AudioContext plus a loaded track; ArrowLeft /
+    // ArrowRight need a playlist.
+    const keys = ['d', 't', 'f', 'r', 'q', 'e', 'w', 'g', 'i', 'p'];
     for (const k of keys) {
       await page.keyboard.press(k);
       // D / R / F each kick off a morph transition and G runs a rAF fade;
@@ -133,7 +137,7 @@ test.describe('Hotkeys', () => {
       // transition callback is attributed to the key that caused it.
       await page.waitForTimeout(120);
     }
-    // 'h' left the hotkey-hint overlay open — harmless, nothing runs after it.
+    // 'i' left the hotkey-hint overlay open — harmless, nothing runs after it.
     expect(errors).toEqual([]);
   });
 
@@ -355,49 +359,142 @@ test.describe('Intro track', () => {
   });
 });
 
-// ── 9. The formula knobs say when they are inert ──
+// ── 9. The formula slot shows the hands of the engine that is drawing ──
 //
 // Formula Detail and Formula Phase reach CPU formulas only; under a numbered
 // GPU shader the vertex program owns the surface and the pair does nothing.
-// That boundary is deliberate — two banks, one per engine — but until r6 it
-// was stated only in an HTML comment, so the panel showed two live sliders
-// whose readouts counted while nothing on screen moved.
+// The four Shader Knobs are the other way round: a numbered shader reads them
+// (scale · depth · phase · palette), and so does any custom shader the
+// operator applies — over a formula too, since a custom fragment body colours
+// every mode. So the two banks share one slot under Wave Intensity and the
+// engine decides which is up: the knobs take the pair's place on a numbered
+// entry, and stand beside it over a formula while a custom shader is applied.
 //
-// A unit test cannot carry this: _syncFormulaKnobs is a closure inside
-// bindControls and the thing under test is what the operator SEES after a
-// selection travels through applyMathFormula's morph.
+// REVERSED (shader knobs): this test used to check r6's answer — the pair
+// dimmed under a shader with a NO EFFECT note, the knobs three clicks deep in
+// ADVANCED → SHADER EDITOR. The swap replaced both.
+//
+// A unit test cannot carry what the operator SEES: tests/controls-wiring.test.js
+// drives every road through the real closure, and these drive the real page —
+// the boot restore, RESET ALL and the editor included.
 test.describe('Formula knobs', () => {
-  test('the pair dims and says why under a GPU shader, and comes back under a formula', async ({ page }) => {
+  // #gpu-sel cannot be driven with selectOption: makeDropdown() in index.html
+  // hides the native select behind a searchable widget (`sel.style.display =
+  // 'none'`), so Playwright waits 90 s for an element that will never be
+  // visible. These two lines are the ones the widget itself runs when an
+  // option is picked, verbatim — same value, same bubbling change event, same
+  // listener at the other end.
+  const pick = (page, v) => page.$eval('#gpu-sel', (sel, value) => {
+    sel.value = value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }, v);
+
+  const banks = page => ({
+    detail:  page.locator('#formula-detail'),
+    phase:   page.locator('#formula-phase'),
+    k0:      page.locator('#shader-k0'),
+    k3:      page.locator('#shader-k3'),
+    // The heading div is the block's first child and the only .xp in it that
+    // is not a slider row.
+    heading: page.locator('#shader-knobs-wrap > div.xp:not(.cg)'),
+  });
+
+  test('the knobs take the pair\'s place on a numbered shader, and give it back on a formula', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', e => errors.push(`pageerror: ${e.message}`));
     await page.goto('/');
     await expect(page.locator('canvas')).toBeVisible();
-    await revealControl(page, '#formula-detail');
+    const b = banks(page);
 
-    const wrap = page.locator('#formula-knobs-wrap');
-    const note = page.locator('#fk-note');
+    // Boot is differentialEqs/pendulumNonLinear — a CPU formula, so the pair
+    // is up and the knobs are not. This half is also the control: a slot that
+    // always showed the knobs would pass the half below.
+    await expect(b.detail).toBeVisible();
+    await expect(b.phase).toBeVisible();
+    await expect(b.k0).toBeHidden();
+    await expect(b.heading).toBeHidden();
 
-    // Boot is differentialEqs/pendulumNonLinear — a CPU formula, so the pair is
-    // live and silent. This half is also the control: without it, a note that
-    // never showed at all would pass the half below.
-    await expect(note).toBeHidden();
-    await expect(wrap).not.toHaveClass(/fk-inert/);
+    await pick(page, '0');                                     // 1. Bass Reactive Waves
+    // No revealControl anywhere in this test: the point of the move is that
+    // they are reachable with ADVANCED shut.
+    await expect(b.k0).toBeVisible();
+    await expect(b.k3).toBeVisible();
+    await expect(b.heading).toBeVisible();
+    await expect(b.heading).toContainText('SHADER KNOBS');
+    await expect(b.detail).toBeHidden();
+    await expect(b.phase).toBeHidden();
+    await expect(page.locator('details.adv-section')).toHaveJSProperty('open', false);
 
-    // #gpu-sel cannot be driven with selectOption: makeDropdown() in index.html
-    // hides the native select behind a searchable widget (`sel.style.display =
-    // 'none'`), so Playwright waits 90 s for an element that will never be
-    // visible. These two lines are the ones the widget itself runs when an
-    // option is picked, verbatim — same value, same bubbling change event, same
-    // listener at the other end.
-    const pick = v => page.$eval('#gpu-sel', (sel, value) => {
-      sel.value = value;
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-    }, v);
+    await pick(page, 'm:differentialEqs:pendulumNonLinear');
+    await expect(b.detail).toBeVisible();
+    await expect(b.k0).toBeHidden();
+    await expect(b.heading).toBeHidden();
 
-    await pick('0');                                           // 1. Bass Reactive Waves
-    await expect(note).toBeVisible();
-    await expect(wrap).toHaveClass(/fk-inert/);
+    expect(errors, errors.join(' | ')).toEqual([]);
+  });
 
-    await pick('m:differentialEqs:pendulumNonLinear');
-    await expect(note).toBeHidden();
-    await expect(wrap).not.toHaveClass(/fk-inert/);
+  test('a session saved on a numbered shader boots with the knobs up', async ({ page }) => {
+    // bootPersist runs AFTER bindControls, so the bind-time sync cannot be what
+    // gets this right: it is applyState's call. Seeded before any app script,
+    // with nothing but the selection, so nothing else can be the reason.
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem('vimathic_persisted_state', JSON.stringify({ _version: 4, gpuSelVal: '5' }));
+      } catch (_) {}
+    });
+    await page.goto('/');
+    await expect(page.locator('canvas')).toBeVisible();
+    const b = banks(page);
+
+    await expect(page.locator('#gpu-sel')).toHaveValue('5');
+    await expect(b.k0).toBeVisible();
+    await expect(b.heading).toBeVisible();
+    await expect(b.detail).toBeHidden();
+  });
+
+  test('RESET ALL from a numbered shader brings the pair back and hides the knobs', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('canvas')).toBeVisible();
+    const b = banks(page);
+
+    await pick(page, '3');
+    await expect(b.k0).toBeVisible();                          // precondition
+
+    await revealControl(page, '#btn-reset-all');
+    await page.locator('#btn-reset-all').click();
+
+    await expect(page.locator('#gpu-sel')).toHaveValue('m:differentialEqs:pendulumNonLinear');
+    await expect(b.detail).toBeVisible();
+    await expect(b.k0).toBeHidden();
+  });
+
+  test('over a formula, APPLYing your own shader puts the knobs beside the pair; the editor\'s RESET takes them away', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('canvas')).toBeVisible();
+    const b = banks(page);
+    await expect(b.k0).toBeHidden();                           // precondition: a formula, built-in program
+
+    // A fragment body that reads a knob: on a CPU formula it colours the body,
+    // so its knob is a live control there.
+    await revealControl(page, '#btn-open-editor');
+    await page.locator('#btn-open-editor').click();
+    await expect(page.locator('#shader-editor-overlay')).toHaveClass(/open/);
+    await page.locator('.se-tab[data-tab="frag"]').click();
+    await page.locator('#se-code').fill('c = paletteAt(t) * (0.8 + uK1);');
+    await page.locator('#se-btn-apply').click();
+    await page.locator('#se-close').click();
+    await expect(page.locator('#shader-editor-overlay')).not.toHaveClass(/open/);
+
+    await expect(b.k0).toBeVisible();
+    await expect(b.heading).toBeVisible();
+    await expect(b.detail).toBeVisible();                      // the formula still draws; the pair stays
+
+    await page.locator('#btn-open-editor').click();
+    await expect(page.locator('#shader-editor-overlay')).toHaveClass(/open/);
+    await page.locator('#se-btn-reset').click();
+    await page.locator('#se-close').click();
+
+    await expect(b.k0).toBeHidden();
+    await expect(b.detail).toBeVisible();
   });
 });
