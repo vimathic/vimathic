@@ -313,7 +313,7 @@ See [NOTICE.md](./NOTICE.md) for full third-party attributions.
 
 ### Bundled audio
 
-VIMATHIC ships with an intro track — *S. Melentyev — Vimathic* (`vimathic-intro.mp3`) — that plays on first load. The MIT License does not cover it: it's © 2026 S. Melentyev, licensed for personal/non-commercial playback inside the app. Public live use, monetised streaming, sampling, and commercial use require separate permission. See [NOTICE.md](./NOTICE.md) for the full bundled-media terms. Click **Clear** in the playlist to skip it and load your own music.
+VIMATHIC ships with an intro track — *Stilicium* (`vimathic-intro.mp3`) — that plays on first load. The MIT License does not cover it: it's © 2026 S. Melentyev, licensed for personal/non-commercial playback inside the app. Public live use, monetised streaming, sampling, and commercial use require separate permission. See [NOTICE.md](./NOTICE.md) for the full bundled-media terms. Click **Clear** in the playlist to skip it and load your own music.
 
 ---
 

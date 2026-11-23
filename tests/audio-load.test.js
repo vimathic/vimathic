@@ -264,7 +264,7 @@ describe('addFiles — the duplicate guard', () => {
 });
 
 // The intro auto-load makes both of its refusals — "the user cleared it once"
-// and "the playlist is not empty" — before awaiting a 3.9 MB fetch, and acts on
+// and "the playlist is not empty" — before awaiting an 8.9 MB fetch, and acts on
 // the answers seconds later without asking again. Its own JSDoc promises both
 // no-ops. A user who drops a track while the fetch is in flight gets the intro
 // mixed into their playlist; a user who presses CLEAR in that window gets the

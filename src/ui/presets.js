@@ -16,6 +16,7 @@ import { normalizeVizMode, DEFAULT_VIZ_MODE } from '../viz-mode.js';
 // earlier build shipped to today's wording (see the shader branch of
 // _applyStateFields).
 import { SE_PRESETS, currentShippedBody } from '../shaders.js';
+import { startupState } from './startup-state.js';
 
 // Fields captured from PARAMS and restored via applyParam. Listed explicitly
 // so adding a new param to params.js doesn't silently start writing into
@@ -960,6 +961,18 @@ export const PresetMixin = {
   },
 
   /**
+   * Apply src/ui/startup-state.js. It ships with the app, so it is not
+   * scrubbed: its camera script — the gallery's Top Flip — keeps running,
+   * where an imported or restored snapshot always comes back with its script
+   * off. Refused, it leaves the defaults standing, as a refused restore does.
+   */
+  _applyStartupState() {
+    if (!this.applyState(startupState())) {
+      console.warn('[preset] startup state refused — starting from defaults');
+    }
+  },
+
+  /**
    * Boot-time entry point. Call exactly once after bindAll() and after the
    * initial defaults (audio.colorIdx, mathViz.setFormula) have been applied
    * in main.js — so a stored snapshot overrides the defaults rather than
@@ -979,6 +992,7 @@ export const PresetMixin = {
   bootPersist() {
     // ── 1. Restore ────────────────────────────────────────────────────────
     let raw;
+    let restored = false;
     try { raw = localStorage.getItem(this._persistKey); } catch (_) { raw = null; }
     if (raw) {
       try {
@@ -1003,12 +1017,18 @@ export const PresetMixin = {
         if (!this.applyState(scrubbed.state)) {
           console.warn('[preset] persisted snapshot unusable — starting from defaults');
           this._clearPersisted();
+        } else {
+          restored = true;
         }
       } catch (_) {
         // Corrupt snapshot — drop it so next save starts clean.
         this._clearPersisted();
       }
     }
+    // A first launch with nothing to restore opens in the shipped startup
+    // state instead of the bare defaults. _firstLaunch is set by bindControls,
+    // which runs before this, at the same moment it marks the About tour seen.
+    if (!restored && this._firstLaunch) this._applyStartupState();
 
     // ── 2. Debounced auto-save ────────────────────────────────────────────
     const DEBOUNCE_MS = 1500;

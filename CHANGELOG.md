@@ -20,6 +20,9 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
   straight up from below, and back.
 - **STARS** — a button in the FPS row that switches the starfield off and on.
   Saved in presets, clip steps and the autosave.
+- **Startup look** — a first visit opens in PTS smoke on a Cube in COLLAPSE,
+  *38. Spectral Centroid*, *Crimson Abyss* under NIGHT, with the 🔄 Top Flip
+  camera running.
 - **Wire Style** — a row for WIRE mode with fifteen styles: Classic, Neon,
   Hidden line, Trails, Depth fade, Scan, Hologram, Rows, Grid, Contours,
   Lattice, Electric, Aurora, Light painting and Glass. Saved in presets, clip
@@ -166,6 +169,7 @@ Changes on `main` since the v1.0.0-beta tag. Not yet released.
 
 ### Changed
 
+- **Intro track:** *Stilicium* (MP3 320 kbps).
 - **License: MIT** (was BUSL-1.1). The bundled intro track keeps its own
   terms; they and the third-party attributions are in `NOTICE.md`.
 - **Support** replaces Roadmap in the About window, without the development

@@ -1681,6 +1681,9 @@ export function bindControls(ui) {
   try {
     if (!localStorage.getItem('vimathic_about_seen')) {
       localStorage.setItem('vimathic_about_seen', '1');
+      // A first launch: bootPersist opens it in the startup state when there
+      // is no saved session to restore.
+      ui._firstLaunch = true;
       // Defer one frame so layout settles before the modal animates in.
       requestAnimationFrame(() => document.getElementById('btn-about')?.click());
     }

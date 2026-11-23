@@ -25,7 +25,7 @@ Open VIMATHIC, drop in your music, watch the visualisations, record GIFs and Web
 
 ## The bundled audio track
 
-VIMATHIC ships with an intro track — *S. Melentyev — Vimathic.mp3* — that plays on first load. The track is **not** under the MIT License; it is licensed separately:
+VIMATHIC ships with an intro track — *Stilicium* — that plays on first load. The track is **not** under the MIT License; it is licensed separately:
 
 - **Personal, non-commercial playback inside VIMATHIC** — fine, no permission needed
 - **Private rehearsals, learning, personal demos** — fine

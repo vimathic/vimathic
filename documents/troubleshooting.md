@@ -75,6 +75,10 @@ If something isn't working, this list covers ~90% of issues. Symptoms in **bold*
   The first frame is the *Nonlinear Pendulum Phase* CPU formula — the app
   activates it explicitly at startup, and the SHADER MODE dropdown's
   pre-selected entry is that same CPU formula. Nothing GPU-side is running yet.
+  A first visit is the exception: it opens in the startup look — PTS smoke on
+  a Cube in COLLAPSE, *38. Spectral Centroid*, *Crimson Abyss* under NIGHT, the
+  🔄 Top Flip camera running. After that, a session is restored from where you
+  left it.
 - The dropdown mixes both ladders. **Numbered** entries (*1. Bass Reactive
   Waves* … *38. Spectral Centroid*) switch the renderer onto the GPU shader
   path. **Unnumbered** entries (*Nonlinear Pendulum Phase*, *Mandelbrot

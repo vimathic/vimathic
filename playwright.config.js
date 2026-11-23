@@ -45,7 +45,8 @@ export default defineConfig({
   // has been closed" line is the maxFailures bail. A budget that kills healthy
   // tests reports product bugs that do not exist; that is worse than a slow run.
   // 240 s leaves ~1.3× over the worst case, and the job budget in ci.yml moved
-  // with it: 3 failures × 2 attempts × 240 s = 24 min against 40.
+  // with it: 3 failures × 2 attempts × 240 s = 24 min against 40 (75 since
+  // 23.11.2026 — a shard drawing most of shader-oracle needs ~45 min green).
   timeout: process.env.CI ? 240_000 : 90_000,
   // Same reasoning for assertions, same factor: the 5 s default is measured
   // against a machine rendering at 60 FPS, and every wait budget has to scale

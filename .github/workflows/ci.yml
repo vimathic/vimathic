@@ -96,14 +96,17 @@ jobs:
     # playwright.config.js and is a different number for CI — the two are sized
     # against each other, so move them together.
     #
-    # 40 per shard. It has to cover the worst RED run, not the green one: with
+    # 75 per shard. It has to cover the worst RED run, not the green one: with
     # the per-test budget at 240 s and one retry, three failures cost
     # 3 × 2 × 240 s = 24 min before the maxFailures bail, on top of whatever
-    # passed first. The green run is far under this — the slowest shard took
-    # 20 min on 03.09, on a runner measurably slower than the same day's
-    # morning one. Move this number with the per-test one in
+    # passed first. And what passes first depends on which tests a shard
+    # draws: on 23.11 two shards took 15 and 19 min, while the one that drew
+    # most of shader-oracle — about 1.9 min a test without a GPU — was
+    # cancelled at the old 40 with everything it had run green and ~45 min of
+    # work in it.
+    # 45 + 24 is under 75. Move this number with the per-test one in
     # playwright.config.js; they are sized against each other.
-    timeout-minutes: 40
+    timeout-minutes: 75
     # continue-on-error was removed here: it had been masking a real product
     # regression (RESET ALL restored colour scheme 0 instead of 16) plus three
     # tests that no longer matched the UI, so the suite was red and nobody saw
